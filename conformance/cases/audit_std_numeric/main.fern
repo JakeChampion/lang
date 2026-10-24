@@ -4,11 +4,11 @@ import "std/math";
 import "std/array";
 import "core/cmp";
 
-// Audit fixture: std/i32 scalar methods, std/math helpers, and std/array
-// reductions across every native backend.
+
+
 
 function main(): i32 {
-    // --- std/i32 scalar methods ---
+
     if ((0 - 5).abs() != 5) { print("FAIL abs"); return 11; }
     if ((3).max(7) != 7 || (3).min(7) != 3) { print("FAIL minmax"); return 12; }
     if ((9).clamp(0, 5) != 5) { print("FAIL clamp"); return 13; }
@@ -18,14 +18,14 @@ function main(): i32 {
     if (!(6).is_even() || (6).is_odd()) { print("FAIL evenodd"); return 17; }
     if ((0 - 3).signum() != (0 - 1) || (5).signum() != 1) { print("FAIL signum"); return 18; }
 
-    // --- std/math helpers ---
-    let r: i32[] = math.range(0, 5); // [0,1,2,3,4]
+
+    let r: i32[] = math.range(0, 5);
     let rs: i32 = 0;
     let ri: i32 = 0;
     while (ri < r.len()) { rs = rs + r[ri]; ri = ri + 1; }
     if (rs != 10) { print("FAIL range"); return 19; }
 
-    // --- std/array reductions ---
+
     let a: i32[] = [3, 1, 2];
     if (a.sum() != 6) { print("FAIL arr-sum"); return 21; }
     let mx: i32 = match (a.max()) { Some(v) => v, None => 0 };

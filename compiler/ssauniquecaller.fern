@@ -1,8 +1,3 @@
-// Whole native body proof for the one-pointer uniqueness leaf and its two
-// acyclic pure SSA continuations. This does not bind a body to a module's final
-// output or certify ownership, arbitrary CFGs, or unwind metadata. The selected
-// API below derives a restricted parameter ABI; the raw APIs remain generic.
-// The incoming ABI supplies a readable normalized RC header for heap pointers.
 import "./ssa";
 import "./ssauniquemeaning" as semantics;
 import "./ssacredithelper" as helper;
@@ -86,13 +81,10 @@ function program(input: string[], name: string, arm: boolean): Program {
     }
   }
   let resolved = destinations(ops, labels);
-  // The closure entry `.k`, where present, sits between the stack entry and `.r`.
   let ordered = closure < 0 || closure > entry && closure <= reg;
   return Program { lines: lines, labels: labels, ops: ops, targets: resolved.targets, entry: entry, register_entry: reg, ok: ok && resolved.ok && entry == 0 && reg > 0 && ordered };
 }
 
-// Resolve targets once into the bounded line array. Each abstract case uses
-// the same checked instruction and target, without repeated symbol scans.
 function destinations(ops: isa.Op[], labels: string[]): Destinations {
   let targets: i32[] = [];
   let ix = names.index(labels);
@@ -123,7 +115,6 @@ function instruction(line: string, arm: boolean): boolean {
 function immediate(s: flow.State, line: string, arm: boolean): flow.State {
   for n in [7, 9] {
     if (line == (if (arm) { "mov x0, #" + n.to_string() } else { "movl $" + n.to_string() + ", %eax" })) {
-      // Abstract values 6 and 7 represent only the two admitted constants.
       return flow.State { ...s, regs: s.regs.with(0, if (n == 7) { 6 } else { 7 }) };
     }
   }
@@ -131,7 +122,6 @@ function immediate(s: flow.State, line: string, arm: boolean): flow.State {
 }
 
 function set_equal(s: flow.State, arm: boolean): flow.State {
-  // x86's other bits are known zero from the preceding Boolean value.
   let v = s.regs[0];
   return flow.State { ...s, ok: s.zero >= 0 && (arm || v == 3 || v == 4), regs: s.regs.with(0, if (s.zero == 1) { 4 } else { 3 }) };
 }
@@ -185,8 +175,6 @@ function branch_pc(p: Program, pc: i32, s: flow.State, b: flow.Boundary, c: flow
 }
 
 function step(s: flow.State, op: isa.Op, line: string, b: flow.Boundary, c: flow.Case): flow.State {
-  // This leaf scope has no local stack slots. A frame-slot spelling
-  // must never be rescued by the fragment checker's boundary model.
   if (isa.frame_slot(op.a, b.arm) || isa.frame_slot(op.b, b.arm)) {
     return flow.State { ...s, ok: false };
   }
@@ -203,8 +191,6 @@ function path(p: Program, b: flow.Boundary, c: flow.Case, m: semantics.Meaning, 
   for line in p.lines {
     seen = seen.append(false);
   }
-  // ARM states: original SP/frame/link, saved pair, established frame,
-  // restored SP at saved pair, restored original SP/frame/link.
   let frame = 0;
   while (pc >= 0 && pc < p.lines.len()) {
     if (seen[pc]) {
@@ -257,8 +243,6 @@ function cases(p: Program, b: flow.Boundary, m: semantics.Meaning, views: boolea
   return ok;
 }
 
-// Each supplied row is still parsed and checked. This API accepts no decoded
-// instructions or trusted validation flags from the final-output binder.
 pub function check_lines(lines: string[], architecture: string, f: ssa.SFunc): helper.Proof {
   return check(lines, architecture, f, true);
 }
@@ -279,14 +263,6 @@ pub function check_body(text: string, architecture: string, f: ssa.SFunc): helpe
   return check_lines(text.split("\n"), architecture, f);
 }
 
-// The selected producer supplies the parameter ABI, not an alignment flag.
-// Both string (tag 0) and str (tag 1) use a bit-clear box handle, base + 8,
-// under the native parameter ABI. Native ssa_str_view preserves that form.
-// Converting either to a string-backed [u8] view adds bit 1 in str_byte_view;
-// that TypeArray descriptor is excluded here. Tag/floor cases remain mandatory.
-// Concrete tuples, maps and other arrays are outer box pointers even when a
-// contained value is a byte view.
-// Generated child-release bodies and other signatures need separate proofs.
 function parameter(t: typeinfo.Type): boolean {
   if (!semtypes.concrete(t, false)) {
     return false;
@@ -321,15 +297,12 @@ function record_fields(fields: semrecords.Field[]): boolean {
 }
 
 function record_parameter(row: ssaprepare.Emitted, t: typeinfo.Type): boolean {
-  // A selected ordinary record is an outer box even if a field holds a view.
-  // Its schema does not prove release effects, field accesses or finalizers.
   if (!semtypes.concrete(t, false) || semtypes.is_handle(t) || semtypes.is_env(t)) {
     return false;
   }
   if let typeinfo.TypeStruct(_) = t {
     let count = 0;
     let valid = false;
-    // Metadata indices and nominal names from other rows imply no identity.
     for record in selected.metadata(row).records.list {
       if (semtypes.equal(record.ty, t)) {
         count = count + 1;
@@ -356,7 +329,6 @@ function same_fields(a: semrecords.Field[], b: semrecords.Field[]): boolean {
 }
 
 function member_parameter(row: ssaprepare.Emitted, v: semrecords.Variant): boolean {
-  // enum_members produces this exact member type, not a name-index proof.
   let t: typeinfo.Type = typeinfo.TypeStruct { name: v.name, args: [] };
   if (!record_parameter(row, t)) {
     return false;
@@ -417,10 +389,6 @@ function signature(row: ssaprepare.Emitted, c: ssasem.Contract): boolean {
   return false;
 }
 
-// Bind the same retained final graph and assembly before deriving the only
-// restricted input partition. SSA validation independently tracks that one
-// parameter through copies/phis and checks every operation and predecessor.
-// The raw APIs above remain generic. This is not a whole-output certificate.
 pub function check_selected(rows: ssaprepare.Emitted[], name: string, architecture: string): helper.Proof {
   let binding = bound.resolve(rows, name, architecture);
   if (binding.error != "") {
@@ -429,8 +397,6 @@ pub function check_selected(rows: ssaprepare.Emitted[], name: string, architectu
   return selected_lines(binding.rows[0].assembly.split("\n"), binding.rows[0], architecture);
 }
 
-// The final-output binder supplies actual body lines. Retained assembly is
-// deliberately unused; binding and ABI checks still use the same final graph.
 pub function check_selected_lines(lines: string[], rows: ssaprepare.Emitted[], name: string, architecture: string): helper.Proof {
   let binding = bound.resolve(rows, name, architecture);
   if (binding.error != "") {

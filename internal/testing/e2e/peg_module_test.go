@@ -7,14 +7,6 @@ import (
 	"testing"
 )
 
-// TestPegModule exercises std/peg end-to-end on the compiled backends
-// (the TAP suite in tests/stdlib/peg_test.fern covers the full API
-// via the interp gate TestRunnerPegExamplePasses; this test proves the
-// module's core machinery — recursive named rules, ordered choice,
-// captures, lookahead, the functional match-state threading — lowers
-// and runs on every backend). The program exercises a recursive
-// balanced-parens grammar with a trailing captured number and returns
-// distinct codes per failure mode.
 func TestPegModule(t *testing.T) {
 	src := `import "std/peg";
 function main(): i32 {
@@ -60,20 +52,6 @@ function ok(r: Result[peg.PegMatch, peg.PegError]): boolean {
 	})
 }
 
-// TestPegLeftRecursion pins #5402: a LEFT-recursive rule — one that
-// re-enters itself (directly or through another rule) at the SAME input
-// position, so no progress is possible — must fail the match fast on
-// every backend. The old guard was only a PRef depth budget of 8192,
-// whose ~2 native frames × ~0.75 KB per expansion needs ~12 MB of call
-// stack: the interpreter's growable stack absorbed it, but the compiled
-// backends SIGSEGV'd on the 8 MB guard page (exit 139) — the one crash
-// left in the examples corpus. __peg_run now threads the (rule, pos)
-// pairs on the call chain and fails a same-position re-entry
-// immediately; the depth budget (2048) remains as the backstop for
-// deep non-cyclic recursion and is sized to fit the native stack. The
-// positive controls prove the chain does NOT over-fire: right
-// recursion re-enters at advancing positions, and balanced parens
-// re-enter the same rule only after consuming "(".
 func TestPegLeftRecursion(t *testing.T) {
 	src := `import "std/peg";
 function main(): i32 {
@@ -126,14 +104,6 @@ function ok(r: Result[peg.PegMatch, peg.PegError]): boolean {
 	})
 }
 
-// TestX86_64PegTapRunsNatively is the full-file gate for #5402: the
-// unmodified tests/stdlib/peg_test.fern TAP suite — formerly the one
-// genuine crash left in the natively-compiled examples corpus — must
-// compile through the full CLI pipeline on x86-64 and run all 18 cases
-// green. TestPegLeftRecursion pins the minimized trigger on every
-// backend; this pins the corpus file itself (the exact repro command
-// from the issue), #5404-style, so a regression anywhere in the
-// std/peg + std/test native path surfaces here.
 func TestX86_64PegTapRunsNatively(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	fern := buildFernCLI(t)

@@ -1,5 +1,5 @@
-// A generic function passed as a callback binds the method's result variable
-// to the result of its instance, so a wrong annotation is an E003.
+
+
 function identity[T](x: T): T {
   return x;
 }

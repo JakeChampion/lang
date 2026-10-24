@@ -1,6 +1,6 @@
-// E015: a struct pattern names every field of its struct, or ends in `..` to
-// leave the rest out, wherever it stands: a match arm, `if let`, `let` and a
-// parameter.
+
+
+
 struct P { x: i32, y: i32 }
 
 function arm(p: P): i32 {

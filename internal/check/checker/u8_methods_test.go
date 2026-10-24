@@ -7,16 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// `u8` had no method surface of its own: methodTypeName mapped every
-// unsigned non-64-bit width to "u32", so a byte silently reached u32's
-// methods and nothing could declare a method ON a byte. That blocks moving
-// the byte classifiers to `u8` with `ascii` in their names (#5629 slice 3),
-// which is what makes the ASCII/Unicode split a type distinction rather than
-// a naming convention.
-//
-// Nothing in the tree declared a u8 receiver, so giving u8 its own name is
-// additive for declarations and strict for dispatch: a byte no longer
-// resolves u32's methods, exactly as `char` does not resolve i32's.
 func TestU8HasItsOwnMethodSurface(t *testing.T) {
 	src := `function (b: u8) doubled(): i32 { return (b as i32) * 2; }
 
@@ -33,8 +23,6 @@ function main(): i32 {
 	}
 }
 
-// The strictness half: a method declared on `u32` is NOT reachable from a
-// `u8` receiver. Before this change it was, because both mapped to "u32".
 func TestU8DoesNotInheritU32Methods(t *testing.T) {
 	src := `function (n: u32) only_on_u32(): i32 { return n as i32; }
 
@@ -50,17 +38,11 @@ function main(): i32 {
 	if err == nil {
 		t.Fatal("a u32 method resolved on a u8 receiver; u8 must have its own surface")
 	}
-	// The rejection is the contract; the wording is the pre-existing E043
-	// scalar-method-not-found phrasing that #5494 tracks separately (it
-	// talks about struct field access for what the user wrote as a method
-	// call). Assert the receiver type is named, not the exact sentence.
 	if !strings.Contains(err.Error(), "u8") {
 		t.Errorf("error = %v, want it to name the u8 receiver", err)
 	}
 }
 
-// The other widths keep their existing surfaces — this change must not
-// disturb u32 / i32 / i64 / u64 dispatch.
 func TestOtherWidthDispatchUnchanged(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"u32", `function (n: u32) twice(): u32 { return n * 2; }
@@ -84,9 +66,6 @@ func TestOtherWidthDispatchUnchanged(t *testing.T) {
 	}
 }
 
-// A u8 method and a u32 method of the SAME name coexist and each dispatches
-// to its own receiver width — the property that lets slice 3 give the byte
-// classifiers ascii-named u8 forms without disturbing u32.
 func TestU8AndU32SameNameCoexist(t *testing.T) {
 	src := `function (b: u8) width(): i32 { return 8; }
 function (n: u32) width(): i32 { return 32; }

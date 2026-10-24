@@ -1,19 +1,19 @@
-// #6049, cause 2 (fixed by #6120, `LocalInfo.borrowed_arr`): a match-arm ARRAY
-// payload binder is BORROWED from the enum box, so it must not enter the
-// function-exit dec-sweep.
-//
-// `Seq(xs)` marks its slot is_arr so `xs[i]` / `xs.len()` resolve, and the
-// sweep is is_arr-gated — a param escapes it by slot index, a binder cannot.
-// So every call that matched a `Seq` released the buffer the box owns, and
-// re-matching one node freed the tree under itself. `closure` is std/regex's
-// `__rx_closure` reduced: `+` and `*` re-match the SAME node once per text
-// position, which is why only quantified patterns (`^(ab)+$` over "ababab")
-// crashed while a single pass looked fine. The per-iteration allocation is what
-// makes a released cell visible rather than merely dangling.
-//
-// #6120 pins this on x86-64 (TestSelfHostEnumPayloadBorrowIRX86_64). The defect
-// is in irlower, which all three self-host backends share, so this fixture
-// carries the same shape onto the wasm and arm64 legs as well.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 enum N { Chr(i32), Seq(N[]), Plus(N) }
 
@@ -42,6 +42,6 @@ function main(): i32 {
     items = items.append(Chr(1));
     items = items.append(Chr(2));
     let t: N = Plus(Seq(items));
-    // 8 passes over Seq(1, 2) = 8 * 3 = 24.
+
     return sum(t);
 }

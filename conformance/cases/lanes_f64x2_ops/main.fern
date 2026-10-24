@@ -1,7 +1,7 @@
-// The f64x2 operators and builtins, lane by lane. `min` and `max` are
-// `b < a ? b : a` and `a < b ? b : a`, so a NaN or an equal pair picks a
-// fixed side, and a sign survives where a division shows it. `round` is half
-// away from zero. `mul_add` rounds the product before the add.
+
+
+
+
 import "std/f64";
 
 function show(tag: string, v: f64x2): void {

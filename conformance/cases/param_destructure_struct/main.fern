@@ -1,9 +1,9 @@
-// Struct-pattern parameters — `P { x, y }: P` in every binding form: named
-// function, second-position param, a field renamed on binding, a partial
-// bind, and a lambda with each body form — braced and expression.
-// Desugars at parse time into a holder param plus a leading
-// `let P { x, y } = <holder>;`, so this exercises the same Destructure path
-// as the tuple spelling in param_destructure.
+
+
+
+
+
+
 struct Point { x: i32, y: i32 }
 
 struct Rect { w: i32, h: i32 }
@@ -24,8 +24,8 @@ function scale(k: i32, Point { x, y }: Point): i32 {
     return k * (x + y);
 }
 
-// The `@` binder names the whole value, so the body reads BOTH the argument
-// and the fields it bound.
+
+
 function whole(p @ Point { x, y }: Point): i32 {
     return p.x + x + y;
 }
@@ -41,7 +41,7 @@ function arrow(): i32 {
 }
 
 function main(): i32 {
-    // 3 + 34 + 5 + 4 + 7 + 12 + 5 = 70
+
     return add(Point { x: 1, y: 2 })
         + ren(Point { x: 3, y: 4 })
         + wide(Rect { w: 5, h: 9 })

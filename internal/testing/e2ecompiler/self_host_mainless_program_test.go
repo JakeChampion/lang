@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// An executable needs an entry point: building one from a module with no
-// `main`, no `handle` and no top-level statements is E001 on every target,
-// as the Go front end reports it.
 func TestSelfHostMainlessExecutableIsRefused(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")

@@ -1,47 +1,5 @@
 package e2e
 
-// An arm binding assigned to an OUTER local is an owner, and reclaims (#7163).
-//
-// A match / if-let binding is borrow-tainted by computeFreeEligible: it aliases
-// an enum payload with no projection dup, so the analysis must not let it free.
-// That taint used to PROPAGATE through `keep = g` to the destination local. But
-// that assignment is not the alias — needsRcIncOnAlias fires on it, so `keep`
-// takes a reference of its own. Inheriting the taint cost `keep` its
-// free-eligibility, and its overwrite-dec fell back to the catch-all flat
-// __fern_rc_dec, which decrements without reclaiming: one stranded buffer per
-// assignment, unbounded in a loop.
-//
-// Under the sanitizer, on the correctness program below:
-//
-//	before   allocs=4003 frees=2503 live_bytes=48000  (leak 48000 in 1500 blocks)
-//	after    allocs=4003 frees=4003 live_bytes=0
-//
-// The defect is in the ASSIGNMENT, not in `get`: a binding taken from a struct
-// field's Option, from an array element's Option, or by `if let` leaks exactly
-// the same way, and all are gated here. #7163 reported it only through
-// `m.get(k)` because that is where it was found.
-//
-// The issue's stated cause — "neither an alias inc nor an overwrite dec, it
-// lowers as a move" — does not match the tree it was filed against any more.
-// The alias inc does fire. What is missing is the RECLAIMING dec, and the
-// reason is the taint above, which is why the fix is in the eligibility
-// analysis rather than at the move-vs-copy decision.
-//
-// The controls are essential in the other direction. get_or_churn does the
-// same work with no arm binding, and nonescape_churn keeps the binding local
-// (the #7144 shape); both were already flat, so a fix that simply freed more
-// aggressively would not be distinguishable from one that is correct. The
-// read-after-death, two-escapee and re-alias legs plus __rc_underflow_count
-// are what say the reclaim is not an over-release — the direction this area
-// fails in (#7122 exit 134, #7114 wrong answer, #7145 a walk that never ran).
-//
-// Reverting the fix fails x86-64, arm64 and wasm on code 1. The INTERP leg
-// still passes: the interpreter runs no RC lowering, so the byte gates are
-// trivially flat there. It is kept for what it does gate — that the expected
-// values in the correctness legs are the language's answer rather than
-// whatever the compiler happens to produce — and not counted as coverage of
-// the reclaim itself.
-
 import "testing"
 
 const matchBindingEscapeProg = `
@@ -214,9 +172,6 @@ function main(): i32 {
 }
 `
 
-// codes: 1..5 = that shape strands its buffer per round; 6..8 = the reclaim is an
-// over-release (wrong value read back, or a control leg tripped); 9 = rc
-// underflow; 11..15 = a churn returned negative, i.e. its own invariant failed.
 const matchBindingEscapeWant = "want 42 (1-5 = that shape leaks per round, " +
 	"6-8 = over-release read back a wrong value, 9 = rc underflow, 11-15 = churn self-check failed)"
 

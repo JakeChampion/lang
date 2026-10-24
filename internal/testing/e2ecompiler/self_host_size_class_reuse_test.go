@@ -2,12 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// Freeing a block and allocating the same size again reuses it, on both sides
-// of the 256-word line where a size class stops being the word count itself.
-// Each fill grows an array through capacities 4 to 1024 elements and frees
-// every buffer it outgrew; the second pass over the same sizes must be served
-// from the free lists, so the bump pointer does not move. An allocation and a
-// free that classed a block differently would leave the second pass bumping.
 const sizeClassReuseProgram = `@noinline function fill(n: i32): i32 {
     let xs: i32[] = [];
     let i: i32 = 0;
@@ -37,8 +31,6 @@ function main(): i32 {
 
 func TestSelfHostSizeClassReuse(t *testing.T) {
 	want := "25894\n0\n"
-	// FERN_SANITIZE quarantines every freed block, so that row checks the
-	// sum and the leak balance only.
 	runSemanticProgram(t, "sizeclass", sizeClassReuseProgram, []string{"fill", "sweep"},
 		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": "25894\n", "wasm32-wasi": want})
 }

@@ -1,6 +1,3 @@
-// Mach-O profiler symbol lookup over the running image's mapped segments.
-// The native writer sorts nlist_64 text symbols by address; no file I/O or
-// allocation is needed at exit, and ASLR is derived from the runtime header.
 pub function source(): string {
   return "function __fern_profile_macho_u32(p: usize): usize {\n  return (__load_i32(p) as u32) as usize;\n}\n"
     + "function __fern_profile_macho_tag(p: usize, text: string): boolean {\n  if (text.len() > 16) { return false; }\n  let i: i32 = 0;\n  while (i < text.len()) {\n    if (__load_u8(p + (i as usize)) != __load_u8(__raw_data(text) + (i as usize))) { return false; }\n    i = i + 1;\n  }\n  if (text.len() == 16) { return true; }\n  return __load_u8(p + (text.len() as usize)) == 0;\n}\n"

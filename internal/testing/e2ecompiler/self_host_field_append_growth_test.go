@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// An `own` record's pointer-element field appended in place: when the push
-// grows the unique buffer into a fresh box, the elements change hands with it,
-// so the field must be moved out then too, or on growth the record's release
-// frees every element the grown array still holds. The NLam arm keeps `step`
-// off the reuse path that would otherwise take the append.
 const fieldAppendGrowthSrc = `struct Occ { name: string, line: i32 }
 struct Facts { occ: Occ[], esc: string[] }
 enum Node { NIdent(Occ), NLam(i32), NOther(i32) }
@@ -51,7 +46,6 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const fieldAppendGrowthWant = 68
 
 func writeFieldAppendGrowthSrc(t *testing.T) string {

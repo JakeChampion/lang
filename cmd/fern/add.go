@@ -10,24 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/pkgcache"
 )
 
-// runAdd implements `fern -add NAME SPEC [DIR]`: append a declared
-// dependency to the nearest fern.toml. SPEC selects the source:
-//
-//	path:../helper                          → { path = "../helper" }
-//	url:https://example.com/pkg.tar.gz      → fetch, compute the sha256,
-//	                                          { url = "…", hash = "sha256:…" }
-//	workspace                               → { workspace = true }
-//	version:1.2.0                           → "1.2.0"
-//
-// grant, from -grant, adds a `capabilities` list: "" writes none, "none" an
-// empty one.
-//
-// The url form is the ergonomic benefit: the user never hand-computes a
-// hash — `add` downloads the archive, records the hash it observed (the
-// Zig "write url, tool tells you the hash" flow), and leaves it verified
-// in the content-addressed store. The manifest is edited textually so
-// existing formatting and comments survive, and the result is re-parsed
-// before it is written so a bad edit can never leave a broken manifest.
 func runAdd(name, spec, grant, dir string) error {
 	if !validDepNameCLI(name) {
 		return fmt.Errorf("fern-oracle: -add: invalid dependency name %q (letters, digits, `_`, `-`; must not start with a digit)", name)
@@ -53,7 +35,6 @@ func runAdd(name, spec, grant, dir string) error {
 		return err
 	}
 	updated := insertDependency(string(orig), line)
-	// Re-parse before committing: never leave a broken manifest on disk.
 	if _, perr := manifest.Parse(updated); perr != nil {
 		return fmt.Errorf("fern-oracle: -add: the edit would produce an invalid manifest (%s) — no change written", perr.(*manifest.Error).Msg)
 	}
@@ -64,9 +45,6 @@ func runAdd(name, spec, grant, dir string) error {
 	return nil
 }
 
-// depLineFor builds the manifest line declaring name from SPEC and grant,
-// fetching + hashing a url source along the way. A version with no grant
-// takes the bare form, `name = "1.2.0"`.
 func depLineFor(name, spec, grant string) (string, error) {
 	fields, err := depSource(spec)
 	if err != nil {
@@ -85,7 +63,6 @@ func depLineFor(name, spec, grant string) (string, error) {
 	return fmt.Sprintf("%s = { %s, capabilities = %s }\n", name, fields, granted), nil
 }
 
-// depSource is the inline-table fields naming SPEC's source.
 func depSource(spec string) (string, error) {
 	switch {
 	case spec == "workspace":
@@ -118,8 +95,6 @@ func depSource(spec string) (string, error) {
 	}
 }
 
-// grantList is -grant's comma-separated capabilities as a manifest array, in
-// the manifest's order, "[]" for none.
 func grantList(grant string) (string, error) {
 	if grant == "none" {
 		return "[]", nil
@@ -139,9 +114,6 @@ func grantList(grant string) (string, error) {
 	return "[" + strings.Join(quoted, ", ") + "]", nil
 }
 
-// insertDependency splices a dependency line into a manifest's
-// [dependencies] table, creating the table at EOF when absent. Existing
-// content (formatting, comments, other sections) is preserved verbatim.
 func insertDependency(src, line string) string {
 	lines := strings.Split(src, "\n")
 	for i, l := range lines {
@@ -152,7 +124,6 @@ func insertDependency(src, line string) string {
 			return strings.Join(out, "\n")
 		}
 	}
-	// No [dependencies] table yet — append one.
 	sep := "\n"
 	if strings.HasSuffix(src, "\n") {
 		sep = ""

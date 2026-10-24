@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// Exercise the runtime ABI directly: source programs cannot call the internal
-// uniqueness helper. Both the value-producing and fused branch selectors must
-// mask a tagged input; a typed alignment proof must survive lifting and avoid
-// the mask for an ordinary array. The same object is unique, then shared, then
-// released twice, so an incorrect count cannot hide behind a constant result.
 const byteViewRCDriver = `import "./ir";
 import "./irtables";
 import "./ircore";

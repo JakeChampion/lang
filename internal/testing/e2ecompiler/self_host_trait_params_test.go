@@ -6,8 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The self-host twin of TestTraitParams: the trait-typed parameters desugar to
-// anonymous generics through the CLI's module loading and flattening.
 func TestSelfHostTraitParams(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	main := e2eharness.WriteTraitParamsProject(t)

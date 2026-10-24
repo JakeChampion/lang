@@ -9,11 +9,6 @@ import (
 	"testing"
 )
 
-// enumMethodIRCases call a method on an enum-typed RECEIVER: an enum-valued
-// LOCAL (`let d = Heading.N; d.code()`, qualified or bare, unit or payload), a
-// method's enum result, or a FRESH variant (`Heading.N.code()`). Each needs the
-// receiver's enum type to form the `<Enum>.<method>` label and dispatch
-// through the IR path.
 var enumMethodIRCases = []struct {
 	name     string
 	src      string
@@ -26,9 +21,6 @@ var enumMethodIRCases = []struct {
 	{"fresh-variant-method", `enum Heading { N, S } function (d: Heading) code(): i32 { return 7; } function main(): i32 { return Heading.N.code(); }`, 7},
 }
 
-// TestSelfHostEnumMethodX86IR gates enum-receiver method dispatch on x86-64:
-// each case asserts the program routes through the "ir" path (via
-// asm_pathprobe_run) and that the IR path computes the oracle exit code.
 func TestSelfHostEnumMethodX86IR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// An array returned through a function value takes its element width from
-// the value's declared result (#9496): a lazy flat_map at f64 must walk the
-// lambda's f64[] result at the 8-byte stride, or wasm pushes an i32 into an
-// f64 push and the module is invalid. Each element kind is here, and a user
-// function iterating a `(i32) => f64[]` result directly.
 const fnValueArrayResultSrc = `import "core/iter" as iter;
 function sum_through(f: (i32) => f64[], n: i32): f64 {
     let t: f64 = 0.0;

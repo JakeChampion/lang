@@ -8,29 +8,10 @@ import (
 	"testing"
 )
 
-// A generic call whose type parameter is inferable only from an ARRAY ELEMENT
-// read — `f(xs[i])`, where `xs: T[]` — must monomorphise and route through the
-// IR path.
-//
-// `mono_infer` has to infer `xs[i]`'s element type; left "unknown", the call
-// stays generic and the un-monomorphised symbol (`cmp____cmp_probe_after`,
-// with no `__i32` suffix) reaches the IR eligibility gate, which refuses the
-// CALLING function — a hard compile error (#6189).
-//
-// THESE CASES NEED THE STDLIB. The bug reproduces through a bounded generic
-// (`T: Ord` calling `.cmp`), which is what core/cmp's adaptive sort does — so
-// the driver here is asm_load_run with the stdlib resolved off disk, not the
-// pathprobe driver. Unbounded single-module `[T]` generics do not reproduce
-// it.
-//
-// Each case is oracle-checked against the interpreter and routing-pinned
-// to "ir".
 var monoIndexArgIRCases = []struct {
 	name string
 	src  string
 }{
-	// The shape core/cmp's sort hit: a bounded generic helper receiving two
-	// element reads, called from inside a loop in a generic caller.
 	{"bounded-elem-args", `import "core/cmp";
 function after[T: cmp.Ord](x: T, y: T): boolean { return x.cmp(y) > 0; }
 function count_desc[T: cmp.Ord](a: T[]): i32 {
@@ -44,7 +25,6 @@ function count_desc[T: cmp.Ord](a: T[]): i32 {
 }
 function main(): i32 { let xs: i32[] = [3, 1, 2]; return count_desc(xs); }`},
 
-	// Same, with the call in a condition rather than a statement.
 	{"bounded-elem-args-condition", `import "core/cmp";
 function bigger[T: cmp.Ord](x: T, y: T): boolean { return x.cmp(y) > 0; }
 function main(): i32 {
@@ -53,8 +33,6 @@ function main(): i32 {
     return 3;
 }`},
 
-	// A string element binds `T = string` through the same path -- guards
-	// against the element type being taken as the array type verbatim.
 	{"bounded-elem-args-string", `import "core/cmp";
 function bigger[T: cmp.Ord](x: T, y: T): boolean { return x.cmp(y) > 0; }
 function main(): i32 {
@@ -63,18 +41,6 @@ function main(): i32 {
     return 3;
 }`},
 
-	// Indexing a value whose type is still an UNSUBSTITUTED `T[]` -- here the
-	// return of an unbounded generic (`array.reverse`), whose type params are
-	// erased, so its return type comes back as the literal "T[]".
-	//
-	// The element type is then the bare type variable "T", which is not a
-	// usable concrete type. Reporting it keyed a clone named after the
-	// variable (`bigger__T`), whose body calls `T.cmp` -- an unknown symbol, so
-	// the gate rejected the caller and the module failed to compile. The first
-	// version of the ExprIndex arm had no such guard and broke
-	// tests/stdlib/array_structural_verbs_test.fern
-	// (`test.assert_eq(array.reverse(xs)[0], 42)` -> `test__assert_eq__T` ->
-	// `T.eq`) on every backend.
 	{"typevar-elem-stays-generic", `import "std/array";
 import "core/cmp";
 function bigger[T: cmp.Ord](x: T, y: T): boolean { return x.cmp(y) > 0; }
@@ -84,14 +50,6 @@ function main(): i32 {
     return 3;
 }`},
 
-	// A RECEIVER METHOD's result as the argument: `assert_eq(s.finish(),
-	// b.finish())`. `mono_infer` typed a method call only for `.to_string()`,
-	// the array-method and generic-struct folds, and an associated
-	// `Type.m()`; a plain user method on a struct value inferred "unknown",
-	// the call stayed generic, and the self-host refused
-	// tests/stdlib/hash_checksums_test.fern with E001 on `test__assert_eq`.
-	// The receiver's declared method answers now, keyed the way an associated
-	// call is; the same-module and the module-qualified receiver both.
 	{"method-result-args", `import "core/cmp";
 struct S { n: u32 }
 function (s: S) finish(): u32 { return s.n * 2u32; }

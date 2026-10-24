@@ -18,7 +18,6 @@ func certdata(t *testing.T) []byte {
 	return data
 }
 
-// nssVersion is the builtins version the committed nssckbi.h names.
 func nssVersion(t *testing.T) string {
 	t.Helper()
 	hdr, err := os.ReadFile("nssckbi.h")
@@ -41,9 +40,6 @@ func TestBuiltinsVersion(t *testing.T) {
 	}
 }
 
-// The committed module must be what the generator produces from the
-// committed certdata.txt as of the date it records: generated code, where
-// a hand edit or a stale regeneration would otherwise go unseen.
 func TestCommittedFileIsUpToDate(t *testing.T) {
 	const path = "../../" + outputPath
 	want, err := os.ReadFile(path)
@@ -67,10 +63,6 @@ func TestCommittedFileIsUpToDate(t *testing.T) {
 	}
 }
 
-// Every certificate has a trust object, the trust bits are read as NSS
-// reads them, and a distrust date is honoured: bundled with the root while
-// a certificate issued before it can still be valid, left out once none
-// can.
 func TestTrustAndDistrust(t *testing.T) {
 	objects, err := parseCertdata(certdata(t))
 	if err != nil {
@@ -117,8 +109,6 @@ func TestTrustAndDistrust(t *testing.T) {
 	if strings.Count(src, " as i64") != st.taken || strings.Count(src, "0 as i64") != st.taken-st.dated {
 		t.Error("__distrust does not hold one date per root taken, zero for the undated")
 	}
-	// One dated root, generated the day before its date and the day its
-	// date is spent: bundled with the date, then left out.
 	var dated root
 	for _, r := range all {
 		if r.trusted && !r.distrust.IsZero() {
@@ -131,7 +121,7 @@ func TestTrustAndDistrust(t *testing.T) {
 		t.Fatal(err)
 	}
 	line := fmt.Sprintf("//   %s (%s)\n", dated.label, dated.distrust.Format("2006-01-02"))
-	if bst.dated == 0 || !strings.Contains(before, "enforces:\n"+line) || !strings.Contains(before, fmt.Sprintf("%d as i64", dated.distrust.Unix())) {
+	if bst.dated == 0 || !strings.Contains(before, "limits:\n"+line) || !strings.Contains(before, fmt.Sprintf("%d as i64", dated.distrust.Unix())) {
 		t.Errorf("%q is not bundled with its live date", dated.label)
 	}
 	after, ast, err := generate(certdata(t), nssVersion(t), dated.distrust.Add(leafLifetime))
@@ -143,8 +133,6 @@ func TestTrustAndDistrust(t *testing.T) {
 	}
 }
 
-// A distrust date the generator cannot read fails the run rather than
-// bundling the root undated.
 func TestUnreadDistrustDateRefused(t *testing.T) {
 	const object = `CKA_CLASS CK_OBJECT_CLASS CKO_CERTIFICATE
 CKA_LABEL UTF8 "Example Root"
@@ -187,7 +175,6 @@ CKA_TRUST_SERVER_AUTH CK_TRUST CKT_NSS_TRUSTED_DELEGATOR
 	}
 }
 
-// Deterministic output is what makes TestCommittedFileIsUpToDate usable.
 func TestGenerateIsDeterministic(t *testing.T) {
 	asOf := time.Date(2026, 10, 11, 0, 0, 0, 0, time.UTC)
 	a, _, err := generate(certdata(t), nssVersion(t), asOf)

@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// The self-host half of #8823: __fern_open_res (asmcore.rt_src_open_res)
-// moves a descriptor below 3 up with fcntl F_DUPFD before wrapping it, so a
-// file opened while fd 1 is closed is never handed descriptor 1 and
-// stdout().write cannot land in it. Same program as the CLI gate
-// (internal/testing/e2e/fd_safer_test.go): exit 2 means the stdout write "succeeded"
-// into the file, and the file must hold only what was written to it.
 const selfHostFdSaferSrc = `function main(): i32 {
     match (open_writer("alias.out")) {
         Ok(w) => {
@@ -61,8 +55,6 @@ func TestSelfHostOpenedHandleNeverLandsOnStdoutX86_64(t *testing.T) {
 	work := t.TempDir()
 	run := exec.Command(bin)
 	run.Dir = work
-	// A typed nil *os.File leaves fd 1 CLOSED in the child, as `prog >&-`
-	// does, rather than on /dev/null.
 	run.Stdout = (*os.File)(nil)
 	_ = run.Run()
 	if code := run.ProcessState.ExitCode(); code != 0 {

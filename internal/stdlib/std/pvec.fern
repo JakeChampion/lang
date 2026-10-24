@@ -1,75 +1,17 @@
-// std/pvec — a persistent vector with structural sharing.
-//
-// `PVec[T]` is a 32-way bit-partitioned trie with a tail buffer (the
-// shape behind Clojure's and Scala's persistent vectors): O(log32 n)
-// `get` / `with`, amortised O(1) `append` and `pop`, O(1) snapshots.
-// Every operation is value-returning:
-//
-//   import "std/pvec";
-//   let v: pvec.PVec[i32] = pvec.pvec_new();
-//   v = v.append(10);
-//   v = v.append(20);
-//   let snapshot: pvec.PVec[i32] = v;   // O(1), shares every node
-//   v = v.with(0, 99);                  // snapshot still reads 10 at 0
-//   v.get_or(0, -1);                    // 99
-//   v.to_array();                       // [99, 20]
-//
-// # Why not `T[]`?
-//
-// The built-in array already updates in place when it is uniquely held
-// and copies the WHOLE buffer otherwise, so `arr.with(i, x)` on a
-// shared array is O(n) and a snapshot costs O(n) on the next write.
-// `PVec` makes the shared case O(log32 n): a write copies at most
-// seven small nodes and shares the rest. For a vector nothing else
-// holds, the compiler's reuse pass gives the same source line the
-// in-place path (see `std/ordmap` for the two-path rule), so the
-// unique case stays close to a plain array.
-//
-// # Layout
-//
-//   PVec { len, shift, root, tail }
-//
-// The last `len mod 32` elements (never zero once `len > 0`) live in
-// `tail`, a plain array, so an `append` usually touches only it. The
-// rest live in the trie under `root`: `shift` is the number of index
-// bits consumed above the leaves (0 when every element is in the tail
-// or in a single leaf), each `Branch` holds up to 32 children, each
-// `Leaf` up to 32 elements, and index `i` descends by the 5-bit slices
-// of `i` from bit `shift` down.
-//
-// # Complexity
-//
-//   get / with                          O(log32 n), at most 7 levels
-//   append / pop                        amortised O(1) (a trie touch every 32)
-//   len / first / last                  O(1)
-//   to_array / fold / for_each / map    O(n)
-//   iter                                O(n)
-//   from_array                          O(n)
-//   concat(other)                       O(len(other))
-//   slice(lo, hi)                       O(hi - lo)
+// This module provides persistent vectors.
 
 import "core/iter";
 
-// The trie. `Leaf` holds elements, `Branch` holds children; `Empty` is
-// only ever the root of a vector with no trie part. No methods are
-// declared on this enum (a generic enum with receiver methods is not
-// monomorphised by the self-hosted compiler); the public surface lives
-// on `PVec`.
 pub enum VNode[T] { Empty, Leaf(T[]), Branch(VNode[T][]) }
 
-// The public handle. Construct one only through `pvec_new` /
-// `from_array`; every field is an implementation detail.
 pub struct PVec[T] { len: i32, shift: i32, root: VNode[T], tail: T[] }
 
-// `pvec_new()` — the empty vector. The element type is fixed by the
-// annotation at the binding (`let v: PVec[string] = pvec_new();`).
 pub function pvec_new[T](): PVec[T] {
   let e: VNode[T] = Empty;
   let t: T[] = [];
   return PVec { len: 0, shift: 0, root: e, tail: t };
 }
 
-// `from_array(xs)` — the vector holding `xs`'s elements in order.
 pub function from_array[T](xs: T[]): PVec[T] {
   let v: PVec[T] = pvec_new();
   let i: i32 = 0;
@@ -80,8 +22,6 @@ pub function from_array[T](xs: T[]): PVec[T] {
   return v;
 }
 
-// ---- trie helpers -----------------------------------------------------
-// __pv_tail_off is the index of the first element held in the tail.
 function __pv_tail_off(len: i32): i32 {
   if (len < 32) {
     return 0;
@@ -89,8 +29,6 @@ function __pv_tail_off(len: i32): i32 {
   return len - 1 >> 5 << 5;
 }
 
-// __pv_path wraps a leaf in `shift / 5` single-child branches, so it
-// can be hung under a root of that depth.
 function __pv_path[T](shift: i32, leaf: VNode[T]): VNode[T] {
   if (shift == 0) {
     return leaf;
@@ -99,9 +37,6 @@ function __pv_path[T](shift: i32, leaf: VNode[T]): VNode[T] {
   return Branch([inner]);
 }
 
-// __pv_push_tail hangs a full tail (as a leaf) at the end of the trie
-// under `node`, which has `shift` index bits above its children.
-// Precondition: the trie has room (the caller grows the root otherwise).
 function __pv_push_tail[T](node: VNode[T], shift: i32, len: i32, leaf: VNode[T]): VNode[T] {
   let sub: i32 = len - 1 >> shift & 31;
   match (node) {
@@ -129,8 +64,6 @@ function __pv_push_tail[T](node: VNode[T], shift: i32, len: i32, leaf: VNode[T])
   }
 }
 
-// __pv_leaf_for returns the leaf array holding index `i` (which must be
-// below the tail offset).
 function __pv_leaf_for[T](root: VNode[T], shift: i32, i: i32): T[] {
   let cur: VNode[T] = root;
   let level: i32 = shift;
@@ -153,11 +86,6 @@ function __pv_leaf_for[T](root: VNode[T], shift: i32, i: i32): T[] {
   return none;
 }
 
-// __pv_with_in returns the trie with element `i` replaced, rebuilding the
-// path from `node` down to its leaf — in place when nothing else holds it.
-// The child is taken OUT of its slot before the descent (`kids.with(sub,
-// Empty)`), so it reaches the recursive call at its own count rather than
-// shared with the array; see docs/PERSISTENT-COLLECTIONS.md.
 function __pv_with_in[T](node: VNode[T], shift: i32, i: i32, x: T): VNode[T] {
   match (node) {
     Branch(kids) => {
@@ -179,8 +107,6 @@ function __pv_with_in[T](node: VNode[T], shift: i32, i: i32, x: T): VNode[T] {
   }
 }
 
-// __pv_pop_tail removes the last leaf under `node`; returns Empty when
-// the node becomes childless, so the caller can drop the level.
 function __pv_pop_tail[T](node: VNode[T], shift: i32, len: i32): VNode[T] {
   let sub: i32 = len - 2 >> shift & 31;
   match (node) {
@@ -217,7 +143,6 @@ function __pv_pop_tail[T](node: VNode[T], shift: i32, len: i32): VNode[T] {
   }
 }
 
-// __pv_drop_last is `xs` without its last element.
 function __pv_drop_last[T](xs: VNode[T][]): VNode[T][] {
   let out: VNode[T][] = [];
   let i: i32 = 0;
@@ -228,10 +153,6 @@ function __pv_drop_last[T](xs: VNode[T][]): VNode[T][] {
   return out;
 }
 
-// __pv_into appends every element under `node`, in order, to `acc`. The
-// walks recurse over the child index rather than looping, so the `own`
-// accumulator is consumed once per frame in the self-reassigning form
-// (an `own` value consumed inside a loop is not reclaimed in place).
 function __pv_into[T](node: VNode[T], own acc: T[]): T[] {
   match (node) {
     Empty => {
@@ -314,8 +235,6 @@ function __pv_for_each[T](node: VNode[T], f: (T) => void): void {
   }
 }
 
-// __pv_valid_branch: a branch at depth `shift` holds 1..32 children, all
-// but the last full, holding `count` elements in total.
 function __pv_valid_branch[T](kids: VNode[T][], shift: i32, count: i32): boolean {
   if (shift == 0 || kids.len() == 0 || kids.len() > 32) {
     return false;
@@ -337,9 +256,6 @@ function __pv_valid_branch[T](kids: VNode[T][], shift: i32, count: i32): boolean
   return left == 0;
 }
 
-// __pv_valid checks the trie shape under `node` at depth `shift`: every
-// leaf sits at depth 0 and holds 32 elements, and the trie holds exactly
-// `count` elements.
 function __pv_valid[T](node: VNode[T], shift: i32, count: i32): boolean {
   match (node) {
     Empty => {
@@ -354,18 +270,14 @@ function __pv_valid[T](node: VNode[T], shift: i32, count: i32): boolean {
   }
 }
 
-// ---- public surface ---------------------------------------------------
-// `len()` — the number of elements. O(1).
 pub function (v: PVec[T]) len(): i32 {
   return v.len;
 }
 
-// `is_empty()` — true when there are no elements.
 pub function (v: PVec[T]) is_empty(): boolean {
   return v.len == 0;
 }
 
-// `get(i)` — `Some(element)` at index `i`, `None` when out of range.
 pub function (v: PVec[T]) get(i: i32): Option[T] {
   if (i < 0 || i >= v.len) {
     return None;
@@ -377,7 +289,6 @@ pub function (v: PVec[T]) get(i: i32): Option[T] {
   return Some(leaf[i & 31]);
 }
 
-// `get_or(i, fallback)` — the element at `i`, or `fallback`.
 pub function (v: PVec[T]) get_or(i: i32, fallback: T): T {
   if (i < 0 || i >= v.len) {
     return fallback;
@@ -389,7 +300,6 @@ pub function (v: PVec[T]) get_or(i: i32, fallback: T): T {
   return leaf[i & 31];
 }
 
-// `first()` / `last()` — the first / last element.
 pub function (v: PVec[T]) first(): Option[T] {
   return v.get(0);
 }
@@ -401,9 +311,6 @@ pub function (v: PVec[T]) last(): Option[T] {
   return Some(v.tail[v.tail.len() - 1]);
 }
 
-// `append(x)` — the vector with `x` at the end. Amortised O(1): the
-// tail absorbs 31 of every 32 appends; the 32nd hangs the full tail in
-// the trie as a leaf.
 pub function (v: PVec[T]) append(x: T): PVec[T] {
   if (v.len - __pv_tail_off(v.len) < 32) {
     return PVec { len: v.len + 1, shift: v.shift, root: v.root, tail: v.tail.append(x) };
@@ -421,8 +328,6 @@ pub function (v: PVec[T]) append(x: T): PVec[T] {
       return PVec { len: v.len + 1, shift: 5, root: Branch([root, leaf]), tail: fresh };
     },
     Branch(kids) => {
-      // Full at this depth when the element count (minus the tail
-      // being pushed) fills 32^(levels): grow a level.
       if (v.len >> 5 > 1 << v.shift) {
         let path: VNode[T] = __pv_path(v.shift, leaf);
         return PVec { len: v.len + 1, shift: v.shift + 5, root: Branch([root, path]), tail: fresh };
@@ -433,8 +338,6 @@ pub function (v: PVec[T]) append(x: T): PVec[T] {
   }
 }
 
-// `with(i, x)` — the vector with element `i` replaced by `x`; the
-// receiver unchanged when `i` is out of range. O(log32 n).
 pub function (v: PVec[T]) with(i: i32, x: T): PVec[T] {
   if (i < 0 || i >= v.len) {
     return v;
@@ -452,9 +355,6 @@ pub function (v: PVec[T]) with(i: i32, x: T): PVec[T] {
   return PVec { ...v, root: root };
 }
 
-// __pv_shrink_root drops root levels a pop left with a single child, and
-// returns the vector holding the trie `root` at depth `shift` with the
-// last leaf moved into `tail`.
 function __pv_shrink_root[T](len: i32, root: VNode[T], shift: i32, tail: T[]): PVec[T] {
   match (root) {
     Branch(rk) => {
@@ -472,8 +372,6 @@ function __pv_shrink_root[T](len: i32, root: VNode[T], shift: i32, tail: T[]): P
   }
 }
 
-// `pop()` — `Some((rest, last))`, the vector without its last element and
-// that element; `None` when empty. Amortised O(1).
 pub function (v: PVec[T]) pop(): Option[(PVec[T], T)] {
   match (v.last()) {
     Some(x) => {
@@ -485,7 +383,6 @@ pub function (v: PVec[T]) pop(): Option[(PVec[T], T)] {
   }
 }
 
-// __pv_without_last is `pop` on a non-empty vector, without the element.
 function __pv_without_last[T](v: PVec[T]): PVec[T] {
   if (v.len == 1) {
     return pvec_new();
@@ -499,7 +396,6 @@ function __pv_without_last[T](v: PVec[T]): PVec[T] {
     }
     return PVec { len: v.len - 1, shift: v.shift, root: v.root, tail: t };
   }
-  // The tail is a single element: the last trie leaf becomes the tail.
   let newTail: T[] = __pv_leaf_for(v.root, v.shift, v.len - 2);
   match (v.root) {
     Leaf(xs) => {
@@ -516,13 +412,10 @@ function __pv_without_last[T](v: PVec[T]): PVec[T] {
   }
 }
 
-// `iter()` — an Iterator over the elements in order, which is what
-// `for x in v` walks.
 pub function (v: PVec[T]) iter(): iter.ArrayIter[T] {
   return iter.of(v.to_array());
 }
 
-// `to_array()` — the elements in order, as a plain array.
 pub function (v: PVec[T]) to_array(): T[] {
   let acc: T[] = [];
   acc = __pv_into(v.root, acc);
@@ -530,7 +423,6 @@ pub function (v: PVec[T]) to_array(): T[] {
   return acc;
 }
 
-// `fold(init, f)` — `f` over every element in order.
 pub function (v: PVec[T]) fold[T, A](init: A, f: (A, T) => A): A {
   let a: A = __pv_fold(v.root, init, f);
   let i: i32 = 0;
@@ -541,7 +433,6 @@ pub function (v: PVec[T]) fold[T, A](init: A, f: (A, T) => A): A {
   return a;
 }
 
-// `for_each(f)` — call `f` on every element in order.
 pub function (v: PVec[T]) for_each(f: (T) => void): void {
   __pv_for_each(v.root, f);
   let i: i32 = 0;
@@ -551,7 +442,6 @@ pub function (v: PVec[T]) for_each(f: (T) => void): void {
   }
 }
 
-// `map(f)` — the vector of `f(x)` for every element, in order.
 pub function (v: PVec[T]) map[T, U](f: (T) => U): PVec[U] {
   let out: PVec[U] = pvec_new();
   let xs: T[] = v.to_array();
@@ -563,7 +453,6 @@ pub function (v: PVec[T]) map[T, U](f: (T) => U): PVec[U] {
   return out;
 }
 
-// `filter(pred)` — the elements `pred` accepts, in order.
 pub function (v: PVec[T]) filter(pred: (T) => boolean): PVec[T] {
   let out: PVec[T] = pvec_new();
   let xs: T[] = v.to_array();
@@ -577,9 +466,6 @@ pub function (v: PVec[T]) filter(pred: (T) => boolean): PVec[T] {
   return out;
 }
 
-// `concat(other)` — this vector followed by `other`'s elements.
-// O(len(other)): the receiver's trie is shared, only `other`'s elements
-// are appended.
 pub function (v: PVec[T]) concat(other: PVec[T]): PVec[T] {
   let out: PVec[T] = v;
   let xs: T[] = other.to_array();
@@ -591,8 +477,6 @@ pub function (v: PVec[T]) concat(other: PVec[T]): PVec[T] {
   return out;
 }
 
-// `slice(lo, hi)` — the elements at indexes `lo` up to (not including)
-// `hi`, clamped to the vector's range. O(hi - lo).
 pub function (v: PVec[T]) slice(lo: i32, hi: i32): PVec[T] {
   let out: PVec[T] = pvec_new();
   let i: i32 = lo;
@@ -610,10 +494,6 @@ pub function (v: PVec[T]) slice(lo: i32, hi: i32): PVec[T] {
   return out;
 }
 
-// __pv_valid_root: the trie under `root` at depth `shift` holds exactly
-// `off` elements — an Empty root only when there are none, a Leaf root
-// only at depth 0, and a Branch root only with at least two children
-// (a single-child root would have been shrunk).
 function __pv_valid_root[T](root: VNode[T], shift: i32, off: i32): boolean {
   match (root) {
     Empty => {
@@ -628,8 +508,6 @@ function __pv_valid_root[T](root: VNode[T], shift: i32, off: i32): boolean {
   }
 }
 
-// `is_valid()` — do the trie and tail invariants hold? Always true for a
-// vector built through this module; exposed for tests.
 pub function (v: PVec[T]) is_valid(): boolean {
   let off: i32 = __pv_tail_off(v.len);
   if (v.tail.len() != v.len - off) {

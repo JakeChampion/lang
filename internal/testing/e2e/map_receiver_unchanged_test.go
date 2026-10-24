@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-// A Map mutator returns a new map and leaves its receiver as it was when the
-// receiver is read again or only borrowed (#9834, #8764): a binding, a lent
-// parameter, a struct field, and a result used as a temporary. The receiver
-// is retained across the call so the copy-on-write copies; each case also
-// pins a balanced leak census, since a forced copy nobody releases would
-// trade the aliasing bug for a leak.
 var mapReceiverUnchangedCases = []struct {
 	name string
 	src  string

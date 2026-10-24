@@ -4,14 +4,6 @@ import (
 	"testing"
 )
 
-// Consuming match on an `own` parameter — Perceus's main FBIP result: a
-// recursive traversal (`map`/`filter`/`length`) that reuses the structure's
-// cells in place. Matching an owned scrutinee MOVES its pointer payloads into
-// the arm bindings (reclaimed downstream) and shallow-frees the box, so the old
-// input cell is freed each step and recycled by the freelist into the output
-// cell — zero leak, bounded memory. `own`/consuming-match is opt-in and unused
-// elsewhere, so these are the feature's correctness gate.
-
 const ownMapSrc = `enum List { Cons(i32, List), Nil }
 function map_inc(own xs: List): List {
     match (xs) {
@@ -53,9 +45,6 @@ func TestWASMOwnConsumingMatch(t *testing.T) {
 	if got := runWasm(t, ownMapSrc); got != 0 {
 		t.Errorf("recursive map_inc: got %d, want 0", got)
 	}
-	// Heap-bump bound: the consuming traversal frees each input cell (recycled
-	// into the output), so a build-map-sum loop holds a bounded high-water
-	// instead of leaking a list per iteration.
 	bump := func(n string) string {
 		return `enum List { Cons(i32, List), Nil }
 function map_inc(own xs: List): List { match (xs) { Cons(h,t) => { return Cons(h+1, map_inc(t)); }, Nil => { return Nil; } } }
@@ -78,10 +67,6 @@ function main(): i32 {
 	}
 }
 
-// A match that only tests the tag of an `own` scrutinee leaves it whole, so a
-// later match can still take its payloads (#9539). The first match used to
-// release the box and the second read what was freed. A correct run exits
-// 608 % 256 = 96; an underflow is 99.
 const ownTagOnlyThenMatchSrc = `enum Box { Str(string), Arr(i32[]), Nil }
 
 @noinline function tag_only(own b: Box): i32 {

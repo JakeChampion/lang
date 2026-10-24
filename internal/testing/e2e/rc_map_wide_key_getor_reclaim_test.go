@@ -2,22 +2,6 @@ package e2e
 
 import "testing"
 
-// #8432's fix is not string-key-specific, and the log that landed with it
-// framed it as though it were.
-//
-// The counted-read `get_or` arm is gated on `needBoxK`, which is
-// `isStringForBoxing(K) || mapKeyKindTag(K) == 2` — a two-word string key OR a
-// WIDE SCALAR key, which wasm32 boxes because an i64 does not fit its 4-byte
-// slot. Both were losing the fallback's release; only the string half had a
-// shape watching it.
-//
-// Pinned as a DIFFERENTIAL rather than an absolute census: subtracting the
-// insert-only baseline measures the read and nothing else.
-//
-// wasm32, 100 rounds: the read added 3200 live bytes before the fix and 0
-// after — the fallback array was the whole difference. arm64 and x86-64
-// hold an i64 key in a pointer slot, so they never box it and read 0 either
-// way; they are included to prove the shape is not wasm-only by construction.
 func TestMapWideKeyGetOrFallbackIsReclaimed(t *testing.T) {
 	src := func(read string) string {
 		return `

@@ -4,15 +4,6 @@ import "std/hex";
 import "std/option";
 import "core/int";
 
-// tests/stdlib/http_qpack_test.fern — std/http/qpack against RFC 9204
-// Appendix B's examples, byte for byte: the encoder stream's instructions,
-// each field section, and what the decoder owes on its decoder stream.
-// Then the encoder, the bounds the decoder keeps, the errors, and a trace
-// another implementation's encoder wrote.
-
-// The decoder hands itself back with the section's outcome in its fields;
-// these read it back as the result and the instruction tuple the cases
-// match on.
 struct Got { decoder: qpack.Decoder, fields: qpack.Field[], blocked: boolean }
 
 function decode_on(d: qpack.Decoder, stream: i64, section: u8[]): Result[Got, qpack.QpackError] {
@@ -46,7 +37,6 @@ function error_text(e: qpack.QpackError): string {
   return e.code().to_string() + " " + e.message();
 }
 
-// fed takes encoder stream bytes, given as hex.
 function fed(d: qpack.Decoder, encoder_stream: string): Result[qpack.Decoder, string] {
   match (d.on_encoder_stream(hex.hex_decode(encoder_stream))) {
     Ok(next) => {
@@ -58,8 +48,6 @@ function fed(d: qpack.Decoder, encoder_stream: string): Result[qpack.Decoder, st
   }
 }
 
-// section decodes a field section given as hex, answering its fields (or
-// "blocked") and what the decoder then owes on its stream.
 function section(d: qpack.Decoder, stream: i64, bytes: string): Result[(qpack.Decoder, string), string] {
   match (decode_on(d, stream, hex.hex_decode(bytes))) {
     Ok(got) => {
@@ -81,7 +69,6 @@ function owed(d: qpack.Decoder): (qpack.Decoder, string) {
   return (next, hex.hex_encode(out));
 }
 
-// B.1: a literal with a static name reference, no dynamic table.
 function test_b1(): test.TestOutcome {
   match (section(qpack.decoder(220 as i64, 2, 16384 as i64), 0 as i64, "0000510b2f696e6465782e68746d6c")) {
     Ok(r) => {
@@ -93,7 +80,6 @@ function test_b1(): test.TestOutcome {
   }
 }
 
-// B.2 to B.5 in order, one decoder throughout.
 function test_b2_to_b5(): test.TestOutcome {
   let log: string = "";
   let d: qpack.Decoder = qpack.decoder(220 as i64, 2, 16384 as i64);
@@ -139,8 +125,6 @@ function b_step(d: qpack.Decoder, step: string): Result[(qpack.Decoder, string),
   return Ok((next, id + ": " + text));
 }
 
-// A section whose inserts have not arrived waits, and decodes once they
-// do; past the blocked-streams limit, a section is an error.
 function test_blocked(): test.TestOutcome {
   let d: qpack.Decoder = qpack.decoder(220 as i64, 1, 16384 as i64);
   let first: string = "";
@@ -180,7 +164,6 @@ function test_blocked(): test.TestOutcome {
   }
 }
 
-// An instruction split across reads is taken once its last byte arrives.
 function test_split_instruction(): test.TestOutcome {
   let d: qpack.Decoder = qpack.decoder(220 as i64, 2, 16384 as i64);
   let parts: string[] = ["3f", "bd01c0", "0f7777772e6578", "616d706c652e636f6d"];
@@ -199,9 +182,6 @@ function test_split_instruction(): test.TestOutcome {
   return test.assert_eq(counts, "0001");
 }
 
-// The encoder indexes a static entry, references a static name, writes a
-// literal otherwise, never indexes a sensitive field, and what it writes
-// decodes back, Huffman-coded or not.
 function test_encoder(): test.TestOutcome {
   let fs: qpack.Field[] = [qpack.field(":method", "GET"), qpack.field(":path", "/index.html"), qpack.field("x-fern", "yes"), qpack.sensitive("authorization", "secret"), qpack.field("content-type", "text/plain")];
   let plain: u8[] = qpack.encoder().without_huffman().encode(fs);
@@ -222,11 +202,6 @@ function test_encoder(): test.TestOutcome {
     + "7f4506736563726574f5 " + int.int_to_string(coded.len()) + " :method=GET; :path=/index.html; x-fern=yes; authorization=secret (never); content-type=text/plain; | :method=GET; :path=/index.html; x-fern=yes; authorization=secret (never); content-type=text/plain; | ");
 }
 
-// The decoder refuses what the settings rule out: a section past the
-// field section size, a capacity past the maximum, a dynamic reference
-// past the Required Insert Count, a static index past the table, a Base
-// below zero; and the encoder refuses acknowledgments it cannot have
-// earned.
 function test_errors(): test.TestOutcome {
   let d: qpack.Decoder = qpack.decoder(220 as i64, 2, 40 as i64);
   let too_big: string = result_text(section(d, 0 as i64, "0000510b2f696e6465782e68746d6c"));
@@ -281,11 +256,6 @@ function result_text_d(r: Result[qpack.Decoder, string]): string {
   }
 }
 
-// LSQPACK_TRACE is what ls-qpack (pylsqpack 1.0.0, aioquic's QPACK) wrote
-// encoding 20 request field sections into a 512-byte table, its own decoder
-// acknowledging each so it kept referencing the table: "E" lines its
-// encoder stream, "S" lines a stream's section. The Required Insert Counts
-// wrap and entries are evicted along the way.
 const LSQPACK_TRACE: string[] = [
   "E 3fe103",
   "S 0 0000d4d750882f91d35d055c87a7518860d5485f2bce9a685f50a7d07f66a281b0dae053fafc087ed4ce6aadf2a7979c89c6bfb521aeba0bc8b1e632586d975765cf2f01f2b585ed69509581a5efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdf558f4150831ea801f6a2672d258241d9d7",
@@ -338,7 +308,6 @@ const LSQPACK_FIELDS: string[] = [
   "76: :method=GET; :scheme=https; :authority=example.com; :path=/; user-agent=curl/8.9.1; x-request-5=vvvvvvvvvvvvvvvvvvvv; cookie=session=4; theme=dark; ",
 ];
 
-// An independent encoder's output, decoded field for field.
 function test_lsqpack_trace(): test.TestOutcome {
   let d: qpack.Decoder = qpack.decoder(512 as i64, 16, 65536 as i64);
   let got: string = "";
@@ -375,7 +344,6 @@ function test_lsqpack_trace(): test.TestOutcome {
   return test.assert_eq(got, want);
 }
 
-// A terminal chunk at shift 56 can wrap an i64 after adding the prefix.
 function overflowing_integer(first: u8): u8[] {
   let out: u8[] = [first];
   let i: i32 = 0;
@@ -386,7 +354,6 @@ function overflowing_integer(first: u8): u8[] {
   return out.append(127u8);
 }
 
-// Canonical encoding of the largest integer QPACK must support (62 bits).
 function largest_integer(first: u8, prefix: i64): u8[] {
   let out: u8[] = [first];
   let rest: i64 = 4611686018427387903 as i64 - prefix;
@@ -463,10 +430,6 @@ function test_cancellation(): test.TestOutcome {
   }
 }
 
-// An encoder-stream literal too long to fit the table is refused at its
-// length, before its bytes arrive, so the decoder never holds them. The
-// table holds 220 bytes, so a name takes at most 188 and a value 188 less
-// its name; a Huffman code of at most 30 bits a byte gives 705 coded bytes.
 function test_oversized_literal(): test.TestOutcome {
   let cases: string[] = ["5f808080808010", "3fbd015f9e01", "3fbd015f9d01", "3fbd017fa305", "3fbd017fa205", "3fbd01c07f34", "3fbd01c07f33"];
   let out: string = "";

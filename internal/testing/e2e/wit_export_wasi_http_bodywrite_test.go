@@ -4,14 +4,6 @@ import (
 	"testing"
 )
 
-// httpHandlerBodyWriteProg is a bring-your-own wasi:http handler that writes a
-// response body: it gets the outgoing-body + its output-stream
-// (result<own<R>> returns), then `blocking-write-and-flush`es "hi". The stream
-// write returns `result<_, stream-error>` — modeled as `Result[i64, i64]` so the
-// canonical return area (a same-width-scalar Result allocs 16 bytes) safely
-// covers the variant `stream-error` result (~12 bytes); the handler reads only
-// the discriminant. (No `outgoing-body.finish` — the body still flushes on
-// drop; finish needs the wider `result<_, error-code>` area, a follow-on.)
 const httpHandlerBodyWriteProg = `@import("wasi:http/types@0.2.0", "incoming-request")
 resource IncomingRequest;
 @import("wasi:http/types@0.2.0", "response-outparam")
@@ -64,10 +56,6 @@ function on_request(request: own IncomingRequest, response_out: own ResponseOutp
 	return;
 }`
 
-// TestExportWasiHttpHandlerBodyWriteServes is the body-write case: a
-// bring-your-own handler writes "hi" to the response body via
-// output-stream.blocking-write-and-flush (a result<_, stream-error> return) and
-// `wasmtime serve` delivers it (200 + body "hi").
 func TestExportWasiHttpHandlerBodyWriteServes(t *testing.T) {
 	if got := serveHttpHandlerBody(t, httpHandlerBodyWriteProg); got != "hi" {
 		t.Fatalf("body = %q; want %q", got, "hi")

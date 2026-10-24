@@ -8,39 +8,21 @@ import (
 	"testing"
 )
 
-// Eq-bounded sequence verbs in core/cmp — `contains` / `index_of` / `distinct`
-// over any `T: Eq`, derived from the single `eq` primitive (#2689). Like the
-// `Ord` helpers, a bounded generic whose body calls `x.eq(y)` monomorphises to a
-// direct call, so these lower on the native backends AND the self-host IR path
-// (#2691 / #3558). The inline cases below pin the self-host IR routing over a
-// user `Eq` struct (genuine genericity, not i32-special-casing); a native module
-// test exercises the shipped module over the primitive `impl Eq for i32` /
-// `string` and a user struct.
 var eqVerbCases = []struct {
 	name string
 	main string
 	want int
 }{
-	// contains over a user Eq struct (P compared by .v). hit → +5, miss → +2 → 7.
 	{"contains", `pub trait Eq { function eq(self: Self, other: Self): boolean; }
 struct P { v: i32 }
 impl Eq for P { function eq(self: Self, other: Self): boolean { return self.v == other.v; } }
 function contains[T: Eq](xs: T[], target: T): boolean { for x in xs { if (x.eq(target)) { return true; } } return false; }
 function main(): i32 { let xs: P[] = [P { v: 1 }, P { v: 2 }, P { v: 3 }]; let r = 0; if (contains(xs, P { v: 2 })) { r = r + 5; } if (!contains(xs, P { v: 9 })) { r = r + 2; } return r; }`, 7},
-	// index_of: first match position; miss → -1. found at 2 → 2*10 + (-1+1) = 20.
 	{"index-of", `pub trait Eq { function eq(self: Self, other: Self): boolean; }
 struct P { v: i32 }
 impl Eq for P { function eq(self: Self, other: Self): boolean { return self.v == other.v; } }
 function index_of[T: Eq](xs: T[], target: T): i32 { let i = 0; for x in xs { if (x.eq(target)) { return i; } i = i + 1; } return 0 - 1; }
 function main(): i32 { let xs: P[] = [P { v: 10 }, P { v: 20 }, P { v: 30 }]; return index_of(xs, P { v: 30 }) * 10 + (index_of(xs, P { v: 99 }) + 1); }`, 20},
-	// distinct dedups [1,2,1,3,2] → [1,2,3] (first occurrence kept, in order).
-	// Verified directly via field access on the result: d.len()*100 + d[0].v*10 +
-	// d[2].v. (An earlier revision avoided d[i].v on a generic `struct[]` return,
-	// believing it hit a codegen limit — that was a process-exit-code (u8)
-	// truncation artifact in the oracle, not a real limit: the value was 313,
-	// which the exit code wraps to 57. Field access compiles and runs correctly;
-	// the oracle just has to stay < 256, so this case checks len + d[0] + d[2].)
-	// 3*10 + 1 + 3 = 34.
 	{"distinct", `pub trait Eq { function eq(self: Self, other: Self): boolean; }
 struct P { v: i32 }
 impl Eq for P { function eq(self: Self, other: Self): boolean { return self.v == other.v; } }
@@ -49,8 +31,6 @@ function distinct[T: Eq](xs: T[]): T[] { let out: T[] = []; for x in xs { if (!c
 function main(): i32 { let xs: P[] = [P { v: 1 }, P { v: 2 }, P { v: 1 }, P { v: 3 }, P { v: 2 }]; let d = distinct(xs); return d.len() * 10 + d[0].v + d[2].v; }`, 34},
 }
 
-// TestNativeEqVerbs runs the inline Eq-verb programs on the native interp /
-// x86-64 / wasm backends, oracle-checked.
 func TestNativeEqVerbs(t *testing.T) {
 	for _, tc := range eqVerbCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -72,7 +52,6 @@ func TestNativeEqVerbs(t *testing.T) {
 	}
 }
 
-// TestNativeEqVerbsArm64 is the arm64 leg (CI-gated; qemu).
 func TestNativeEqVerbsArm64(t *testing.T) {
 	for _, tc := range eqVerbCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -88,8 +67,6 @@ func TestNativeEqVerbsArm64(t *testing.T) {
 	}
 }
 
-// TestNativeEqVerbsModule exercises the shipped `import "core/cmp"` module: the
-// Eq verbs over the primitive `impl Eq for i32` / `string` AND a user Eq struct.
 func TestNativeEqVerbsModule(t *testing.T) {
 	src := `import "core/cmp" as cmp;
 struct P { v: i32 }
@@ -119,13 +96,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostEqVerbsIRX86_64 drives each inline Eq-verb case through the
-// self-hosted x86-64 compiler and oracle-checks the exit code. The scalar-
-// returning verbs (`contains` → boolean, `index_of` → i32) lower on the IR path;
-// `distinct` returns a generic `struct[]`, which (over a struct element type)
-// is not routing-pinned here — both produce the right answer, so this asserts
-// behaviour rather than the routing tag (which differs by case, as in the
-// predicate-adapter gate). The native legs above pin cross-backend correctness.
 func TestSelfHostEqVerbsIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -159,7 +129,6 @@ func TestSelfHostEqVerbsIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostEqVerbsIRWasm runs the same cases through the wasm IR backend.
 func TestSelfHostEqVerbsIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host eq-verbs wasm IR e2e")

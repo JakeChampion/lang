@@ -12,14 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternListResultRunsUnderWasmtime is P4c's first gate (composite results
-// across the @import boundary — docs/WIT-BRING-YOUR-OWN.md): a `list<u8>` /
-// `string` result is lifted from the canonical-ABI return area into a Fern
-// string. `wasi:random/random@0.2.0` `get-random-bytes: func(len: u64) ->
-// list<u8>` is the simplest runnable composite (scalar param, variable-size
-// result, no resources); declared on the Fern side as returning `string`
-// (identical canonical ABI), the call must produce a string of exactly the
-// requested byte length.
 func TestExternListResultRunsUnderWasmtime(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -31,9 +23,6 @@ func TestExternListResultRunsUnderWasmtime(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	// 16 random bytes → a 16-byte Fern string; the program writes a sentinel
-	// only when the lifted length is exactly right (deterministic despite the
-	// random contents).
 	src := `@import("wasi:random/random@0.2.0", "get-random-bytes")
 function rand_bytes(n: u64): string;
 
@@ -51,13 +40,8 @@ function main(): i32 {
 		t.Fatalf("write prog: %v", err)
 	}
 
-	// Build the component-run core directly (the CLI's legacy composer doesn't
-	// know get-random-bytes; the world-driven path below does).
 	core := e2eharness.SelfHostComponentCore(t, mainPath)
 
-	// Codegen gate: the raw import of the declared (interface, wit-name) is
-	// present, and cabi_realloc is exported for the host to materialize the
-	// returned bytes.
 	if !bytes.Contains(core, []byte("wasi:random/random@0.2.0")) || !bytes.Contains(core, []byte("get-random-bytes")) {
 		t.Fatalf("core module is missing the extern import")
 	}
@@ -89,10 +73,6 @@ function main(): i32 {
 	}
 }
 
-// TestExternU8ArrayResultRunsUnderWasmtime is the u8[] counterpart of the
-// string-result gate (P4c): the same `get-random-bytes(len) -> list<u8>`
-// import, but declared as returning `u8[]`, lifts zero-copy into a Fern slice.
-// The result must have exactly the requested element count.
 func TestExternU8ArrayResultRunsUnderWasmtime(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

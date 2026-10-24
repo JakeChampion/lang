@@ -1,16 +1,5 @@
 package e2eharness
 
-// SocketCtlProbe exercises `tcp_listen_with` and `tcp_socket_ctl` (#9853)
-// over a loopback connection: a listener with a chosen backlog and
-// SO_REUSEPORT, a second listener on the same port where the target
-// load-balances one (Linux), no-delay and keep-alive on the accepted side,
-// a non-blocking read that answers -EAGAIN rather than waiting, a write-side
-// shutdown the peer reads as end of stream, the -EINVAL an unknown op
-// draws, the CPU steering of a SO_REUSEPORT group (op 8) where the
-// host has it, and the local address (op 9) and the peer's (op 10) as
-// 16-bit groups and a port. Exit 42 and "ok" on stdout iff every check holds, else the number
-// of the first failing check; a preview-2 wasm host reports only 0 or 1, so
-// the wasm legs read stdout.
 func SocketCtlProbe() string {
 	return `import "core/int";
 import "std/async";
@@ -113,13 +102,6 @@ function main(): i32 {
 `
 }
 
-// NetSocketOptsProbe is SocketCtlProbe through std/net's typed faces:
-// `listen_with` with options, `set_keepalive`, `set_nodelay`,
-// `set_nonblocking`, `read`, `write`, `local_addr`, `peer_addr` and
-// `shutdown`, each answering a `Result` with the errno mapped, and the
-// errno a refused bind and a refused dial report on each target. A read
-// waits for readability first, since a wasi:sockets read never blocks.
-// Same verdict channel: exit 42 and "ok", or the first failing check.
 func NetSocketOptsProbe() string {
 	return `import "core/int";
 import "std/net";

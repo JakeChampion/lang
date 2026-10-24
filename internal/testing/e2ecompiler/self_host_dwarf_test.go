@@ -14,11 +14,6 @@ import (
 	"testing"
 )
 
-// The self-host twin of internal/testing/e2e's TestDWARFDebugInfo (#11410): a `-g`
-// image carries a DWARF compilation unit a debugger decodes, with a
-// subprogram per function named as the source names it and spanning its
-// code, and the default build carries no DWARF. Decoded host-side through
-// Go's debug/dwarf, so both ELF targets are checked without running.
 func TestSelfHostDWARFDebugInfo(t *testing.T) {
 	cli := newStrictCLI(t)
 	dir := t.TempDir()
@@ -93,8 +88,6 @@ func TestSelfHostDWARFDebugInfo(t *testing.T) {
 			if cuHi <= cuLo {
 				t.Fatalf("CU pc range empty: [%#x,%#x)", cuLo, cuHi)
 			}
-			// The user functions carry source names, not the `__fn_` symbols,
-			// and each range sits inside the CU's and is non-empty.
 			for _, name := range []string{"main", "helper"} {
 				pc, ok := subs[name]
 				if !ok {
@@ -112,8 +105,6 @@ func TestSelfHostDWARFDebugInfo(t *testing.T) {
 	}
 }
 
-// dwarfSubprograms decodes a -g image's subprogram PC ranges by source name
-// and its line-table rows (end-of-sequence rows left out).
 func dwarfSubprograms(t *testing.T, out string) (map[string][2]uint64, []dwarf.LineEntry) {
 	t.Helper()
 	f, err := goelf.Open(out)
@@ -163,7 +154,6 @@ func dwarfSubprograms(t *testing.T, out string) (map[string][2]uint64, []dwarf.L
 	return subs, rows
 }
 
-// rowsIn is the line-table rows inside a function's code.
 func rowsIn(t *testing.T, subs map[string][2]uint64, rows []dwarf.LineEntry, name string) []dwarf.LineEntry {
 	t.Helper()
 	pc, ok := subs[name]
@@ -179,15 +169,9 @@ func rowsIn(t *testing.T, subs map[string][2]uint64, rows []dwarf.LineEntry, nam
 	return out
 }
 
-// The self-host twin of internal/testing/e2e's TestDWARFLineTable (#11410): under -g
-// the ELF image carries a .debug_line table with a row per statement, so a
-// function whose body spans several lines maps each of them, and the default
-// build carries no line table.
 func TestSelfHostDWARFLineTable(t *testing.T) {
 	cli := newStrictCLI(t)
 	dir := t.TempDir()
-	// helper: decl line 1, `let y` line 2, `return` line 3.
-	// main:   decl line 5, `let a` line 6, `return` line 7.
 	src := filepath.Join(dir, "prog.fern")
 	prog := "@noinline function helper(x: i32): i32 {\n    let y: i32 = x * 2;\n    return y + 1;\n}\nfunction main(): i32 {\n    let a: i32 = helper(20);\n    return a;\n}\n"
 	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
@@ -238,11 +222,6 @@ func TestSelfHostDWARFLineTable(t *testing.T) {
 	}
 }
 
-// The self-host twin of internal/testing/e2e's TestDWARFMultiFile (#11410): the rows
-// of an imported module's function name that module's file, every row has a
-// column, exactly a function's first row is prologue_end, addr2line resolves
-// a row's address to its file and line, and .debug_frame has an FDE over
-// each function.
 func TestSelfHostDWARFMultiFile(t *testing.T) {
 	cli := newStrictCLI(t)
 	dir := t.TempDir()
@@ -300,15 +279,11 @@ func TestSelfHostDWARFMultiFile(t *testing.T) {
 				}
 			}
 
-			// .debug_frame: the debugger-facing container of the unwind
-			// rules, one FDE per function at its exact range.
 			f, err := goelf.Open(out)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer f.Close()
-			// An inner label (a register-ABI entry `f.r`) is no symbol of
-			// its own, or the function's extent would end at it.
 			syms, err := f.Symbols()
 			if err != nil {
 				t.Fatal(err)
@@ -357,10 +332,6 @@ func TestSelfHostDWARFMultiFile(t *testing.T) {
 	}
 }
 
-// dwarfVarsSrc gives the variables a debugger has to find in every kind of
-// home: f's in registers (and its string parameter, which is described by no
-// DIE), sum's carried round a loop, and many's, which outnumber the
-// registers across the calls between them and so live in frame slots.
 const dwarfVarsSrc = `@noinline function bump(x: i64): i64 { return x + 1; }
 @noinline function f(s: string, n: i32): i32 {
     let m: i32 = n + 1;
@@ -396,8 +367,6 @@ function main(): i32 {
 }
 `
 
-// dwarfVar is one variable DIE of a subprogram: its tag, type name, and
-// location-list entries as absolute [lo, hi) ranges with their expressions.
 type dwarfVar struct {
 	tag    dwarf.Tag
 	typ    string
@@ -405,8 +374,6 @@ type dwarfVar struct {
 	exprs  [][]byte
 }
 
-// dwarfVars reads each subprogram's variable children, decoding their
-// location lists from .debug_loc against the unit's low_pc.
 func dwarfVars(t *testing.T, path string) (map[string]map[string]dwarfVar, map[string][2]uint64) {
 	t.Helper()
 	f, err := goelf.Open(path)
@@ -477,12 +444,6 @@ func dwarfVars(t *testing.T, path string) (map[string]map[string]dwarfVar, map[s
 	return out, subs
 }
 
-// Scalar locals and parameters under -g (#11410). A variable's value moves between homes the register allocator picks, so its
-// DW_AT_location is a location list: each entry a range of f's code and the
-// register (DW_OP_reg<n>) or frame slot (DW_OP_breg<fp>) the value is in
-// there. Native's fixed DW_OP_fbreg offsets do not exist here, so this checks
-// the shape on both ISAs, and on an x86-64 host with gdb what the debugger
-// reads at a breakpoint.
 func TestSelfHostDWARFLocalVars(t *testing.T) {
 	cli := newStrictCLI(t)
 	dir := t.TempDir()
@@ -548,8 +509,6 @@ func TestSelfHostDWARFLocalVars(t *testing.T) {
 		})
 	}
 
-	// What a debugger reads. gdb is the consumer -g serves; where it is
-	// absent the shape checks above still stand.
 	gdb, err := exec.LookPath("gdb")
 	if err != nil || runtime.GOARCH != "amd64" || bins["x86-64-linux"] == "" {
 		t.Skip("gdb on an amd64 host reads the x86-64 binary's variables; none here")
@@ -562,9 +521,9 @@ func TestSelfHostDWARFLocalVars(t *testing.T) {
 	}
 	got := string(o)
 	for _, want := range []string{
-		"m = 42\nk = 126\n", // f at its return
-		"acc = 0\ni = 0\n",  // sum's first iteration
-		"a = 1\n",           // many's parameter, at its return
+		"m = 42\nk = 126\n",
+		"acc = 0\ni = 0\n",
+		"a = 1\n",
 		"b = 2\nc = 4\nd = 7\ne = 13\ng = 24\nh = 45\nj = 84\nk = 181\nl = 362\no = 724\np = 1448\nq = 2896\n",
 	} {
 		if !strings.Contains(got, want) {
@@ -587,7 +546,6 @@ function main(): i32 {
 }
 `
 
-// dwarfVarStruct is the struct a pointer-typed variable of fn points at.
 func dwarfVarStruct(t *testing.T, path, fn, name string) *dwarf.StructType {
 	t.Helper()
 	f, err := goelf.Open(path)
@@ -638,8 +596,6 @@ func dwarfVarStruct(t *testing.T, path, fn, name string) *dwarf.StructType {
 	return nil
 }
 
-// checkDwarfStruct holds a struct DIE to its name, size and members, each
-// member given as name, offset and type.
 func checkDwarfStruct(t *testing.T, st *dwarf.StructType, name string, size int64, members [][3]string) {
 	t.Helper()
 	if st.StructName != name || st.ByteSize != size {
@@ -656,11 +612,6 @@ func checkDwarfStruct(t *testing.T, st *dwarf.StructType, name string, size int6
 	}
 }
 
-// The self-host's answer to internal/testing/e2e's TestDWARFMixedStructVars and
-// TestDWARFNestedStructVars (#11410). A struct variable holds a pointer to its box, whose word 0 is the shape and whose
-// field i is the 8-byte slot at (i+1)*8, so its type is a pointer to a struct
-// of that layout. A string field is left out and the fields after it keep
-// their offsets; a struct field is a pointer to its own box.
 func TestSelfHostDWARFStructVars(t *testing.T) {
 	cli := newStrictCLI(t)
 	dir := t.TempDir()
@@ -724,7 +675,6 @@ function main(): i32 {
 }
 `
 
-// dwarfVarType is the DW_AT_type of fn's variable or parameter `name`.
 func dwarfVarType(t *testing.T, d *dwarf.Data, fn, name string) dwarf.Type {
 	t.Helper()
 	r := d.Reader()
@@ -757,12 +707,6 @@ func dwarfVarType(t *testing.T, d *dwarf.Data, fn, name string) dwarf.Type {
 	return nil
 }
 
-// The self-host's answer to internal/testing/e2e's TestDWARFEnumVars (#11410). A
-// payloadless enum value points at a box whose word 0 is its variant's shape:
-// the address of the variant's name. So the variable is a pointer to an
-// 8-byte enumeration whose enumerators are those addresses, and gdb's
-// `print *d` names the variant. Each enumerator's value is checked against
-// the image: the bytes there must spell its name.
 func TestSelfHostDWARFEnumVars(t *testing.T) {
 	cli := newStrictCLI(t)
 	dir := t.TempDir()
@@ -838,8 +782,6 @@ func TestSelfHostDWARFEnumVars(t *testing.T) {
 	}
 }
 
-// imageBytes is the n bytes the image loads at vaddr, nil when no segment
-// holds them.
 func imageBytes(f *goelf.File, vaddr uint64, n int) []byte {
 	for _, p := range f.Progs {
 		if p.Type == goelf.PT_LOAD && vaddr >= p.Vaddr && vaddr+uint64(n) <= p.Vaddr+p.Filesz {

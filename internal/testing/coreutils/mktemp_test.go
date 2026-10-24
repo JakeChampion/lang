@@ -10,11 +10,6 @@ import (
 	"testing"
 )
 
-// mktempSeed fills a case's own working directory. Every case gets one —
-// mktemp both CREATES entries and asks lstat about them, so the tree each
-// side leaves behind is as much of the answer as the name on stdout, and
-// the cases that would otherwise write into the real /tmp are pointed at
-// this directory instead (TMPDIR=., -p td1).
 func mktempSeed(t *testing.T, dir string) {
 	t.Helper()
 	at := func(parts ...string) string { return filepath.Join(append([]string{dir}, parts...)...) }
@@ -23,19 +18,13 @@ func mktempSeed(t *testing.T, dir string) {
 			t.Fatal(err)
 		}
 	}
-	// A regular file where a directory is wanted: ENOTDIR, both through
-	// the template's own leading component and through -p.
 	if err := os.WriteFile(at("afile"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	links := [][2]string{
 		{"afile", "symtofile"},
-		// A cycle: ELOOP, which is neither ENOENT nor EEXIST and so
-		// reaches the diagnostic on the -u path as well as the create one.
 		{"loopa", "loopb"},
 		{"loopb", "loopa"},
-		// Points at nothing, so lstat of a name UNDER it is ENOENT — the
-		// success case of -u.
 		{"/nonexistent-target", "danglingdir"},
 	}
 	for _, l := range links {
@@ -45,31 +34,10 @@ func mktempSeed(t *testing.T, dir string) {
 	}
 }
 
-// alnum62 is the alphabet mktemp draws a random character from, measured
-// by unioning many runs of `mktemp -u XXXXXXXXXX`:
-// TestMktempRandomAlphabet re-measures it against the Fern build.
 const alnum62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 func inAlnum62(b byte) bool { return strings.IndexByte(alnum62, b) >= 0 }
 
-// maskRandom canonicalises the `run` random characters that sit `sufLen`
-// bytes from the end of a name mktemp printed or created — the ONLY part
-// of a successful run that two implementations may legitimately differ
-// on. Everything else stays under byte comparison: the directory the name
-// was joined to, the literal prefix (including X's that are not in the
-// final run), the suffix, and the total length, since the window is
-// located by position and a name of the wrong length puts other bytes in
-// it.
-//
-// A byte in the window that is NOT from the 62-character alphabet is left
-// as it stands, so an implementation drawing from a wider alphabet
-// differs from the reference here rather than being masked into
-// agreement. What the mask cannot see is a CONSTANT name from inside the
-// alphabet; TestMktempRandomAlphabet is what covers that.
-//
-// In the tree comparison the harness applies this only to entries the RUN
-// left behind: a seeded name is the same on both sides already, and
-// masking one could only collapse two of them onto each other.
 func maskRandom(run, sufLen int) func(string) string {
 	return func(s string) string {
 		body, nl := s, ""
@@ -91,16 +59,10 @@ func maskRandom(run, sufLen int) func(string) string {
 	}
 }
 
-// mktempCase is an invocation whose output is deterministic end to end:
-// every diagnostic, every exit status, and every write-failure path.
-// Nothing is masked, so these are compared to GNU byte for byte.
 func mktempCase(name string, args ...string) invocation {
 	return invocation{name: name, args: args, seedTree: mktempSeed}
 }
 
-// mktempShape is an invocation that prints a name. `run` is how many
-// random characters the template asks for and `sufLen` how many bytes
-// follow them; together they say which window maskRandom rewrites.
 func mktempShape(name string, run, sufLen int, args ...string) invocation {
 	inv := mktempCase(name, args...)
 	inv.mask = maskRandom(run, sufLen)
@@ -116,41 +78,9 @@ func init() {
 	registerCorpus("mktemp", mktempCases)
 }
 
-// mktempCases is mktemp(1)'s corpus.
-//
-// mktemp's answer is a RANDOM name, so the corpus is gated two ways and
-// which one a case is under is worth knowing before reading it:
-//
-//   - ORACLE-GATED, unmasked (mktempCase): every fault. The getopt
-//     messages, the four template faults and the order they are decided
-//     in, every creation failure with its strerror and its file/directory
-//     noun, the -u lstat failures, gnulib's quoting of a template holding
-//     control or non-UTF-8 bytes, and the write-failure paths — where the
-//     tree comparison also proves that what was just created is removed
-//     again. These carry no random output at all and are diffed against
-//     GNU byte for byte.
-//   - ORACLE-GATED, position-masked (mktempShape): every successful run.
-//     The random window is rewritten to X's on stdout and in the names of
-//     the tree each side left behind (see maskRandom); the directory the
-//     name was joined to, the prefix, the suffix, the length, the exit
-//     status and stderr are all still compared exactly. That is what pins
-//     the SHAPE — that `-p td1//` joins as `td1/`, that `-p ///` does not,
-//     that `fooXXXXbarXXX` replaces three characters and not seven, that
-//     `-t` and `--tmpdir` order $TMPDIR against -p in opposite ways, and
-//     that a created file is 0600 and a created directory 0700.
-//   - INVARIANT-GATED, Fern only: what no diff against GNU can see,
-//     because GNU's own answer differs run to run. TestMktempRandomAlphabet
-//     holds the alphabet, the length and the fact that the characters
-//     actually vary — the one thing maskRandom is blind to, since a
-//     constant name from inside the alphabet masks to the same X's.
-//     TestMktempRetryExhaustion holds the bounded retry: Linux exhausts
-//     a directory filled with all 62^3 names; Darwin injects collisions
-//     through the full TMP_MAX bound. Both require GNU's failure and
-//     diagnostic, and retain a live four-character escape case.
 func mktempCases(*testing.T) []invocation {
 	long := strings.Repeat("a", 300)
 	return []invocation{
-		// ---- the operand -------------------------------------------------
 		mktempShape("no operand", 10, 0, "-u"),
 		mktempShape("dash dash alone", 10, 0, "-u", "--"),
 		mktempShape("dash dash with -d", 10, 0, "-u", "-d", "--"),
@@ -164,7 +94,6 @@ func mktempCases(*testing.T) []invocation {
 		mktempShape("leading dash operand", 6, 0, "-u", "--", "-XXXXXX"),
 		mktempCase("leading dash without dash dash", "-XXXXXX"),
 
-		// ---- the X run ---------------------------------------------------
 		mktempShape("only the last run is replaced", 3, 0, "-u", "fooXXXXbarXXX"),
 		mktempShape("run before a literal tail", 3, 3, "-u", "XXXfoo"),
 		mktempShape("three is the minimum", 3, 0, "-u", "XXX"),
@@ -182,12 +111,10 @@ func mktempCases(*testing.T) []invocation {
 		mktempCase("an empty template", ""),
 		mktempCase("quiet does not cover too few X", "-q", "XX"),
 
-		// ---- the derived suffix -----------------------------------------
 		mktempCase("a trailing slash is the suffix", "XXX/"),
 		mktempCase("one X still reaches the suffix check", "X/"),
 		mktempCase("the derived suffix names the text", "dXXXX/foo"),
 
-		// ---- --suffix ----------------------------------------------------
 		mktempShape("glued suffix", 6, 4, "-u", "--suffix=.txt", "fooXXXXXX"),
 		mktempShape("separate suffix", 6, 2, "-u", "--suffix", ".x", "fooXXXXXX"),
 		mktempShape("last suffix wins", 6, 2, "-u", "--suffix=.a", "--suffix=.b", "fooXXXXXX"),
@@ -206,11 +133,8 @@ func mktempCases(*testing.T) []invocation {
 		mktempCase("a suffix of X on a template without one", "--suffix=XXX", "foo"),
 		mktempCase("a suffix of X does not lengthen the run", "--suffix=XXX", "fooX"),
 		mktempCase("suffix on an empty template", "--suffix=.x", ""),
-		// The option is still waiting for its argument, so the next token
-		// is the suffix whatever it looks like.
 		mktempShape("suffix swallows --help", 10, 6, "-u", "--suffix", "--help"),
 
-		// ---- -p / --tmpdir ------------------------------------------------
 		mktempShape("short p", 6, 0, "-u", "-p", "td1", "XXXXXX"),
 		mktempShape("short p glued", 3, 0, "-u", "-ptd1", "fooXXX"),
 		mktempShape("short p takes the rest of a cluster", 3, 0, "-u", "-pt", "fooXXX"),
@@ -230,7 +154,6 @@ func mktempCases(*testing.T) []invocation {
 		mktempCase("absolute under an empty -p", "-p", "", "/abs/XXXXXX"),
 		mktempCase("too few X beats the absolute check", "--tmpdir", "/abs/XX"),
 
-		// ---- the join ----------------------------------------------------
 		mktempShape("trailing slashes are dropped", 6, 0, "-u", "-p", "td1//", "XXXXXX"),
 		mktempShape("one trailing slash is dropped", 6, 0, "-u", "-p", "td1/", "XXXXXX"),
 		mktempShape("an all-slash directory is kept", 6, 0, "-u", "-p", "/", "XXXXXX"),
@@ -244,7 +167,6 @@ func mktempCases(*testing.T) []invocation {
 		mktempEnv(mktempShape("a TMPDIR of trailing slashes", 10, 0, "-u"), "TMPDIR=/tmp///"),
 		mktempEnv(mktempShape("a TMPDIR of two slashes", 10, 0, "-u"), "TMPDIR=//"),
 
-		// ---- -t ------------------------------------------------------------
 		mktempShape("-t with no TMPDIR", 3, 0, "-u", "-t", "fooXXX"),
 		mktempShape("-t with no operand", 10, 0, "-u", "-t"),
 		mktempShape("-t with -d and no operand", 10, 0, "-u", "-d", "-t"),
@@ -263,10 +185,8 @@ func mktempCases(*testing.T) []invocation {
 		mktempCase("-t reports the concatenated template", "--suffix=.x", "-t", "a/bXXX"),
 		mktempCase("too few X beats the -t separator check", "-t", "a/bXX"),
 		mktempCase("the suffix check beats the -t separator check", "-t", "XXX/"),
-		// -t reaches creation rather than the absolute-template fault.
 		mktempCase("-t with an absolute -p", "-t", "--tmpdir=/d", "aXXXX"),
 
-		// ---- creation ------------------------------------------------------
 		mktempShape("create a file", 6, 0, "XXXXXX"),
 		mktempShape("create a directory", 6, 0, "-d", "XXXXXX"),
 		mktempShape("-d twice", 6, 0, "-d", "-d", "XXXXXX"),
@@ -297,7 +217,6 @@ func mktempCases(*testing.T) []invocation {
 		mktempCase("a name too long, -u", "-u", long+"XXXXXX"),
 		mktempEnv(mktempCase("TMPDIR is not a directory"), "TMPDIR=./afile"),
 
-		// ---- -u is an lstat, not a straight line ---------------------------
 		mktempCase("-u meets ENOTDIR", "-u", "afile/XXXXXX"),
 		mktempCase("-u meets ENOTDIR with -d", "-u", "-d", "afile/XXXXXX"),
 		mktempCase("quiet covers the -u lstat failure", "-u", "-q", "afile/XXXXXX"),
@@ -305,7 +224,6 @@ func mktempCases(*testing.T) []invocation {
 		mktempCase("-u through a symlink to a file", "-u", "symtofile/XXXXXX"),
 		mktempShape("-u through a dangling symlink", 6, 0, "-u", "danglingdir/XXXXXX"),
 
-		// ---- getopt --------------------------------------------------------
 		mktempCase("directory takes no argument", "--directory=1"),
 		mktempCase("dry-run takes no argument", "--dry-run=x"),
 		mktempCase("quiet takes no argument", "--quiet=1"),
@@ -324,7 +242,6 @@ func mktempCases(*testing.T) []invocation {
 		mktempEnv(mktempCase("POSIXLY_CORRECT stops at the operand", "fooXXXXXX", "-d"), "POSIXLY_CORRECT=1"),
 		mktempEnv(mktempShape("POSIXLY_CORRECT with the option first", 6, 0, "-d", "fooXXXXXX"), "POSIXLY_CORRECT=1"),
 
-		// ---- gnulib's quoting ----------------------------------------------
 		mktempCase("an apostrophe in the template", "fo'oXX"),
 		mktempCase("a tab in the template", "a\tbXX"),
 		mktempCase("a backslash in the template", "a\\bXX"),
@@ -338,12 +255,8 @@ func mktempCases(*testing.T) []invocation {
 		mktempCase("vertical tab in the template", "a\vbXX"),
 		mktempCase("UTF-8 in the template", "caf\xc3\xa9XX"),
 		mktempCase("bytes that are not UTF-8", "\xff\xfeXX"),
-		// stdout is raw where the diagnostic is quoted.
 		mktempShape("a raw byte reaches stdout", 6, 0, "-u", "\xffXXXXXX"),
 
-		// ---- the write failure ---------------------------------------------
-		// The tree comparison is the other half of each of these: what was
-		// created is removed again, and -u had nothing to remove.
 		writeFail("write error", stdoutClosed, "zzXXXXXX"),
 		writeFail("write error under -q", stdoutClosed, "-q", "zzXXXXXX"),
 		writeFail("write error under -u is not suppressed", stdoutClosed, "-q", "-u", "zzXXXXXX"),
@@ -362,9 +275,6 @@ func mktempCases(*testing.T) []invocation {
 	}
 }
 
-// writeFail is a case whose stdout cannot be written: the diagnostic, the
-// status and — through the tree — whether the created entry was removed
-// again are all that is left to compare, and none of them is random.
 func writeFail(name string, mode stdoutMode, args ...string) invocation {
 	inv := mktempCase(name, args...)
 	inv.stdout = mode
@@ -387,19 +297,12 @@ func TestMktempHelpVersion(t *testing.T) {
 	requireVersion(t, "mktemp", []string{"--v"}, 0)
 	requireVersion(t, "mktemp", []string{"--version", "--help"}, 0)
 	requireVersion(t, "mktemp", []string{"--version", "-x"}, 0)
-	// -V is a live short option that --help does not mention, and it
-	// short-circuits the rest of its cluster.
 	requireVersion(t, "mktemp", []string{"-V"}, 0)
 	requireVersion(t, "mktemp", []string{"-dV"}, 0)
 	requireVersion(t, "mktemp", []string{"-Vd"}, 0)
 	requireVersion(t, "mktemp", []string{"-Vx"}, 0)
 }
 
-// TestMktempRandomAlphabet is the invariant the oracle cannot state:
-// maskRandom rewrites the random window by position, so a build that
-// answered with a CONSTANT string of alphabet characters would mask to
-// the same X's as GNU and pass every case above. What has to hold of the
-// characters themselves is held here, of the Fern build alone.
 func TestMktempRandomAlphabet(t *testing.T) {
 	bin := fernBin(t, "mktemp")
 	const runs, width = 40, 10
@@ -423,10 +326,6 @@ func TestMktempRandomAlphabet(t *testing.T) {
 		}
 		names[name] = true
 	}
-	// 400 characters over 62 values: the chance any one is missing is
-	// 62*(61/62)^400, about 0.09, so a build drawing uniformly clears this
-	// with room to spare and one that varies only a couple of positions
-	// does not.
 	if len(seen) < 55 {
 		t.Errorf("%d of the 62 characters appeared over %d names; the alphabet is narrower than GNU's", len(seen), runs)
 	}
@@ -435,17 +334,6 @@ func TestMktempRandomAlphabet(t *testing.T) {
 	}
 }
 
-// TestMktempRetryExhaustion holds the bounded retry. A name that is taken
-// is redrawn, which nothing else here reaches: the corpus cannot make a
-// collision happen, and an unbounded loop would hang rather than fail. GNU
-// gives up after max(62^3, TMP_MAX) candidates whatever the run length, so a directory
-// holding every three-character name is where both sides run out — and an
-// implementation that never retried would report the same thing for the
-// wrong reason, which is why the name is three characters rather than ten.
-//
-// Darwin's TMP_MAX is 308915776. Fault injection checks its full retry count
-// without hundreds of millions of real filesystem calls. The saturated
-// directory still checks the live four-character escape case.
 func TestMktempRetryExhaustion(t *testing.T) {
 	dir := t.TempDir()
 	for _, a := range alnum62 {
@@ -457,8 +345,6 @@ func TestMktempRetryExhaustion(t *testing.T) {
 			for _, n := range names {
 				f, err := os.OpenFile(filepath.Join(dir, n), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 				if errors.Is(err, fs.ErrExist) {
-					// A case-insensitive filesystem (APFS's default) already
-					// holds this name under another case, so it is taken.
 					continue
 				}
 				if err != nil {
@@ -493,8 +379,6 @@ func TestMktempRetryExhaustion(t *testing.T) {
 			}
 		})
 	}
-	// A four-character run has room left in the same directory, so the
-	// exhaustion above is the cap and not a refusal to retry at all.
 	inv := invocation{args: []string{"-u", "XXXX"}, dir: dir, mask: maskRandom(4, 0)}
 	want := inv.run(t, referenceBin(t, "mktemp"), "mktemp")
 	got := inv.run(t, fernBin(t, "mktemp"), "mktemp")

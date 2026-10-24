@@ -7,42 +7,6 @@ import (
 	"testing"
 )
 
-// #8678: coreutils/seq threads an output block through its stepping loop and
-// hands it through a tuple-returning helper —
-//
-//	let d: (BufWriter, Block) = drain(w, out); w = d.0; out = d.1;
-//
-// — and every generation of that block leaked under the self-host, 64 KiB per
-// term, until the OOM killer took the process. Each shape below pins one of
-// the things that refused or prevented the local's rebind release:
-//
-//   - `return (w, out)` read as a container-literal escape of `out`, where
-//     `return T { f: out }` and `return g(out)` were already admitted as the
-//     box going back inside the result. The same reading left `flush`'s
-//     `return (o, b)` marking its PARAMETER non-consume-safe, which refused
-//     every caller passing a threaded local to it.
-//   - the handback pair `let d = g(.., out, ..); out = d.f;` was recognised
-//     only when the unpack was the very next statement; seq reads `w = d.0`
-//     in between, a differently-typed element that cannot be the box.
-//   - `return (o, b)` retained the bare parameter for the tuple, so the
-//     caller received its own box with a count nobody gave back; the next
-//     rebind found it shared and left its fields — the buffer — to a dead
-//     tuple. A returned struct param is an uncounted alias by the Return
-//     lowering's own rule, and the tuple literal now follows it.
-//   - a call in statement position taking the local, `overflow(w, out)`,
-//     read as an escape however consume-safe the callee — and its own
-//     `finish(flush(w, b).0)` needed a scalar position to count as safe.
-//   - `let d = drain(w, out)` earned no box credit for `d`, because
-//     `drain`'s slow path returns `flush(w, b)` — a call, not a literal.
-//   - with the tuple return admitted, a FRESH local handed back bare by a
-//     callee inside that tuple (numfmt's `options`) was freed by the exit
-//     sweep while the tuple carried it — the top-level `return g(o)` form
-//     already had that hazard; the sweep now keeps it like a bare return.
-//
-// Each case runs at two round counts and the number of unreclaimed blocks
-// must not move: a leak of this family is one block per iteration, and a
-// fixed residue is the caller's own final block. Exits are the interpreter's.
-
 const tupleHandbackCommon = `struct Block { buf: u8[], n: i32 }
 
 function block_new(): Block {
@@ -98,8 +62,6 @@ var tupleHandbackCases = []struct {
 	name string
 	run  string
 }{
-	// The local goes back to the caller inside a tuple, and a second callee
-	// rebinds it on one path.
 	{"tuple_return", `function flush_fresh(b: Block): Block {
   return Block { ...b, n: 0 };
 }
@@ -117,7 +79,6 @@ function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
   }
   return (w, out);
 }`},
-	// The handback pair with the other element read in between: dec_seq.
 	{"handback_other_elem_read", `function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
   let w: i32 = w0;
   let out: Block = b;
@@ -133,8 +94,6 @@ function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
   }
   return (w, out);
 }`},
-	// The identity handback every iteration: drain returns its parameter
-	// inside the tuple on the common path. print_numbers.
 	{"identity_handback_each_round", `function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
   let w: i32 = w0;
   let out: Block = b;
@@ -148,10 +107,6 @@ function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
   }
   return (w, out);
 }`},
-	// The local handed to a call in STATEMENT position inside a match arm —
-	// emit_term's overflow report — its result discarded, and the block
-	// reaching the callee only as a projection of a nested tuple-returning
-	// call.
 	{"void_call_arg_in_arm", `struct Fmt { pre: string, post: string }
 function render(v: i32): Option[i32] {
   if (v < 0) {
@@ -204,11 +159,6 @@ function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
   }
   return (w, out);
 }`},
-	// numfmt's `options`: a FRESH local the exit sweep releases, handed back
-	// bare by `check` inside the returned tuple. The sweep must keep it — the
-	// box IS the result — and `junk` recycles its block if it does not, so
-	// the caller's read moves rather than reading intact freed bytes (the
-	// quarantine cannot see this one; the interpreter's exit can).
 	{"swept_local_handed_back", `function check(b: Block, w: i32): Block {
   if (w < 0) {
     exit(3);
@@ -235,10 +185,6 @@ function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
   let out: Block = push_str(b, "x");
   return (inner.0 + junk.n - 77, Block { ...out, n: o.n % 100 + out.n });
 }`},
-	// swept_local_handed_back's hazard for a credited TUPLE local (#8734): it
-	// goes back bare through a returned call, and the caller allocates a
-	// same-sized block before reading it, so a sweep that freed it would hand
-	// that block to the reader.
 	{"swept_tuple_handed_back", `function checkt(t: (i32, i32[]), w: i32): (i32, i32[]) {
   if (w < 0) {
     exit(3);
@@ -266,8 +212,6 @@ function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
   let out: Block = push_str(b, "x");
   return (r.0 + junk.len() - r.1.len(), Block { ...out, n: out.n + r.1[3] + r.1.len() % 100 });
 }`},
-	// A call-derived local rather than an alias, with the loop's exit a
-	// tuple return whose element is a call taking the local.
 	{"call_local_loop_tuple_return", `function terminate(b: Block): Block {
   return push_str(b, "\n");
 }
@@ -290,18 +234,10 @@ function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
 }`},
 }
 
-// tupleHandbackCheckedCases earn their credits only from the checker's type
-// annotations, so they run through the self-host CLI, which annotates, and
-// not through asm_ir_run, which does not.
 var tupleHandbackCheckedCases = []struct {
 	name string
 	run  string
 }{
-	// The handback unpacked by a destructure (#8734): re-declaring the loop
-	// locals in the same statement, and through fresh binders rebound after.
-	// The re-declaration SHADOWS `w` and `out` for the rest of the body, so the
-	// outer block is never drained and grows every round; what the case pins
-	// is that no generation of either is stranded.
 	{"destructure_same_statement", `function run(w0: i32, b: Block, rounds: i32): (i32, Block) {
   let w: i32 = w0;
   let out: Block = b;
@@ -326,7 +262,6 @@ var tupleHandbackCheckedCases = []struct {
   }
   return (w, out);
 }`},
-	// The same hazard for a credited STRING accumulator.
 	{"swept_string_handed_back", `function checks(acc: string, w: i32): string {
   if (w < 0) {
     exit(3);
@@ -359,8 +294,6 @@ func tupleHandbackSrc(run string, rounds int) string {
 	return strings.ReplaceAll(run+"\n"+tupleHandbackCommon, "ROUNDS", strconv.Itoa(rounds))
 }
 
-// tupleHandbackCensus reads the census a run printed and returns its
-// unreclaimed block count.
 func tupleHandbackCensus(t *testing.T, name, stderr string) int64 {
 	t.Helper()
 	allocs, frees, _ := parseLeakcheck(t, name, stderr)
@@ -370,8 +303,6 @@ func tupleHandbackCensus(t *testing.T, name, stderr string) int64 {
 	return allocs - frees
 }
 
-// checkTupleHandback asserts the two censuses agree and that the residue is a
-// handful of blocks, not a per-round one.
 func checkTupleHandback(t *testing.T, name string, small, large int64, rounds [2]int) {
 	t.Helper()
 	if small != large {
@@ -415,9 +346,6 @@ func TestSelfHostTupleHandbackReclaimX86_64(t *testing.T) {
 	}
 }
 
-// The sanitizer leg: the quarantine and the over-release trap must stay
-// silent — the rebind release now runs where it used to be refused, so the
-// direction to guard is a free too many, not a leak.
 func TestSelfHostTupleHandbackReclaimSanitizeX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -448,9 +376,6 @@ func TestSelfHostTupleHandbackReclaimSanitizeX86_64(t *testing.T) {
 	}
 }
 
-// The CLI leg compiles every case, the annotated ones included, the way
-// production does: through the self-host CLI with the checker's annotations.
-// Each case gets the census at both round counts and one sanitizer run.
 func TestSelfHostTupleHandbackReclaimCLIX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)
@@ -474,7 +399,6 @@ func TestSelfHostTupleHandbackReclaimCLIX86_64(t *testing.T) {
 			}
 			checkTupleHandback(t, tc.name, leaked[0], leaked[1], tupleHandbackRounds)
 
-			// want is still the last round count's answer.
 			src := tupleHandbackSrc(tc.run, tupleHandbackRounds[1])
 			stderr, code := runCaptureStderrExit(t, cli.runner, build(t, src, "FERN_SANITIZE=1"))
 			if code != want {
@@ -551,8 +475,6 @@ func TestSelfHostTupleHandbackReclaimWasm(t *testing.T) {
 	}
 }
 
-// runCaptureStderrExit runs a built program and returns its stderr and exit
-// code; a signal death is fatal, since a census cannot be read off one.
 func runCaptureStderrExit(t *testing.T, runner []string, bin string) (string, int) {
 	t.Helper()
 	var cmd *exec.Cmd

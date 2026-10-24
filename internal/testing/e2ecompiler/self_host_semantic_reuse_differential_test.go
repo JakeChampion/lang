@@ -8,43 +8,16 @@ import (
 	"testing"
 )
 
-// The typed (semantic) lowering's reuse pairing: a firing count that must be
-// met, a switch (FERN_SELFHOST_NO_REUSE=1) that must take it to zero, and the
-// two builds' answers compared against each other.
-//
-// Each case must produce WHOLE on the typed path, so every intrinsic a case
-// calls must have a semantic contract, as `__rc_underflow_count` does.
 var semanticReuseCases = []struct {
-	name string
-	src  string
-	want int
-	// Firings of the reuse call the typed path must emit.
-	firings int
-	// Allocations the program makes under FERN_LEAKCHECK with the pairing on
-	// and off. A FIRING IS A CALL: `__fern_alloc_reuse` hands the donor block
-	// back only when its cap matches what the construction asks for, and
-	// returns it to its freelist and allocates fresh when it does not. So the
-	// count above cannot tell a reuse from a pairing that declines, and the
-	// difference between these two can — it is the allocations the reuse
-	// actually saved. Nothing in this suite could see that until it was asked
-	// (rc-log/2026-09-18-a-firing-is-not-a-reuse.md).
+	name      string
+	src       string
+	want      int
+	firings   int
 	allocsOn  int64
 	allocsOff int64
-	// A case whose pairing is admitted statically and declined at RUN time, so
-	// it saves nothing by design. Every other case must save, or it is pinning
-	// machinery that never fires.
-	degrades bool
-	// A case where NO pairing may be admitted — a third class the suite could
-	// not express, and the one the degenerate self-donor needed. `degrades` is
-	// a pairing the runtime turns down; this is a pairing the compiler must
-	// never offer, so saving nothing is the correct answer rather than evidence
-	// of machinery that never fires.
-	noPair bool
+	degrades  bool
+	noPair    bool
 }{
-	// A record owning a string and an array, rebuilt from its own fields. The
-	// donor dies at its last field read and the construction below builds in
-	// its box; the `__sem_drop_` helper releases the string and the array
-	// first, since the runtime frees a mismatched donor block shallowly.
 	{"owns-references", `struct R { tag: string, cells: i32[], n: i32 }
 function step(seed: i32): R {
     let a: R = R { tag: "aa", cells: [seed, seed + 1], n: seed };
@@ -59,11 +32,6 @@ function main(): i32 {
     return t;
 }`, 72, 1, 12, 16, false, false},
 
-	// The degrade path: an array holds a second count on the donor, so the
-	// pairing is static but `__fern_rc_is_unique` fails and the construction
-	// allocates fresh. That fresh box carries no shape word of its own, so a
-	// pairing that does not write one corrupts it here and nowhere else.
-	// `keep` starts as `[]`, one allocation since #10408 where it was two.
 	{"shared-donor-degrades", `struct R { tag: string, cells: i32[], n: i32 }
 function shared(n: i32): i32 {
     let keep: R[] = [];
@@ -79,14 +47,6 @@ function main(): i32 {
     return v;
 }`, 17, 1, 5, 5, true, false},
 
-	// The donor and the recipient are different TYPES and the same number of
-	// SLOTS, which is the only thing a box has to agree on. Mote and Glyph are
-	// members of a struct-union, so the match reads the shape word each
-	// construction wrote: a recipient inheriting the donor's takes the wrong
-	// arm, which is why the answer separates this from a pairing that merely
-	// reuses the storage. cross_wide is the third candidate and it does NOT
-	// pair — a three-slot donor against a four-slot construction — so the
-	// count of 2 over three sites is what pins that the pairing asks.
 	{"cross-type", `struct Mote { text: string, k: i32 }
 struct Glyph { xs: i32[], k: i32 }
 type Sigil = Mote | Glyph;
@@ -123,12 +83,6 @@ function main(): i32 {
     return t % 251;
 }`, 189, 2, 13, 18, false, false},
 
-	// A tuple box is one word per element and no shape word, so it is storage
-	// a donor of any form can be and storage any form can take: tuple to
-	// tuple, a record's box to a tuple, and a tuple's to a record. The two
-	// cross-form ones are a two-field record against a three-element tuple,
-	// because the pairing matches SLOTS and a record box carries a shape word
-	// the tuple's does not.
 	{"tuple-form", `struct Parcel { a: string, b: i32 }
 function tuple_step(seed: i32): (i32, string) {
     let a: (string, i32[]) = ("aa", [seed, seed + 1]);
@@ -163,18 +117,6 @@ function main(): i32 {
     return t;
 }`, 60, 3, 10, 16, false, false},
 
-	// A UNION donor: a declared enum whose variants agree on field count, so
-	// its box is a count this frame can state, dying at a call before a record
-	// of the same slot count is built. Its box becomes the record's, so the
-	// program allocates two fewer blocks than with the pairing off.
-	//
-	// The live variant's payload is an ARRAY rather than a string, and that is
-	// the half of this case that tests the token's child release: the enum's
-	// own drop helper has to free it before the box is handed on, since the
-	// runtime frees a size-mismatched donor block SHALLOWLY. Written with a
-	// string literal instead, the child is a static box whose release is a
-	// no-op, and the fixture passes with `drop_children` deleted — measured,
-	// which is why it is not written that way.
 	{"union-donor", `enum Duo { Two(i32, i32[]), Both(i32[], i32) }
 struct Trip { a: string, b: i32 }
 function duo_size(d: Duo): i32 {
@@ -196,22 +138,6 @@ function main(): i32 {
     return t;
 }`, 30, 1, 4, 6, false, false},
 
-	// The two rules that decide WHICH dying box a construction builds in,
-	// neither of which the cases above can see: every one of them puts the
-	// matching construction immediately after the donor.
-	//
-	// `hold_over` is the hold: a three-slot donor dies at an ordinary
-	// instruction, a FOUR-slot construction follows it, and the three-slot one
-	// that can take it comes after that. Holding the donor past a construction
-	// that cannot serve it is the whole of the pairing there — taken for the
-	// next construction alone it fires 0.
-	//
-	// `chain_up` is the same-instruction pairing: a chain of functional
-	// updates of one type, where each superseded box dies AT the construction
-	// that supersedes it rather than before it, so a rule that only looks
-	// backwards never sees it. 3 firings; 0 without that rule. This is the
-	// shape the two native assemblers are made of — `a = X86Asm { ...a, code:
-	// … }` — and 795 of the compiler's constructions have it.
 	{"pairing-reach", `struct A3 { p: string, q: i32 }
 struct B4 { x: string, y: i32, z: i32 }
 function hold_over(seed: i32): i32 {
@@ -234,8 +160,6 @@ function main(): i32 {
     return t;
 }`, 32, 4, 3, 7, false, false},
 
-	// A record of scalars: pure storage, with no children to release at the
-	// token.
 	{"scalar-fields", `struct P { x: i32, y: i32 }
 function bump(seed: i32): i32 {
     let p: P = P { x: seed, y: seed + 1 };
@@ -250,13 +174,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
 }`, 21, 1, 3, 6, false, false},
-	// A 3-slot donor held for a later 3-slot construction, with a 4-slot
-	// self-update between them. The held token waits in the donor's local and
-	// the self pairing's in the frame's token slot, so both reuse. While the
-	// two shared the slot, the self pairing's token overwrote the held one and
-	// the later construction was handed a box the update was returning live:
-	// a leak where the sizes differ, an alias where they agree. Nothing in the
-	// compiler's own sources has this overlap, so only this fixture fails.
 	{"token-slot-overlap", `struct A3 { p: string, q: i32 }
 struct B4 { x: string, y: i32, z: i32 }
 function f(seed: i32): i32 {
@@ -272,21 +189,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
 }`, 21, 2, 2, 4, false, false},
-	// A construction whose value is never read has its drop at its own step, so
-	// the value dying there IS the construction's result. The first cut of the
-	// same-instruction pairing took it as a donor for itself: it read a token
-	// slot for a value that does not exist yet, always declined — and it cost
-	// the module its last ALLOCATING op, so the heap runtime block stopped
-	// being emitted and the link failed on an undefined `__fn___fern_arr_dec`.
-	//
-	// Found by `TestDifferential_SelfHostX86_64` at seed 452, reduced to
-	// this. The suite could not express it before: the point is not that the
-	// pairing declines but that it must never be OFFERED, which is what
-	// `noPair` says.
-	// An update of a unique record leaves the fields it carries over in its
-	// box: `tag` is taken from the slot it is stored back to, so it is neither
-	// nulled nor released, and only `names`, which the update replaces, is.
-	// `ids` keeps the initial record a heap box.
 	{"update-keeps-fields", `struct Acc { names: string[], tag: string, n: i32 }
 @noinline function ids(s: string): string { return s; }
 function add(own a: Acc, s: string): Acc {
@@ -301,11 +203,6 @@ function main(): i32 {
     return a.n * 10 + a.names.len() + a.tag.len();
 }`, 67, 1, 3, 9, false, false},
 
-	// The same update over a base another binding still holds: the donor is
-	// shared at its first kept read, so the kept fields are retained, the
-	// construction allocates, and `keep` still reads the fields it had. The
-	// second update's base is unique again and builds in place. `ids` keeps
-	// the initial record a heap box.
 	{"update-keeps-shared-base", `struct Acc { names: string[], tag: string, n: i32 }
 @noinline function ids(s: string): string { return s; }
 function add(own a: Acc, s: string): Acc {
@@ -321,10 +218,6 @@ function main(): i32 {
     return a.names.len() * 10 + keep.names.len() + keep.tag.len() + a.tag.len() + keep.n;
 }`, 33, 1, 5, 6, false, false},
 
-	// A field carried over into its own slot and read again after the update:
-	// the read keeps its position (another use needs the value), and the
-	// construction still leaves the slot alone while the donor is unique.
-	// `ids` keeps the initial record a heap box.
 	{"update-keeps-field-read-later", `struct Acc { names: string[], tag: string, n: i32 }
 @noinline function ids(s: string): string { return s; }
 function add(own a: Acc, s: string): Acc {
@@ -340,10 +233,6 @@ function main(): i32 {
     return a.n * 10 + a.names.len() + a.tag.len();
 }`, 189, 1, 3, 9, false, false},
 
-	// A field carried over into its own slot AND copied into another. The two
-	// are distinct reads of slot 0: the carried-over one is kept in place, and
-	// the copy, placed at slot 1, is not a read of its own slot, so it takes
-	// its unit as before.
 	{"update-duplicate-operand", `struct P { a: i32[], b: i32[], n: i32 }
 function dup(own p: P): P { p = P { ...p, b: p.a, n: p.n + 1 }; return p; }
 function run(k: i32): i32 {
@@ -358,9 +247,6 @@ function main(): i32 {
     return r;
 }`, 44, 1, 3, 7, false, false},
 
-	// One local named in two field positions is ONE operand value appearing
-	// twice. The donor's slot holds one unit and the construction needs two,
-	// so the field is not kept and both positions take their unit as before.
 	{"update-local-in-two-slots", `struct P { a: i32[], b: i32[], n: i32 }
 function twice(own p: P): P {
     let x: i32[] = p.a;
@@ -379,10 +265,6 @@ function main(): i32 {
     return r;
 }`, 44, 1, 3, 7, false, false},
 
-	// A field read from its own slot, stored back there and also returned:
-	// the read is taken and the construction retains it, two units where the
-	// donor's slot holds one, so the field is not kept. Kept, the
-	// construction's release freed the array `grab` returns.
 	{"update-keeps-no-field-held-twice", `struct P { f: string[], n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function mkv(): string[] { let o: string[] = []; o = o.append(w("a")); o = o.append(w("b")); return o; }
@@ -402,10 +284,6 @@ function main(): i32 {
     return t % 101;
 }`, 46, 1, 28, 32, false, false},
 
-	// Scalar fields carried over into their own slots are kept as the counted
-	// ones are: a unique update stores only what it replaces. The fields are
-	// one of each scalar width, so a slot left unwritten on the fresh path, or
-	// written from the wrong place, changes the answer.
 	{"update-keeps-scalar-fields", `struct Acc { names: string[], n: i32, on: boolean, big: i64, w: f64 }
 @noinline function ids(s: string): string { return s; }
 function add(own a: Acc, s: string): Acc {
@@ -424,8 +302,6 @@ function main(): i32 {
     return r;
 }`, 74, 1, 5, 11, false, false},
 
-	// The same over a base another binding holds: the construction gets a
-	// fresh box, which must receive every kept scalar from the donor.
 	{"update-keeps-scalars-shared-base", `struct Acc { names: string[], n: i32, on: boolean, big: i64, w: f64 }
 @noinline function ids(s: string): string { return s; }
 function add(own a: Acc, s: string): Acc {
@@ -445,9 +321,6 @@ function main(): i32 {
     return r;
 }`, 130, 1, 5, 6, false, false},
 
-	// A kept scalar also read after the update: its read stays where it is,
-	// and the construction still leaves the slot alone while the donor is
-	// unique.
 	{"update-keeps-scalar-read-later", `struct Acc { names: string[], n: i32, big: i64 }
 @noinline function ids(s: string): string { return s; }
 function step(own a: Acc, s: string): Acc {
@@ -463,8 +336,6 @@ function main(): i32 {
     return a.n * 10 + a.names.len() + a.big as i32;
 }`, 217, 1, 5, 9, false, false},
 
-	// A record of scalars alone: no field holds a count, so the donor's
-	// uniqueness is read at its drop rather than at a kept read.
 	{"update-keeps-scalar-only-record", `struct P3 { x: i32, y: i32, z: i64 }
 @noinline function mk(v: i32): P3 { return P3 { x: v, y: v + 1, z: 7i64 }; }
 @noinline function bump(own p: P3): P3 { return P3 { ...p, x: p.x + 1 }; }
@@ -476,9 +347,6 @@ function main(): i32 {
     return p.x * 10 + p.y + p.z as i32;
 }`, 69, 1, 1, 6, false, false},
 
-	// `seed` keeps the record off the static data a constant literal is
-	// placed in: the case is about the one allocation the construction makes
-	// and must not pair with.
 	{"degenerate-self-donor", `struct S0 { f0: i32, f1: i64, f2: boolean }
 @noinline function hold(v: S0): i32 { return 0; }
 @noinline function seed(): i32 { return 687i32; }
@@ -500,8 +368,6 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	// emit compiles src with the given environment and returns the assembly
-	// along with the semantic lowering's own report of what it produced.
 	emit := func(t *testing.T, proj, src, tag string, extraEnv ...string) (string, string) {
 		t.Helper()
 		mainPath := filepath.Join(proj, tag+".fern")
@@ -536,10 +402,6 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 		_ = rcmd.Run()
 		return rcmd.ProcessState.ExitCode()
 	}
-	// allocs builds the case under FERN_LEAKCHECK and runs it, answering what
-	// the program allocated. Balance is checked here too: a pairing that hands
-	// a box to a construction not entitled to it shows as a free the program
-	// cannot account for.
 	allocs := func(t *testing.T, proj, src, tag string, extraEnv ...string) int64 {
 		t.Helper()
 		asm, _ := emit(t, proj, src, tag, append([]string{"FERN_LEAKCHECK=1"}, extraEnv...)...)
@@ -567,10 +429,6 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 		return a
 	}
 
-	// An update that keeps its carried-over fields in place releases only the
-	// field it replaces at the reuse, so the record's children-drop helper is
-	// called from its release helper alone; before, the update's reuse called
-	// it too.
 	keptDropCases := map[string]bool{"update-keeps-fields": true, "update-keeps-field-read-later": true}
 
 	for _, tc := range semanticReuseCases {
@@ -585,15 +443,12 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 				if got := strings.Count(outside, "call __fn___sem_drop_Acc"); got != 0 {
 					t.Errorf("%s: %d calls to the children-drop helper outside its release helper, want 0 — the update's reuse released the fields it keeps", tc.name, got)
 				}
-				// Once in its frameless head for a sole owner, once in its body.
 				if got := strings.Count(inside, "call __fn___sem_drop_Acc"); got != 2 {
 					t.Errorf("%s: the release helper calls the children-drop helper %d times, want 2", tc.name, got)
 				}
 			}
 			asmOff, _ := emit(t, proj, tc.src, "off", "FERN_SELFHOST_NO_REUSE=1")
 
-			// The runtime helper's own body is emitted either way, so the CALL
-			// is the firing and its label is not.
 			const witness = "call __fn___fern_alloc_reuse"
 			if got := strings.Count(asmOn, witness); got != tc.firings {
 				t.Errorf("%s: typed path emitted %d reuse calls, want %d", tc.name, got, tc.firings)
@@ -602,9 +457,6 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 				t.Errorf("%s: FERN_SELFHOST_NO_REUSE=1 still emitted %d reuse calls — the switch does not reach the typed pairing", tc.name, got)
 			}
 
-			// The allocations the reuse SAVED. A firing that declines saves
-			// none, so this is what separates a pairing the runtime can
-			// honour from one that only emits its machinery.
 			onAllocs := allocs(t, proj, tc.src, "leakon")
 			offAllocs := allocs(t, proj, tc.src, "leakoff", "FERN_SELFHOST_NO_REUSE=1")
 			if onAllocs != tc.allocsOn || offAllocs != tc.allocsOff {
@@ -636,8 +488,6 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 	}
 }
 
-// splitFunction cuts the function opening at label out of an assembly
-// listing, through its .cfi_endproc, answering the function and the rest.
 func splitFunction(asm, label string) (inside, outside string) {
 	at := strings.Index(asm, label)
 	if at < 0 {

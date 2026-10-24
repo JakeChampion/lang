@@ -2,11 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/semver across backends: the §11
-// precedence chain (including the numeric `beta.2 < beta.11` vs lexical
-// distinction), prerelease-below-release, build-metadata-ignored, and
-// malformed-input rejection. Returns 42 iff every check holds. Each leg
-// skips itself when its toolchain is absent.
 const semverProg = `
 import "std/semver" as semver;
 function cmp(x: string, y: string): i32 {

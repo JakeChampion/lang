@@ -1,46 +1,27 @@
-// std/hex — lowercase hex encode / decode.
-//
-// `hex_encode(b)` / `hex_decode(s)` — round-trip
-// content-preserving on raw bytes. Encode emits lowercase
-// `0-9a-f`. Decode accepts both cases; terminates at the
-// first non-hex character or at an odd-length tail without
-// raising — partial inputs round-trip cleanly. Companion
-// to base64 with no `=` padding.
-//
-// Bytes are `u8[]` on both sides (#5730, decision D9):
-// arbitrary hex decodes to arbitrary bytes, which are not
-// UTF-8 and so must not be typed as a `string`, and encoding
-// is the inverse — its job is rendering bytes as text. Read a
-// decode result back as text with `std/utf8.from_bytes` when
-// the bytes are supposed to be text; encode a string's bytes
-// with `std/string`'s `s.bytes()`.
-//
-// No prelude: these are in scope only after a program
-// declares `import "std/hex";` (docs/PRELUDE-TO-MODULES.md,
-// Phase 5).
+// This module encodes and decodes hexadecimal data.
 
 function __hex_lower_char(d: i32): i32 {
-  if (d < 10) {  // '0' + d
+  if (d < 10) {
     return d + 48;
   }
-  return d + 87;  // 'a' - 10 + d
+  return d + 87;
 }
 
 function __hex_upper_char(d: i32): i32 {
-  if (d < 10) {  // '0' + d
+  if (d < 10) {
     return d + 48;
   }
-  return d + 55;  // 'A' - 10 + d
+  return d + 55;
 }
 
 function __hex_value(c: i32): i32 {
-  if (c >= 48 && c < 58) {  // 0-9
+  if (c >= 48 && c < 58) {
     return c - 48;
   }
-  if (c >= 97 && c < 103) {  // a-f
+  if (c >= 97 && c < 103) {
     return c - 87;
   }
-  if (c >= 65 && c < 71) {  // A-F
+  if (c >= 65 && c < 71) {
     return c - 55;
   }
   return 0 - 1;
@@ -62,11 +43,6 @@ pub function hex_encode(bs: u8[]): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `hex_encode_upper(b)` — like `hex_encode` but emits uppercase
-// `0-9A-F`. Useful where a protocol / display convention calls for
-// uppercase hex (MAC addresses, some checksums, fingerprints). Decodes
-// with the same `hex_decode` / `hex_decode_strict` (both accept either
-// case).
 pub function hex_encode_upper(bs: u8[]): string {
   let n: i32 = bs.len();
   if (n == 0) {
@@ -85,8 +61,6 @@ pub function hex_encode_upper(bs: u8[]): string {
 
 pub function hex_decode(s: string): u8[] {
   let sLen: i32 = s.len();
-  // Walk forward to count consecutive valid hex chars;
-  // first non-hex (or odd-length tail) terminates.
   let n: i32 = 0;
   while (n < sLen) {
     if (__hex_value(s[n] as i32) < 0) {
@@ -109,13 +83,6 @@ pub function hex_decode(s: string): u8[] {
   return buf;
 }
 
-// `hex_decode_strict(s)` — like `hex_decode` but returns `None` on malformed
-// input instead of silently truncating at the first non-hex char or an odd
-// tail. Decoding an attacker-supplied signature with the lenient variant
-// hides tampering (a bad nibble just shortens the output); the strict variant
-// makes malformed input observable (#4384). Every character must be a hex
-// digit (either case) and the length must be even (an odd tail can't form a
-// byte). `""` decodes to `Some([])`.
 pub function hex_decode_strict(s: string): Option[u8[]] {
   let sLen: i32 = s.len();
   let k: i32 = 0;

@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// An array literal or a self-append that stores a value another owner
-// releases — a borrowed struct or enum parameter, an indexed box — stores it
-// counted, as the clone-append does. Stored uncounted, the record's field drop
-// would free the caller's box and the caller would read it back wrong. The
-// counted store is credited, so a temporary argument is still released by the
-// caller.
 var arrlitBorrowedElemCases = []struct {
 	name string
 	src  string
@@ -101,8 +95,6 @@ function main(): i32 {
     return ps[0].tag[1] + acc - 72;
 }
 `, 8},
-	// A temporary handed to a storing parameter: the counted store leaves it
-	// rc 2, and the caller's post-call release nets it to the record's one.
 	{"temp_args", `struct Pt { x: i32, tag: i32[] }
 struct Bag { n: i32, pts: Pt[] }
 enum Flag { On(i32[]), Off }
@@ -126,8 +118,6 @@ function main(): i32 {
     return s;
 }
 `, 18},
-	// The same at a METHOD's counted position whose result is a struct: the
-	// counted store is the proof, whatever the callee returns.
 	{"temp_enum_to_method", `enum Flag { On(i32[]), Off }
 struct Flags { n: i32, fs: Flag[] }
 function (h: Flags) mk(f: Flag): Flags { return Flags { n: h.n + 1, fs: h.fs.append(f) }; }
@@ -176,8 +166,6 @@ func TestSelfHostArrlitBorrowedElemX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostArrlitBorrowedElemNative holds `fern -target x86-64-linux` to
-// the same answers, every row clean.
 func TestSelfHostArrlitBorrowedElemNative(t *testing.T) {
 	boxedProbes(t)
 	_, runner := x86_64Tooling(t)

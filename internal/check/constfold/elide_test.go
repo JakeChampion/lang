@@ -7,8 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// countIfs walks every statement list reachable from the program's
-// function bodies and returns (assert-desugared ifs, other ifs).
 func countIfs(prog *ast.Program) (asserts, plain int) {
 	var walkStmt func(st ast.Stmt)
 	walkBlock := func(b *ast.Block) {
@@ -57,9 +55,6 @@ func countIfs(prog *ast.Program) (asserts, plain int) {
 	return asserts, plain
 }
 
-// ElideAsserts drops every assert-desugared If — top-level and nested
-// in control flow — while leaving ordinary ifs
-// (including ones spelling a similar shape by hand) untouched.
 func TestElideAsserts(t *testing.T) {
 	prog, err := parser.Parse(`
 function helper(n: i32): i32 {
@@ -100,8 +95,6 @@ function main(): i32 {
 	}
 }
 
-// An assert inside a struct update's spread source is elided like one in
-// a field value.
 func TestElideAssertsInSpreadSource(t *testing.T) {
 	prog, err := parser.Parse(`
 struct S { a: i32, b: i32 }

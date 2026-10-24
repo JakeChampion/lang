@@ -1,5 +1,3 @@
-// Load-time package grant attenuation (#5361). Resolve grant identities with
-// the same dependency-directory function the module loader uses.
 import "./fern_toml";
 import "./caps";
 import "./modloader";
@@ -13,7 +11,6 @@ pub function canonical_dir(dir: string): string {
   if (dir.len() > 0 && dir[0] == b'/') {
     return util.clean_path(dir);
   }
-  // WASI paths are relative to preopens; there is no process directory.
   if (target_os() == "wasi") {
     return util.clean_path(dir);
   } else {
@@ -28,8 +25,6 @@ pub function canonical_dir(dir: string): string {
   }
 }
 
-// A manifest with no explicit grants has neither a contribution to the union
-// nor an outgoing edge to check. Grant-free builds keep the empty table.
 pub function with_manifest(own mans: ManifestAt[], dir: string, man: fern_toml.Manifest): ManifestAt[] {
   let explicit: boolean = false;
   for dep in man.deps {
@@ -41,7 +36,6 @@ pub function with_manifest(own mans: ManifestAt[], dir: string, man: fern_toml.M
     return mans;
   }
   let key: string = canonical_dir(dir);
-  // Indexed reads borrow the cache that this function returns.
   let i: i32 = 0;
   while (i < mans.len()) {
     if (mans[i].dir == key) {
@@ -87,9 +81,6 @@ function holding_index(held: Holding[], dir: string): i32 {
   return 0 - 1;
 }
 
-// A least fixed point admits seeded cycles without letting cycles create
-// authority. Every governed target starts empty; only a capability already
-// held by the grantor can propagate. Root and ungoverned grantors are exempt.
 function grant_edges(mans: ManifestAt[]): GrantEdge[] {
   let edges: GrantEdge[] = [];
   for m in mans {
@@ -194,8 +185,6 @@ function violations(m: ManifestAt, held: string[]): string[] {
   return out;
 }
 
-// ModuleAt records the resolved file and nearest manifest, before bundling.
-// Prefixes come from flatten's single assignment table, never basenames.
 pub struct ModuleAt { dir: string, owner_dir: string, name: string, stdlib: boolean }
 
 pub struct Checked { pkgs: caps.Pkg[], err: string }
@@ -204,8 +193,6 @@ function within(dir: string, parent: string): boolean {
   return dir == parent || dir.len() > parent.len() && slice_unchecked(dir, 0, parent.len()) == parent && dir[parent.len()] == b'/';
 }
 
-// Check every edge against its grantor, then apply the authorized union to
-// each module of the same package. Display names carry no authority.
 pub function checked(mans: ManifestAt[], root: caps.Pkg, modules: ModuleAt[], prefixes: string[]): Checked {
   let held: Holding[] = holdings(mans, root.dir);
   let errors: string[] = [];
@@ -229,12 +216,9 @@ pub function checked(mans: ManifestAt[], root: caps.Pkg, modules: ModuleAt[], pr
   return Checked { pkgs: pkgs, err: joined(sorted_unique(errors), "\n") };
 }
 
-// Resolve a module's boundary independently of its display name.
 function module_package(m: ModuleAt, prefix: string, root: caps.Pkg, held: Holding[]): caps.Pkg {
   let dir: string = m.owner_dir;
   let name: string = m.name;
-  // Explicit grants define a package boundary even when the dependency
-  // has no manifest. Local imports inside that boundary remain governed.
   for h in held {
     if (within(m.dir, h.dir) && (!within(m.dir, dir) || h.dir.len() > dir.len())) {
       dir = h.dir;

@@ -1,35 +1,3 @@
-// `r.dup_onto(fd)` / `w.dup_onto(fd)` end to end on every backend: dup3(2) of
-// the handle's descriptor onto a number the caller chose.
-//
-// What no unit test can assert: three hand-written implementations issue the
-// call. x86-64 and arm64-linux each emit it from hand-written
-// assembly with its own frame discipline, its own literal syscall NUMBER and
-// its own handle layout; the interpreter goes through Go's syscall package behind a per-OS
-// split, because Linux has dup3 and XNU only dup2; and both wasm previews
-// refuse it.
-//
-// The probe never trusts a bare `ok`. Each answer is pinned to one an
-// operand mistake cannot produce:
-//
-//   - a live handle onto an UNUSED number succeeds, so the call reaches the
-//     kernel with a plausible pair rather than failing on arrival.
-//   - a live handle onto a NEGATIVE number is EBADF, so the destination is
-//     being read rather than ignored.
-//   - a CLOSED handle onto a valid number is EBADF, so the source is the
-//     handle's own descriptor rather than something ambient.
-//   - and the redirection itself is observable: after `w.dup_onto(1)` the
-//     program's own `print` lands in the FILE. The Go side reads those bytes
-//     back off disk, so the claim is checked against the tree rather than
-//     against the value the program was handed.
-//
-// That last one is what catches a TRANSPOSITION — operands passed as
-// dup3(newfd, own_fd) — and the reason it takes a tree check rather than an
-// errno: where the destination happens to be open already the transposed
-// call SUCCEEDS, answers None to every arm above, and leaves fd 1 alone. Fd 7
-// is closed in a compiled binary and open in the interpreter's Go process, so
-// the two legs would disagree about which arm notices. Measured by
-// transposing the implementations in turn; a wrong syscall NUMBER fails the
-// first arm instead.
 package e2e
 
 import (
@@ -43,14 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// dupOntoSource is the probe, parameterised by the directory its relative
-// paths resolve against — "" for the backends whose cwd is already there
-// (wasm under its preopen), an absolute prefix for the rest.
-//
-// `wasm` selects the arm that expects every call to be REFUSED. Asserting the
-// refusal is the point: a body that quietly answered None would claim a
-// descriptor the caller never got, and the next thing the caller does is
-// write to that number.
 func dupOntoSource(dir string, wasm bool) string {
 	p := func(name string) string {
 		if dir == "" {
@@ -59,17 +19,12 @@ func dupOntoSource(dir string, wasm bool) string {
 		return filepath.Join(dir, name)
 	}
 
-	// 7 is above the three standard descriptors and above the pty the `tty`
-	// harness hands out, so nothing in any of these runners has it open.
 	readerArm := `match (r.dup_onto(7))    { Ok(_) => {}, Err(_) => { return 11; } }
             match (r.dup_onto(0 - 1)) { Ok(_) => { return 12; }, Err(_) => {} }`
 	closedArm := `match (r.dup_onto(7))    { Ok(_) => { return 13; }, Err(_) => {} }`
 	writerArm := `match (w.dup_onto(1))    { Ok(_) => {}, Err(_) => { return 21; } }
             print("redirected");`
 	if wasm {
-		// Refused on both previews, so every arm flips: the success cases
-		// become failures and the closed-handle case cannot be reached at
-		// all (a dropped preview-2 descriptor traps rather than answering).
 		readerArm = `match (r.dup_onto(7))    { Ok(_) => { return 11; }, Err(_) => {} }
             match (r.dup_onto(0 - 1)) { Ok(_) => { return 12; }, Err(_) => {} }`
 		closedArm = "// a dropped preview-2 descriptor traps rather than answering EBADF"
@@ -104,11 +59,6 @@ func dupOntoSource(dir string, wasm bool) string {
 `, p("data.txt"), readerArm, closedArm, p("out.txt"), writerArm)
 }
 
-// dupOntoCheckTree reads the redirected bytes back through Go's own read
-// rather than Fern's, so a broken reader cannot make the probe
-// self-consistent. `w.close()` ran after the print, and closing the handle
-// leaves fd 1 alone — that is dup2 semantics and what `nohup` relies on — so
-// the file holds the line either way.
 func dupOntoCheckTree(t *testing.T, dir string) {
 	t.Helper()
 	got, err := os.ReadFile(filepath.Join(dir, "out.txt"))
@@ -138,9 +88,6 @@ func TestArm64DupOnto(t *testing.T) {
 	dupOntoCheckTree(t, dir)
 }
 
-// The interpreter's descriptors are the program's, so the redirect really
-// does take fd 1 away from `print` — which is why this leg runs the program
-// as a subprocess rather than in the test's own process.
 func TestInterpDupOnto(t *testing.T) {
 	dir := t.TempDir()
 	if code := runInterpExit(t, dupOntoSource(dir, false)); code != 0 {
@@ -149,12 +96,6 @@ func TestInterpDupOnto(t *testing.T) {
 	dupOntoCheckTree(t, dir)
 }
 
-// The refusal is one body on both previews, but the handles it is asked
-// about are opened and dropped by separate ones, so two runs. Neither
-// preview can install a descriptor at a chosen number: preview 1's
-// fd_renumber CLOSES the source, which is a move rather than a duplicate and
-// would leave the handle the caller still holds dangling, and preview 2 has
-// no numbered table at all.
 func TestWASMPreview1DupOntoUnsupported(t *testing.T) {
 	mod := buildWasmCore(t, dupOntoSource("", true))
 	dir := t.TempDir()
@@ -170,12 +111,6 @@ func TestWASMDupOntoUnsupported(t *testing.T) {
 	}
 }
 
-// It is a runtime refusal rather than an E066 one, which is the `syncfs`
-// shape and not the `sync` shape: the method has an error channel, so
-// "Unsupported" is an answer the caller can act on, where a whole-machine
-// flush that returns nothing has nowhere to put the refusal. Nothing here
-// should be capability-gated — a target with no descriptor table simply says
-// so at the call.
 func TestWASMDupOntoNotCapabilityGated(t *testing.T) {
 	prog, err := parser.Parse(`function main(): i32 {
     match (open_writer("x")) {

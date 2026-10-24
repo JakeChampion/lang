@@ -2,43 +2,25 @@ import "std/test";
 import "std/u64";
 import "../../coreutils/lib/ld" as ld;
 
-// tests/stdlib/coreutils_ld_test.fern — coreutils/lib/ld against the
-// three `long double` formats a target can have.
-//
-// Every expectation below came from the C implementation of the format
-// it names, not from this one: `%a` / `%La` of a double and of an x87
-// long double on an x86-64 glibc host, and `%Qa` through gcc's
-// libquadmath for binary128 — the same printf code glibc runs when
-// `long double` IS binary128, cross-checked against aarch64 glibc under
-// qemu.
-//
-// The formats are passed explicitly rather than read from `format()`,
-// so all three are exercised wherever this runs; which one a target
-// picks is pinned by internal/testing/coreutils/longdouble_test.go.
-
 function none(): i64 {
   return 0 as i64 - 1 as i64;
 }
 
-// `%a` of the value `s` names, without the `0x`.
 function hex(f: ld.Format, s: string): string {
   let p: ld.Parse = f.strtold(s);
   return f.hex(p.v, none(), false);
 }
 
-// The exact decimal expansion, as `0.digits e dp`.
 function dec(f: ld.Format, s: string): string {
   let p: ld.Parse = f.strtold(s);
   let d: ld.Dec = p.v.dec();
   return d.digits + "e" + (d.dp as i64).to_string();
 }
 
-// The exact `%a` of `a / b` in the format, without the `0x`.
 function div_hex(f: ld.Format, a: string, b: string): string {
   return f.hex(f.div(f.strtold(a).v, f.strtold(b).v), none(), false);
 }
 
-// `as_i64` shown, so a missing answer is as testable as a present one.
 function whole(f: ld.Format, s: string): string {
   return shown(f.strtold(s).v.as_i64());
 }
@@ -111,10 +93,6 @@ function test_binary64_is_darwins_long_double(): test.TestOutcome {
   return test.assert_eq(hex(f, "3.141592653589793238462643"), "1.921fb54442d18p+1");
 }
 
-// A subnormal keeps the format's least exponent and prints with a
-// leading digit below the normal one, and past half the least subnormal
-// the value is gone — which is where the formats differ most: 1e-4951
-// is an ordinary subnormal in binary128 and an underflow in x87.
 function test_subnormals_reach_where_the_format_ends(): test.TestOutcome {
   let q: ld.Format = ld.binary128();
   if (hex(q, "1e-4951") != "0.00000000000000008c756d969002p-16382") {
@@ -143,9 +121,6 @@ function test_subnormals_reach_where_the_format_ends(): test.TestOutcome {
   return test.assert_eq(hex(d, "1e-400"), "0p+0");
 }
 
-// A value out of range is an infinity and sets ERANGE, and where that
-// range ends is the format's business: 1e309 overflows binary64 and is
-// an ordinary number in the other two.
 function test_overflow_is_the_formats_own(): test.TestOutcome {
   let d: ld.Format = ld.binary64();
   let p: ld.Parse = d.strtold("1e309");
@@ -166,8 +141,6 @@ function test_overflow_is_the_formats_own(): test.TestOutcome {
   return test.assert_true(q.strtold("1e4933").v.is_inf());
 }
 
-// `%e`, `%f` and `%g` round from the exact expansion of the binary
-// value, so how far a tenth stays a tenth is the significand's width.
 function test_exact_decimal_is_the_significands_width(): test.TestOutcome {
   if (dec(ld.binary64(), "0.1") != "1000000000000000055511151231257827021181583404541015625e0") {
     return test.fail("double");
@@ -182,8 +155,6 @@ function test_exact_decimal_is_the_significands_width(): test.TestOutcome {
   );
 }
 
-// Parsing is glibc's c_strtold: the words, a hex float, and how far it
-// consumed.
 function test_strtold_reads_what_glibc_reads(): test.TestOutcome {
   let f: ld.Format = ld.binary128();
   if (!f.strtold("  -inf").v.is_inf()) {
@@ -204,8 +175,6 @@ function test_strtold_reads_what_glibc_reads(): test.TestOutcome {
   return test.assert_eq(f.strtold("1.5x").end, 3);
 }
 
-// add / sub / mul round once to the format, so each answer carries that
-// format's error and no other's.
 function test_arithmetic_rounds_once_to_the_format(): test.TestOutcome {
   let q: ld.Format = ld.binary128();
   let qs: ld.LD = q.add(q.strtold("0.1").v, q.strtold("0.2").v);
@@ -222,18 +191,14 @@ function test_arithmetic_rounds_once_to_the_format(): test.TestOutcome {
   if (d.hex(ds, none(), false) != "1.3333333333334p-2") {
     return test.fail("double sum");
   }
-  // 0.1 × 3 lands on the same value as 0.1 + 0.2 in each format.
   let qm: ld.LD = q.mul(q.strtold("0.1").v, q.from_i64(3 as i64));
   if (!qm.eq(qs)) {
     return test.fail("quad product");
   }
-  // Subtraction is exact cancellation to +0.
   let z: ld.LD = q.sub(qs, qs);
   return test.assert_true(z.is_zero() && !z.neg);
 }
 
-// The specials follow 754, and `cmp` answers 2 for a pair no order
-// covers.
 function test_specials_and_ordering(): test.TestOutcome {
   let f: ld.Format = ld.binary128();
   let one: ld.LD = f.from_i64(1 as i64);
@@ -265,9 +230,6 @@ function test_specials_and_ordering(): test.TestOutcome {
   return test.assert_true(f.add(ld.inf(false), one).is_inf());
 }
 
-// A precision rounds the hex digits half to even and a carry lifts the
-// leading digit — which for a stored integer bit renormalises four
-// binades up, and for an implied one simply reads 2.
 function test_hex_precision_rounds_half_to_even(): test.TestOutcome {
   let x: ld.Format = ld.x87();
   if (x.hex(x.strtold("1.5").v, 0 as i64, false) != "cp-3") {
@@ -292,12 +254,9 @@ function test_hex_precision_rounds_half_to_even(): test.TestOutcome {
   if (q.hex(q.strtold("0xf.ff8p0").v, 3 as i64, false) != "1.fffp+3") {
     return test.fail("quad no carry");
   }
-  // `#` keeps the point when the precision leaves no digits after it.
   return test.assert_eq(q.hex(q.strtold("1").v, 0 as i64, true), "1.p+0");
 }
 
-// Division is correctly rounded at each width — the operation printf
-// never needed and seq / numfmt do.
 function test_division_rounds_to_the_format(): test.TestOutcome {
   let x: ld.Format = ld.x87();
   if (div_hex(x, "1", "3") != "a.aaaaaaaaaaaaaabp-5") {
@@ -332,7 +291,6 @@ function test_division_rounds_to_the_format(): test.TestOutcome {
   return test.assert_eq(div_hex(d, "1", "10"), "1.999999999999ap-4");
 }
 
-// An exact quotient stays exact, and the specials answer as 754 says.
 function test_division_specials(): test.TestOutcome {
   let f: ld.Format = ld.binary128();
   let six: ld.LD = f.from_i64(6 as i64);
@@ -359,10 +317,6 @@ function test_division_specials(): test.TestOutcome {
   return test.assert_true(f.div(ld.inf(false), two).is_inf());
 }
 
-// numfmt's --round. `nearest` is floor(|x| + 1/2) with the addition
-// rounded to the format FIRST, which is why a value a hair under a half
-// still carries up: 0.0005 scaled by 1000 is 0.49999999999999999997 in
-// x87, and adding a half lands on exactly 1.
 function test_round_modes(): test.TestOutcome {
   let f: ld.Format = ld.x87();
   let scaled: ld.LD = f.mul(f.strtold("0.0005").v, f.pow10(3));
@@ -401,8 +355,6 @@ function test_round_modes(): test.TestOutcome {
   return test.assert_eq(f.to_fixed(f.round_to_int(f.from_i64(7 as i64), ld.round_up()), 0), "7");
 }
 
-// LDBL_DIG and the largest exactly-held integer are the format's, and
-// GNU reads both: numfmt prints nothing unscaled past LDBL_DIG digits.
 function test_format_digit_limits(): test.TestOutcome {
   if (ld.x87().dig() != 18) {
     return test.fail("x87 dig");
@@ -422,7 +374,6 @@ function test_format_digit_limits(): test.TestOutcome {
   return test.assert_true(ld.binary64().max_exact_u64() == 9007199254740991 as u64);
 }
 
-// `to_fixed` and `to_g` are `%.*Lf` and `%Lg` with the sign attached.
 function test_whole_conversions(): test.TestOutcome {
   let f: ld.Format = ld.x87();
   if (f.to_fixed(f.strtold("0.1").v, 25) != "0.1000000000000000000013553") {
@@ -450,8 +401,6 @@ function test_whole_conversions(): test.TestOutcome {
   return test.assert_eq(d.to_fixed(d.strtold("0.1").v, 25), "0.1000000000000000055511151");
 }
 
-// `body(b)` — a Body's three pieces and the refusal, so a precision of
-// two billion is asserted as a count and never built.
 function body(b: ld.Body): string {
   if (b.refused) {
     return "refused";
@@ -459,12 +408,6 @@ function body(b: ld.Body): string {
   return b.head + "|" + b.zeros.to_string() + "|" + b.tail;
 }
 
-// A precision wider than the value's digits is a zero COUNT in the
-// body: `%.2147483640e` of 1 is a two-gigabyte field, and printf writes
-// the run in blocks rather than building it (#9812). Every path that
-// used to pad the digit string is here: `%e` and `%f` of a value and of
-// zero, `%#g` in both styles, and the digit rounding, which only ever
-// shortens.
 function test_huge_precision_is_a_count(): test.TestOutcome {
   let f: ld.Format = ld.x87();
   let one: ld.Dec = f.strtold("1").v.dec();
@@ -527,8 +470,6 @@ function test_huge_precision_is_a_count(): test.TestOutcome {
   return test.assert_eq(ld.fixed(tenth, 5 as i64, false, 0 as i64).text(), "0.12500");
 }
 
-// `pow10` is reached by multiplying, the way a C program reaches it, so
-// it is exact exactly as far as the significand allows.
 function test_pow10(): test.TestOutcome {
   let f: ld.Format = ld.x87();
   if (f.to_fixed(f.pow10(0), 0) != "1") {
@@ -544,10 +485,6 @@ function test_pow10(): test.TestOutcome {
   return test.assert_eq(q.to_fixed(q.pow10(30), 0), "1000000000000000000000000000000");
 }
 
-// `as_i64` is the inverse of `from_i64`: the value when it is a whole
-// number an i64 holds, None otherwise. It reads the FORMAT's value, not
-// the text — binary64 cannot tell 9007199254740993 from its neighbour —
-// and the two ends of the type are the edges it has to get right.
 function test_as_i64(): test.TestOutcome {
   let f: ld.Format = ld.x87();
   let min: i64 = 0 as i64 - 9223372036854775807 as i64 - 1 as i64;
@@ -598,15 +535,6 @@ function test_as_i64(): test.TestOutcome {
   return test.assert_eq(whole(d, "9007199254740993"), "9007199254740992");
 }
 
-// ---- the word path against the exact path ------------------------------------
-// Each operation runs on machine words when the exact result fits two of
-// them and on bigints otherwise; `add_exact`, `mul_exact` and `div_exact`
-// are the bigint path made callable. The values below are drawn from a
-// fixed LCG — the same sequence every run, so a failure names a value
-// that can be reproduced — as integers up to 64 bits and as decimals
-// with up to 64 bits of digits scaled by 10^-25 .. 10^25, which reach
-// integers, dyadic fractions, and fractions that fill every format's
-// significand.
 function next(state: u64): u64 {
   return state * (6364136223846793005 as u64) + 1442695040888963407 as u64;
 }
@@ -696,12 +624,6 @@ function test_word_and_exact_paths_agree(): test.TestOutcome {
   return paths_agree_in(ld.binary128(), "binary128");
 }
 
-// The word path of `to_fixed` — the integer nearest |v| × 10^prec, from
-// a 128-bit product and a shift — against `fixed` on the exact decimal
-// expansion, which is what `%f` is defined as. The random values cover
-// every prec a word can hold; the named ones sit on the ties and the
-// edges: a half at zero places, a value the word cannot hold, a value
-// under half a unit at the last place, and the two zeros.
 function fixed_via_expansion(f: ld.Format, v: ld.LD, prec: i32): string {
   let sign: string = "";
   if (v.neg) {
@@ -779,9 +701,6 @@ function test_to_fixed_matches_the_expansion(): test.TestOutcome {
   return test.assert_eq(q.to_fixed(q.strtold("123456789012345678901234567890").v, 0), "123456789012345678901234567890");
 }
 
-// `round_to_int` rounds the whole part on words; the modes on every
-// format, a value too small for its half to be added on words, and a
-// half at the top of a word.
 function rounded(f: ld.Format, s: string, mode: i32): string {
   return f.to_fixed(f.round_to_int(f.strtold(s).v, mode), 0);
 }
@@ -853,12 +772,9 @@ function test_round_modes_on_every_format(): test.TestOutcome {
   if (!ok(r)) {
     return r;
   }
-  // 2^62 + 1/2 does not fit 53 bits: it reads as 2^62, a whole number.
   return round_modes_in(ld.binary64(), "binary64", "4611686018427387904");
 }
 
-// `cmp_abs` settles a pair by the leading bits' exponents and then, in
-// one binade, by the words themselves; the cases sit on each of those.
 function test_cmp_abs_on_words(): test.TestOutcome {
   let q: ld.Format = ld.binary128();
   let x: ld.Format = ld.x87();
@@ -889,8 +805,6 @@ function test_cmp_abs_on_words(): test.TestOutcome {
   return test.assert_eq(ld.inf(true).cmp_abs(x.strtold("1e4000").v), 1);
 }
 
-// `dec` answers from a word while the digits fit one — an integer under
-// 2^64, or m × 5^k with room for both — and from a bigint past that.
 function test_dec_word_paths(): test.TestOutcome {
   let x: ld.Format = ld.x87();
   if (dec(x, "0.5") != "5e0") {

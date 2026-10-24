@@ -10,25 +10,6 @@ import (
 	"testing"
 )
 
-// The single-step directory and link primitives (#8883) through the SELF-HOST
-// IR path: create_dir / remove_dir / create_link / create_symlink /
-// read_link / rename, plus `umask` on the native leg.
-//
-// The self-host emits these as generated Fern runtime bodies
-// (`asmcore.rt_src_create_dir` and its six siblings), with `sysno`,
-// `at_fdcwd` and `at_removedir` carrying the whole per-target difference. Every
-// one of those is a constant that produces a plausible syscall when it is
-// wrong — AT_REMOVEDIR is 0x200 on Linux and 0x80 on Darwin, and without it
-// unlinkat asks to remove a directory as a file — so the probe checks the
-// resulting TREE and not only the return value.
-//
-// `internal/testing/e2ecompiler` is PRIMARY for a self-host lowering change
-// (docs/TEST-GATES.md): the fixpoint is self-referential and cannot see a
-// stable miscompile of a construct it does not itself use, and nothing in the
-// compiler calls these seven.
-
-// driverStderr is what a failed driver wrote on stderr — the diagnostic a
-// bare exit status hides. exec.Cmd.Output stashes it on the ExitError.
 func driverStderr(err error) []byte {
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
@@ -37,8 +18,6 @@ func driverStderr(err error) []byte {
 	return nil
 }
 
-// selfHostDirLinkSource is the probe, parameterised by the directory its paths
-// resolve against — "" for the wasm leg, which runs under its preopen.
 func selfHostDirLinkSource(prefix string, withUmask bool) string {
 	p := func(name string) string {
 		if prefix == "" {
@@ -72,8 +51,6 @@ func selfHostDirLinkSource(prefix string, withUmask bool) string {
     match (remove_dir(%[1]q)) { Ok(_) => {}, Err(_) => { return 16; } }
     match (remove_dir(%[1]q)) { Ok(_) => { return 17; }, Err(_) => {} }
 `, p("d"), p("d/nope/deep"), p("f.txt"), p("hard.txt"), p("link"), p("d/inner.txt"))
-	// rename replaces an existing destination in one step, which a
-	// create_link plus remove_file pair cannot: that pair is EEXIST here.
 	src += fmt.Sprintf(`    match (write_file(%[1]q, "moved\n")) { Ok(_) => {}, Err(_) => { return 18; } }
     match (write_file(%[2]q, "stale\n")) { Ok(_) => {}, Err(_) => { return 19; } }
     match (rename(%[1]q, %[2]q)) { Ok(_) => {}, Err(_) => { return 20; } }
@@ -95,8 +72,6 @@ func selfHostDirLinkSource(prefix string, withUmask bool) string {
 	return src
 }
 
-// selfHostDirLinkTree asserts what the probe left on disk — the half a return
-// value cannot prove.
 func selfHostDirLinkTree(t *testing.T, dir string) {
 	t.Helper()
 	if _, err := os.Lstat(filepath.Join(dir, "d")); !os.IsNotExist(err) {
@@ -164,11 +139,6 @@ func TestSelfHostDirLinkIR(t *testing.T) {
 	selfHostDirLinkTree(t, work)
 }
 
-// The wasm leg: six of the seven are real WASI calls
-// (path_create_directory / path_remove_directory / path_link /
-// path_symlink / path_readlink / path_rename), so they are exercised rather
-// than classified out. `umask` is absent — WASI has no file-mode creation mask and
-// E066 refuses the builtin on that target.
 func TestSelfHostDirLinkWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host dirlink wasm IR e2e")

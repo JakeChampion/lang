@@ -9,21 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmHostedX86CompilerMatchesNative pins #8119: the asm_run
-// driver — the self-host x86-64 compiler — built to a wasm core module by the
-// self-host CLI must compile a program to the same asm the native build of the
-// same driver emits.
-//
-// A functional-update copy of a struct shares its base's array fields, and the
-// wasm build has to count that sharing exactly as the register builds do: a
-// drop that frees the shared `string[]` fields leaves the caller reading a
-// freed and recycled buffer. On this driver that runs linear memory to 3.8 GB
-// and traps on `function main(): i32 { return 0; }`, while the x86-64-hosted
-// build of the same source stays green.
-//
-// The wasm_ir_run twin of this test (self_host_wasm_hosted_nested_arith_test.go)
-// does not reach it: that driver never builds its signature table by
-// functional update.
 func TestSelfHostWasmHostedX86CompilerMatchesNative(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds the self-host x86-64 driver twice; skipped in -short")
@@ -46,9 +31,6 @@ func TestSelfHostWasmHostedX86CompilerMatchesNative(t *testing.T) {
 	cli := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 	entry := filepath.Join(dir, "drivers/asm_run.fern")
 
-	// Both drivers come out of the same CLI binary, so the only variable is
-	// -target. Each emit peaks in the low gigabytes, so it takes a slot in the
-	// process-wide build budget the cold driver builds share.
 	compile := func(t *testing.T, out string, args ...string) string {
 		t.Helper()
 		outPath := filepath.Join(dir, out)
@@ -85,11 +67,7 @@ func TestSelfHostWasmHostedX86CompilerMatchesNative(t *testing.T) {
 	}
 
 	for _, tc := range []struct{ name, src string }{
-		// The issue's reproduction: the smallest program there is.
 		{"return-zero", "function main(): i32 { return 0; }\n"},
-		// The same failure reached a different size (1.7 GB against 3.8 GB)
-		// on a program with one local, so the volume was input-dependent
-		// garbage, not a fixed leak — worth a second point.
 		{"one-local", "function main(): i32 { let a: i32 = 1; return a; }\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

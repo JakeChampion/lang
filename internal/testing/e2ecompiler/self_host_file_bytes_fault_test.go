@@ -12,8 +12,6 @@ import (
 	"time"
 )
 
-// Replace only the WASI boundary of a compiled program. The real lowering,
-// byte-array layout, write loop, result boxing and caller ownership still run.
 func TestSelfHostFileBytesFaults(t *testing.T) {
 	for _, tool := range []string{"wasm-tools", "wasmtime"} {
 		if _, err := exec.LookPath(tool); err != nil {

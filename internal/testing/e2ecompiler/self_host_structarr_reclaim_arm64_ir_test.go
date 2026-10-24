@@ -4,8 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructArrReclaimIRArm64 runs the shared struct-array reclaim
-// cases on ARM64, exercising the typed release pipeline.
 func TestSelfHostStructArrReclaimIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -27,7 +25,6 @@ func TestSelfHostStructArrReclaimIRArm64(t *testing.T) {
 		}
 	}
 
-	// scalar-field struct[] churn — flat at detector zero.
 	run(t, `struct P { x: i32, y: i32 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -51,7 +48,6 @@ function main(): i32 {
     return 0;
 }`, "structarr-scalar-flat-arm64", 0)
 
-	// TRANSIENT ITERATION admitted — still flat.
 	run(t, `struct P { x: i32, y: i32 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -75,7 +71,6 @@ function main(): i32 {
     return 0;
 }`, "structarr-iter-flat-arm64", 0)
 
-	// ELEMENT-ALIAS exclusion — q stays valid, no over-release.
 	run(t, `struct P { x: i32, y: i32 }
 function main(): i32 {
     let bad: i32 = 0;

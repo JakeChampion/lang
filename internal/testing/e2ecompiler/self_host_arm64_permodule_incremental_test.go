@@ -9,27 +9,10 @@ import (
 	"testing"
 )
 
-// TestSelfHostPerModuleObjectCacheArm64 is the arm64 twin of
-// TestSelfHostPerModuleObjectCacheX86_64 (#3451 step 6 / #3458): the arm64
-// per-module driver's own on-disk object cache (-cache-dir). The cache KEYS are
-// backend-independent (a module's source + the signatures of what it depends on
-// don't depend on the target), so the hit/miss decisions match x86 exactly;
-// only the cached unit bytes are arm64 asm.
-//
-// The driver is built as an x86 HOST binary — its cache logic (key computation,
-// file I/O) runs on the host; only its OUTPUT is arm64 asm — so this test needs
-// no aarch64 toolchain and runs in the x86 shard.
-//
-// It does not assemble+link+run the emitted arm64 units — that path is covered
-// by TestSelfHostPerModuleArm64LeafOnlyLinkRun (the #4305 regression guard) and
-// TestSelfHostModloadPerModuleWholeCompilerArm64. What this test guards is the
-// CACHE contract: correct hit/miss invalidation and byte-identical reuse of
-// whatever arm64 asm the emitter produced.
 func TestSelfHostPerModuleObjectCacheArm64(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
 
-	// Build the arm64 driver as an x86 host binary (mirrors the fixpoint harness).
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_modload_run.fern", "arm64cachedriver")
 
 	proj := t.TempDir()
@@ -42,7 +25,6 @@ func TestSelfHostPerModuleObjectCacheArm64(t *testing.T) {
 			t.Fatalf("write leaf.fern: %v", err)
 		}
 	}
-	// @noinline: the per-module route inlines across modules, which would put leaf's body in mid's key.
 	writeLeaf("@noinline pub function leaf_val(): i32 { return 40; }\n")
 	if err := os.WriteFile(filepath.Join(proj, "mid.fern"), []byte(
 		"import \"./leaf\";\n"+
@@ -59,7 +41,6 @@ func TestSelfHostPerModuleObjectCacheArm64(t *testing.T) {
 	}
 	entry := filepath.Join(proj, "main.fern")
 
-	// The driver is an x86 host binary — run it directly.
 	drive := func(args ...string) (string, string) {
 		t.Helper()
 		cmd := runX86_64Bin(x86runner, driverBin, append([]string{entry, "-target", "arm64-linux"}, args...)...)
@@ -127,13 +108,11 @@ func TestSelfHostPerModuleObjectCacheArm64(t *testing.T) {
 		return true
 	}
 
-	// Cold: all miss, cache populated with arm64 units.
 	units, hits, misses := buildWithCache()
 	if len(hits) != 0 || !eq(misses, nsOrder...) {
 		t.Fatalf("cold: hits=%v misses=%v, want no hits and all-miss", hits, misses)
 	}
 
-	// Warm: all hit, arm64 bytes unchanged.
 	units2, hits2, misses2 := buildWithCache()
 	if !eq(hits2, nsOrder...) || len(misses2) != 0 {
 		t.Fatalf("warm: hits=%v misses=%v, want all-hit and no miss", hits2, misses2)
@@ -144,7 +123,6 @@ func TestSelfHostPerModuleObjectCacheArm64(t *testing.T) {
 		}
 	}
 
-	// Body-only edit: only leaf re-emits; mid/__entry served byte-identically.
 	writeLeaf("@noinline pub function leaf_val(): i32 { return 41; }\n")
 	unitsA, hitsA, missesA := buildWithCache()
 	if !eq(missesA, "leaf") || !eq(hitsA, "mid", "__entry") {
@@ -156,10 +134,6 @@ func TestSelfHostPerModuleObjectCacheArm64(t *testing.T) {
 		}
 	}
 
-	// Signature edit (i32 -> i64): everything in leaf's dependency closure
-	// re-emits. mid's arm64 call-site codegen depends on leaf's return type
-	// directly; __entry reaches it transitively and the key folds the closure,
-	// which is backend-independent like the rest of the key.
 	writeLeaf("@noinline pub function leaf_val(): i64 { return 41i64; }\n")
 	_, hitsB, missesB := buildWithCache()
 	if !eq(missesB, "leaf", "mid", "__entry") || len(hitsB) != 0 {

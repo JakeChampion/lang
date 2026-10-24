@@ -13,10 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// `serve.Config { trace: true }` through std/serve's loop: a request
-// carrying a `traceparent` is handed a span continuing that trace under a
-// span id of its own, its `tracestate` kept; one without starts a trace.
-// The interpreter and the x86-64 backend.
 func TestTraceServeInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := writeTraceServeSource(t)

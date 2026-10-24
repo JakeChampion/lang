@@ -1,20 +1,3 @@
-// The Fern TLS client scripts/net-tls-interop runs against OpenSSL's
-// s_server and Go's crypto/tls server: one line per case, the same lines
-// whichever server answers, so the script compares them with one
-// expected text. Every server answers GET /hello with "hello".
-//
-//   get      std/fetch over HTTPS, the roots from SSL_CERT_FILE
-//   socket   a std/tls/client session on a socket of its own, with ALPN
-//   resume   another, resumed from the ticket the first was issued
-//   mtls     the server requiring a client certificate, shown one
-//   nocert   the same server, shown none, which it refuses
-//   bulk     the 16 MiB body of /bulk over std/fetch, with its time, when
-//            BULK is set: not every server has one to give
-//   handshakes  twenty connections, with their time
-//
-// A body is shown by its first line: the whole of a hello, the heading of
-// a page of connection details. The protocol ALPN agreed on follows the
-// socket cases' answers when there is one.
 import "std/fetch";
 import "std/http";
 import "std/string";
@@ -51,8 +34,6 @@ function port_of(name: string): i32 {
   return 0;
 }
 
-// first_line is the first line of a body with something on it: the whole
-// of a hello, the heading of a page of connection details.
 function first_line(body: string): string {
   let lines: string[] = body.lines_non_empty();
   if (lines.len() == 0) {
@@ -61,7 +42,6 @@ function first_line(body: string): string {
   return lines[0].trim();
 }
 
-// The status and body of `answer`, or the error.
 function line(answer: Result[HttpResponse, fetch.FetchError]): string {
   match (answer) {
     Ok(resp) => {
@@ -111,8 +91,6 @@ function identity_from(cert_path: string, key_path: string): Result[identity.Ide
   return Err("identity");
 }
 
-// answered is the status on the response's first line and the first line
-// of its body.
 function answered(raw: u8[]): string {
   let text: string = string_from_bytes_unchecked(raw);
   if (!text.starts_with("HTTP/1.")) {
@@ -127,8 +105,6 @@ function answered(raw: u8[]): string {
   return code + " " + first_line(body);
 }
 
-// exchange sends the request and reads the response to the server's
-// close.
 function exchange(conn: client.Connection): Result[(client.Connection, u8[]), tls.TlsError] {
   let c: client.Connection = conn.send("GET /hello HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n".bytes())?;
   let out: u8[] = [];
@@ -146,7 +122,6 @@ function exchange(conn: client.Connection): Result[(client.Connection, u8[]), tl
   return Ok((c, out));
 }
 
-// over is one request on a session of its own at `port`.
 function over(cfg: client.Config, port: i32): Result[Outcome, tls.TlsError] {
   let conn: client.Connection = client.connect("localhost", port, cfg, time.duration_seconds(10 as i64))?;
   let (c, raw) = exchange(conn)?;
@@ -180,7 +155,6 @@ function millis_since(started: Instant): string {
   return time.instant_now().duration_since(started).as_millis().to_string();
 }
 
-// bulk is the body of /bulk read whole, and the time that took.
 function bulk(base: string): string {
   let started: Instant = time.instant_now();
   let roomy: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 17 * 1048576 };
@@ -195,7 +169,6 @@ function bulk(base: string): string {
   return "";
 }
 
-// handshakes is twenty full handshakes in turn, and the time they took.
 function handshakes(cfg: client.Config, port: i32): string {
   let started: Instant = time.instant_now();
   let n: i32 = 0;

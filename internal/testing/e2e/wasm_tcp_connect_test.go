@@ -9,19 +9,9 @@ import (
 	"time"
 )
 
-// The wasm outbound TCP client: tcp_connect (the wasm analog of the
-// native builtin) drives wasi:sockets/tcp start-connect / finish-connect
-// through the composer's connect instance-type variant. A Go upstream
-// listens; the wasm guest connects to it, sends a request, reads the
-// reply, and prints it. The whole point is the OUTBOUND direction —
-// today the wasm TCP path was server-only — so a successful round-trip
-// proves connect + the connection's input/output streams work end to
-// end under `wasmtime -S inherit-network`.
 func TestWasmTcpConnectOutbound(t *testing.T) {
 	skipIfPreview2Missing(t)
 
-	// Go upstream: accept one connection, drain the request, reply with
-	// a known body, close.
 	const body = "hello-from-upstream\n"
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -38,12 +28,10 @@ func TestWasmTcpConnectOutbound(t *testing.T) {
 		defer conn.Close()
 		buf := make([]byte, 256)
 		_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
-		_, _ = conn.Read(buf) // drain the guest's request
+		_, _ = conn.Read(buf)
 		_, _ = conn.Write([]byte(body))
 	}()
 
-	// Guest: read PORT from env, connect to 127.0.0.1:PORT, send a
-	// request, read the reply, print it.
 	src := `import "std/net";
 
 function port_from_env(): i32 {

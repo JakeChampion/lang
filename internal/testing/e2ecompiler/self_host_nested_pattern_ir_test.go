@@ -7,20 +7,6 @@ import (
 	"testing"
 )
 
-// Nested match patterns on the self-host compiler (#5353). The self-host
-// parser gained the same parse-time desugar as the native front-end
-// (#5389): a nested variant sub-pattern (`Some(Ok(n))`) is rewritten into
-// a flat outer arm whose body re-matches the payload on an inner `match`
-// (desugar_nested_arms in parser.fern), so the checker and codegen see
-// only flat arms. These cases route each program through the self-host
-// x86-64 driver (asm_run.fern) and assert the compiled binary agrees with
-// the interpreter oracle — the desugared Option/Result matches lower via
-// whichever path the driver picks (the IR path bails on Option/Result
-// scrutinees, which is expected and still correct).
-//
-// These cases nest at a single payload slot (`Some(Ok(n))`), including deep
-// nesting, flat siblings, guards, and the outer-`_` fallthrough; multi-payload
-// nesting is in conformance/cases/nested_pattern_*.
 var selfHostNestedPatternCases = []struct {
 	name string
 	main string
@@ -80,9 +66,6 @@ function main(): i32 { return g(Some(Err(9))); }`},
 function main(): i32 { return g(Some(Ok(5))); }`},
 }
 
-// TestSelfHostNestedPatternX86_64 builds the self-host x86-64 driver and
-// checks each nested-pattern program's compiled exit code against the
-// interpreter oracle.
 func TestSelfHostNestedPatternX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)

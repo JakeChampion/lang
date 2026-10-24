@@ -1,17 +1,10 @@
-// std/http/grpc — the gRPC wire protocol over HTTP/2
-// (github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md), the parts a
-// server written on std/serve needs: the length-prefixed message framing
-// of a request or response body, the status codes and the trailers that
-// carry one, the `grpc-timeout` a request arrives with, and what makes a
-// request gRPC's. Messages are bytes here; std/protobuf reads and writes
-// them.
+// This module reads and writes gRPC messages, status codes, and metadata over HTTP/2.
 
 import "std/headers";
 import "std/http";
 import "std/string";
 import "std/time";
 
-// Status codes (PROTOCOL-HTTP2 §Status codes, statuscodes.md).
 pub const OK: i32 = 0;
 
 pub const CANCELLED: i32 = 1;
@@ -46,8 +39,6 @@ pub const DATA_LOSS: i32 = 15;
 
 pub const UNAUTHENTICATED: i32 = 16;
 
-// `is_grpc(req)` — whether the request is a gRPC call: its content-type is
-// `application/grpc`, alone or with a `+proto` style suffix or parameters.
 pub function is_grpc(req: HttpRequest): boolean {
   match (req.headers.get("content-type")) {
     Some(ct) => {
@@ -64,10 +55,6 @@ pub function is_grpc(req: HttpRequest): boolean {
   return false;
 }
 
-// `timeout(headers)` — the request's `grpc-timeout`, a count of at most
-// eight digits and a unit (H hours, M minutes, S seconds, m milliseconds,
-// u microseconds, n nanoseconds) as a Duration; None without one, or for
-// one that is not of that shape.
 pub function timeout(h: HeaderMap): Option[Duration] {
   match (h.get("grpc-timeout")) {
     Some(v) => {
@@ -116,19 +103,12 @@ function __unit(unit: i32, n: i64): Option[Duration] {
   return None;
 }
 
-// `frame(message)` — a message as the body carries it: a compressed flag
-// of 0, its length as four big-endian bytes, then the message.
 pub function frame(message: u8[]): u8[] {
   let n: i32 = message.len();
   let head: u8[] = [0 as u8, (n >> 24 & 255) as u8, (n >> 16 & 255) as u8, (n >> 8 & 255) as u8, (n & 255) as u8];
   return head.concat(message);
 }
 
-// `next_message(buffered)` — the first whole message in the bytes buffered
-// from a body and what follows it, `Some((message, rest))`; None while the
-// buffer holds no whole message yet. Err for a message marked compressed,
-// which this server does not take (answer UNIMPLEMENTED), or a length past
-// the four bytes' sign bit.
 pub function next_message(buffered: u8[]): Result[Option[(u8[], u8[])], string] {
   if (buffered.len() < 5) {
     return Ok(None);
@@ -157,15 +137,10 @@ pub function next_message(buffered: u8[]): Result[Option[(u8[], u8[])], string] 
   return Ok(Some((message, rest)));
 }
 
-// `headers()` — the headers every gRPC response carries: a 200 with
-// `content-type: application/grpc`.
 pub function headers(): HeaderMap {
   return headers.header_map_new().append("Content-Type", "application/grpc");
 }
 
-// `status(code, message)` — the trailers that end a call: `grpc-status`
-// and, for a message, `grpc-message` percent-encoded as the protocol
-// asks (spaces and printable ASCII kept, the rest as %XX of the UTF-8).
 pub function status(code: i32, message: string): HeaderMap {
   let out: HeaderMap = headers.header_map_new().append("Grpc-Status", code.to_string());
   if (message.len() == 0) {
@@ -192,10 +167,6 @@ function __hex_byte(c: i32): string {
   return string_from_bytes_unchecked([digits[c >> 4 & 15], digits[c & 15]]);
 }
 
-// `response(messages, code, message)` — a whole response: the messages
-// framed in order as the body, the headers above and the status as
-// trailers; `error(code, message)` answers a call with no message, the
-// status alone, which the protocol allows as a trailers-only response.
 pub function response(messages: u8[][], code: i32, message: string): HttpResponse {
   let body: u8[] = [];
   for m in messages {

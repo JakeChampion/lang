@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// highByteProg prints the length and each byte of a string literal whose
-// UTF-8 spans lead and continuation bytes up to 0xF4, so any byte the pipeline
-// mangles shows up as both a wrong value and a wrong length.
 const highByteProg = `import "std/i32";
 function main(): i32 {
     let s: string = "\x00\x41\x7f\u{80}\u{e9}\u{FFFE}\u{10FFFF}";
@@ -24,23 +21,6 @@ function main(): i32 {
 
 const highByteWant = "14:0 65 127 194 128 195 169 239 191 190 244 143 191 191 \n"
 
-// TestHighByteStringLiteralNativeAssembler pins that a string literal carrying
-// bytes >= 0x80 survives the DEFAULT compile path — the in-process pure-Go
-// assembler that `cmd/fern -target <x86-64|arm64>` uses with no external
-// toolchain.
-//
-// It did not. The code generators write those bytes into the `.asciz` operand
-// raw (escapeForGAS only escapes quotes, backslash and control bytes), which is
-// exactly what GNU as wants; but the in-process assembler decoded the operand
-// with strconv.Unquote, which treats a quoted string as UTF-8 TEXT. A lone 0x80
-// is invalid UTF-8, so it came back as U+FFFD's three bytes (ef bf bd) — with
-// no error — corrupting the data and desynchronising it from the .4byte length
-// emitted beside it. The gcc fallback path assembled the same asm correctly, so
-// the two disagreed silently, and only programs with non-ASCII literals could
-// see it.
-//
-// The interpreter is the reference: it never routes literals through an
-// assembler, so its bytes are the source of truth.
 func TestHighByteStringLiteralNativeAssembler(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -64,8 +44,6 @@ func TestHighByteStringLiteralNativeAssembler(t *testing.T) {
 			t.Skip("no way to run x86-64 binaries on this host")
 		}
 		outBin := filepath.Join(dir, "prog.x86")
-		// No -cc: the default in-process assembler + linker, the path the
-		// bug lived on.
 		if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", outBin, src).CombinedOutput(); err != nil {
 			t.Fatalf("x86-64 build: %v\n%s", err, o)
 		}

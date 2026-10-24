@@ -2,12 +2,7 @@ package e2ecompiler
 
 import "testing"
 
-// enumMapShakeSrcs each hold a map only in an enum variant the program never
-// builds, so the tree shaker has to keep core/map's routed helpers for the
-// enum's drop glue. Dropping them, the x86-64 assembler refused the module for
-// calling an unresolved map drop helper.
 var enumMapShakeSrcs = []struct{ name, src string }{
-	// `J` is named only through a variant that holds no map (#10772).
 	{"direct", `import "std/i32";
 enum J { S(string), O(Map[string, J]) }
 function main(): i32 {
@@ -16,8 +11,6 @@ function main(): i32 {
     return 0;
 }
 `},
-	// `Inner` holds the map and is named nowhere: only `Outer`'s drop reaches
-	// it, through the `W` payload (fernsmith printable seed 797).
 	{"nested", `import "std/i32";
 import "core/map";
 enum Inner { V0, V1(boolean, Map[i32, i32]) }

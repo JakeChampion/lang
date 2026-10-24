@@ -2,15 +2,6 @@ package e2e
 
 import "testing"
 
-// A local bound to a projection THROUGH an array element — `ps[i].steps`,
-// `grid[i][j]`, `fs[f].graph.blocks[0].insts[i]` — takes the binding's alias
-// inc like any field or element read, but the free analysis only credited a
-// chain of struct / tuple fields back to a slot, so an indexed step left the
-// binding borrow-tainted. It then had no per-iteration release and a flat exit
-// dec, and every element it ever held leaked with everything reachable from it.
-// Each program checks its own answer and carries `__rc_underflow_count()` in
-// its exit, so crediting a binding that does not own its count would show as
-// an over-release rather than a clean census.
 const indexedProjectionPrelude = `struct St { block: i32, drops: i32[] }
 struct Pl { ok: boolean, steps: St[] }
 function mk(n: i32): Pl[] {
@@ -105,8 +96,6 @@ function walk(fs: F[], at: i32[]): i32 {
 }
 function main(): i32 { let fs: F[] = mk(10); return walk(fs, [0]) - 2800 + __rc_underflow_count(); }
 `},
-	// The binding owns its count: replacing the element it was read from must
-	// not take the array it holds down with it.
 	{"outlives-replaced-element", indexedProjectionPrelude + `function main(): i32 {
     let ps: Pl[] = mk(3);
     let st: St[] = ps[0].steps;

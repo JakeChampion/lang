@@ -1,57 +1,3 @@
-// stat.fern — GNU-compatible `stat`.
-//
-//   stat [OPTION]... FILE...
-//
-// Two programs under one name, chosen by `-f`: the status of a FILE,
-// and the status of the FILE SYSTEM it resolves on. Each has its own
-// alphabet of `%` directives and they do not overlap — `%t` is the
-// major device number of `st_rdev` in one and the file system's magic
-// number in the other, `%n` is the only letter meaning the same thing
-// in both.
-//
-// The format grammar is the substance. A directive is
-//
-//     % [flags] [width] [.precision] [H|L] conversion
-//
-// with the flags `#`, `0`, `-`, `+`, ` `, `'` and `I`, a decimal width
-// and a decimal precision, and `H` / `L` selecting the major or minor
-// half of a device number. Each conversion is one of three kinds and
-// takes its modifiers from C's printf for that kind: a string honours
-// width and precision and ignores `0` and `#`; an unsigned number
-// honours width, precision and `0` and ignores `+` and a space; the
-// four epoch-seconds conversions are SIGNED and a precision on one of
-// them is the fractional part rather than a minimum digit count —
-// `%.3Y` of a timespec is `981173106.123`, and of a PRE-epoch one it
-// carries the borrow, so (-315521756 s, 500000000 ns) prints
-// `-315521755.500`. A precision of zero is not a fraction of no digits
-// but the raw seconds, which is `%Y` again.
-//
-// An unknown conversion prints `?` and SWALLOWS its byte: `%q` is `?`
-// and `[%5]` is `[?`, the `]` having been the conversion. Under `H` or
-// `L` it does not — those two only stand in front of `d` and `r`, and
-// anything else gives its byte back as literal text, so `%Hx` is `?`
-// then an `x`. The one directive that is fatal is `%%` wearing a
-// modifier: `stat -c '[%5%]' f` writes its `[`, then
-// `stat: '%5%': invalid directive`, and exits 1.
-//
-// `--format` and `--printf` are the same option with two differences,
-// both measured: `--format` writes a newline after each operand and
-// takes its FORMAT literally, `--printf` writes none and reads
-// backslash escapes (`\a \b \e \f \n \r \t \v \\ \" \NNN \xHH`, with
-// a warning and the backslash dropped for anything else, `\'`
-// included).
-//
-// Filesystem names come from the kernel on Darwin. Linux reports a magic
-// number, translated through `lib/fstype.fern` to match GNU's names.
-//
-// `%C` reads a FILE's SELinux context the way a libselinux build of GNU
-// does: the `security.selinux` attribute, so a kernel without SELinux
-// answers ENODATA. A GNU built `--without-selinux` answers ENOTSUP from
-// gnulib's stub instead, whatever the attribute holds.
-//
-// The birth time (`%w`, `%W`) is FileStat's own: statx(2) on Linux,
-// st_birthtimespec on Darwin, and zero where the filesystem records none,
-// which is when GNU prints `-` and 0.
 import "std/string";
 import "std/array";
 import "std/i64";
@@ -149,9 +95,6 @@ function help_text(): string {
   return out;
 }
 
-// GNU 9.12's built-in file layouts. `--terse` adds `%C` where SELinux is
-// enabled, and the default block a `Context:` line; a character or block
-// device's `Device:` line also carries its `Device type:`.
 function file_terse_format(context: boolean): string {
   if (context) {
     return "%n %s %b %f %u %g %D %i %h %t %T %X %Y %Z %W %o %C\n";
@@ -174,7 +117,6 @@ function file_default_format(device: boolean, context: boolean): string {
   return f + "Access: %x\nModify: %y\nChange: %z\n Birth: %w\n";
 }
 
-// GNU 9.12's two built-in `--file-system` layouts.
 function fs_terse_format(): string {
   return "%Qn %i %l %t %s %S %b %f %a %c %d\n";
 }
@@ -187,7 +129,6 @@ function fs_default_format(): string {
   return f + "Inodes: Total: %-10c Free: %d\n";
 }
 
-// ---- options ----------------------------------------------------------------
 function opt_dereference(): i32 {
   return 1;
 }
@@ -212,11 +153,6 @@ function opt_cached(): i32 {
   return 6;
 }
 
-// ---- the parsed directive ---------------------------------------------------
-// One `%` directive. `mod` is 0, `H`, `L` or `Q`; `conv` is the
-// conversion byte. `raw` records that the directive carried ANY flag,
-// width or precision, which is what keeps a `%%` with modifiers from
-// being the literal `%` a bare `%%` is.
 struct Directive {
   minus: boolean,
   zero: boolean,
@@ -227,42 +163,22 @@ struct Directive {
   prec: i32,
   has_prec: boolean,
   raw: boolean,
-  // How many flag characters other than `-` the directive carried,
-  // occurrences and not distinct letters. Nothing reads it but
-  // `link_tail`, whose rule is a count.
   plain_flags: i32,
   mod: i32,
   conv: i32,
-  // `text` is the directive as written, for the `invalid directive`
-  // diagnostic, which quotes it verbatim.
   text: string,
 }
 
-// The widest field this implementation will pad to. GNU hands the
-// width straight to `sprintf` into a buffer it sized from the width
-// itself, and `stat -c '%2147483646s' f` SEGFAULTS on coreutils 9.4 —
-// measured, not guessed — so there is no parity to hold past the point
-// where the reference stops being a program. A width that cannot
-// plausibly be wanted is clamped rather than allocated.
 function max_width(): i32 {
   return 1048576;
 }
 
-// ---- the format scanner -----------------------------------------------------
-// A piece of a scanned format: literal bytes, or a directive.
-// A literal piece keeps the format text as written; `escapes` says
-// `--printf` reads it, so its backslashes are resolved as it prints.
 struct Piece { literal: u8[], dir: Directive, is_dir: boolean, escapes: boolean }
 
 function is_digit_byte(b: i32): boolean {
   return b >= 48 && b <= 57;
 }
 
-// `scan(fmt)` — the format as a list of pieces. A `%` whose directive
-// is `%%` wearing a modifier is fatal here, before any operand is
-// looked at, which is where GNU reports it too. Under `--printf` a
-// backslash takes the byte after it into the literal, so `\%n` and
-// `\045n` print `%n` rather than a name.
 function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
   let out: Piece[] = [];
   let lit: u8[] = [];
@@ -278,7 +194,6 @@ function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
       }
       continue;
     }
-    // A trailing `%` is a literal `%`.
     if (i + 1 >= fmt.len()) {
       lit = lit.append(37 as u8);
       i = i + 1;
@@ -303,8 +218,6 @@ function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
       } else if (f == 32) {
         d = Directive { ...d, space: true };
       } else if (f == 39 || f == 73) {} else {
-        // `'` (thousands grouping) and `I` (alternative digits) are
-        // accepted and do nothing in the C locale, as they do in glibc.
         break;
       }
       d = Directive { ...d, raw: true, plain_flags: d.plain_flags + 1 };
@@ -347,8 +260,6 @@ function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
       }
     }
     if (i >= fmt.len()) {
-      // `%` plus modifiers and nothing to apply them to: the unknown
-      // directive, with no byte left to resume on.
       out = flush_literal(out, lit, escapes);
       lit = [];
       out = out.append(Piece { literal: [], dir: Directive { ...d, conv: 0, mod: 0, text: "" }, is_dir: true, escapes: false });
@@ -358,12 +269,6 @@ function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
     i = i + 1;
     let mod_ok: boolean = d.mod == 81 && conv == 110 || (d.mod == 72 || d.mod == 76) && !fs_mode && (conv == 100 || conv == 114);
     if (d.mod != 0 && !mod_ok) {
-      // `H` and `L` select a half of a device number and only `d` and
-      // `r` have halves — and `-f` has no device numbers at all; `Q`
-      // quotes a name and only `n` is one, in either mode. The byte
-      // that followed is NOT consumed: `%Hx` is `?` and then a
-      // literal `x`, where a plain unknown conversion swallows its own
-      // byte (`%q` is `?`, not `?q`).
       i = i - 1;
       out = flush_literal(out, lit, escapes);
       lit = [];
@@ -371,7 +276,6 @@ function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
       continue;
     }
     d = Directive { ...d, conv: conv, text: "" };
-    // Only a percent directive uses this diagnostic, and its spelling is ASCII.
     if (conv == 37) {
       d = Directive { ...d, text: slice_unchecked(fmt, start, i) + "" };
     }
@@ -394,7 +298,6 @@ function flush_literal(out: Piece[], lit: u8[], escapes: boolean): Piece[] {
   return out.append(Piece { literal: lit, dir: empty, is_dir: false, escapes: escapes });
 }
 
-// ---- backslash escapes (--printf only) --------------------------------------
 function hex_value(b: i32): i32 {
   if (b >= 48 && b <= 57) {
     return b - 48;
@@ -408,13 +311,6 @@ function hex_value(b: i32): i32 {
   return 0 - 1;
 }
 
-// `put_unescaped(o, s)` — `s` written through the backslash table
-// `--printf` reads. An escape the table does not hold is a warning
-// naming it and the backslash dropped, which is GNU's `warning:
-// unrecognized escape '\q'` followed by a literal `q`; a backslash at
-// the end of the format is its own warning and stays. GNU resolves
-// the escapes as it prints each operand, so a warning repeats per
-// operand and lands after the text written before it.
 function put_unescaped(o: io_buffered.BufWriter, s: u8[]): io_buffered.BufWriter {
   let w: io_buffered.BufWriter = o;
   let out: u8[] = [];
@@ -456,7 +352,6 @@ function put_unescaped(o: io_buffered.BufWriter, s: u8[]): io_buffered.BufWriter
     } else if (c == 34) {
       out = out.append(34 as u8);
     } else if (c >= 48 && c <= 55) {
-      // Up to three octal digits, wrapping at a byte: `\777` is 0xff.
       let v: i32 = c - 48;
       let n: i32 = 1;
       while (n < 3 && i < s.len() && s[i] as i32 >= 48 && s[i] as i32 <= 55) {
@@ -466,7 +361,6 @@ function put_unescaped(o: io_buffered.BufWriter, s: u8[]): io_buffered.BufWriter
       }
       out = out.append((v % 256) as u8);
     } else if (c == 120) {
-      // `\x` wants at least one hex digit and takes at most two.
       if (i >= s.len() || hex_value(s[i] as i32) < 0) {
         w = gnu.error_out(gnu.check(w.write_bytes(out)), "warning: unrecognized escape '\\x'");
         out = [];
@@ -489,7 +383,6 @@ function put_unescaped(o: io_buffered.BufWriter, s: u8[]): io_buffered.BufWriter
   return gnu.check(w.write_bytes(out));
 }
 
-// ---- padding ----------------------------------------------------------------
 function spaces(n: i32): string {
   let out: u8[] = [];
   let i: i32 = 0;
@@ -510,8 +403,6 @@ function zeros(n: i32): string {
   return string_from_bytes_unchecked(out);
 }
 
-// A string conversion: precision truncates, width pads, `-` pads on
-// the right. `0` and `#` do nothing, as they do to a C `%s`.
 function out_string(d: Directive, s: string): u8[] {
   let n: i32 = s.len();
   if (d.has_prec && d.prec < n) {
@@ -521,7 +412,6 @@ function out_string(d: Directive, s: string): u8[] {
   if (!d.minus && d.width > n) {
     buf_push(h, spaces(d.width - n));
   }
-  // printf precision is a byte limit and may stop inside a UTF-8 scalar.
   buf_push_range(h, s, 0, n);
   if (d.minus && d.width > n) {
     buf_push(h, spaces(d.width - n));
@@ -531,9 +421,6 @@ function out_string(d: Directive, s: string): u8[] {
   return out;
 }
 
-// A number already rendered in its base, with `sign` ("", "-", "+" or
-// " ") split off so a `0` fill lands after it. Precision is a minimum
-// digit count and suppresses the `0` fill, as in C.
 function out_digits(d: Directive, sign: string, digits: string): string {
   let body: string = digits;
   if (d.has_prec && d.prec > body.len()) {
@@ -554,8 +441,6 @@ function out_digits(d: Directive, sign: string, digits: string): string {
 }
 
 function out_unsigned(d: Directive, v: u64): string {
-  // `%.0u` of zero writes nothing, which is C's rule for a zero
-  // precision and reachable through `%.0s` on an empty file.
   if (d.has_prec && d.prec == 0 && v == 0 as u64) {
     return out_digits(d, "", "");
   }
@@ -631,8 +516,6 @@ function octal_digits(v: u64): string {
   return string_from_bytes_unchecked(rev);
 }
 
-// `%a` is a C `%o`, so `#` forces a leading zero — on a value that
-// already starts with one (and on zero itself) it changes nothing.
 function out_octal(d: Directive, v: u64): string {
   let body: string = octal_digits(v);
   if (d.has_prec && d.prec == 0 && v == 0 as u64) {
@@ -644,9 +527,6 @@ function out_octal(d: Directive, v: u64): string {
   return out_digits(d, "", body);
 }
 
-// ---- device numbers ---------------------------------------------------------
-// Linux splits both components across its 64-bit device number. Darwin's
-// contiguous fields are selected at the rendering sites below.
 function dev_major(dev: u64): u64 {
   return dev >> 8 as u64 & 0xfff as u64 | dev >> 32 as u64 & 0xfffff000 as u64;
 }
@@ -655,7 +535,6 @@ function dev_minor(dev: u64): u64 {
   return dev & 0xff as u64 | dev >> 12 as u64 & 0xffffff00 as u64;
 }
 
-// ---- timestamps -------------------------------------------------------------
 function pad2(n: i32): string {
   if (n < 10) {
     return "0" + n.to_string();
@@ -685,8 +564,6 @@ function pad9(n: i64): string {
   return s;
 }
 
-// `%x` / `%y` / `%z`: `nstrftime("%Y-%m-%d %H:%M:%S.%N %z")` in the
-// LOCAL zone, which is `lib/tz.fern`'s tzset.
 function human_time(z: tz.Zone, sec: i64, nsec: i64): string {
   let dt: DateTime = z.civil(sec);
   let off: i32 = z.offset_at(sec);
@@ -699,9 +576,6 @@ function human_time(z: tz.Zone, sec: i64, nsec: i64): string {
   return pad_year(dt.date.year) + "-" + pad2(dt.date.month) + "-" + pad2(dt.date.day) + " " + pad2(dt.time.hour) + ":" + pad2(dt.time.minute) + ":" + pad2(dt.time.second) + "." + pad9(nsec) + " " + sign + pad2(mag / 3600) + pad2(mag / 60 % 60);
 }
 
-// `%X` / `%Y` / `%Z` with a precision: the whole timespec as one
-// signed decimal. A negative second with a non-zero remainder carries,
-// so (-315521755, 250000000) is -315521754.750 and not -315521755.250.
 function epoch_time(d: Directive, sec: i64, nsec: i64): string {
   if (!d.has_prec || d.prec == 0) {
     return out_signed(d, sec);
@@ -727,13 +601,9 @@ function epoch_time(d: Directive, sec: i64, nsec: i64): string {
     f = f + "0";
   }
   let digits: string = whole.to_string() + "." + (slice_unchecked(f, 0, d.prec) + "");
-  // The precision is spent on the fraction, so what is left is a plain
-  // width fill — a `0` flag pads after the sign, as it does for a
-  // number with no precision at all.
   return out_digits(Directive { ...d, has_prec: false }, sign, digits);
 }
 
-// ---- mount point ------------------------------------------------------------
 function parent_of(p: string): string {
   if (p == "/") {
     return "/";
@@ -759,10 +629,6 @@ function dev_of(path: string): Option[i64] {
   }
 }
 
-// `%m` — the mount point the file sits on. GNU canonicalizes the
-// operand first (`stat -c '%m' -` is `failed to canonicalize '-'`),
-// then walks up from the containing directory while `st_dev` stays
-// the same; the last path that still matched is the answer.
 function mount_point(name: string, st: FileStat): Option[string] {
   let real: string = "";
   match (canon.canonicalize(name, canon.existing(), false)) {
@@ -795,17 +661,11 @@ function mount_point(name: string, st: FileStat): Option[string] {
   return Some("/");
 }
 
-// ---- what a directive is answered from --------------------------------------
-// The record one operand contributes, gathered once so a format naming
-// a field twice costs one syscall; `owner` and `group` are the names for
-// `%U` / `%G`, resolved through the run's `pwdb.Names` when the format
-// asks for them and the digits otherwise.
 struct Item { name: string, st: FileStat, link: string, is_link: boolean, deref: boolean, owner: string, group: string }
 
 struct FsItem { name: string, fs: FsStat }
 
 function darwin_no_birth(st: FileStat): boolean {
-  // gnulib treats a zero second or an invalid fraction as unknown on BSD.
   return st.btime == 0 as i64 || st.btime_nsec < 0 as i64 || st.btime_nsec >= 1000000000 as i64;
 }
 
@@ -817,17 +677,8 @@ function fsstat_zero(): FsStat {
   return FsStat { block_size: 0 as i64, blocks: 0 as i64, blocks_free: 0 as i64, blocks_avail: 0 as i64, files: 0 as i64, files_free: 0 as i64, name_max: 0 as i64, path_max: 0 as i64, fs_type: 0 as i64, fsid: 0 as i64, frag_size: 0 as i64, fs_type_name: "" };
 }
 
-// ---- rendering one directive ------------------------------------------------
-// What one directive contributes. `failed` is raised by the directives
-// that can fail on their own — `%m` and `%C` — which print `?`,
-// say so on stderr, and cost the exit status without stopping the run.
-// `RenderNumber` is an unsigned number with no width or precision, which
-// goes into the output in decimal without a string of its own.
 enum Rendered { RenderText(string, boolean), RenderBytes(u8[], boolean), RenderNumber(u64) }
 
-// The conversion was not one of this mode's. The scanner has already
-// decided which byte the scan resumes on, so nothing but the `?` is
-// left to write.
 function unknown_rendered(): Rendered {
   return RenderText("?", false);
 }
@@ -847,18 +698,12 @@ function ok_number(d: Directive, v: u64): Rendered {
   return ok_rendered(out_unsigned(d, v));
 }
 
-// The style `%N` and `%Qn` quote in. It is read from the environment the
-// first time one of them is PRINTED and not before, so a format that
-// never reaches one never warns about a bad QUOTING_STYLE, and a format
-// holding two warns once.
 struct Quoting { style: i32, ready: boolean }
 
 function quoting_new(): Quoting {
   return Quoting { style: 0, ready: false };
 }
 
-// stat falls back on shell-escape rather than gnulib's own default, so
-// a name needing no quotes is printed without them.
 function quoting_ready(q: Quoting): Quoting {
   if (q.ready) {
     return q;
@@ -870,8 +715,6 @@ function render_file(d: Directive, it: Item, z: tz.Zone, qi: Quoting): (Rendered
   let st: FileStat = it.st;
   let c: i32 = d.conv;
   if (d.mod != 0 && d.mod != 81) {
-    // The scanner only lets `H` and `L` through in front of `d` and
-    // `r`, so the half is all that is left to choose.
     let dev: u64 = st.dev as u64;
     if (c == 114) {
       dev = st.rdev as u64;
@@ -1004,8 +847,6 @@ function render_file(d: Directive, it: Item, z: tz.Zone, qi: Quoting): (Rendered
   if (c == 90) {
     return (ok_rendered(epoch_time(d, st.ctime, st.ctime_nsec)), qi);
   }
-  // The birth time; zero is a filesystem that records none, which GNU
-  // prints as `-` and, through %W, as 0.
   if (c == 119) {
     if (target_os() == "darwin") {
       if (darwin_no_birth(st)) {
@@ -1028,10 +869,6 @@ function render_file(d: Directive, it: Item, z: tz.Zone, qi: Quoting): (Rendered
   return (unknown_rendered(), qi);
 }
 
-// `%N`. The name is quoted in the style QUOTING_STYLE chose and the
-// width and precision then apply to THAT, so `%12N` pads the quotes
-// along with the name and `%.3N` can cut a quote off. A link's target
-// is quoted and padded the same way, separately.
 function quoted_name(d: Directive, it: Item, style: i32): u8[] {
   let name: u8[] = out_string(d, gnu.quote_style(it.name, style));
   if (!it.is_link) {
@@ -1048,16 +885,6 @@ function quoted_name(d: Directive, it: Item, style: i32): u8[] {
   return out;
 }
 
-// GNU writes a stray `s` after a symlink's target when `%N` carries
-// exactly ONE flag character other than `-`: `%#N`, `%+N`, `%0N`, `% N`,
-// `%'N`, `%IN`, `%#-N` and `%#.5N` all show it, and `%-N`, `%##N`, `%#+N`,
-// `%###N` and a bare width or precision do not. It is the `s` out_string
-// writes over the conversion, reached one byte past where GNU meant to —
-// glibc's own printf does nothing of the kind with any of these formats,
-// so it is GNU's buffer and not the C library's. Measured across the flag
-// space rather than derived; the corpus pins the zero-, one-, two- and
-// three-flag shapes, so a GNU that stops doing it turns that gate red
-// rather than going unnoticed.
 function link_tail(d: Directive): string {
   if (d.plain_flags == 1) {
     return "s";
@@ -1092,7 +919,6 @@ function render_fs(d: Directive, it: FsItem, qi: Quoting): (Rendered, Quoting) {
   }
   if (c == 108) {
     if (target_os() == "darwin") {
-      // GNU reads this from statfs, whose Darwin record has no name limit.
       return (ok_rendered_bytes(out_string(d, "?")), qi);
     }
     return (ok_number(d, fs.name_max as u64), qi);
@@ -1125,7 +951,6 @@ function render_fs(d: Directive, it: FsItem, qi: Quoting): (Rendered, Quoting) {
   return (unknown_rendered(), qi);
 }
 
-// GNU's name for a Linux file system type, or `UNKNOWN (0x…)`.
 function fstype_text(magic: i64): string {
   match (fstype.name(magic)) {
     Some(n) => {
@@ -1137,10 +962,6 @@ function fstype_text(magic: i64): string {
   }
 }
 
-// `render_pieces` walks the format for one operand, writing each piece
-// straight into the output buffer, and dies where GNU dies: on `%%`
-// wearing a modifier. This leaves the text already written in place, so
-// `stat -c '[%5%]' f` writes its `[` before the diagnostic.
 function render_pieces(o: io_buffered.BufWriter, pieces: Piece[], fs_mode: boolean, it: Item, fs: FsItem, z: tz.Zone, qi: Quoting): (io_buffered.BufWriter, boolean, Quoting) {
   let w: io_buffered.BufWriter = o;
   let q: Quoting = qi;
@@ -1190,8 +1011,6 @@ function render_pieces(o: io_buffered.BufWriter, pieces: Piece[], fs_mode: boole
   return (w, failed, q);
 }
 
-// Whether the format carries directive `conv` (`%U` is 85, `%G` is 71): the
-// two name columns read their database only when a format will print them.
 function names_conv(pieces: Piece[], conv: i32): boolean {
   let i: i32 = 0;
   while (i < pieces.len()) {
@@ -1203,8 +1022,6 @@ function names_conv(pieces: Piece[], conv: i32): boolean {
   return false;
 }
 
-// Whether the format asks for a human-readable time, which is the only
-// thing that makes the local zone worth reading off disk.
 function needs_zone(pieces: Piece[]): boolean {
   let i: i32 = 0;
   while (i < pieces.len()) {
@@ -1217,7 +1034,6 @@ function needs_zone(pieces: Piece[]): boolean {
   return false;
 }
 
-// ---- one operand ------------------------------------------------------------
 function stat_of(name: string, deref: boolean): Result[FileStat, IoError] {
   if (name == "-") {
     return stdin().stat();
@@ -1232,10 +1048,6 @@ function is_symlink(st: FileStat): boolean {
   return filetype.is_link(st.mode);
 }
 
-// `device_pieces` is the layout for a character or block device, which the
-// default block gives a `Device type:`; otherwise it is `pieces` itself.
-// `names` is the run's owner / group cache, handed back with each operand's
-// answers remembered.
 function do_file(o: io_buffered.BufWriter, pieces: Piece[], device_pieces: Piece[], name: string, deref: boolean, newline: boolean, z: tz.Zone, qi: Quoting, names: pwdb.Names): (io_buffered.BufWriter, boolean, Quoting, pwdb.Names) {
   let w: io_buffered.BufWriter = o;
   match (stat_of(name, deref)) {
@@ -1279,10 +1091,6 @@ function do_file(o: io_buffered.BufWriter, pieces: Piece[], device_pieces: Piece
   }
 }
 
-// Darwin's pathconf can reject a device node even though its filesystem
-// has valid geometry. Query the verified mount point in that case. This
-// leaves statfs's length-limit error contract intact and keeps the original
-// operand's error if no alternative query succeeds.
 function fsstat_fallback(name: string, original: IoError): Result[FsStat, IoError] {
   match (stat(name)) {
     Ok(st) => {
@@ -1336,7 +1144,6 @@ function do_fs(o: io_buffered.BufWriter, pieces: Piece[], name: string, newline:
   }
 }
 
-// ---- main -------------------------------------------------------------------
 pub function main(): i32 {
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("L", "dereference", opt_dereference()));
@@ -1373,10 +1180,6 @@ pub function main(): i32 {
           have_format = true;
           escapes = true;
         } else if (m.id == opt_cached()) {
-          // The value is validated and then dropped: `always`, `never`
-          // and `default` all name a statx(2) AT_STATX_ flag this
-          // build has no statx to hand it to, and the answer on a
-          // local filesystem is the same either way.
           let names: string[] = ["default", "never", "always"];
           let ignored: i32 = gnu.argmatch(m.value, names, "--cached");
         }
@@ -1392,8 +1195,6 @@ pub function main(): i32 {
     gnu.die_usage("missing operand", 1);
   }
 
-  // A built-in layout carries its own newlines, and the default file one
-  // has a second shape for a device.
   let newline: boolean = !escapes;
   let device_format: string = format;
   if (!have_format) {

@@ -11,13 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostComposeFromWorld is the end-to-end gate for the self-host
-// world-driven composer: the self-hosted compiler decodes the fern world,
-// parses a stdout core's imports, classifies them against the world, emits the
-// world import prefix pruned to what the core reaches, and wires the suffix —
-// producing a component that validates under wasm-tools and runs under
-// wasmtime, printing the program's output. This is the self-host mirror of the Go ComposeFromWorldAuto, and
-// completes P2 in both compilers.
 func TestSelfHostComposeFromWorld(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -29,7 +22,6 @@ func TestSelfHostComposeFromWorld(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	// Compile a stdout program and extract its core module.
 	fernBin := filepath.Join(dir, "fern")
 	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
 		t.Fatalf("build fern: %v\n%s", err, out)
@@ -52,8 +44,6 @@ func TestSelfHostComposeFromWorld(t *testing.T) {
 		t.Fatalf("write core.bin: %v", err)
 	}
 
-	// Compile a driver that turns the core into a component via the
-	// world-driven path, through the self-host CLI against the modules.
 	driverWatPath := witCompileToWat(t, dir, "driver", witPayloadFunc(t, "FERN_BIN", "fern")+withPrintInt(selfHostComposeWorldDriver))
 	out, err := exec.Command(wasmtime, "run", "--dir", dir, driverWatPath).Output()
 	if err != nil {
@@ -83,8 +73,6 @@ func TestSelfHostComposeFromWorld(t *testing.T) {
 			t.Errorf("component WIT lacks %s:\n%s", iface, wit)
 		}
 	}
-	// An interface the core never reaches is dropped, whether or not a type
-	// of it is aliased by another interface the core does not reach either.
 	for _, unused := range []string{"wasi:random/", "wasi:filesystem/", "wasi:sockets/", "wasi:clocks/"} {
 		if strings.Contains(string(wit), unused) {
 			t.Errorf("component imports %s, which a stdout core never reaches:\n%s", unused, wit)
@@ -97,12 +85,9 @@ func TestSelfHostComposeFromWorld(t *testing.T) {
 	if string(stdout) != want {
 		t.Errorf("component stdout = %q, want %q", string(stdout), want)
 	}
-	_ = componenttype.PayloadFor // keep import used via witPayloadFunc
+	_ = componenttype.PayloadFor
 }
 
-// selfHostComposeWorldDriver: component_from_world (the self-host orchestration)
-// + a main that reads the core, decodes the fern world, and emits the
-// world-driven component as space-separated decimal bytes.
 const selfHostComposeWorldDriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {
@@ -122,11 +107,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostComposeFromUserWorld is the self-host P3 gate: the self-hosted
-// compiler composes a component from a USER-supplied WIT world (a minimal
-// stdout program plus abort causes), not the embedded fern world. The component
-// imports the four interfaces of that world and runs under wasmtime. Self-host mirror
-// of TestComposeFromUserWorld.
 func TestSelfHostComposeFromUserWorld(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -138,7 +118,6 @@ func TestSelfHostComposeFromUserWorld(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	// The heap OOM path requires stderr even when the program writes only stdout.
 	witDir := filepath.Join(dir, "wit")
 	_ = os.MkdirAll(witDir, 0o755)
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(witDir, "deps")).CombinedOutput(); err != nil {
@@ -164,7 +143,6 @@ func TestSelfHostComposeFromUserWorld(t *testing.T) {
 	}
 	payload := extractComponentType(t, embeddedBytes)
 
-	// Compile a stdout program and extract its core.
 	fernBin := filepath.Join(dir, "fern")
 	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
 		t.Fatalf("build fern: %v\n%s", err, out)
@@ -181,8 +159,6 @@ func TestSelfHostComposeFromUserWorld(t *testing.T) {
 		t.Fatalf("write core.bin: %v", err)
 	}
 
-	// Compile a driver that composes from the user world, through the
-	// self-host CLI against the modules.
 	driverWatPath := witCompileToWat(t, dir, "driver", witBytesFunc("USER_BIN", payload)+withPrintInt(selfHostComposeUserDriver))
 	out, err := exec.Command(wasmtime, "run", "--dir", dir, driverWatPath).Output()
 	if err != nil {
@@ -222,7 +198,6 @@ func TestSelfHostComposeFromUserWorld(t *testing.T) {
 	}
 }
 
-// selfHostComposeUserDriver composes from a user world payload (USER_BIN).
 const selfHostComposeUserDriver = `
 function main(): i32 {
     match (read_file_bytes("core.bin")) {

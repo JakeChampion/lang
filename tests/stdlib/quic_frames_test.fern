@@ -4,11 +4,6 @@ import "std/hex";
 import "std/i64";
 import "core/int";
 
-// tests/stdlib/quic_frames_test.fern — std/quic/frames: RFC 9000 Appendix
-// A.1's variable-length integers, every frame type written and read back
-// byte for byte, ACK ranges in both directions, which frames each packet
-// type may carry (§12.4), and every malformed shape answered with its error.
-
 function varint_of(block: string): string {
   let bytes: u8[] = hex.hex_decode(block);
   let v: i64 = frames.varint_at(bytes, 0);
@@ -121,7 +116,6 @@ function describe_rest(f: frames.Frame): string {
   return "";
 }
 
-// shown reads one frame from hex, as text, with the bytes it took.
 function shown(block: string): string {
   match (frames.read(hex.hex_decode(block), 0)) {
     Ok(got) => {
@@ -134,7 +128,6 @@ function shown(block: string): string {
   return "";
 }
 
-// trip encodes `f`, reads it back, and answers the bytes and the reading.
 function trip(f: frames.Frame): string {
   let bytes: u8[] = frames.encode(f);
   return hex.hex_encode(bytes) + " -> " + shown(hex.hex_encode(bytes));
@@ -177,9 +170,6 @@ function test_round_trips(): test.TestOutcome {
   return test.assert_eq(got, "000000 -> PADDING 3 [3]\n01 -> PING [1]\n1e -> HANDSHAKE_DONE [1]\n04044102" + "4" + "3e8 -> RESET_STREAM 4 code 258 size 1000 [6]\n050801 -> STOP_SENDING 8 code 1 [3]\n060003010203 -> CRYPTO 0 010203 [6]\n0702abcd -> NEW_TOKEN abcd [4]\n0a00026869 -> STREAM 0 at 0 6869 [5]\n0f04406402" + "6869 -> STREAM 4 at 100 FIN 6869 [7]\n1080100000 -> MAX_DATA 1048576 [5]\n110480010000 -> MAX_STREAM_DATA 4 65536 [6]\n124064 -> MAX_STREAMS bidi 100 [3]\n1303 -> MAX_STREAMS 3 [2]\n1407 -> DATA_BLOCKED 7 [2]\n150409 -> STREAM_DATA_BLOCKED 4 9 [3]\n160a -> STREAMS_BLOCKED bidi 10 [2]\n170b -> STREAMS_BLOCKED 11 [2]\n180201080102030405060708" + "00112233445566778899aabbccddeeff -> NEW_CONNECTION_ID 2 prior 1 0102030405060708 token 00112233445566778899aabbccddeeff [28]\n1901 -> RETIRE_CONNECTION_ID 1 [2]\n1a0102030405060708 -> PATH_CHALLENGE 0102030405060708 [9]\n1b0807060504030201 -> PATH_RESPONSE 0807060504030201 [9]\n1c0a0603626164 -> CONNECTION_CLOSE code 10 in 6 \"bad\" [7]\n1d410000 -> CONNECTION_CLOSE app code 256 in 0 \"\" [4]\n");
 }
 
-// An ACK's gap-and-length form (§19.3.1) both ways: largest 100 with a first
-// range of 5 (95..100), then a gap of 2 (two missing: 92, 93) and a range of
-// 1 (90..91), then a gap of 0 (one missing: 89) and a range of 0 (88).
 function test_ack(): test.TestOutcome {
   let wire: string = "02" + "4064" + "19" + "02" + "05" + "02" + "01" + "00" + "00";
   let a: frames.Ack = frames.Ack { delay: 25 as i64, ranges: [frames.AckRange { low: 95 as i64, high: 100 as i64 }, frames.AckRange { low: 90 as i64, high: 91 as i64 }, frames.AckRange { low: 88 as i64, high: 88 as i64 }], ecn: None };
@@ -231,7 +221,6 @@ function test_malformed(): test.TestOutcome {
   return test.assert_eq(got, "quic frame: error 7 in frame type 31: unknown frame type\nquic frame: error 7 in frame type 2: ack delay cut short\nquic frame: error 7 in frame type 2: first ack range below packet 0\nquic frame: error 7 in frame type 2: ack range below packet 0\nquic frame: error 7 in frame type 10: stream data of 5 bytes past the end of the packet\nquic frame: error 7 in frame type 6: crypto data of 2 bytes past the end of the packet\nquic frame: error 7 in frame type 7: an empty NEW_TOKEN\nquic frame: error 7 in frame type 18: a stream count over 2^60\nquic frame: error 7 in frame type 24: retire prior to 2 past sequence number 1\nquic frame: error 7 in frame type 24: a connection id of 0 bytes\nquic frame: error 7 in frame type 24: a connection id of 21 bytes\nquic frame: error 7 in frame type 26: path data of 8 bytes past the end of the packet\nquic frame: error 7 in frame type 28: reason phrase of 5 bytes past the end of the packet\nquic frame: error 7 in frame type 12: stream offset cut short");
 }
 
-// Which frames each packet type may carry (§12.4, table 3).
 function test_permitted(): test.TestOutcome {
   let fs: frames.Frame[] = [frames.Padding(1), frames.Ping, frames.AckFrame(frames.Ack { delay: 0 as i64, ranges: [frames.AckRange { low: 0 as i64, high: 0 as i64 }], ecn: None }), frames.Crypto(0 as i64, []), frames.StreamFrame(frames.StreamData { stream: 0 as i64, offset: 0 as i64, data: [], fin: false }), frames.NewToken([1 as u8]), frames.HandshakeDone, frames.PathResponse([]), frames.ConnectionCloseFrame(frames.ConnectionClose { code: 0 as i64, frame_type: 0 as i64, reason: "", app: false }), frames.ConnectionCloseFrame(frames.ConnectionClose { code: 0 as i64, frame_type: 0 as i64, reason: "", app: true })];
   let got: string = "";

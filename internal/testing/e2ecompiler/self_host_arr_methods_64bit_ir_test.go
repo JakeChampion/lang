@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrMethods64bitIR is the correctness gate for METHODS that return
-// f64[] / i64[] on the wasm IR backend: the call result must carry its 8-byte
-// element width so a later x[i] reads an 8-byte f64/i64. Results pinned to
-// hardcoded oracle values.
 func TestSelfHostArrMethods64bitIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arr-methods-64bit wasm IR e2e")
@@ -51,13 +47,9 @@ func TestSelfHostArrMethods64bitIR(t *testing.T) {
 		src      string
 		expected int
 	}{
-		// f64[]-returning method, result bound then indexed. v[1] = 2.5 > 2.0 -> 6
 		{"f64arr-method-binding", `struct Box { n: i32 } function (b: Box) vals(): f64[] { let a: f64[] = [1.5, 2.5, 3.5]; return a; } function main(): i32 { let b: Box = Box { n: 0 }; let v: f64[] = b.vals(); if (v[1] > 2.0) { return 6; } return 1; }`, 6},
-		// i64[]-returning method, result bound then indexed. v[1] = 2e10 > 1.5e10 -> 7
 		{"i64arr-method-binding", `struct Box { n: i32 } function (b: Box) vals(): i64[] { let a: i64[] = [10000000000, 20000000000]; return a; } function main(): i32 { let b: Box = Box { n: 0 }; let v: i64[] = b.vals(); if (v[1] > 15000000000) { return 7; } return 1; }`, 7},
-		// Direct index of the i64[]-returning method call: obj.m()[i]. 9e9 > 8e9 -> 9
 		{"i64arr-method-direct-index", `struct Box { n: i32 } function (b: Box) vals(): i64[] { let a: i64[] = [6000000000, 9000000000]; return a; } function main(): i32 { let b: Box = Box { n: 0 }; if (b.vals()[1] > 8000000000) { return 9; } return 1; }`, 9},
-		// f64[] method elements used in arithmetic. 2.5 + 4.0 = 6.5 > 6.0 -> 5
 		{"f64arr-method-arith", `struct Box { n: i32 } function (b: Box) vals(): f64[] { let a: f64[] = [2.5, 4.0]; return a; } function main(): i32 { let b: Box = Box { n: 0 }; let v: f64[] = b.vals(); let s: f64 = v[0] + v[1]; if (s > 6.0) { return 5; } return 1; }`, 5},
 	}
 	for _, tc := range cases {

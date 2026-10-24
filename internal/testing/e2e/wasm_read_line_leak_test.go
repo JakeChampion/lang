@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// Reading a line on wasm must not strand working memory per byte (#8868):
-// what a program keeps live after io.read_line must not depend on how long
-// the line was, and the natives read these programs clean.
 var wasmReadLineSrcs = []struct{ name, src string }{
 	{"io_read_line", `import "std/io";
 

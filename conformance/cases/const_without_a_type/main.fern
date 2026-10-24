@@ -1,5 +1,5 @@
-// A `const` written without a type takes its value's type, and a later const
-// may be built from an earlier one.
+
+
 import "std/i32";
 
 const WIDTH = 9;

@@ -8,29 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/tables/x86tbl"
 )
 
-// The operand-form differential (#8083), against GNU as.
-//
-// The table-driven families (the condition families, the SSE halves, the 0F38
-// group) are checked row by row from x86tbl. The GPR families have no table:
-// the self-host dispatches them through x86_gas_emit's if-chain, and this
-// matrix is what reaches every arm of it.
-//
-// The mnemonic-level coverage test does not reach this. It asks whether `lea`
-// and `movzx` are reachable, and they are; what it cannot ask is whether every
-// (operand form, width) of them is. All seven defects #8083 found sat in that
-// gap, including one that assembled to a memory load where a register move was
-// written.
-//
-// The matrix is a PRODUCT, deliberately. Probing one form per mnemonic finds
-// the refusals and misses the miscompile: `movzwq` had an arm, so a
-// mnemonic-shaped or single-form probe passes, and only the register source
-// exposes it.
-
-// aluFormCases is every ALU mnemonic at every width in every operand form:
-// reg-reg, mem-reg, reg-mem, reg-imm, mem-imm. The mnemonic lists here and
-// below come from x86tbl, the table the self-host's dispatch is generated
-// from, so a spelling added there is probed here without anyone remembering
-// to.
 func aluFormCases() []string {
 	var out []string
 	for _, m := range x86tbl.ALU.Spellings() {
@@ -49,8 +26,6 @@ func aluFormCases() []string {
 	return out
 }
 
-// shiftFormCases covers the three count shapes each shift takes — the imm-1
-// short form, an imm8, and %cl — at every width, register and memory.
 func shiftFormCases() []string {
 	var out []string
 	for _, m := range x86tbl.Shift.Spellings() {
@@ -66,8 +41,6 @@ func shiftFormCases() []string {
 	return out
 }
 
-// extendLeaFormCases is the family #8083 was found in: AT&T names BOTH widths
-// in the mnemonic, so every spelling needs its own arm, in both source forms.
 func extendLeaFormCases() []string {
 	return []string{
 		"leaw (%rbx), %cx",
@@ -98,16 +71,12 @@ func extendLeaFormCases() []string {
 		"movswq %cx, %rdx",
 		"movslq %ecx, %rdx",
 		"movslq (%rbx), %rdx",
-		// spl/bpl/sil/dil need a bare REX as a byte SOURCE, and the extended
-		// byte registers need one too — the widths must not lose that.
 		"movzbl %spl, %esi",
 		"movzbq %r9b, %r10",
 		"movsbl %sil, %edx",
 	}
 }
 
-// miscFormCases: the remaining GPR families, register and memory where both
-// exist — test, the bit-test group, the RMW atomics, bswap, imul, mov.
 func miscFormCases() []string {
 	var out []string
 	for _, w := range []struct{ sfx, a, b string }{{"l", "%ecx", "%edx"}, {"q", "%rcx", "%rdx"}} {
@@ -143,9 +112,6 @@ func miscFormCases() []string {
 	return out
 }
 
-// vexFormCases is the AVX2 vocabulary the byte and f64 kernels use, each
-// form with a low and an extended register so both halves of the prefix are
-// checked.
 func vexFormCases() []string {
 	return []string{
 		"vmovdqu (%rax,%rdx), %ymm0",
@@ -208,10 +174,6 @@ func vexFormCases() []string {
 		"vpsrlw $4, %xmm9, %xmm0",
 		"vpsrlw $3, %ymm2, %ymm10",
 		"vzeroupper",
-		// The lane type's fused multiply-adds (docs/SIMD-GENERIC-KERNELS.md
-		// §6): VEX.W selects the element width, so both widths at both
-		// register extensions and with a memory source.
-		// Packed arithmetic permits distinct destinations and unaligned spills.
 		"vaddpd %xmm9, %xmm10, %xmm11",
 		"vsubpd -24(%rbp), %xmm12, %xmm13",
 		"vmulpd 16(%r8,%rdx,8), %xmm1, %xmm0",
@@ -244,10 +206,6 @@ func vexFormCases() []string {
 	}
 }
 
-// TestSelfHostX86FormsMatchGas is the gate. Every case is assembled by both
-// assemblers and byte-compared; a self-host refusal is a failure, not a skip,
-// because a refused line is an instruction that would have left the byte
-// stream.
 func TestSelfHostX86FormsMatchGas(t *testing.T) {
 	var cases []string
 	cases = append(cases, aluFormCases()...)
@@ -256,8 +214,6 @@ func TestSelfHostX86FormsMatchGas(t *testing.T) {
 	cases = append(cases, miscFormCases()...)
 	cases = append(cases, vexFormCases()...)
 
-	// Anti-vacuity: if the builders stop producing cases the loop below is a
-	// no-op that reports success.
 	if len(cases) < 300 {
 		t.Fatalf("the matrix produced only %d cases; it is meant to be a product of mnemonics, forms and widths", len(cases))
 	}
@@ -265,9 +221,6 @@ func TestSelfHostX86FormsMatchGas(t *testing.T) {
 	compareFormCases(t, cases)
 }
 
-// compareFormCases assembles every AT&T line with GNU as and with the
-// self-host assembler and byte-compares the results. A line GNU as rejects is
-// a failure of the case rather than of the self-host.
 func compareFormCases(t *testing.T, cases []string) {
 	t.Helper()
 	gas := gnuX86Oracle(t)

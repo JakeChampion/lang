@@ -1,23 +1,3 @@
-// examples/vcl/machine.fern — the VCL request state machine.
-//
-// This is the part that makes VCL a language rather than a config format:
-// subroutines do not run top to bottom, they are STATES, and the value a
-// subroutine returns picks the next one. `vcl_recv` returning `hash`
-// takes the request to the cache; returning `pass` routes it to the
-// backend without ever looking. What each subroutine may see (`vars.fern`)
-// follows from where it sits in this graph.
-//
-// The built-in subroutines are modelled too, and that is not a detail:
-// in Varnish, a `vcl_recv` that falls off the end WITHOUT returning
-// continues into the built-in `vcl_recv`, which passes any request with
-// a Cookie or Authorization header. VCL authors are caught by this
-// constantly. Here `run_stage` runs the user's subroutine and applies the
-// built-in default only when the user's fell through, which reproduces
-// it.
-//
-// The backend is a mock (`fetch`): it never opens a socket. A URL of the
-// form `/status/NNN` comes back with that status, which is the hook the
-// tests use to drive the error paths.
 import "std/string";
 import "std/i64";
 import "std/f64";
@@ -27,45 +7,14 @@ import "./runtime";
 import "./vars";
 import "./eval";
 
-// How the transaction ended, plus everything worth inspecting afterwards.
-// `steps` is the ordered list of subroutines that actually ran, which is
-// what makes a routing bug legible: the state machine's path IS the
-// explanation.
 pub struct Outcome { txn: runtime.Txn, cache: runtime.Cache, disposition: string, hit: boolean, steps: string[], ok: boolean, err: string }
 
-// What the state machine needs from a policy, and all it needs: a way to
-// run one subroutine by name, and the backends the policy declares.
-//
-// Parameterising it this way is what lets an INTERPRETED policy and a
-// COMPILED one share a single state machine. The tree-walk supplies a
-// closure over the parsed declarations; generated Fern code supplies its
-// own dispatcher over generated functions. The graph itself — which
-// subroutine runs next, what the built-ins decide, when an object is
-// stored — is policy-independent, so there is no reason to have two.
-// A declared backend, resolved from its VCL `backend` block. `host` and
-// `port` are what the real fetcher dials; the mock ignores them.
 pub struct Backend { name: string, host: string, port: i32 }
 
-// What a fetch produced. `ok` false means the origin could not be reached
-// at all, which is distinct from it answering 5xx — VCL sees the former as
-// a failed fetch and the latter as a response carrying a status.
-// `ttl` is what the origin said about caching, in seconds; NEGATIVE means
-// it expressed no opinion and the built-in default applies. A real fetcher
-// fills it from `Cache-Control: max-age`, which is how an origin actually
-// controls a cache; the mock leaves it negative.
 pub struct FetchOut { status: i64, reason: string, headers: runtime.Headers, body: string, ttl: f64, ok: boolean, err: string }
 
-// What the state machine needs from a policy and its environment: a way to
-// run one subroutine, the declared backends, and a way to fetch from one.
-//
-// Parameterising all three is what lets one state machine serve an
-// interpreted policy, a compiled one, a mock origin under test, and a real
-// TCP origin in the proxy. The graph — which subroutine runs next, what the
-// built-ins decide, when an object is stored — is the same in every case.
 pub struct Driver { run_sub: (string, runtime.Txn) => eval.ExecOut, backends: Backend[], fetch: (Backend, runtime.Txn) => FetchOut }
 
-// prop_string reads a scalar `.name = value;` from a backend block, or ""
-// when it is absent or not a plain literal.
 function prop_string(props: ast.PropBlock, name: string): string {
   let i: i32 = 0;
   while (i < props.props.len()) {
@@ -95,9 +44,6 @@ function prop_string(props: ast.PropBlock, name: string): string {
   return "";
 }
 
-// backends_of resolves every declared backend, reading the `.host` and
-// `.port` a real fetch needs. VCL writes the port as a string
-// (`.port = "8080"`), so it is parsed here; it defaults to 80.
 pub function backends_of(decls: ast.Decl[]): Backend[] {
   let out: Backend[] = [];
   let i: i32 = 0;
@@ -124,31 +70,22 @@ pub function backends_of(decls: ast.Decl[]): Backend[] {
   return out;
 }
 
-// interpreting builds a Driver that walks the parsed tree.
 pub function interpreting(decls: ast.Decl[]): Driver {
   let ctx: eval.Ctx = eval.Ctx { decls: decls };
   let runner: (string, runtime.Txn) => eval.ExecOut = (name: string, t: runtime.Txn): eval.ExecOut => eval.run_sub(ctx, t, name);
   return Driver { run_sub: runner, backends: backends_of(decls), fetch: mock_fetch };
 }
 
-// The evolving machine state, threaded through the stages.
 struct Run { txn: runtime.Txn, cache: runtime.Cache, steps: string[], ok: boolean, err: string }
 
 function fail(r: Run, msg: string): Run {
   return Run { ...r, ok: false, err: msg };
 }
 
-// max_restarts bounds `return (restart)`, matching Varnish's default.
 function max_restarts(): i32 {
   return 4;
 }
 
-// run_stage runs one subroutine and reports the action it returned.
-//
-// A subroutine that falls through returns "" and the caller applies the
-// built-in default — which is exactly Varnish's rule, and the reason a
-// `vcl_recv` without an explicit `return` still passes cookie-bearing
-// requests.
 struct Staged { run: Run, act: eval.Action }
 
 function run_stage(ctx: Driver, r: Run, name: string): Staged {
@@ -160,10 +97,6 @@ function run_stage(ctx: Driver, r: Run, name: string): Staged {
   let next: Run = Run { ...stepped, txn: out.txn };
   match (out.flow) {
     FReturn(a) => {
-      // A bare `return;` at entry level names no action, so the built-in
-      // default applies exactly as falling off the end does. The checker
-      // rejects that spelling in a `vcl_*` subroutine; this keeps the
-      // evaluator sane for a program that was never checked.
       if (a.name == "none") {
         return Staged { run: next, act: eval.action("") };
       }
@@ -175,9 +108,6 @@ function run_stage(ctx: Driver, r: Run, name: string): Staged {
   }
 }
 
-// ------------------------------------------------------- built-in rules
-// The methods Varnish is willing to handle. Anything else is piped
-// straight through to the backend.
 function known_methods(): string[] {
   return ["GET", "HEAD", "PUT", "POST", "TRACE", "OPTIONS", "DELETE"];
 }
@@ -193,9 +123,6 @@ function in_list(s: string, items: string[]): boolean {
   return false;
 }
 
-// builtin_recv is Varnish's default `vcl_recv`: anything that is not a
-// plain GET or HEAD, or that carries credentials or a cookie, bypasses
-// the cache.
 function builtin_recv(t: runtime.Txn): string {
   let m: string = t.req.method;
   if (m == "PRI") {
@@ -213,8 +140,6 @@ function builtin_recv(t: runtime.Txn): string {
   return "hash";
 }
 
-// builtin_backend_response is the default caching decision: a response
-// that arrives with no positive TTL is not stored.
 function builtin_backend_response(r: Run): string {
   if (r.txn.beresp_ttl <= 0.0) {
     return "deliver-uncacheable";
@@ -222,8 +147,6 @@ function builtin_backend_response(r: Run): string {
   return "deliver";
 }
 
-// resolve applies the built-in default when the user's subroutine fell
-// through without returning.
 function resolve(act: eval.Action, fallback: string): string {
   if (act.name == "") {
     return fallback;
@@ -231,14 +154,6 @@ function resolve(act: eval.Action, fallback: string): string {
   return act.name;
 }
 
-// ------------------------------------------------------------ the fetch
-// fetch is the mock origin. It fabricates a response rather than opening
-// a connection: status 200 unless the URL asks for another via
-// `/status/NNN`, and a small deterministic header set.
-//
-// The default TTL of 120s is the stand-in for a real origin's
-// Cache-Control, so a program that never sets `beresp.ttl` still has
-// something for the built-in caching decision to act on.
 pub function mock_fetch(b: Backend, t: runtime.Txn): FetchOut {
   let url: string = t.bereq.url;
   let status: i64 = 200;
@@ -259,11 +174,6 @@ pub function mock_fetch(b: Backend, t: runtime.Txn): FetchOut {
   return FetchOut { status: status, reason: reason, headers: h, body: body, ttl: 0.0 - 1.0, ok: true, err: "" };
 }
 
-// apply_fetch runs the Driver's fetcher and folds the result into `beresp`.
-// A default TTL of 120s stands in for an origin's Cache-Control so the
-// built-in caching decision has something to act on; a policy that sets
-// `beresp.ttl` overrides it, and the real fetcher reads Cache-Control
-// itself.
 function apply_fetch(ctx: Driver, r: Run, b: Backend): Run {
   let out: FetchOut = ctx.fetch(b, r.txn);
   if (!out.ok) {
@@ -278,9 +188,6 @@ function apply_fetch(ctx: Driver, r: Run, b: Backend): Run {
   return Run { ...r, txn: t.note("fetch " + b.name + " -> " + out.status.to_string()) };
 }
 
-// backend_for picks the backend to fetch from: the hint a subroutine set,
-// or the first `backend` declared, which is Varnish's rule when nothing
-// else applies.
 function backend_for(ctx: Driver, t: runtime.Txn): Backend {
   if (t.backend_hint != "") {
     let i: i32 = 0;
@@ -297,9 +204,6 @@ function backend_for(ctx: Driver, t: runtime.Txn): Backend {
   return Backend { name: "", host: "127.0.0.1", port: 80 };
 }
 
-// ------------------------------------------------------------- hashing
-// hash_key is what `vcl_hash` produced, or the built-in URL + Host key
-// when the program did not hash anything itself.
 function hash_key(t: runtime.Txn): string {
   if (t.hash_parts.len() == 0) {
     return t.req.url + "|" + value.to_str(t.req.headers.get("Host"));
@@ -316,22 +220,16 @@ function hash_key(t: runtime.Txn): string {
   return out;
 }
 
-// ---------------------------------------------------------- the stages
-// start_bereq copies the client request into the backend request, which
-// is the point where `req` stops being visible and `bereq` starts.
 function start_bereq(r: Run): Run {
   let b: runtime.Msg = runtime.Msg { method: r.txn.req.method, url: r.txn.req.url, proto: r.txn.req.proto, status: 0, reason: "", headers: r.txn.req.headers, body: r.txn.req.body };
   return Run { ...r, txn: runtime.Txn { ...r.txn, bereq: b } };
 }
 
-// deliver_from_beresp seeds `resp` from the fetched response, which is
-// what `vcl_deliver` then edits.
 function deliver_from_beresp(r: Run): Run {
   let resp: runtime.Msg = runtime.Msg { method: "", url: "", proto: r.txn.beresp.proto, status: r.txn.beresp.status, reason: r.txn.beresp.reason, headers: r.txn.beresp.headers, body: r.txn.beresp.body };
   return Run { ...r, txn: runtime.Txn { ...r.txn, resp: resp } };
 }
 
-// deliver_from_obj seeds `resp` from a cached object on a hit.
 function deliver_from_obj(r: Run, e: runtime.CacheEntry): Run {
   let obj: runtime.Msg = runtime.Msg { method: "", url: "", proto: "HTTP/1.1", status: e.status, reason: e.reason, headers: e.headers, body: e.body };
   let resp: runtime.Msg = runtime.Msg { ...obj };
@@ -339,14 +237,11 @@ function deliver_from_obj(r: Run, e: runtime.CacheEntry): Run {
   return Run { ...r, txn: t };
 }
 
-// store_object puts the fetched response in the cache under `key`.
 function store_object(r: Run, key: string): Run {
   let e: runtime.CacheEntry = runtime.CacheEntry { key: key, status: r.txn.beresp.status, reason: r.txn.beresp.reason, headers: r.txn.beresp.headers, body: r.txn.beresp.body, ttl: r.txn.beresp_ttl, hits: 0 };
   return Run { ...r, cache: r.cache.store(e), txn: r.txn.note("store " + key + " ttl=" + r.txn.beresp_ttl.to_string_prec(3)) };
 }
 
-// synth_response builds the response a `return (synth(…))` names, then
-// runs `vcl_synth` so the program can decorate it.
 function synth(ctx: Driver, r: Run, a: eval.Action): Outcome {
   let status: i64 = a.status;
   if (status == 0) {
@@ -369,8 +264,6 @@ function done(r: Run, disposition: string, hit: boolean): Outcome {
   return Outcome { txn: r.txn, cache: r.cache, disposition: disposition, hit: hit, steps: r.steps, ok: true, err: "" };
 }
 
-// backend_side runs the fetch half: `vcl_backend_fetch`, the mock origin,
-// then `vcl_backend_response` and the caching decision.
 function backend_side(ctx: Driver, r0: Run, key: string, store: boolean): Outcome {
   let r: Run = start_bereq(r0);
   let bf: Staged = run_stage(ctx, r, "vcl_backend_fetch");
@@ -405,9 +298,6 @@ function backend_side(ctx: Driver, r0: Run, key: string, store: boolean): Outcom
   return client_deliver(ctx, deliver_from_beresp(stored), false);
 }
 
-// should_store is the insertion decision: the fetch has to be delivering,
-// this path has to be one that inserts at all (a pass never does), and the
-// object has to be cacheable with a positive TTL.
 function should_store(act: string, inserts: boolean, t: runtime.Txn): boolean {
   if (act != "deliver" || !inserts) {
     return false;
@@ -415,8 +305,6 @@ function should_store(act: string, inserts: boolean, t: runtime.Txn): boolean {
   return !t.beresp_uncacheable && t.beresp_ttl > 0.0;
 }
 
-// client_deliver runs `vcl_deliver`, the last stage before the response
-// goes back to the client.
 function client_deliver(ctx: Driver, r: Run, hit: boolean): Outcome {
   let d: Staged = run_stage(ctx, r, "vcl_deliver");
   if (!d.run.ok) {
@@ -429,12 +317,9 @@ function client_deliver(ctx: Driver, r: Run, hit: boolean): Outcome {
   return done(d.run, "deliver", hit);
 }
 
-// lookup_side runs the cache lookup and the hit or miss subroutine.
 function lookup_side(ctx: Driver, r: Run, key: string): Outcome {
   match (r.cache.lookup(key)) {
     Some(e) => {
-      // Count the hit BEFORE seeding `obj`, so `obj.hits` reads 1 on the
-      // first hit as Varnish reports it, not the pre-hit 0.
       let bumped: runtime.Cache = r.cache.touch(key);
       let touched: Run = Run { ...r, cache: bumped };
       let onhit: Run = deliver_from_obj(touched, runtime.CacheEntry { ...e, hits: e.hits + 1 });
@@ -468,8 +353,6 @@ function lookup_side(ctx: Driver, r: Run, key: string): Outcome {
   }
 }
 
-// purge evicts the object under the request's key and synthesises a 200,
-// which is what Varnish's built-in `vcl_purge` does.
 function purge(ctx: Driver, r: Run, key: string): Outcome {
   let evicted: Run = Run { ...r, cache: r.cache.evict(key), txn: r.txn.note("purge " + key) };
   let p: Staged = run_stage(ctx, evicted, "vcl_purge");
@@ -479,10 +362,6 @@ function purge(ctx: Driver, r: Run, key: string): Outcome {
   return synth(ctx, p.run, eval.Action { name: "synth", status: 200, reason: "Purged" });
 }
 
-// dispatch routes the action `vcl_recv` settled on. It takes the ACTION
-// as well as its resolved name: `return (synth(405, "Not allowed"))`
-// carries its status and reason there, and rebuilding a bare synth here
-// would answer every rejection with a generic 503.
 function dispatch(ctx: Driver, r: Run, act: string, a: eval.Action): Outcome {
   if (act == "pipe") {
     let p: Staged = run_stage(ctx, start_bereq(r), "vcl_pipe");
@@ -515,9 +394,6 @@ function dispatch(ctx: Driver, r: Run, act: string, a: eval.Action): Outcome {
   return lookup_side(ctx, hashed.run, key);
 }
 
-// one_pass runs a single trip through the machine, from `vcl_recv` to a
-// disposition. A `return (restart)` comes back as the "restart"
-// disposition for `run` to act on.
 function one_pass(ctx: Driver, r: Run): Outcome {
   let recv: Staged = run_stage(ctx, r, "vcl_recv");
   if (!recv.run.ok) {
@@ -530,13 +406,6 @@ function one_pass(ctx: Driver, r: Run): Outcome {
   return dispatch(ctx, recv.run, act, recv.act);
 }
 
-// run_with_headers executes one client request against the program and
-// the cache, returning the response and the updated cache. Restarts loop
-// back to `vcl_recv` with the transaction's edits intact, bounded like
-// Varnish's; the accumulated hash is cleared on each pass so a restarted
-// request re-hashes under whatever the new `req` says.
-// run_request is `run_with` with a client request body, which a real proxy
-// has and the CLI drivers do not.
 pub function run_request(ctx: Driver, method: string, url: string, client_ip: string, names: string[], values: string[], body: string, cache: runtime.Cache): Outcome {
   return run_inner(ctx, method, url, client_ip, names, values, body, cache);
 }
@@ -568,15 +437,10 @@ function run_inner(ctx: Driver, method: string, url: string, client_ip: string, 
   return Outcome { txn: r.txn, cache: r.cache, disposition: "error", hit: false, steps: r.steps, ok: false, err: "too many restarts" };
 }
 
-// run is `run_with_headers` for a request that carries none.
-// run_with_headers interprets `decls` directly. It is `run_with` over an
-// interpreting Driver, kept because most callers have declarations rather
-// than a Driver in hand.
 pub function run_with_headers(decls: ast.Decl[], method: string, url: string, client_ip: string, names: string[], values: string[], cache: runtime.Cache): Outcome {
   return run_with(interpreting(decls), method, url, client_ip, names, values, cache);
 }
 
-// run is `run_with_headers` for a request that carries none.
 pub function run(decls: ast.Decl[], method: string, url: string, client_ip: string, cache: runtime.Cache): Outcome {
   let none: string[] = [];
   return run_with_headers(decls, method, url, client_ip, none, none, cache);

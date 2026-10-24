@@ -6,14 +6,6 @@ import (
 	"testing"
 )
 
-// allocU8ZeroProgram exercises the __alloc_u8 zero-initialisation contract
-// (issue #2768). fill() allocates a u8[], writes 0xAB into every byte, and
-// returns — dropping (freeing) the buffer so it lands on the allocator's
-// freelist. check() then allocates the SAME size, which reuses that freed
-// block, and sums its bytes: 0 iff the reused block was zero-filled, or
-// 32*0xAB otherwise. The interpreter always zeroed (Go make); the AOT backends
-// did not until #2768, so a reused block carried stale bytes. main returns the
-// sum, so exit 0 means correctly zero-initialised on every backend.
 const allocU8ZeroProgram = `
 function fill(): i32 {
     let a: u8[] = __alloc_u8(32);

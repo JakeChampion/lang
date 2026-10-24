@@ -1,12 +1,5 @@
 package e2eharness
 
-// EnumClosurePayloadProgram builds enum values that carry a closure in a
-// payload, a concrete enum and a generic one at i32, 100 rounds over: eight
-// it matches and calls through, eight whose owning local it overwrites
-// inside the arm before calling the binding (the box must outlive the arm
-// that borrows its payload), and eight it holds in an array, calls through
-// from there, and drops whole. It exits 0 when every answer is right; a leak
-// census over it must balance (#11349).
 const EnumClosurePayloadProgram = `import "std/i32";
 enum E { A(i32, (i32) => i32), B }
 enum G[T] { P(T, (i32) => T), N }

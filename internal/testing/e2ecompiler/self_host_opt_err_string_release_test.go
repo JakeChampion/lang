@@ -5,19 +5,6 @@ import (
 	"testing"
 )
 
-// --- The Err arm's string is released with its box (#6360) -----------------
-//
-// A tag-guarded Option/Result drop must release the Err payload as well as the
-// Ok one: `Result[i32[], string]` from a call strands 6400 bytes over 100
-// rounds, doubling with the round count, when only the Ok payload is released.
-// The Err release needs its own freshness proof — the producer's Err payload
-// must be a value the caller owns — since the success payload's proof cannot
-// vouch for it, and an unconditional release would free a caller's box on the
-// Err path.
-//
-// Both quadrants are covered: the local a match consumes, and the UNMATCHED
-// one.
-
 func TestSelfHostOptErrStringReleaseX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -54,7 +41,6 @@ func TestSelfHostOptErrStringReleaseX86_64(t *testing.T) {
 		return allocs, frees, live
 	}
 
-	// The main row: the Err strings are released, 6400 -> 0.
 	t.Run("err_string_from_a_call_with_a_match", func(t *testing.T) {
 		src := `function mk(i: i32): Result[i32[], string] {
     if (i % 3 == 0) { return Err("e" + "rr"); }
@@ -83,7 +69,6 @@ function main(): i32 {
 		}
 	})
 
-	// Every return is an Err, so the else-branch carries the whole program.
 	t.Run("err_string_on_every_return", func(t *testing.T) {
 		src := `function mk(i: i32): Result[i32[], string] {
     return Err("e" + "rr");
@@ -110,7 +95,6 @@ function main(): i32 {
 		}
 	})
 
-	// A bare Err literal: __fern_str_free's heap-base guard no-ops on .rodata.
 	t.Run("err_string_literal", func(t *testing.T) {
 		src := `function mk(i: i32): Result[i32[], string] {
     if (i % 3 == 0) { return Err("literal"); }
@@ -138,10 +122,6 @@ function main(): i32 {
 		}
 	})
 
-	// The producer's Err payload is a bare parameter, so it aliases the
-	// caller's box. Churns same-shaped strings before the aliased read, because
-	// otherwise the released box is not recycled and this exits correctly with the
-	// bug present.
 	t.Run("aliased_err_payload_still_strands", func(t *testing.T) {
 		src := `function mk(i: i32, held: string): Result[i32[], string] {
     if (i % 3 == 0) { return Err(held); }
@@ -179,7 +159,6 @@ function main(): i32 {
 		}
 	})
 
-	// The UNMATCHED quadrant: the same leak with no consuming match.
 	t.Run("unmatched_err_string_is_released", func(t *testing.T) {
 		src := `function mk(i: i32): Result[i32[], string] {
     if (i % 3 == 0) { return Err("e" + "rr"); }

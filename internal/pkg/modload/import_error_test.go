@@ -9,9 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
-// A refused reference into an imported module carries its position and the
-// file it is written in, so the CLI renders it with a header and caret and
-// the LSP publishes it where it is rather than at the top of the entry.
 func TestImportErrorIsPlacedInTheReferencingModule(t *testing.T) {
 	dir := t.TempDir()
 	for name, src := range map[string]string{
@@ -42,8 +39,6 @@ func TestImportErrorIsPlacedInTheReferencingModule(t *testing.T) {
 	}
 }
 
-// With refusals in two modules, the load reports the same one every run: the
-// first in path order.
 func TestImportErrorIsTheSameEveryRun(t *testing.T) {
 	dir := t.TempDir()
 	for name, src := range map[string]string{
@@ -65,8 +60,6 @@ func TestImportErrorIsTheSameEveryRun(t *testing.T) {
 	}
 }
 
-// An import that leads to no module, or back to one still being loaded, is
-// E086 at that import, in the file that writes it.
 func TestUnresolvedImportIsPlacedAtTheImport(t *testing.T) {
 	cases := []struct {
 		name  string

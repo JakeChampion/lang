@@ -9,11 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmCoreExportsMain pins that the WASI core module (`-emit
-// core-module` and the `-emit asm` text it is assembled from) exports `main`
-// beside `_start`, so a host reads main's result with `wasmtime run --invoke
-// main`. Through `_start` alone the result goes to proc_exit, which refuses a
-// status outside [0..126), so an answer of 126 or more is unreadable that way.
 func TestSelfHostWasmCoreExportsMain(t *testing.T) {
 	cli := newStrictCLI(t)
 	wat := cli.emit(t, "wasm32-wasi", "function main(): i32 { return 200; }")

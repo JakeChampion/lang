@@ -1,10 +1,3 @@
-// `pipe()` end to end: a Reader and a Writer joined by the kernel, and the
-// shape `split --filter` needs — a forked child whose stdin is the read end.
-//
-// Each exit code names the step that failed. The child leg is what pins the
-// close-on-exec contract: the child runs `c=$(cat)`, which only returns once
-// every write end is closed. A write end that leaked across the exec would be
-// held open by the child itself, and the probe would hang instead of exiting.
 package e2e
 
 import (
@@ -19,8 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// pipeSource is the probe. `forks` selects the child leg, which the
-// interpreter cannot run: its proc_fork answers -38.
 func pipeSource(forks bool) string {
 	child := ""
 	if forks {
@@ -78,8 +69,6 @@ func TestArm64Pipe(t *testing.T) {
 	}
 }
 
-// Darwin's pipe is the one hand-written half: XNU reports the write end in x1.
-// The binary is built on every host and run only on Apple Silicon.
 func TestArm64DarwinPipe(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -107,8 +96,6 @@ func TestInterpPipe(t *testing.T) {
 	}
 }
 
-// No wasm world has a process to hand an end to, so `pipe` is gated on
-// `proc` with fork and exec rather than answering Unsupported at run time.
 func TestPipeGatedOnProc(t *testing.T) {
 	prog, err := parser.Parse(pipeSource(false))
 	if err != nil {

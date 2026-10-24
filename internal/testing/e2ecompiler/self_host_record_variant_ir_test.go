@@ -8,19 +8,6 @@ import (
 	"testing"
 )
 
-// Record-form enum variants (`enum Shape { Rect { w: i32, h: i32 } }`) on the
-// self-host IR path (#6676). The payload layout is the positional one — the
-// variant record carries the same `__ev` / `__ev1` marker fields — so the field
-// names are a parse concern only: parse_enum_decl records them alongside the
-// markers and resolve_variant_fields_module rewrites `Rect { h, w }` into the
-// positional `Rect(w, h)` before the checker or any backend sees it. Every case
-// is checked against the native interpreter oracle, so a wrong ORDER (the
-// failure mode the reorder exists to prevent) shows up as a wrong exit code.
-//
-// The first-arm `Ident {` shape is shared with the struct-pattern desugar; which
-// one a match takes is decided on whether the head names a struct declared in
-// the same file (parser.is_struct_pattern_arm), which is why several cases
-// declare a struct alongside the enum.
 var selfHostRecordVariantCases = []struct {
 	name string
 	src  string
@@ -43,13 +30,9 @@ function area(s: Shape): i32 {
 function main(): i32 {
   return area(Rect(3, 4)) + area(Circle(2)) + area(Unit) + area(Pair(5, 6));
 }`},
-	// Field order in the pattern is free; the bindings must still land on the
-	// payloads in DECLARATION order.
 	{"reordered_fields", `enum Shape { Rect { w: i32, h: i32 } }
 function f(s: Shape): i32 { match (s) { Rect { h, w } => { return w * 10 + h; }, } return 0; }
 function main(): i32 { return f(Rect(3, 7)); }`},
-	// Value position: the parser desugars the match into an immediately-invoked
-	// closure, so the record pattern sits inside a lambda body.
 	{"expr_form", `enum Shape { Circle { r: i32 }, Rect { w: i32, h: i32 } }
 function area(s: Shape): i32 {
   return match (s) {
@@ -58,7 +41,6 @@ function area(s: Shape): i32 {
   };
 }
 function main(): i32 { return area(Rect(3, 4)) + area(Circle(2)); }`},
-	// A record variant still matches positionally — the layout is the same.
 	{"positional_match_of_record", `enum Shape { Rect { w: i32, h: i32 }, Unit }
 function f(s: Shape): i32 { match (s) { Rect(w, h) => { return w - h; }, Unit => { return 0; } } return 0; }
 function main(): i32 { return f(Rect(9, 4)) + f(Unit); }`},
@@ -75,22 +57,17 @@ function main(): i32 { return f(Rect(5, 2)) * 100 + f(Rect(1, 9)) * 10 + f(Unit)
 	{"string_payload", `enum Msg { Note { id: i32, text: string }, Empty }
 function f(m: Msg): i32 { match (m) { Note { text, id } => { return text.len() + id; }, Empty => { return 0; } } return 0; }
 function main(): i32 { return f(Note(5, "abcd")) + f(Empty); }`},
-	// A struct pattern in the same file must keep taking the struct desugar.
 	{"struct_pattern_alongside", `struct Point { x: i32, y: i32 }
 enum Shape { Rect { w: i32, h: i32 } }
 function ps(p: Point): i32 { match (p) { Point { x, y } => { return x + y; } } return 0; }
 function sh(s: Shape): i32 { match (s) { Rect { h, w } => { return w * h; }, } return 0; }
 function main(): i32 { return ps(Point { x: 1, y: 2 }) + sh(Rect(3, 4)); }`},
-	// The enum is declared BELOW the match that destructures it: the head-name
-	// scan runs over the whole token stream, not the decls parsed so far.
 	{"enum_declared_after_use", `function f(s: Shape): i32 { match (s) { Rect { h, w } => { return w * 10 + h; }, } return 0; }
 enum Shape { Rect { w: i32, h: i32 } }
 function main(): i32 { return f(Rect(2, 5)); }`},
 	{"at_binding", `enum Shape { Rect { w: i32, h: i32 }, Unit }
 function f(s: Shape): i32 { match (s) { r @ Rect { h, w } => { return w * h; }, Unit => { return 0; } } return 0; }
 function main(): i32 { return f(Rect(6, 7)) + f(Unit); }`},
-	// `field: local` renames, `..` leaves fields out, and a field may carry a
-	// sub-pattern; each slot still lands on its DECLARED payload.
 	{"rename_and_rest", `enum Shape { Rect { w: i32, h: i32, d: i32 }, Unit }
 function f(s: Shape): i32 {
   match (s) {

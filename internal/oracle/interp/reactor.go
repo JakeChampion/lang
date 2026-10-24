@@ -11,26 +11,12 @@ import (
 	"time"
 )
 
-// The reactor floor (#9853) in the interpreter: an epoll or kqueue set
-// over the raw descriptors behind the tcp, unix and udp handles, so a
-// program that waits on the reactor sees the same readiness the native
-// runtime bodies report, with the handle the program knows in each event.
-
 type reactor struct {
-	fd int
-	// handles maps a raw descriptor in the set to the handle it was
-	// watched under; a signal's pipe maps to -signal.
+	fd      int
 	handles map[int]int64
-	// signals holds the pipes that turn a delivered signal into readiness.
 	signals map[int]*signalWatch
 }
 
-// waitRestarting calls wait with timeoutMs, and again after each EINTR with
-// what is left of the original deadline, as the kernel does for a compiled
-// program's poll. Go's runtime handles every signal, its preemption signal
-// among them, and an epoll or kqueue wait a handler interrupts is not
-// restarted. A negative timeoutMs waits without a bound; an interruption once
-// the deadline has passed is a timeout, with no events.
 func waitRestarting(timeoutMs int, wait func(ms int) (int, error)) (int, error) {
 	deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
 	n, err := wait(timeoutMs)
@@ -48,16 +34,11 @@ func waitRestarting(timeoutMs int, wait func(ms int) (int, error)) (int, error) 
 	return n, err
 }
 
-// signalWatch is one watched signal: os/signal delivers to ch, a
-// goroutine writes a byte per delivery into the pipe, and the pipe's read
-// end sits in the set under -signal.
 type signalWatch struct {
 	r, w *os.File
 	ch   chan os.Signal
 }
 
-// watchSignal makes signal sig a readiness event: the pipe's read end,
-// which reactor_ctl answers as the descriptor an unwatch names.
 func (r *reactor) watchSignal(sig int) (int, error) {
 	if r.signals == nil {
 		r.signals = map[int]*signalWatch{}
@@ -108,7 +89,6 @@ func (r *reactor) unwatchSignal(sig int) error {
 	return err
 }
 
-// drainSignal consumes the deliveries queued in a signal's pipe.
 func (r *reactor) drainSignal(raw int) {
 	var buf [128]byte
 	syscall.Read(raw, buf[:])
@@ -122,20 +102,14 @@ func errnoOf(err error) int64 {
 	return -int64(syscall.EIO)
 }
 
-// builtinRingUnsupported answers ring_new, ring_ctl, ring_wait, ring_recv and ring_send_zc: the
-// interpreter keeps every wait on the reactor, so a driver asking for the
-// io_uring set falls back to it as it does on a kernel without one.
 func builtinRingUnsupported(_ *Interp, _ []Value) (Value, error) {
 	return Number(errnoOf(syscall.ENOSYS)), nil
 }
 
-// builtinKtlsUnsupported answers tcp_ktls: the interpreter's sockets are
-// Go's, so a connection asking for the kernel's record layer keeps its own.
 func builtinKtlsUnsupported(_ *Interp, _ []Value) (Value, error) {
 	return Number(errnoOf(syscall.ENOSYS)), nil
 }
 
-// rawFd is the descriptor behind a socket handle of any kind.
 func (i *Interp) rawFd(handle int64) (int, bool) {
 	var sc syscall.Conn
 	if ln, ok := i.tcpListeners[handle]; ok {
@@ -234,8 +208,6 @@ func builtinReactorCtl(i *Interp, args []Value) (Value, error) {
 	return Number(-int64(syscall.EINVAL)), nil
 }
 
-// A readiness event: the handle and its readiness bits, 1 readable, 2
-// writable, 4 an error or hang-up.
 type reactorEvent struct {
 	raw   int
 	ready int64
@@ -282,9 +254,6 @@ func builtinReactorWait(i *Interp, args []Value) (Value, error) {
 	return Number(len(got)), nil
 }
 
-// builtinTcpRecvInto reads once into the caller's buffer: the byte count,
-// 0 at EOF, or -errno; a non-blocking connection with nothing to read
-// answers -EAGAIN.
 func builtinTcpRecvInto(i *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("tcp_recv_into: expected 2 args, got %d", len(args))
@@ -318,13 +287,6 @@ func builtinTcpRecvInto(i *Interp, args []Value) (Value, error) {
 	return Number(errnoOf(err)), nil
 }
 
-// readSocket is one read of a connection. A non-blocking one reads through
-// the descriptor itself, so what is queued comes back and nothing answers
-// EAGAIN; the deadline the net package offers would refuse to read at all
-// once it has passed.
-// writeSocket is readSocket's write side: one write(2) on the descriptor
-// for a non-blocking socket, which answers a short count or EAGAIN
-// rather than waiting for room.
 func writeSocket(conn net.Conn, data []byte, nonblocking bool) (int, error) {
 	if !nonblocking {
 		return conn.Write(data)

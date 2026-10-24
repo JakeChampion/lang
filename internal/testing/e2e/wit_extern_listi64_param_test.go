@@ -12,17 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternListI64ParamCustomProvider is the P4c composite-parameter gate for
-// an 8-byte-element integer array (docs/WIT-BRING-YOUR-OWN.md): a Fern program
-// passes an `i64[]` to an `@import` extern, lowered to a canonical `list<s64>`
-// (ptr, len). It pins that 8-byte elements need no special handling: the param
-// wrapper forwards `(elemPtr, load(elemPtr-4))` unchanged, and the canonical
-// lower of `list<s64>` accepts the 4-byte-aligned element pointer (the bytes
-// are read in place, no alignment trap) — so the same zero-copy path as the
-// ≤4-byte arrays applies.
-//
-// The provider exports `sum-i64: func(data: list<s64>) -> s64` summing the
-// elements at 8-byte stride; the Fern side passes [10, 20, 30] (sum 60).
 func TestExternListI64ParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -40,7 +29,6 @@ func TestExternListI64ParamCustomProvider(t *testing.T) {
 		}
 	}
 
-	// --- Provider component exporting local:test/sink@0.1.0 sum-i64. ---
 	provWit := filepath.Join(dir, "provwit")
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -49,9 +37,6 @@ func TestExternListI64ParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\ninterface sink { sum-i64: func(data: list<s64>) -> s64; }\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// sum-i64 receives the lowered (ptr, len) — len is the element count, the
-	// caller writes the i64s into this module's memory via cabi_realloc — and
-	// returns their sum. Elements are read at 8-byte stride via i64.load.
 	provCoreWat := filepath.Join(dir, "prov_core.wat")
 	if err := os.WriteFile(provCoreWat, []byte(`(module
   (memory (export "memory") 1)
@@ -79,7 +64,6 @@ func TestExternListI64ParamCustomProvider(t *testing.T) {
 	run(wasmtools, "component", "embed", provWit, "-w", "provider", provCore, "-o", provEmbed)
 	run(wasmtools, "component", "new", provEmbed, "-o", provider)
 
-	// --- User world: custom sink iface + wasi stdout. ---
 	userWit := filepath.Join(dir, "userwit")
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps")).CombinedOutput(); err != nil {
 		_ = os.MkdirAll(userWit, 0o755)
@@ -114,7 +98,6 @@ func TestExternListI64ParamCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// --- User program: pass [10, 20, 30] (sum 60) to the extern. ---
 	const want = "sum-ok"
 	src := `@import("local:test/sink@0.1.0", "sum-i64")
 function sum_i64(data: i64[]): i64;

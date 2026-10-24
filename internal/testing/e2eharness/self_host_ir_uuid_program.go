@@ -1,16 +1,5 @@
-// Package e2eharness holds the shared e2e test harness — driver builds,
-// tooling discovery, caches — used by both internal/testing/e2e and
-// internal/testing/e2ecompiler (#4398 part 3). Extracted verbatim from
-// internal/testing/e2e/self_host_ir_uuid_program_test.go.
 package e2eharness
 
-// UuidV4Program is a self-contained (single-module) uuid_v4 implementation used
-// by the self-host IR-path tests (issue #2682). It inlines the std/uuid helpers
-// because the self-host differential drivers parse one module without modload.
-// It builds the canonical 8-4-4-4-12 lowercase hex string from the
-// random_bytes u8[] + sliced-hex-literal + string concat, so it lowers through
-// the IR path on every backend. main returns 0 on
-// success, or a small non-zero code identifying the failed invariant.
 const UuidV4Program = `
 function hexd(n: i32): string { return slice_unchecked("0123456789abcdef", n, n + 1) + ""; }
 function bh(b: i32): string { return hexd((b >> 4) & 15) + hexd(b & 15); }

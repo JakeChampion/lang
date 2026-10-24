@@ -10,11 +10,6 @@ import (
 	"testing"
 )
 
-// The punctuation and keywords a construct's grammar requires are required by
-// both front ends (#12659): `match (e) {`, `if (c)`, `while (c)`, the `=>` of a
-// match arm, the `else` of an if-expression, the `=` of an `if let` or a
-// destructure, and the `= E else` of a let-else. The self-host reports each
-// missing one where native does, in native's words.
 func TestSelfHostRequiredPunctGrammar(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	const prelude = "struct P { x: i32 }\nconst K: i32 = 1;\nfunction main(): i32 {\n  let n: i32 = 3;\n  let o: Option[i32] = Some(3);\n  let t: (i32, i32) = (1, 2);\n  let q: P = P { x: 1 };\n"
@@ -36,10 +31,6 @@ func TestSelfHostRequiredPunctGrammar(t *testing.T) {
 		"let Some(v) = o else { return 1; };",
 		"let 3 = n else { return 1; };",
 	}
-	// Each rejected statement is the whole of one program's body line; native's
-	// first P001 names the position and the words the self-host must match.
-	// The two rows that close `main` early put a declaration between it and a
-	// second function the postlude finishes.
 	rejected := []string{
 		"return 0;\n}\nconst J: i32 2;\nfunction g(): i32 {",
 		"return 0;\n}\ntrait H { type Item; }\nimpl H for P { type Item i32; }\nfunction g(): i32 {",
@@ -111,8 +102,6 @@ func TestSelfHostRequiredPunctGrammar(t *testing.T) {
 			t.Errorf("self-host on `%s`: want %q at %s as native reports, got (%v)\n%s", stmt, m[2], m[1], err, out)
 		}
 	}
-	// A plain binding always binds, so an `else` after it is refused where
-	// native refuses it, in the same words (native gives that error no code).
 	src := filepath.Join(dir, "plain_else.fern")
 	if err := os.WriteFile(src, []byte(prelude+"  let w = o else { return 1; };"+postlude), 0o644); err != nil {
 		t.Fatal(err)

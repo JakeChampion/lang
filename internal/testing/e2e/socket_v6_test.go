@@ -11,11 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The IPv6 leg of the socket primitives (#9853): a listener, a dial and
-// two datagram sockets over ::1, raw and through std/net, on every
-// backend. A host without IPv6 is one where Go itself cannot listen on
-// ::1; there the probe must answer "nov6" (exit 43) rather than fail, and
-// the test skips. Where Go can listen, the probe must pass.
 var socketV6Probes = []struct {
 	name string
 	src  func() string
@@ -24,7 +19,6 @@ var socketV6Probes = []struct {
 	{"std_net", e2eharness.NetV6Probe},
 }
 
-// checkV6Verdict judges a native leg's exit code and output.
 func checkV6Verdict(t *testing.T, leg, out string, got int) {
 	t.Helper()
 	if e2eharness.HostHasIPv6() {
@@ -94,8 +88,6 @@ func TestArm64DarwinSocketV6(t *testing.T) {
 	}
 }
 
-// The wasm leg: a wasi:cli/run component reports only 0 or 1, so the
-// verdict is the probe's stdout, "ok" or "nov6".
 func TestSocketV6Wasm(t *testing.T) {
 	for _, tool := range []string{"wasm-tools", "wasmtime"} {
 		if _, err := exec.LookPath(tool); err != nil {

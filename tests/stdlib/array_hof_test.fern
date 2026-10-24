@@ -2,15 +2,6 @@ import "std/test";
 import "std/array";
 import "core/cmp";
 
-// tests/stdlib/array_hof_test.fern — pure-Fern coverage of the std/array
-// higher-order combinators NOT already covered by array_combinators_test
-// (which does map / filter / fold / any / all / find): flat_map, reduce
-// (→ Option[T]), and core/cmp's sort_by (a comparator closure). All are generic over the
-// element type with closure args — the same generic-method-on-array + closure
-// shape that lowers through the self-host IR. The Go-side suite unit-tests
-// these; this is the migration-shaped (pure-Fern, std/test-driven,
-// self-host-gated) companion.
-
 function test_flat_map(): test.TestOutcome {
   let xs: i32[] = [1, 2, 3];
   let out = xs.flat_map((x: i32): i32[] => [x, x * 10]);
@@ -94,7 +85,6 @@ function test_intersperse(): test.TestOutcome {
 }
 
 function test_intersperse_single(): test.TestOutcome {
-  // A single element has no gap to fill — returned unchanged.
   let xs: i32[] = [7];
   return test.assert_eq_array(xs.intersperse(0), [7]);
 }
@@ -105,7 +95,6 @@ function test_intersperse_empty(): test.TestOutcome {
 }
 
 function test_intersperse_strings(): test.TestOutcome {
-  // Structural (no callback) → works for any element type.
   let xs: string[] = ["a", "b", "c"];
   return test.assert_eq_array(xs.intersperse("-"), ["a", "-", "b", "-", "c"]);
 }
@@ -119,7 +108,6 @@ function flatten_add(a: i32, x: i32): i32 {
 }
 
 function test_flatten(): test.TestOutcome {
-  // Nested arrays concatenate in order; inner empties vanish.
   return test.assert_eq_array(array.flatten([[1, 2], [], [3, 4]]), [1, 2, 3, 4]);
 }
 
@@ -129,7 +117,6 @@ function test_flatten_empty(): test.TestOutcome {
 }
 
 function test_partition(): test.TestOutcome {
-  // kept = matches (in order), rejected = the rest (in order).
   let pr: (i32[], i32[]) = array.partition([1, 2, 3, 4, 5], flatten_is_even);
   if (pr.1.len() != 3) {
     return test.fail("rejected len");
@@ -143,7 +130,6 @@ function test_partition_method(): test.TestOutcome {
 }
 
 function test_scan(): test.TestOutcome {
-  // Running left fold; same length as input, final == fold.
   return test.assert_eq_array(array.scan([1, 2, 3, 4], 0, flatten_add), [1, 3, 6, 10]);
 }
 

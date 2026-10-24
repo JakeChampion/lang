@@ -5,11 +5,6 @@ import "std/platform";
 import "std/json";
 import "std/option";
 
-// tests/stdlib/http_router_test.fern — std/http/router: the patterns it
-// refuses and keeps, which route answers a request and with what status,
-// the parameters a pattern binds, a handler failing with `?` on errors of
-// more than one type, and a `use` chain of middleware over a route.
-
 function answer(label: string): (HttpRequest, router.Params, platform.Host) => Result[HttpResponse, dyn http.ToResponse] {
   return (req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] => Ok(http.ok(label));
 }
@@ -33,9 +28,6 @@ function user_by_id(req: HttpRequest, params: router.Params, plat: platform.Host
 @derive(json.Json, json.FromJson)
 struct Note { id: i32, text: string }
 
-// A handler whose failures are of two types: the body's (`BodyError`) and
-// the route's (`HttpError`), each boxed by `?` into the one error the
-// handler answers.
 function note_create(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
   let n: Note = http.body_json[Note](req)?;
   if (n.id < 0) {
@@ -98,8 +90,6 @@ function test_conflicts(): test.TestOutcome {
   return test.assert_eq(got, "http router: pattern GET /a conflicts with GET /a\nhttp router: pattern /{y}/b conflicts with /a/{x}\naccepted\naccepted\naccepted\naccepted\naccepted\naccepted\naccepted");
 }
 
-// A refusal is the first one, kept through every registration after it,
-// and the router answers 500 naming it until it is fixed.
 function test_a_refusal_is_kept(): test.TestOutcome {
   let r: router.Router[platform.Host] = router.new[platform.Host]().get("/ok", answer("ok")).route("/a//b", answer("x")).route("/a//b", answer("y")).get("/ok", answer("again"));
   let resp: HttpResponse = r.handle(http.request("GET", "/ok"), platform.host());
@@ -151,14 +141,11 @@ function test_errors_of_two_types(): test.TestOutcome {
   return test.assert_eq(got, "415|422 {\"type\":\"about:blank\",\"title\":\"Unprocessable Entity\",\"status\":422,\"detail\":\"a note's id is not negative\"}|201 application/json {\"id\":7,\"text\":\"hi\"}");
 }
 
-// stamped is a middleware: it tags the request for the handler and the
-// response for the client, a failure's answer included.
 function stamped(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
   let resp: HttpResponse = http.respond(next(req.with_header("x-request-id", "r-1")));
   return Ok(resp.with_header("x-request-id", "r-1"));
 }
 
-// gated is a middleware that stops the chain without a token.
 function gated(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
   match (req.headers.get("x-token")) {
     Some(t) => {
@@ -200,8 +187,6 @@ function test_middleware_chain(): test.TestOutcome {
   return test.assert_eq(got, "401 {\"type\":\"about:blank\",\"title\":\"Unauthorized\",\"status\":401,\"detail\":\"no token\"} r-1|200 request r-1 r-1");
 }
 
-// tagged is a router-wide middleware: it marks the request for the routes
-// and the response on the way out, with the order the wraps ran in.
 function tagged(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
   let resp: HttpResponse = http.respond(next(req.with_header("x-seen", req.headers.get("x-seen").unwrap_or("") + "t")));
   return Ok(resp.with_header("x-order", resp.headers.get("x-order").unwrap_or("") + "t"));
@@ -212,8 +197,6 @@ function counted(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => R
   return Ok(resp.with_header("x-order", resp.headers.get("x-order").unwrap_or("") + "c"));
 }
 
-// options_for answers any OPTIONS itself, ahead of the routes, the way a
-// CORS preflight is answered.
 function options_for(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
   if (req.method == "OPTIONS") {
     return Ok(http.no_content().with_header("x-preflight", req.path));

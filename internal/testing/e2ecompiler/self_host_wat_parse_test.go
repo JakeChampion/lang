@@ -7,16 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWatParse exercises the WAT S-expr parser (compiler/
-// wat_parse.fern) — slice 3 of the self-hosted binary wasm backend, which
-// turns the wat_lex token stream into a tree the encoder will walk.
-//
-// wat_parse.fern depends on WatTok (from wat_lex.fern) but is otherwise
-// import-free, so the test concatenates wat_lex.fern + wat_parse.fern + a
-// self-test main() that parses a small nested form and asserts the tree
-// shape, then runs it through the self-host wasm pipeline (wasm_run -> WAT
-// -> wasmtime). Exit 0 = all checks pass; a failing check returns its
-// 1-based id.
 func TestSelfHostWatParse(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wat_parse e2e")
@@ -48,10 +38,6 @@ func TestSelfHostWatParse(t *testing.T) {
 	}
 }
 
-// watParseSelfTestMain parses `(module (func $f))` and asserts the tree:
-// a 2-child root list [atom "module", list [atom "func", atom "$f"]] —
-// exercising nested list nodes + two-level child access. Each `return N`
-// is a distinct failing-check id (0 = pass).
 const watParseSelfTestMain = `
 function main(): i32 {
     let root: SExpr = wat_parse(wat_tokenize("(module (func $f))"));

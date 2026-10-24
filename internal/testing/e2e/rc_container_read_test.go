@@ -4,45 +4,6 @@ import (
 	"testing"
 )
 
-// Reading a value OUT of a container and letting the read die is a reclaim
-// shape, and two of them leaked once per read rather than once per program.
-// Both are pinned the way docs/ALLOCATION-OBSERVABLE.md states the observable:
-// run the loop at n and at 2n and compare the FRESH bytes each round consumed,
-// never an absolute byte count.
-//
-//   - `m.get(k)` (#6561) stranded two blocks per lookup — the Map runtime's
-//     uniform `Option[usize]` and the consumer-shaped box emitMapGetRebox
-//     rebuilds from it. Measured 48 B/get on x86-64, arm64-linux and
-//     arm64-darwin and 32 B/get on wasm; a MISS stranded 16 B on every
-//     backend through the rebuilt box alone.
-//   - `let line = words[0]` followed by `line = line + …` (#6567) stranded
-//     every intermediate concat, 64 B/round on all four compiled backends.
-//     Neither ingredient leaks alone: a `""` seed is flat, and so is a single
-//     append onto a container-read seed, which is what let the shape survive
-//     casual testing.
-//
-// The comparison happens INSIDE the program and only a verdict crosses the
-// harness boundary. A byte count cannot: it comes back as an exit code clamped
-// to 0..255, so two leaking measurements 256 apart compare equal and the gate
-// passes on the commit the fix has not landed on.
-//
-// Each program also checks its own ANSWER and `__rc_underflow_count()`. The
-// borrow-soundness half — that a value read out is one the CONTAINER still
-// owns — is in the rc corpus (rc_corpus_map_get_string_value_borrowed_repeatedly,
-// rc_corpus_accumulator_seeded_from_array_element), which runs the free-off legs too.
-//
-// arm64 has no seeded-accumulator bound: the seed taint is fixed there as
-// well, but that backend still defers the accumulator's intermediates under
-// #6554 — the same residual an accumulator seeded from `""` shows — so
-// asserting flatness here would pin someone else's bug to this test.
-
-// Verdict codes shared by both probes.
-//
-//	0    flat, and no over-release
-//	1    the second run consumed more fresh bytes than the first
-//	99x  the loop computed the wrong answer, so the shape it measured is not
-//	     the shape under test
-//	>1   __rc_underflow_count(), i.e. an over-release
 const bumpVerdictFlat = 0
 
 func mapGetVerdictSrc() string {

@@ -2,10 +2,6 @@ package symname
 
 import "testing"
 
-// Round-tripping is what lets debug info describe the source while the binary
-// carries the mangled symbol: DW_AT_name is Source(sym), and it has to give
-// back exactly what the program was written with — including the names that
-// already start with an underscore run, where a sloppy trim would eat one.
 func TestFnSourceRoundTrip(t *testing.T) {
 	for _, name := range []string{
 		"main", "cs", "r16", "qword", "and",
@@ -23,10 +19,6 @@ func TestFnSourceRoundTrip(t *testing.T) {
 	}
 }
 
-// A name the backends emit outside the Fern-function namespace — a runtime
-// helper, the process entry, an internal label — must not read back as a Fern
-// function, or debug info would rename it and the emitter's two namespaces
-// would not be separable after the fact.
 func TestSourceRejectsNonFunctionSymbols(t *testing.T) {
 	for _, sym := range []string{
 		"__fern_alloc", "__memcpy", "__c_call1", "_start", "_main",

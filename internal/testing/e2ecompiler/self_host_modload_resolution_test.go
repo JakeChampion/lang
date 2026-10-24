@@ -8,21 +8,13 @@ import (
 	"testing"
 )
 
-// TestSelfHostModloadResolvesBesideImporter pins the shared modloader's
-// resolution to native's: an import other than `std/` and `core/` resolves
-// beside the file that wrote it, not beside the entry, and a module is the
-// file it resolves to, so two modules sharing a basename both load and each
-// keeps its own namespace. Driven through checker_modload_run, whose checker
-// rejects a reference bound to the wrong module.
 func TestSelfHostModloadResolvesBesideImporter(t *testing.T) {
 	_, runner, driverBin := buildCheckerModloadDriverX86(t)
 
 	cases := []struct {
 		name  string
 		files map[string]string
-		// want is the diagnostic, with DIR standing for the project directory;
-		// empty means the run must be clean and quiet.
-		want string
+		want  string
 	}{
 		{
 			name: "dot-import-inside-a-subdirectory",
@@ -86,8 +78,6 @@ function main(): i32 { let a: i32 = h2.value(); let b: string = h3.value(); let 
 			want: `checker_modload_run: DIR/lib/a.fern:1:1: error[E086]: cannot resolve import "./gone": not found`,
 		},
 		{
-			// A stdlib import resolves under the stdlib root and nowhere else:
-			// a file of the same basename beside the importer is not it (#12690).
 			name: "missing-stdlib-module-with-local-namesake",
 			files: map[string]string{
 				"main.fern":      "import \"std/other\";\n  import \"std/json2\";\nfunction main(): i32 { return other.x() + json2.y(); }\n",

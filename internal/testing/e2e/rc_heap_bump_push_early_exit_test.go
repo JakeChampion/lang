@@ -5,28 +5,8 @@ import (
 	"testing"
 )
 
-// The array-push element move used to be disabled by ANY `return` / `break` /
-// `continue` in the loop body, so a guard clause on a provably dead branch made
-// every pushed element a copy: measured on main, 1280 B/round on arm64-darwin
-// and 960 B/round on wasm at 200 vs 400 rounds, exactly 2.0x per doubling.
-// Parsers and tokenisers are built out of that shape, so this covered most of
-// the accumulate-into-an-array code in the language (#6533).
-//
-// The probe runs the same churn TWICE and subtracts the bump high-water across
-// the second one, so the figure is what the FIRST churn failed to give back —
-// a leak, not a working set. n=2 keeps the pre-fix figure inside an exit code
-// (128 B on both natives, 96 B on wasm) so the number itself is pinned, not
-// just its sign; anything past 200 saturates rather than wrapping into a small
-// value.
-//
-// The answer is checked in-process on both churns: a move that fired where it
-// must not is a use-after-free, and a corrupted element would show up as the
-// wrong total rather than as a byte count.
-
 const pushEarlyExitN = 2
 
-// pushEarlyExitSrc places an early exit before the element's declaration
-// (`pre`), between the declaration and the push (`mid`), or after it (`post`).
 func pushEarlyExitSrc(pre, mid, post string) string {
 	return fmt.Sprintf(`struct Val { kind: i32, kids: i32[] }
 function churn(n: i32): i32 {

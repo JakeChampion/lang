@@ -38,8 +38,6 @@ function outcome_controls(f: ssa.SFunc): void {
     reverse = reverse.append(ssa.SBlock { ...b, term: term });
   }
   expect_outcomes(ssa.SFunc { ...f, blocks: reverse }, [true, false], [false, true], 41);
-  // Unknown second-parameter conditions allow both outcomes for either Boolean
-  // input. A normal-return summary must never conceal the possible exit.
   let unknown: ssa.SBlock[] = [];
   for b in f.blocks {
     let term = b.term;
@@ -79,9 +77,6 @@ function outcome_controls(f: ssa.SFunc): void {
   select_controls(f);
 }
 
-// select_controls: a select picks the operand its known condition names and
-// joins both under an unknown one, and returns zero only when both of its
-// operands are zero.
 function select_controls(f: ssa.SFunc): void {
   let params = [ssa.SInst { kind_tag: 6, result: 0, args: [], imm: 0, str: "" }, ssa.SInst { kind_tag: 6, result: 1, args: [], imm: 1, str: "" }, ssa.SInst { kind_tag: 1, result: 2, args: [], imm: 0, str: "" }, ssa.SInst { kind_tag: 1, result: 3, args: [], imm: -2147483648, str: "" }];
   let pick = ssa.SInst { kind_tag: 36, result: 4, args: [0, 3, 2], imm: 0, str: "" };
@@ -159,9 +154,6 @@ function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
   return ssa.SFunc { ...f, blocks: blocks };
 }
 
-// with_join_phi gives the join after `require`'s branch a phi for the phi
-// controls to corrupt: zero from the path that returns, and the exit's result
-// from the path that exits. The lowering leaves no phi there of its own.
 function with_join_phi(f: ssa.SFunc): ssa.SFunc {
   let ex: Exits = exits_of(f);
   let blocks: ssa.SBlock[] = [];
@@ -179,7 +171,6 @@ function with_join_phi(f: ssa.SFunc): ssa.SFunc {
   return ssa.SFunc { ...f, blocks: blocks, nvals: f.nvals + 1 };
 }
 
-// Exits holds the entry's zero constant and each exit with the block it is in.
 struct Exits { zero: i32, blocks: i32[], results: i32[] }
 
 function exits_of(f: ssa.SFunc): Exits {
@@ -197,8 +188,6 @@ function exits_of(f: ssa.SFunc): Exits {
   return ex;
 }
 
-// join_phi_args takes each predecessor's exit result, or zero from one that
-// does not exit.
 function join_phi_args(preds: i32[], ex: Exits): i32[] {
   let args: i32[] = [];
   for p in preds {
@@ -223,7 +212,6 @@ function prepended(first: ssa.SInst, rest: ssa.SInst[]): ssa.SInst[] {
   return out;
 }
 
-// control_form is the form control `i` corrupts: the phi controls need a phi.
 function control_form(f: ssa.SFunc, phi_form: ssa.SFunc, i: i32): ssa.SFunc {
   if (i == 7 || i == 9 || i == 10) {
     return phi_form;

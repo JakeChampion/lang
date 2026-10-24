@@ -2,15 +2,6 @@ package e2e
 
 import "testing"
 
-// std/array's `max_index[T: cmp.Ord](xs)` / `min_index[T: cmp.Ord](xs)` — the
-// INDEX of the largest / smallest element by the element type's Ord ordering,
-// as Option[i32] (None on empty; first index on a tie). The index-returning
-// companions to core/cmp's value-returning max_of/min_of. The T: cmp.Ord bound
-// monomorphises the compare per element type (scalar i32, lexicographic
-// string); the return is Option[i32] (scalar payload) regardless of T, so it
-// lowers on the self-host IR path for string elements too. This differential
-// exercises i32 AND string arrays across interp / x86-64 / wasm / arm64. Returns
-// 42 iff every check holds; each leg skips itself when its toolchain is absent.
 const arrayMinMaxIndexProg = `
 import "std/array" as array;
 function idx(o: Option[i32]): i32 { match (o) { Some(v) => { return v; }, None => { return 0 - 1; } } }

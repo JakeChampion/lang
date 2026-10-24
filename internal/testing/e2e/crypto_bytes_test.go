@@ -2,23 +2,6 @@ package e2e
 
 import "testing"
 
-// cryptoBytesProgram pins that `std/crypto` carries bytes as `u8[]`
-// rather than `string` (#5730, the D9 follow-up), and that the encoders
-// take `u8[]` on the input side so a digest pipes straight into one.
-//
-// The point is not the types per se. A SHA-256 digest is 32 arbitrary
-// bytes and is essentially never valid UTF-8 — so as long as
-// `sha256_bytes` came back as a `string`, the D9 invariant ("a `string`
-// is well-formed UTF-8") was false by construction for every caller of
-// this module. The `utf8.from_bytes` rejection below is the proof: those
-// bytes really cannot be a `string`.
-//
-// It also pins the shape of the migration: the `*_hex` variants still
-// return a `string` (hex output genuinely is text), the message to hash
-// and the password to stretch are still `string`, and the whole
-// key / salt / IKM / info side is `u8[]`.
-//
-// Exits 0 on success, a distinct code per failed step.
 const cryptoBytesProgram = `
 import "std/crypto" as crypto;
 import "std/hex" as hex;

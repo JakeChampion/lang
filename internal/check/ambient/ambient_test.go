@@ -12,8 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/modload"
 )
 
-// enforce loads, folds and checks src the way `fern -check` does, then
-// runs the rule over it.
 func enforce(t *testing.T, src string) []Violation {
 	t.Helper()
 	prog, _, err := modload.LoadSource(src)
@@ -39,7 +37,7 @@ func TestReportsEffectsAroundTheBag(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
-		want []string // "builtin@capability" per violation, in order
+		want []string
 	}{
 		{
 			name: "every ambient builtin in the body, one violation per capability",
@@ -220,8 +218,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	}
 }
 
-// The chain is the message's argument: it names the path from the handler
-// to the builtin, so the reader knows which helper to hand the bag to.
 func TestMessageNamesTheChainAndTheBag(t *testing.T) {
 	vs := enforce(t, `import "std/http";
 import "std/platform";
@@ -250,8 +246,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	}
 }
 
-// The suggestions name std/platform methods that exist, with the same
-// arity as the builtin they replace, so a reader can apply one verbatim.
 func TestSuggestionsExistInStdPlatform(t *testing.T) {
 	src, err := os.ReadFile(filepath.Join("..", "..", "stdlib", "std", "platform.fern"))
 	if err != nil {
@@ -268,9 +262,6 @@ func TestSuggestionsExistInStdPlatform(t *testing.T) {
 	}
 }
 
-// A platform's own methods are the sanctioned route: they reach the
-// builtins by design and are not handlers, even though they take the
-// platform.
 func TestBagMethodsAreNotHandlers(t *testing.T) {
 	vs := enforce(t, `import "std/http";
 import "std/platform";

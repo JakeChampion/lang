@@ -8,25 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostReaderWasmIR closes the streaming-reader wasm IR gap: the Reader
-// intrinsics `r.read_chunk(n)` (-> Result[string, IoError]) and `r.close()` (-> a
-// Result[void, IoError]) now lower on the wasm IR path. A Reader is just
-// its fd (stdin() = fd 0), so read_chunk reads stdin via preview1 fd_read into a
-// fresh string block and boxes Some(chunk) / None-at-EOF, and close calls
-// fd_close and boxes the outcome — the same Option[string] / Result[void, IoError] ABIs the
-// register backends' __fn___fern_reader_read_chunk / __fn___fern_reader_close
-// produce, and the same string+Option layout env_func builds. Backs the std/io
-// read_all_stdin loop on wasm.
-//
-// Wasm keeps its own hand-emitted helpers under the bare `$__fern_reader_*` names;
-// only the register backends moved to Fern runtime functions (#2649) and so to the
-// stack-ABI `__fn___` names. The assertions below differ from the register-backend
-// ones for that reason.
-//
-// Each case (a) pins the IR route (the WAT calls $__fern_reader_read_chunk /
-// $__fern_reader_close) and (b) actually reads stdin under wasmtime, asserting
-// the program's stdout and exit code. The register-backend counterparts are
-// TestSelfHostReaderX86_64 and TestSelfHostReaderArm64.
 func TestSelfHostReaderWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host reader wasm IR e2e")
@@ -40,9 +21,6 @@ func TestSelfHostReaderWasmIR(t *testing.T) {
 		name, src, stdin, wantOut string
 		wantExit                  int
 	}{
-		// Two sized reads then close: first 5 bytes ("hello"), then the rest
-		// (" world"). Proves read_chunk returns the requested-bounded chunk and
-		// close returns None (no error).
 		{"two_chunks_then_close", `function main(): i32 {
     let r: Reader = stdin();
     match (r.read_chunk(5)) { Ok(s) => { write(s); write(":"); }, Err(e) => { return 4; } }
@@ -50,9 +28,6 @@ func TestSelfHostReaderWasmIR(t *testing.T) {
     match (r.close()) { Err(_) => { return 6; }, Ok(_) => {} }
     return 0;
 }`, "hello world", "hello: world", 0},
-		// Drain to EOF: loop read_chunk until it comes back empty, summing
-		// bytes. Exit code = total bytes (7), proving the empty chunk arrives
-		// exactly at end-of-stream.
 		{"drain_to_eof", `function main(): i32 {
     let r: Reader = stdin();
     let total: i32 = 0;
@@ -62,8 +37,6 @@ func TestSelfHostReaderWasmIR(t *testing.T) {
     }
     return total;
 }`, "abcdefg", "", 7},
-		// Empty stdin: the very first read_chunk is Ok("") (nread == 0), so the
-		// program sees a zero-length chunk immediately.
 		{"empty_stdin_eof", `function main(): i32 {
     let r: Reader = stdin();
     match (r.read_chunk(16)) { Ok(s) => { if (s.len() > 0) { return 1; } return 42; }, Err(e) => { return 2; } }
@@ -87,7 +60,6 @@ func TestSelfHostReaderWasmIR(t *testing.T) {
 			if !bytes.Contains(wat, []byte("call $__fern_reader_read_chunk")) {
 				t.Fatalf("%s: read_chunk did not reach the wasm IR runtime path (no call $__fern_reader_read_chunk)", tc.name)
 			}
-			// close() only appears in cases that call it.
 			watFile := filepath.Join(dir, tc.name+".wat")
 			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
 				t.Fatalf("write wat: %v", err)

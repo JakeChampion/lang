@@ -1,40 +1,9 @@
-// Memory-and-correctness guard for the threaded borrowed ARRAY parameter —
-// `function f(buf: i32[], ..): i32[] { buf = buf.append(..); .. return buf; }`,
-// called in a loop by an owner that self-reassigns. It is the shape every
-// byte-emitter in the self-host compiler is built from (arm64_native's
-// `arm64_le32` runs it four times per assembled instruction word), and it has
-// now been broken in both directions:
-//
-//   - Before #6021 the overwrite dec released a reference the caller never
-//     handed over: __rc_underflow_count() reports 1 here, and downstream that
-//     count-steal frees a live buffer at whichever site legitimately owns it
-//     (a ~50% segfault in __fern_alloc's freelist pop, from a change that
-//     merely shifted allocation sizes).
-//
-//   - #6021 balanced it with the entry retain that structs / tuples / enums
-//     use, which for an ARRAY costs the in-place append: rc==1 is exactly the
-//     uniqueness test __fern_arr_push_grow gates on, so a retained buffer
-//     enters at rc 2 and every append clones it. Arena traffic went 14x here
-//     and 490x on the arm64 assembler (18 MB -> 8.9 GB on ~900 KB of input).
-//
-// So neither number alone is the contract — the program asserts both, plus
-// __arr_push_shared_count(), which reports the second failure at its cause
-// rather than through its symptom: an append that copied a buffer which still
-// had room copied it because of an extra reference, and that count is exactly
-// 0 here on all three backends when the threading is right. The bytes-per-
-// live-byte ratio is kept as a backstop for the copies the counter cannot
-// attribute (a genuinely full buffer growing more often than it should). It is
-// flat in N when the appends stay in place (4) and grows with the buffer when
-// they do not (44..94 over the range below, rising as N shrinks), so a ceiling
-// of 8 sits an order of magnitude clear of both regimes at every size.
 package e2e
 
 import (
 	"testing"
 )
 
-// threadedArrayParamSrc threads an accumulator through a borrowed array param
-// that self-appends and hands it back, N times.
 func threadedArrayParamSrc(n, twoN string) string {
 	return `function le32(buf: i32[], v: i32): i32[] {
     buf = buf.append(v & 255);
@@ -54,8 +23,6 @@ function main(): i32 {
 }`
 }
 
-// threadedArrayParamOverheadCeiling is arena bytes per live byte. Measured:
-// 4 with the in-place append at every N below; 44..94 with it forced off.
 const threadedArrayParamOverheadCeiling = 8
 
 func checkThreadedArrayParam(t *testing.T, backend string, n, got int) {
@@ -79,9 +46,6 @@ func checkThreadedArrayParam(t *testing.T, backend string, n, got int) {
 	}
 }
 
-// threadedArrayParamSizes spans a 4x range: the in-place regime is flat
-// across it and the copying one is not, so a single ceiling separates them
-// without depending on which N a future change happens to run.
 var threadedArrayParamSizes = []struct {
 	n    int
 	src  string

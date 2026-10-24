@@ -6,15 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// A braced arrow-lambda body is the lambda's own body block (#2673).
-//
-// `=>` takes an expression, so a `{ … }` body first parses as a block
-// EXPRESSION — but wrapping that in a `return` is what made a body with no
-// value of its own (`(x) => { f(x); }`) a value-less block in value position
-// (E061) rather than the void lambda `(x) => { f(x); }` has always been.
-// Splicing the block in instead makes every body shape mean what the same
-// statements mean in a named function's body, with a trailing value written
-// without a `;` becoming the returned value.
 func TestArrowLambdaBracedBodyIsSpliced(t *testing.T) {
 	lambdaOf := func(t *testing.T, src string) *ast.Lambda {
 		t.Helper()
@@ -82,10 +73,6 @@ func TestArrowLambdaBracedBodyIsSpliced(t *testing.T) {
 		}
 	})
 
-	// #8561: an `if` / `match` STATEMENT among the body's statements. Both stay
-	// on the block scanner's EXPRESSION path, because either can also be the
-	// block's trailing value, so an item followed by neither `;` nor `}` has to
-	// be read again as the statement it is.
 	t.Run("match statement followed by more statements", func(t *testing.T) {
 		l := lambdaOf(t, `function main(): i32 { let f = (x: i32) => {
 			match (x) { 0 => { return 100; }, _ => {} }
@@ -129,9 +116,6 @@ func TestArrowLambdaBracedBodyIsSpliced(t *testing.T) {
 		}
 	})
 
-	// #8593: `use` and `let … else` rewrite the REST of the block they appear
-	// in, so they only work where the parser has that remainder to give them —
-	// which a value-block scanner never does. A braced body is a function body.
 	t.Run("use binds the rest of the body", func(t *testing.T) {
 		l := lambdaOf(t, `function apply(x: i32, cb: (i32) => i32): i32 { return cb(x); }
 function main(): i32 {
@@ -141,9 +125,6 @@ function main(): i32 {
     };
     return f();
 }`)
-		// The desugar makes the rest of the body a callback and returns the
-		// call with it appended: a local FuncDecl for the callback, then
-		// `return apply(41, <callback>)`.
 		if len(l.Body.Stmts) != 2 {
 			t.Fatalf("want the callback decl plus the return, got %d: %#v", len(l.Body.Stmts), l.Body.Stmts)
 		}
@@ -173,7 +154,6 @@ function main(): i32 {
     };
     return f();
 }`)
-		// The desugar turns the `let` and everything after it into a match.
 		if len(l.Body.Stmts) != 2 {
 			t.Fatalf("want the let plus the desugared match, got %d: %#v", len(l.Body.Stmts), l.Body.Stmts)
 		}

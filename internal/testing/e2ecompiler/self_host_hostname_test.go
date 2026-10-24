@@ -10,11 +10,6 @@ import (
 	"testing"
 )
 
-// selfHostHostnameSource prints the node name and exits by whether it
-// matched `want`. The value comes from os.Hostname — uname(2)'s nodename,
-// the same kernel field the helper reads — so a body that copied the
-// neighbouring sysname field ("Linux") fails here rather than passing a
-// non-empty check.
 func selfHostHostnameSource(want string) string {
 	return fmt.Sprintf(`function main(): i32 {
     let h: string = hostname();
@@ -34,9 +29,6 @@ func selfHostHostHostname(t *testing.T) string {
 	return h
 }
 
-// TestSelfHostHostnameIR pins the x86-64 lowering: the Fern-source runtime
-// helper (asmcore.rt_src_hostname) compiled through the self-host's own IR
-// path, reading nodename at offset 65 of the struct uname(2) fills.
 func TestSelfHostHostnameIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -64,8 +56,6 @@ func TestSelfHostHostnameIR(t *testing.T) {
 	}
 }
 
-// The arm64-linux leg: the same Fern body with the asm-generic uname number,
-// run under qemu — which reports the host's own nodename.
 func TestSelfHostHostnameIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -97,10 +87,6 @@ func TestSelfHostHostnameIRArm64(t *testing.T) {
 	}
 }
 
-// The wasm leg answers the empty string — a component has no node name —
-// and the test runs the module rather than reading the WAT, because a
-// wrong stack discipline around the scratch local is a validation error at
-// instantiation, not a textual difference.
 func TestSelfHostHostnameIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host hostname wasm IR e2e")

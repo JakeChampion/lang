@@ -10,18 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// readFileUtf8Program pins read_file's UTF-8 validation (D9, #5714) against
-// std/utf8.is_valid_utf8, the language-level reference, on the backend's
-// own runtime: every 1- and 2-byte sequence, every 3- and 4-byte lead with
-// every first continuation and the second and third continuations at each
-// edge of their range, the truncation of each length, and a multibyte or
-// invalid byte at every offset across an eight-byte ASCII word.
-//
-// What the test proves per target is the lowering of the runtime helper
-// behind read_file.
-//
-// Prints read-file-utf8-agrees on success, or FAIL and the step that
-// disagreed; the exit code, or main's result on wasm, says the same.
 const readFileUtf8Program = `
 import "std/utf8" as utf8;
 
@@ -112,9 +100,6 @@ function main(): i32 {
 }
 `
 
-// compileRunInDir compiles a program that imports from std/ for target
-// ("x86-64" or "arm64"), runs the binary in a fresh temp dir and returns its
-// output and exit code.
 func compileRunInDir(t *testing.T, target string, src string) (string, int) {
 	t.Helper()
 	return compileRunInDirAt(t, target, src, t.TempDir())

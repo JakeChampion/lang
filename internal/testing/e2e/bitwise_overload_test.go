@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// The remaining binary operators overload on composites too — `%`→rem,
-// `&`→bitand, `|`→bitor, `^`→bitxor, `<<`→shl, `>>`→shr — alongside the
-// `+ - * /` (add/sub/mul/div) and `== <` (eq/cmp) overloads. Final value
-// chained through all six is 2 (17 % 5). See #2706.
 const bitwiseOverloadSrc = `struct F { b: i32 }
 function (self: F) rem(o: F): F { return F { b: self.b % o.b }; }
 function (self: F) bitand(o: F): F { return F { b: self.b & o.b }; }

@@ -43,8 +43,6 @@ func testDependencyVerificationIR(t *testing.T, target string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// One compiled program exercises every verdict, avoiding one whole-module
-	// compiler build per small metadata mutation.
 	var source, want, main strings.Builder
 	source.WriteString("import \"./ssa\";\nimport \"./ssalive\";\nimport \"./ssadeps\";\n")
 	main.WriteString("function main(): i32 {\n")
@@ -82,7 +80,6 @@ func testDependencyVerificationIR(t *testing.T, target string) {
 		if err := os.WriteFile(wat, output, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		// wasmtime hands the guest no host variable it is not told to.
 		run = exec.Command(wasmtime, "run", "--env", e2eharness.SelfHostVerify, wat)
 	}
 	got, err := run.CombinedOutput()

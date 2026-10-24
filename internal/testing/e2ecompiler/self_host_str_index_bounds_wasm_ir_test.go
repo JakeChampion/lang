@@ -9,30 +9,6 @@ import (
 	"testing"
 )
 
-// --- `s[i]` is bounds-checked on the self-host wasm tier too --------------
-//
-// The other two tiers refuse an out-of-range string index:
-//
-//	interp        exit 134  fern: string index out of range
-//	native x86-64 exit 134  fern: string index out of range
-//
-// The self-host wasm emitter did neither. `str_index` was a plain arm of
-// emit_str_op_wat — `i32.const 4; i32.add; i32.add; i32.load8_u` — which forms
-// the address from an unchecked index and reads whatever is there. A negative
-// index reads below the block; a large one reads past it. No trap, no
-// diagnostic, a plausible byte returned (#8483).
-//
-// The array ops on this tier have had the check all along, and a wasm string
-// block is `[len@0][bytes@4]` — the same length prefix an array carries — so
-// wasm_arr_bounds_check applies unchanged. What str_index lacked was not the
-// check but ACCESS to it: emit_str_op_wat is a plain Op-to-string with no
-// scratch locals, and the check needs one to hold the index across the
-// compare. Moving the arm to the dispatch site, where arr_get already reads
-// arrtmp / bctmp, is the whole fix.
-//
-// The rows assert the process DIES rather than asserting a particular byte:
-// what is read out of bounds is not defined, so a test that pinned a value
-// would pass for the wrong reason on a different heap layout.
 func TestSelfHostStrIndexBoundsWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wasm string-bounds e2e")
@@ -45,7 +21,7 @@ func TestSelfHostStrIndexBoundsWasm(t *testing.T) {
 	cases := []struct {
 		name    string
 		src     string
-		wantOK  bool // true: runs to completion with wantOut
+		wantOK  bool
 		wantOut string
 	}{
 		{
@@ -69,8 +45,6 @@ func TestSelfHostStrIndexBoundsWasm(t *testing.T) {
 }`,
 		},
 		{
-			// The index equal to the length is the boundary the check must
-			// exclude: `abc` has valid indices 0..2.
 			name: "index equal to the length traps",
 			src: `function main(): i32 {
   let s: string = "abc";
@@ -81,7 +55,6 @@ func TestSelfHostStrIndexBoundsWasm(t *testing.T) {
 }`,
 		},
 		{
-			// In-range reads must be untouched, including the last valid index.
 			name: "in range still reads",
 			src: `function main(): i32 {
   let s: string = "abc";

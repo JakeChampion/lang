@@ -2,20 +2,12 @@ import "std/test";
 import "std/hex";
 import "std/crypto/p256";
 
-// tests/stdlib/p256_test.fern: std/crypto/p256 at its edges, against values
-// computed with Python's integers. [k]G from the fixed-base table and [k]Q
-// from the window agree with the affine formulas for scalars whose nibbles
-// run through every value, for 1, 2 and n - 1, and for a lone top bit; the
-// scalar range check and reduction hold at n. std/crypto/ecdsa's suite holds
-// the signatures to RFC 6979.
-
 const G: string = "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
 
 const N: string = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551";
 
 const N_MINUS_1: string = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632550";
 
-// Every nibble value, in both halves of a byte.
 const MIXED: string = "0123456789abcdeffedcba98765432100f1e2d3c4b5a69788796a5b4c3d2e1f0";
 
 const TOP_BIT: string = "8000000000000000000000000000000000000000000000000000000000000000";
@@ -35,7 +27,6 @@ function test_base_point(): test.TestOutcome {
   if (base(one_hot(31, 2 as u8)) != "047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1") {
     return test.fail("[2]G");
   }
-  // [n - 1]G is -G: G's x, p - G's y.
   if (base(N_MINUS_1) != "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296b01cbd1c01e58065711814b583f061e9d431cca994cea1313449bf97c840ae0a") {
     return test.fail("[n - 1]G");
   }
@@ -56,7 +47,6 @@ function test_scalar_mul(): test.TestOutcome {
   if (times_x(N_MINUS_1, G) != "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296") {
     return test.fail("[n - 1]G");
   }
-  // [k]([7]G) is [7k mod n]G.
   let seven: string = "048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4";
   if (base(one_hot(31, 7 as u8)) != seven) {
     return test.fail("[7]G");

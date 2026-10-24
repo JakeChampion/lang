@@ -9,22 +9,7 @@ import (
 	"testing"
 )
 
-// A struct- or enum-keyed map on the typed path (#9962). The key column is a
-// column of boxes the map owns one unit of per entry, hashed and compared
-// through the key type's derived `hash` and `eq`, and released through the
-// key type's own `__sem_release_<K>`, which core/map calls on the column at
-// release and on the consumed key an overwrite discards.
-//
-// The assert is ABSOLUTE and on every backend: the heap bump across 1000
-// build-and-drop rounds is flat, `__rc_underflow_count()` reads zero, and the
-// module is produced WHOLE by the typed path. Each program is also checked to
-// answer what the interpreter answers.
 var mapKeyedTypedPrograms = []mapChurnProgram{
-	// A struct key carrying a STRING field, overwritten through a FRESH
-	// value-equal key: the map keeps its existing key and releases the one it
-	// discards through the key's release — a shallow dec there
-	// would strand the key's string. `keys()` is the retaining snapshot, read
-	// after the map is gone.
 	{"struct-key-string-field", `import "core/map";
 import "core/cmp";
 
@@ -67,11 +52,6 @@ function main(): i32 {
     return 0;
 }
 `},
-	// An enum key with a string payload beside a boxed VALUE column: the
-	// `_kfvf` member takes both releases, and an overwrite releases the
-	// superseded value through one and the discarded key through the other.
-	// A grow from capacity 2 to twenty entries rehashes on wasm and reallocates
-	// both columns on the register backends.
 	{"enum-key-boxed-value", `import "core/map";
 import "core/cmp";
 
@@ -113,11 +93,6 @@ function main(): i32 {
     return 0;
 }
 `},
-	// A SHARED map written through: the insert finds the box aliased and
-	// rebuilds it, retaining every key the copy names, so the two maps hold
-	// one unit each of the same key boxes and both release cleanly. The key
-	// is also a LOCAL the frame keeps, so the insert's consumed unit is a
-	// retain rather than the local's own.
 	{"struct-key-shared-rebuild", `import "core/map";
 import "core/cmp";
 
@@ -172,8 +147,6 @@ func TestSelfHostMapKeyedTypedWasm(t *testing.T) {
 	runMapChurnTyped(t, nil, "wasm32-wasi", mapKeyedTypedPrograms)
 }
 
-// semProducedWhole reads the production tally and reports whether every
-// declaration and instance of the module was produced.
 func semProducedWhole(report string) bool {
 	m := regexp.MustCompile(`module: produced (\d+) of (\d+) declarations and (\d+) of (\d+) instances`).FindStringSubmatch(report)
 	return m != nil && m[1] == m[2] && m[3] == m[4]
@@ -184,10 +157,6 @@ type mapChurnProgram struct {
 	src  string
 }
 
-// runMapChurnTyped builds the self-host compiler once, then compiles each
-// program for `target` through the typed path with the report on, checks the
-// tally says the module was produced whole, and runs it: natively, under
-// qemu, or under wasmtime.
 func runMapChurnTyped(t *testing.T, runner []string, target string, programs []mapChurnProgram) {
 	hostGcc, hostRunner := x86_64Tooling(t)
 	if len(hostRunner) != 0 {

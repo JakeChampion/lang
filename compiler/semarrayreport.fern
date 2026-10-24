@@ -1,12 +1,8 @@
-// Primary compiler array decisions. The rewriting passes supply the sites;
-// this module only formats them and counts their closed reason tags.
 import "./util";
 import "std/envflag";
 
 pub struct Site { owner: string, stage: string, plan: string, reason: i32, storage: string }
 
-// Where a compile writes the report: nowhere, stderr (FERN_ARRAY_REPORT=1)
-// or stdout (`fern -array-report`).
 pub function off(): i32 {
   return 0;
 }
@@ -34,7 +30,6 @@ pub function write(sink: i32, text: string): void {
   }
 }
 
-// Named ordinals keep planner decisions tied to the closed diagnostic tags.
 pub function fusion_fused(): i32 {
   return 0;
 }
@@ -195,8 +190,6 @@ pub function kernel_element_not_binary_add(): i32 {
   return 15;
 }
 
-// Stable ordinals are shared by the decision and its diagnostic. A successful
-// rewrite has its own tag; refusals never predict a rewrite.
 pub function reasons(): string[] {
   return ["fused", "no-producer", "intermediate-shared", "control-flow-boundary", "effect-boundary", "element-fn-unresolved", "element-fn-effectful", "non-scalar", "result-escapes", "no-reduction-sink", "operator-outside-algebra", "disabled", "element-fn-may-abort"];
 }
@@ -249,7 +242,6 @@ pub function scale_storage_reasons(): string[] {
   return ["guarded-reuse", "reuse-disabled", "receiver-borrowed", "receiver-still-live", "receiver-supplied", "borrow-linked-result", "builtin-shadowed", "shape-unsupported"];
 }
 
-// Append sites, decided the way ssarc.append_push lowers them.
 pub function append_sole_owner(): i32 {
   return 0;
 }
@@ -282,8 +274,6 @@ pub function append_reasons(): string[] {
   return ["sole-owner", "guarded", "receiver-still-live", "receiver-retained", "receiver-borrowed", "field-grow", "borrow-linked"];
 }
 
-// What the push does with the receiver's buffer: grow it with no test, copy
-// it every time, or ask the box's count at run time.
 pub function append_storage(reason: i32): string {
   if (reason == append_sole_owner()) {
     return "in-place";

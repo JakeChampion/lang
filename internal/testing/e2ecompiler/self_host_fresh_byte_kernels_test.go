@@ -2,10 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// freshByteKernelProgram hands the result of a byte kernel, and of a
-// function returning one, to an `own` parameter. The kernels are lent their
-// views and answer an array they built, so the self-host checker takes each
-// call as fresh, as native does (freshResultBuiltins).
 const freshByteKernelProgram = `function take(own xs: u8[]): i32 {
   return xs.len();
 }

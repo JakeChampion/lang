@@ -3,18 +3,6 @@ import "std/async";
 import "std/sim";
 import "std/time";
 
-// tests/stdlib/sim_fault_test.fern — SimNet fault injection
-// (docs/DST-PLATFORM-BRIEF.md slice 3): seed-driven fault schedules on
-// scripted endpoints — fail / stall / partial / flaky — driven through
-// the std/async combinators. Every fault outcome is a pure function of
-// the seed and the call order, so a flaky-upstream bug is a seed you
-// replay (the sweep_seeds workflow), not a flake.
-//
-// Run:  fern -interp tests/stdlib/sim_fault_test.fern
-
-// fail-mode mirrors the real fetch's connect/send failure: Ready("")
-// immediately, no suspension, the clock does not move, the hit still
-// counts, and a healthy sibling endpoint is untouched.
 function test_fail_immediate(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim.Net = sim.net(d);
@@ -46,8 +34,6 @@ function test_fail_immediate(): test.TestOutcome {
   return test.pass();
 }
 
-// stall-mode never resolves: with_deadline drops it with None at the
-// EXACT virtual deadline while the healthy endpoint still answers.
 function test_stall_dropped_at_deadline(): test.TestOutcome {
   let d: sim.Sim = sim.new(7);
   let n: sim.Net = sim.net(d);
@@ -81,8 +67,6 @@ function test_stall_dropped_at_deadline(): test.TestOutcome {
   return test.assert_eq(d.now_ns(), 25000000 as i64);
 }
 
-// A stalled slot in an unbounded gather lands on_incomplete (poll over
-// only never-ready tokens returns -1) instead of hanging the fan-out.
 function test_stall_gather_incomplete(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim.Net = sim.net(d);
@@ -100,10 +84,6 @@ function test_stall_gather_incomplete(): test.TestOutcome {
   return test.assert_eq(got[1], "!");
 }
 
-// partial(k) delivers the first k chunks at their scheduled virtual
-// times, then goes silent: drained by hand, the [4,4,2]@5/10/15ms
-// schedule under fault_partial(2) yields tokens 5 and 10 and then a
-// never-ready (negative) token — the future never resolves.
 function test_partial_prefix_then_silent(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim.Net = sim.net(d);
@@ -136,9 +116,6 @@ function test_partial_prefix_then_silent(): test.TestOutcome {
   return test.fail("partial future never went silent");
 }
 
-// Under with_deadline a partial endpoint is indistinguishable from a
-// stall: None at exactly the deadline, even though its prefix chunks
-// arrived on time.
 function test_partial_deadline_none(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim.Net = sim.net(d);
@@ -155,10 +132,6 @@ function test_partial_deadline_none(): test.TestOutcome {
   return test.assert_eq(d.now_ns(), 30000000 as i64);
 }
 
-// __flaky_pattern(seed) — 10 sequential fetches of a flaky(50)
-// endpoint: "S" per success (a Pending scripted read), "F" per fault
-// (Ready("")). Sequential calls with no polls between them, so the
-// pattern is exactly the sim PRNG's first ten draws for the seed.
 function __flaky_pattern(seed: i64): string {
   let d: sim.Sim = sim.new(seed);
   let n: sim.Net = sim.net(d);
@@ -180,14 +153,10 @@ function __flaky_pattern(seed: i64): string {
   return out;
 }
 
-// flaky(50) over 10 calls with seed 1 gives this exact golden pattern
-// on every backend — the determinism proof.
 function test_flaky_golden(): test.TestOutcome {
   return test.assert_eq(__flaky_pattern(1), "FFFFFSFFFS");
 }
 
-// Same seed => same outcomes and the PRNG states stay in lockstep;
-// different seeds => (here, immediately) different outcomes.
 function test_same_seed_reproducible(): test.TestOutcome {
   if (__flaky_pattern(9) != __flaky_pattern(9)) {
     return test.fail("same seed diverged");
@@ -203,9 +172,6 @@ function test_same_seed_reproducible(): test.TestOutcome {
   return test.pass();
 }
 
-// __gather_shape_ok(seed) — the invariant swept below: gather over one
-// healthy + one flaky(50) + one stalled endpoint ALWAYS returns exactly
-// 3 results in input order, whatever the seed's fault outcomes.
 function __gather_shape_ok(seed: i64): boolean {
   let d: sim.Sim = sim.new(seed);
   let n: sim.Net = sim.net(d);
@@ -232,9 +198,6 @@ function __gather_shape_ok(seed: i64): boolean {
   return got[2] == "!";
 }
 
-// __flaky_first_call_ok(seed) — a property that genuinely depends on the
-// seed (the first draw of a flaky(50) endpoint succeeds), used to pin
-// sweep_seeds' failure path.
 function __flaky_first_call_ok(seed: i64): boolean {
   let d: sim.Sim = sim.new(seed);
   let n: sim.Net = sim.net(d);
@@ -250,9 +213,6 @@ function __flaky_first_call_ok(seed: i64): boolean {
   return ok;
 }
 
-// sweep_seeds over 20 seeds: the gather-shape invariant holds for every
-// seed (returns 0), and a seed-dependent property reports its FIRST
-// failing seed (seed 1 draws a success first, seed 2 a fault — so 2).
 function test_seed_sweep(): test.TestOutcome {
   if (sim.sweep_seeds(20, __gather_shape_ok) != 0 as i64) {
     return test.fail("gather-shape invariant failed for some seed in 1..20");

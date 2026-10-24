@@ -1,186 +1,131 @@
-// std/wasm/memory — memory load / store / size / grow instruction
-// encoders for the WebAssembly Core 1.0 binary format.
-//
-// Spec: https://webassembly.github.io/spec/core/binary/instructions.html#memory-instructions
-//
-// Fifth slice of Phase 1 of docs/TOOLCHAIN-SELF-HOSTING.md. After
-// the numeric opcodes (single-byte, no immediate), memory ops are
-// the second-largest opcode family. Every load / store carries a
-// `memarg` immediate — an alignment hint plus a base offset, both
-// uleb-encoded. memory.size / memory.grow each take a one-byte
-// reserved "memory index" immediate (always 0 in wasm 1.0, since
-// the multi-memory proposal hadn't landed).
-//
-// The "load_8_s" / "load_16_u" etc. variants only exist for the
-// integer widths — float types have no narrow-load form because
-// IEEE-754 doesn't decompose that way.
-//
-// The bulk-memory ops the production backend actually emits —
-// memory.copy and memory.fill, both under the 0xFC multi-byte
-// opcode prefix — are covered at the bottom of this file. The
-// rest of the bulk-memory family (memory.init / data.drop) and
-// the saturating-truncate ops aren't included; the backend's
-// memcpy / memset helpers only reach for copy + fill.
+// This module encodes WebAssembly memory instructions.
 
 import "std/wasm/leb128";
 
-// put_memarg — append the alignment + offset uleb pair every
-// load / store opcode carries as its immediate. Kept non-pub
-// because the per-opcode wrappers below all funnel through it;
-// no external caller should ever need to compose a memarg
-// without an opcode in front of it.
 function put_memarg(buf: u8[], align: u32, offset: u32): u8[] {
   let out: u8[] = leb128.uleb_u32(buf, align);
   return leb128.uleb_u32(out, offset);
 }
 
-// ---- Loads (0x28 - 0x35) -------------------------------------
-//
-// `align` is the log2 of the natural alignment in bytes — 0 for
-// byte-wide accesses, 1 for halfwords, 2 for words, 3 for
-// doublewords. The spec lets the producer pass any value <= the
-// natural alignment; engines use it as a hint and ignore it
-// otherwise.
-
 pub function inst_i32_load(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(40u8), align, offset);  // 0x28
+  return put_memarg(buf.append(40u8), align, offset);
 }
 
 pub function inst_i64_load(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(41u8), align, offset);  // 0x29
+  return put_memarg(buf.append(41u8), align, offset);
 }
 
 pub function inst_f32_load(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(42u8), align, offset);  // 0x2A
+  return put_memarg(buf.append(42u8), align, offset);
 }
 
 pub function inst_f64_load(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(43u8), align, offset);  // 0x2B
+  return put_memarg(buf.append(43u8), align, offset);
 }
 
 pub function inst_i32_load8_s(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(44u8), align, offset);  // 0x2C
+  return put_memarg(buf.append(44u8), align, offset);
 }
 
 pub function inst_i32_load8_u(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(45u8), align, offset);  // 0x2D
+  return put_memarg(buf.append(45u8), align, offset);
 }
 
 pub function inst_i32_load16_s(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(46u8), align, offset);  // 0x2E
+  return put_memarg(buf.append(46u8), align, offset);
 }
 
 pub function inst_i32_load16_u(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(47u8), align, offset);  // 0x2F
+  return put_memarg(buf.append(47u8), align, offset);
 }
 
 pub function inst_i64_load8_s(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(48u8), align, offset);  // 0x30
+  return put_memarg(buf.append(48u8), align, offset);
 }
 
 pub function inst_i64_load8_u(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(49u8), align, offset);  // 0x31
+  return put_memarg(buf.append(49u8), align, offset);
 }
 
 pub function inst_i64_load16_s(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(50u8), align, offset);  // 0x32
+  return put_memarg(buf.append(50u8), align, offset);
 }
 
 pub function inst_i64_load16_u(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(51u8), align, offset);  // 0x33
+  return put_memarg(buf.append(51u8), align, offset);
 }
 
 pub function inst_i64_load32_s(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(52u8), align, offset);  // 0x34
+  return put_memarg(buf.append(52u8), align, offset);
 }
 
 pub function inst_i64_load32_u(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(53u8), align, offset);  // 0x35
+  return put_memarg(buf.append(53u8), align, offset);
 }
 
-// ---- Stores (0x36 - 0x3E) ------------------------------------
-
 pub function inst_i32_store(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(54u8), align, offset);  // 0x36
+  return put_memarg(buf.append(54u8), align, offset);
 }
 
 pub function inst_i64_store(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(55u8), align, offset);  // 0x37
+  return put_memarg(buf.append(55u8), align, offset);
 }
 
 pub function inst_f32_store(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(56u8), align, offset);  // 0x38
+  return put_memarg(buf.append(56u8), align, offset);
 }
 
 pub function inst_f64_store(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(57u8), align, offset);  // 0x39
+  return put_memarg(buf.append(57u8), align, offset);
 }
 
 pub function inst_i32_store8(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(58u8), align, offset);  // 0x3A
+  return put_memarg(buf.append(58u8), align, offset);
 }
 
 pub function inst_i32_store16(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(59u8), align, offset);  // 0x3B
+  return put_memarg(buf.append(59u8), align, offset);
 }
 
 pub function inst_i64_store8(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(60u8), align, offset);  // 0x3C
+  return put_memarg(buf.append(60u8), align, offset);
 }
 
 pub function inst_i64_store16(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(61u8), align, offset);  // 0x3D
+  return put_memarg(buf.append(61u8), align, offset);
 }
 
 pub function inst_i64_store32(buf: u8[], align: u32, offset: u32): u8[] {
-  return put_memarg(buf.append(62u8), align, offset);  // 0x3E
+  return put_memarg(buf.append(62u8), align, offset);
 }
-
-// ---- Memory size / grow --------------------------------------
-//
-// Both ops carry a single reserved byte (the memory index, fixed
-// at 0 in MVP wasm — the multi-memory proposal would let it vary).
-// memory.size pops nothing and pushes the current size in pages;
-// memory.grow pops the requested delta and pushes the old size on
-// success, -1 on failure.
 
 pub function inst_memory_size(buf: u8[]): u8[] {
   let out: u8[] = buf;
-  out = out.append(63u8);  // 0x3F
-  out = out.append(0u8);  // reserved memidx
+  out = out.append(63u8);
+  out = out.append(0u8);
   return out;
 }
 
 pub function inst_memory_grow(buf: u8[]): u8[] {
   let out: u8[] = buf;
-  out = out.append(64u8);  // 0x40
-  out = out.append(0u8);  // reserved memidx
+  out = out.append(64u8);
+  out = out.append(0u8);
   return out;
 }
 
-// ---- Bulk memory (0xFC prefix) -------------------------------
-//
-// memory.copy and memory.fill are encoded as the 0xFC prefix
-// followed by a uleb sub-opcode and one reserved memidx byte per
-// memory operand. Both sub-opcodes (10 / 11) fit a single uleb
-// byte. memory.copy pops (dst, src, len); memory.fill pops
-// (dst, val, len). The production backend emits these literally
-// as the byte sequences `0xFC 0x0A 0x00 0x00` / `0xFC 0x0B 0x00`
-// for its memcpy / memset runtime helpers.
-
 pub function inst_memory_copy(buf: u8[]): u8[] {
   let out: u8[] = buf;
-  out = out.append(252u8);  // 0xFC prefix
-  out = out.append(10u8);  // 0x0A memory.copy sub-opcode
-  out = out.append(0u8);  // dst memidx (reserved)
-  out = out.append(0u8);  // src memidx (reserved)
+  out = out.append(252u8);
+  out = out.append(10u8);
+  out = out.append(0u8);
+  out = out.append(0u8);
   return out;
 }
 
 pub function inst_memory_fill(buf: u8[]): u8[] {
   let out: u8[] = buf;
-  out = out.append(252u8);  // 0xFC prefix
-  out = out.append(11u8);  // 0x0B memory.fill sub-opcode
-  out = out.append(0u8);  // memidx (reserved)
+  out = out.append(252u8);
+  out = out.append(11u8);
+  out = out.append(0u8);
   return out;
 }

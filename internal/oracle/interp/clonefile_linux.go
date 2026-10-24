@@ -8,12 +8,8 @@ import (
 	"syscall"
 )
 
-// FICLONE.
 const ficlone = 0x40049409
 
-// cloneFile opens dest exclusively, or as it stands when it exists, and
-// asks FICLONE. A dest this call created is removed again when the clone
-// fails.
 func cloneFile(src, dest string) error {
 	s, err := os.Open(src)
 	if err != nil {

@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A sub-slice views the SOURCE's bytes, never its parent header, so
-// the parent may be released first: reassigned while the child is
-// live, dropped at a callee's exit while the child is returned, or
-// released as the temp the child was cut from. The child stays
-// valid and the parent's header is reclaimed each time.
+
+
+
+
+
+
+
+
 function tail(s: string): [u8] {
     let a: [u8] = s.as_bytes();
     let b: [u8] = a[1:3];

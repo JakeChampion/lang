@@ -1,42 +1,12 @@
-// std/http/sse — server-sent events, the `text/event-stream` of the
-// WHATWG HTML standard: the events a server streams down one response,
-// and the decoder a client reads them back with.
-//
-//     import "std/http/sse";
-//
-//     function ticks(i: i32): Option[sse.Event] {
-//       if (i == 3) {
-//         return None;
-//       }
-//       return Some(sse.event("tick " + i.to_string()).with_id(i.to_string()));
-//     }
-//
-//     function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
-//       return sse.respond_with(time.duration_seconds(15 as i64), ticks);
-//     }
-//
-// The response is `http.chunks` under `text/event-stream`: the serve loop
-// asks the producer for each event as the socket takes the one before,
-// and a producer that waits for its next event (`plat.sleep`, a
-// `plat.http`) parks the connection and not the worker. `respond_with`
-// has the loop write a comment line while the producer waits past
-// `keep_alive`, so an idle timeout in a proxy or the client does not cut
-// a quiet stream.
+// This module reads and writes server-sent events.
 
 import "std/http";
 import "std/time";
 import "std/utf8";
 import "std/array";
 
-// `Event` — one event: `data`, the payload, any lines; `name`, the event
-// type ("" for the client's default, `message`); `id`, what the client
-// sends back as `Last-Event-ID` after a reconnect ("" for none); and
-// `retry`, the reconnection time in milliseconds the stream sets for
-// the client (negative for unset).
 pub struct Event { data: string, name: string, id: string, retry: i32 }
 
-// `event(data)` — an event carrying `data`, with no name, no id and no
-// reconnection time.
 pub function event(data: string): Event {
   return Event { data: data, name: "", id: "", retry: -1 };
 }
@@ -53,11 +23,6 @@ pub function (e: Event) with_retry(ms: i32): Event {
   return Event { ...e, retry: ms };
 }
 
-// `(e).encode()` — the event as it goes on the stream: its `event`, `id`
-// and `retry` lines where set, one `data` line per line of the payload
-// (a CR, LF or CRLF ends one), and the blank line that dispatches it. The
-// name and the id are one line each; a line break in either is left
-// out, since it would end the field.
 pub function (e: Event) encode(): string {
   let out: string = "";
   if (e.name.len() > 0) {
@@ -75,31 +40,18 @@ pub function (e: Event) encode(): string {
   return out + "\n";
 }
 
-// `comment(text)` — a comment line, which a client ignores, followed by
-// the blank line: what keeps a quiet stream open through an idle
-// timeout.
 pub function comment(text: string): string {
   return ": " + __one_line(text) + "\n\n";
 }
 
-// `respond(next)` — a 200 whose body is the events `next` answers for
-// the indexes 0, 1, 2, … until it answers None, each encoded and written
-// as the socket takes the one before, under `Content-Type:
-// text/event-stream` and `Cache-Control: no-cache`.
 pub function respond(next: (i32) => Option[Event]): HttpResponse {
   return __headed(http.chunks(200, (i: i32): Option[u8[]] => __encoded(next(i))));
 }
 
-// `respond_with(keep_alive, next)` — `respond`, with a comment line
-// written whenever `next` has been waiting `keep_alive` for its next
-// event since the last byte went out (`http.chunks_idle`), so an idle
-// timeout in a proxy or the client does not cut a quiet stream.
 pub function respond_with(keep_alive: Duration, next: (i32) => Option[Event]): HttpResponse {
   return __headed(http.chunks_idle(200, (i: i32): Option[u8[]] => __encoded(next(i)), keep_alive, comment("keep-alive").bytes()));
 }
 
-// `last_event_id(req)` — the `Last-Event-ID` a reconnecting client sent,
-// the id of the last event it received.
 pub function last_event_id(req: HttpRequest): Option[string] {
   return req.headers.get("last-event-id");
 }
@@ -120,7 +72,6 @@ function __encoded(e: Option[Event]): Option[u8[]] {
   return None;
 }
 
-// __one_line(s) — `s` with every CR and LF left out.
 function __one_line(s: string): string {
   let out: string = "";
   for line in __lines(s) {
@@ -129,8 +80,6 @@ function __one_line(s: string): string {
   return out;
 }
 
-// __lines(s) — the lines of `s`, a CR, LF or CRLF ending each; one empty
-// line for "".
 function __lines(s: string): string[] {
   let out: string[] = [];
   let bs: u8[] = s.bytes();
@@ -149,11 +98,6 @@ function __lines(s: string): string[] {
   return out.append(utf8.from_bytes_lossy(array.slice(bs, start, bs.len())));
 }
 
-// `Decoder` — a client's side: the stream's bytes fed in as they arrive,
-// the events they complete answered. `retry` is the reconnection time
-// the stream last set (negative for none); `last_id` the last event id
-// it set, which every later event carries and a reconnect sends as
-// `Last-Event-ID`.
 pub struct Decoder { buf: u8[], data: string, name: string, last_id: string, retry: i32, started: boolean }
 
 pub function decoder(): Decoder {
@@ -161,15 +105,6 @@ pub function decoder(): Decoder {
   return Decoder { buf: none, data: "", name: "", last_id: "", retry: -1, started: false };
 }
 
-// `(d).feed(bytes)` — the decoder with `bytes` taken, and the events
-// they completed, in order, under the standard's parsing: a line ends
-// with CR, LF or CRLF; a blank line dispatches the event built so far,
-// none when it has no data; a line starting with `:` is a comment; a
-// field is the text before the first `:`, its value what follows less
-// one leading space; `data` lines join with LF, the last LF dropped;
-// an `id` holding NUL is ignored, a `retry` that is not digits too; any
-// other field is ignored. A line still open at the end of the bytes
-// waits for the next feed. A leading byte order mark is skipped.
 pub function (d: Decoder) feed(bytes: u8[]): (Decoder, Event[]) {
   let unmarked: (Decoder, u8[]) = __unmarked(d, d.buf.concat(bytes));
   d = unmarked.0;
@@ -199,8 +134,6 @@ pub function (d: Decoder) feed(bytes: u8[]): (Decoder, Event[]) {
   return (Decoder { ...d, buf: array.slice(buf, start, buf.len()) }, out);
 }
 
-// __unmarked(d, buf) — the stream's first bytes with a byte order mark
-// skipped, once three have arrived to tell.
 function __unmarked(d: Decoder, buf: u8[]): (Decoder, u8[]) {
   if (d.started || buf.len() < 3) {
     return (d, buf);
@@ -212,9 +145,6 @@ function __unmarked(d: Decoder, buf: u8[]): (Decoder, u8[]) {
   return (d, buf);
 }
 
-// __break_at(buf, i) — how many bytes of line break start at `i`: 0 for
-// none, 1 for a LF or a lone CR, 2 for CRLF, -1 for a CR that ends the
-// bytes, which the next feed tells apart.
 function __break_at(buf: u8[], i: i32): i32 {
   if (buf[i] == 10) {
     return 1;
@@ -231,8 +161,6 @@ function __break_at(buf: u8[], i: i32): i32 {
   return 1;
 }
 
-// __line(d, line) — one line taken: the decoder after it, and the event
-// the line dispatched when it was blank.
 function __line(d: Decoder, line: string): (Decoder, Option[Event]) {
   if (line.len() == 0) {
     return __dispatch(d);
@@ -287,8 +215,6 @@ function __has_nul(s: string): boolean {
   return false;
 }
 
-// __dispatch(d) — the blank line: the event built so far, none when it
-// has no data, and the buffers cleared either way.
 function __dispatch(d: Decoder): (Decoder, Option[Event]) {
   let cleared: Decoder = Decoder { ...d, data: "", name: "" };
   if (d.data.len() == 0) {

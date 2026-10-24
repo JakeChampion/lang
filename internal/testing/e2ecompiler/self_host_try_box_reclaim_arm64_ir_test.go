@@ -4,11 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostTryBoxReclaimIRArm64 is the arm64 port of the #4355
-// `?`-consumed source-box reclaim (x86 sibling:
-// TestSelfHostTryBoxReclaimIRX86_64). The heap stays flat across the `?`
-// churn: the typed lowering also reclaims the outer `let r = ...` box the
-// caller matches on. Lighter churn under qemu.
 func TestSelfHostTryBoxReclaimIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -30,7 +25,6 @@ func TestSelfHostTryBoxReclaimIRArm64(t *testing.T) {
 		}
 	}
 
-	// SCALAR Result payload.
 	run(t, `function mk(pre: string): Result[i32, i32] { return Ok(pre.len()); }
 function innerT(pre: string): Result[i32, i32] { let v: i32 = mk(pre)?; return Ok(v + 1); }
 function innerB(pre: string): Result[i32, i32] { let t: i32 = 0; match (mk(pre)) { Ok(v) => { t = v + 1; }, Err(e) => { t = e; }, } return Ok(t); }
@@ -48,7 +42,6 @@ function main(): i32 {
     return 0;
 }`, "try-box-scalar-pin-arm64", 0)
 
-	// STRING payload — box and moved payload both recycle.
 	run(t, `function mk(pre: string): Result[string, i32] { return Ok(pre + "abc"); }
 function innerT(pre: string): Result[i32, i32] { let s: string = mk(pre)?; return Ok(s.len()); }
 function innerB(pre: string): Result[i32, i32] { let t: i32 = 0; match (mk(pre)) { Ok(s) => { t = s.len(); }, Err(e) => { t = e; }, } return Ok(t); }
@@ -66,7 +59,6 @@ function main(): i32 {
     return 0;
 }`, "try-box-string-pin-arm64", 0)
 
-	// ALIASED payload excluded — keep stays readable, detector 0.
 	run(t, `function mk(pre: string): Result[string, i32] { return Ok(pre); }
 function inner(pre: string): Result[i32, i32] { let s: string = mk(pre)?; return Ok(s.len()); }
 function go(pre: string): i32 { let r: i32 = 0; match (inner(pre)) { Ok(k) => { r = k; }, Err(e) => { r = e; }, } return r; }

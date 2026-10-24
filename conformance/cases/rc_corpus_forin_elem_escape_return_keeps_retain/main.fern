@@ -1,16 +1,16 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A loop element RETURNED out of the iteration: the returned guard
-// (with bindingConfinedToArm and movedLocals behind it) refuses the
-// borrow, so sd keeps the owned model. Pinned here as cross-backend
-// value correctness — content compare after the container dies, with
-// same-size churn after the drop. Measured with every walk-3 guard
-// knocked out: this still exits 0 on all three backends, because a
-// wrongly-borrowed return goes uncounted through move-on-return and
-// the caller's may-alias-result conservatism degrades its container
-// drops to FLAT decs — a leak, which this corpus reads as 0 by
-// design.
+
+
+
+
+
+
+
+
+
+
+
+
+
 struct S { name: string, fields: string[] }
 function mkstr(p: string): string { return p + "!"; }
 function pick(xs: S[]): S {

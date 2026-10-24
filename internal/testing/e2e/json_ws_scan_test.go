@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// jsonWsScanSrc drives std/json's whitespace skip across the runs `__scan_set`
-// jumps: each of the four whitespace bytes alone and mixed, runs at the start
-// and the end of the input and between every token, input that is all
-// whitespace, and the bytes that look like whitespace but are not JSON's
-// (form feed, vertical tab, NUL, a no-break space), which must stop the run.
 const jsonWsScanSrc = `import "std/json";
 
 function show(text: string): string {

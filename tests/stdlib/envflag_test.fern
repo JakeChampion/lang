@@ -2,10 +2,6 @@ import "std/test";
 import "std/envflag";
 import "std/option";
 
-// tests/stdlib/envflag_test.fern — std/envflag's reading of a FERN_* switch.
-// internal/envflag's TestValueOn holds the Go reader to the same table.
-
-// The off spellings, in any case; every other value is on.
 function test_value_on_off_values(): test.TestOutcome {
   for v in ["", "0", "false", "FALSE", "False", "off", "OFF", "Off"] {
     if (envflag.value_on(v)) {

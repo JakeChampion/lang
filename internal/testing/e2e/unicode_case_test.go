@@ -2,17 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/unicode across backends: simple case
-// mapping (ASCII, Latin-1, Greek, Cyrillic, the code-point helpers, the
-// non-letter passthrough, the ß caveat) AND the character-class
-// predicates (CJK letter, Arabic-Indic digit, NBSP whitespace, Greek
-// upper/lower).
-//
-// The tables are long STRING literals decoded in place (#5627), so this
-// also exercises big-string-literal codegen and the two decode paths —
-// constant-delta runs and alternating pair runs — plus the ASCII fast
-// path that fronts every entry point. Each leg skips itself when its
-// toolchain is absent.
 const unicodeCaseProg = `
 import "std/unicode" as unicode;
 function main(): i32 {

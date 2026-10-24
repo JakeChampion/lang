@@ -4,15 +4,6 @@ import (
 	"testing"
 )
 
-// The `own` self-reassign move — `a = grow(a, n)` where `grow` consumes `a` —
-// written inside a CLOSURE. The shape itself is pinned at top level elsewhere;
-// what is new here is that the checker admits it one nesting level in (#7452),
-// so the rc side of it runs for the first time from a hoisted lambda body.
-//
-// The old `a` is moved into the callee, which deep-drops it at its own exit, so
-// the overwrite must not drop it a second time. closureconv hoists the lambda
-// to a top-level function before IR sees it, which is exactly why the same
-// `callConsumesIdent` suppression applies unchanged — this pins that it does.
 const ownSelfReassignClosureSrc = `struct B { items: i32[], tag: i32[] }
 function grow(own b: B, x: i32): B { return B { items: b.items.append(x), tag: b.tag }; }
 function main(): i32 {

@@ -11,34 +11,15 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// ratchetLimit is the complexity limit this repository's own Fern sources are
-// held to: the cyclomatic-complexity rule's default, not a second number.
 const ratchetLimit = 10
 
-// ratchetTolerance is how far a tree may drift from its recorded numbers
-// before the gate calls it a regression. Main moves the numbers by a few
-// tenths of a per cent inside the time one CI run takes, so an exact gate is
-// stale before it lands; five per cent absorbs that churn and still fails a
-// truly new hot spot. scripts/ci-check-perf and
-// scripts/ci-check-driver-sizes take the same shape for the same reason.
 const ratchetTolerance = 0.05
 
-// ratchetTree is one body of first-party Fern source held to the limit. The
-// numbers are the measured state, not an allowance: growth past the tolerance
-// fails, and a shrink past it logs, asking for the improvement to be recorded.
-// A per-function exception is a `// fern-lint: allow cyclomatic-complexity`
-// comment on the function, never a row here.
 type ratchetTree struct {
-	name string
-	dir  string
-	// ceiling is the highest complexity any function reaches, suppressed
-	// ones included: an `allow` lets a function exceed the limit, never be
-	// worse than anything here has been.
+	name    string
+	dir     string
 	ceiling int
-	// excess is the summed distance over the limit of every unsuppressed
-	// function above it. Summed distance rather than a count, so splitting
-	// one huge function into readable pieces reads as the improvement it is.
-	excess int
+	excess  int
 }
 
 var ratchetTrees = []ratchetTree{
@@ -56,9 +37,6 @@ func ratchetUnder(measured, want int) bool {
 
 var ratchetLineRe = regexp.MustCompile(`^tree (\S+) worst (\S*) (\d+) excess (\d+)$`)
 
-// TestSelfHostRepoComplexityRatchet holds the compiler's and the stdlib's
-// complexity to a ratchet, measured by compiler/lint.fern through
-// drivers/lint_ratchet_run.fern; a malformed `fern-lint:` directive fails it.
 func TestSelfHostRepoComplexityRatchet(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -122,9 +100,6 @@ func TestSelfHostRepoComplexityRatchet(t *testing.T) {
 	}
 }
 
-// The tolerance's two edges, pinned with the main-branch churn that sized it:
-// the self-host excess moved +22 and then +9 against ~19870 inside one
-// two-hour window, and the ceiling 468 -> 477.
 func TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression(t *testing.T) {
 	const (
 		baseExcess  = 19869

@@ -7,36 +7,11 @@ import (
 	"testing"
 )
 
-// ownershipCases pin the borrow inference: which reference parameters
-// `semsource` hands to the callee as COUNTED, and which stay borrowed.
-//
-// The rule is `ownership.escaping` — a parameter is counted when it is
-// returned, or when it or anything anchored to it is built into a container or
-// box, stored into a cell or a map, or passed to a slot its callee counts.
-// Returning a projection of it does not count it: the callee retains the
-// projection instead. Everything else borrows, because the caller's retain and
-// the callee's release would cancel.
-//
-// What each CONSUMING case measures is the allocation census, because that is
-// what the two conventions differ on there. A borrowed parameter cannot be
-// reclaimed by the frame that reads it, so a rebuild through one copies its
-// buffer on every update; a counted one arrives uniquely held and the update
-// lands in place. Correctness is the exit code, checked against the
-// interpreter first. A reader allocates the same either way, so its mode is
-// read off the emitted code instead (modes-in-the-emitted-code).
-//
-// The `NO own` in the consuming cases is the point. Every one of these shapes
-// reclaimed only when the stdlib or the program spelled `own` before this;
-// the annotation is what the inference replaces.
 var ownershipCases = []struct {
 	name      string
 	src       string
 	maxAllocs int64
 }{
-	// An element appended and stored back at its index takes the slot only
-	// when the outer array has no other holder: `kept` still sees empty
-	// buckets after `base` was grown through it, and a sole-owned array's
-	// buckets grow in place across calls.
 	{"append-into-element-takes-only-a-sole-owned-slot", `@noinline
 function bucket(out: i32[][], n: i32, from: i32): i32[][] {
     let i: i32 = from;
@@ -59,10 +34,6 @@ function main(): i32 {
     if (kept[0].len() != 0) { return 4; }
     return 0;
 }`, 13},
-	// The `std/pvec` shape in miniature, and the case this inference exists
-	// for: a trie rebuilt through a parameter nothing declares `own`. Without
-	// the inference every `.with` on a payload clones the whole 1-slot buffer,
-	// twice per level per update.
 	{"rebuilt-tree-parameter-is-counted", `enum Tree { Node(Tree[]), Leaf(i32), Nil }
 @noinline
 function set_leaf(t: Tree, at: i32, v: i32): Tree {
@@ -96,18 +67,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 24},
-	// A RECEIVER is inferred too, which `decl_param_mode` borrowed
-	// unconditionally before — and the whole chain has to line up for it to
-	// pay, which is what this case pins. `keep` hands its parameter back, so
-	// the parameter escapes and is counted; `b.c` is then supplied to a
-	// counted slot, so the RECEIVER escapes and is counted; `steals` can take
-	// the field's unit because the record is owned; `inner` therefore reaches
-	// `keep` uniquely held and the payload take updates the buffer in place.
-	// Break any link and the update copies, which is what the census reads.
-	//
-	// This is `std/pvec.with` in miniature. Note there is no `own` to be had:
-	// E051 refuses a borrowed local as an owned argument, so a hand-annotated
-	// version of this shape does not type-check at all.
 	{"receiver-counted-through-an-escaping-callee", `enum Chain { Link(i32[]), Stop }
 @noinline
 function keep(c: Chain, at: i32, v: i32): Chain {
@@ -136,15 +95,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 93},
-	// A READER borrows, and that is what keeps the convention from costing.
-	// `weigh` never lets its argument leave the frame — the string payload is
-	// only measured — so counting it would add a retain and a release per call
-	// and reclaim nothing that the caller's own temp path does not already.
-	//
-	// What this case pins is that the caller still reclaims each fresh
-	// argument: no leak, no over-release. It does NOT pin the mode, because
-	// the two conventions allocate identically for a reader. The mode itself
-	// is asserted from the emitted code, in modes-in-the-emitted-code below.
 	{"reader-parameter-stays-borrowed", `enum Node { Leaf(i32), Label(string), Empty }
 @noinline
 function weigh(n: Node): i32 {
@@ -168,12 +118,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 30},
-	// A reader that RETURNS a projection of its parameter keeps it borrowed:
-	// `peek` retains the element it hands back instead of taking the whole
-	// cursor, so a caller that goes on using the cursor retains and releases
-	// nothing per call. The parser's `Par.peek` is this shape. The census pins
-	// that the retained element is still reclaimed and the cursor is not
-	// over-released.
 	{"returned-projection-keeps-the-parameter-borrowed", `enum Tok { Word(string), Num(i32), End }
 struct Cursor { toks: Tok[], pos: i32 }
 @noinline
@@ -194,16 +138,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 4},
-	// A parameter the frame hands BACK escapes, so it is counted even though
-	// the body only reads it — the caller must not also reclaim what it
-	// returned. The pin here is the exit code and a balanced census: an
-	// over-release shows up as a wrong answer, a missed one as live bytes.
-	// A record update whose overrides replace every reference field reads
-	// nothing else off its base, so nothing anchored to the base reaches the
-	// new record. The update still consumes the base's box, which is reused
-	// only when the base is counted, so the update's base is carried out
-	// whatever it keeps (`HeaderMap.append`'s shape). A caller that keeps the
-	// receiver retains it, and the update copies instead.
 	{"update-base-is-counted", `struct Hm { names: string[], values: string[] }
 @noinline
 function (h: Hm) add(n: string, v: string): Hm {
@@ -266,31 +200,6 @@ func TestSelfHostOwnershipInference(t *testing.T) {
 	})
 }
 
-// A reader's mode is not census-observable: a parameter the callee only reads
-// costs a retain and a release per call and reclaims nothing, so counting it
-// wrongly changes the instruction count and nothing the allocation census can
-// see. (That cost is what the bench corpus reads — it is how the type rung was
-// found, at 1.049x on `ascii_scan`.) The mode itself is legible in the emitted
-// code instead: a COUNTED reference parameter carries the callee's release, so
-// its drop function is called inside the callee; a borrowed one is not.
-//
-// Both directions are asserted from ONE compilation, so the marker is proven
-// present before its absence is read as an answer, and `modes-program-runs`
-// runs the program's own checks: `hands_back` returns its
-// parameter and must drop, `reads_only` must not. The same pair for a record:
-// `keep_or_new` hands its parameter back on one arm and drops it on the other,
-// and `lends_to_builtin` only lends a field to a builtin's lent slot, which
-// takes no unit. For a recursive enum: `pick` hands back one tree and drops the
-// other, `depth` walks its tree and must not drop it, and neither may
-// `visit_depth`, which also hands each node to a function value that lends it;
-// `hand_to` gives its owned tree to a function value's `own` slot. `names_of` folds
-// a tree into a list of strings through its own recursive call: its result
-// holds references but never a tree, so it lends the tree too. And for a receiver:
-// `advance` builds a new cursor out of its parameter and must drop it, `peek`
-// returns an element of its token array and must not. For a user callee's lends:
-// `checked_keep` reads its record only through a function whose result holds
-// no reference, so it is counted and drops on its fresh arm; `view_keep` reads
-// it through one that returns a view of it, so it stays borrowed.
 const inferredModesProgram = `enum Node { Leaf(i32), Label(string), Empty }
 enum Tree { Tip(i32), Fork(Tree, Tree) }
 struct Rec { text: string, n: i32 }
@@ -393,10 +302,6 @@ function main(): i32 {
 }
 `
 
-// asmWholeFunc returns the emitted body of `__fn_<name>` in full, from its
-// label to the next function label (its own entries `.k:` and `.r:` are
-// inside it). The package's asmFuncBody stops at the
-// first `ret`, which is a window these multi-arm bodies leave through early.
 func asmWholeFunc(asm, name string) (string, bool) {
 	lines := strings.Split(asm, "\n")
 	start := -1

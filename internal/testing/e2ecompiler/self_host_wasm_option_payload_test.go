@@ -5,22 +5,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmOptionPayload pins the wasm backend's Option/Result payload
-// extractors (compiler/wasm_ir.fern's parse_option_payload /
-// parse_result_err_payload — SH-021, docs/SELF-HOST-AUDIT.md T2). Both now decode
-// an Option[T] / Result[T, E] spelling via the structured TypeRef
-// (parser.parse_type_ref) instead of the magic-byte `Option[` / `Result[` prefix +
-// top-level-comma depth scan.
-//
-// On every valid input the new decode agrees with the former scan byte-for-byte;
-// the golden's two array rows (Option[i32][], Result[i32, u32][]) show the
-// deliberate correction — the old scan returned garbage there (prefix matched,
-// trailing `]` passed its last-char test), the TypeRef decode peels the trailing
-// `[]` into array_depth and returns "" (an array is not an Option/Result). The
-// three x86 self-compile fixpoints confirm no such array type reaches these during
-// bootstrap, so the correction leaves the self-compile byte-identical.
-//
-// The driver is built natively via the Go x86-64 backend; its stdout is the map.
 func TestSelfHostWasmOptionPayload(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

@@ -2,22 +2,6 @@ import "core/map";
 import "std/test";
 import "std/headers";
 
-// tests/stdlib/header_map_migrated_test.fern —
-// Fern port of `TestInterpScriptHeaderMap` from
-// `internal/testing/e2e/interp_script_test.go`.
-//
-// The Go original was a 5-case table-driven test where
-// each subcase spawned a `fern -interp` subprocess, ran
-// a different inline program, and grep-asserted exit
-// code + stdout. The migrated form folds all 5 cases
-// into one Fern file: each `r.it(...)` exercises the
-// same surface but asserts on the returned value
-// directly via `assert_eq` / `_i32` / the new
-// `assert_is_some_eq_string` (no subprocess, no
-// print-then-grep).
-//
-// Needs `import "std/headers";`.
-
 function test_case_insensitive_get(): test.TestOutcome {
   let h: HeaderMap = headers.header_map_new();
   h = h.set("Content-Type", "application/json");
@@ -32,10 +16,6 @@ function test_get_all_preserves_insertion_order(): test.TestOutcome {
   h = h.append("Set-Cookie", "a=1");
   h = h.append("Set-Cookie", "b=2");
   h = h.append("Set-Cookie", "c=3");
-  // Original verified via print-each-line + grep on
-  // stdout; here we assert the returned array directly
-  // so the failure message localises the first
-  // divergence by index.
   return test.assert_eq_array(
     h.get_all("set-cookie"),
     ["a=1", "b=2", "c=3"],
@@ -48,8 +28,6 @@ function test_set_replaces_then_size_2(): test.TestOutcome {
   h = h.append("Y", "y1");
   h = h.append("X", "second");
   h = h.set("x", "replaced");
-  // After set("x"), X has exactly one value
-  // ("replaced") and Y is still there → size == 2.
   return test.assert_eq(h.len(), 2);
 }
 
@@ -118,14 +96,10 @@ function joined(xs: string[]): string {
   return out;
 }
 
-// A comma inside a quoted string does not split, the whitespace around a
-// member goes, an empty member is dropped, and an escaped quote does not
-// end the string.
 function test_split_list(): test.TestOutcome {
   return test.assert_eq(joined(headers.split_list(" a , \"b,c\",,  \"d\\\",e\" ,")), "[a][\"b,c\"][\"d\\\",e\"]");
 }
 
-// Every line's members, in order, whatever the name's case.
 function test_get_list(): test.TestOutcome {
   let h: HeaderMap = headers.header_map_new().append("Vary", "Accept, Origin").append("vary", "Cookie");
   return test.assert_eq(joined(h.get_list("VARY")), "[Accept][Origin][Cookie]");
@@ -150,9 +124,6 @@ function coding(accept: string): string {
   }
 }
 
-// The highest weight wins and a tie goes to the earlier offer; `*` stands
-// for what the field does not name, `x-gzip` is `gzip`, and identity is
-// sent when nothing was asked for or it ranks above every offer.
 function test_preferred_coding(): test.TestOutcome {
   let got: string[] = [
     coding(""),
@@ -167,7 +138,6 @@ function test_preferred_coding(): test.TestOutcome {
   return test.assert_eq(joined(got), "[identity][br][gzip][gzip][zstd][identity][identity][gzip]");
 }
 
-// RFC 9110 §12.4.2's qvalue grammar, in thousandths.
 function test_weight(): test.TestOutcome {
   let got: string = headers.weight("a").to_string() + " " + headers.weight("a; Q=0.25").to_string() + " " + headers.weight("a;level=1;q=0.008").to_string() + " " + headers.weight("a;q=1.5").to_string() + " " + headers.weight("a;q=0.1234").to_string();
   return test.assert_eq(got, "1000 250 8 0 0");

@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// A small function that calls nothing and returns a value is a leaf
-// (ssa.leaf_of): its callers take its instructions in place of the call
-// (ssa.inline_leaves). `lo32` lifts to a chain of blocks, which a leaf may be;
-// `kept` is the same body declared `@noinline`, which stays a call.
 const inlineLeafProg = `function lo32(x: i64): i32 { return (x & 4294967295i64) as i32; }
 @noinline function kept(x: i64): i32 { return (x & 4294967295i64) as i32; }
 @noinline function sum(n: i64): i32 {
@@ -64,9 +60,6 @@ func TestSelfHostInlineLeaf(t *testing.T) {
 	}
 }
 
-// A leaf may call a scalar primitive (ssasem.scalar_primitive) as it may use
-// an operator: `red`, a Montgomery reduction with a branch, is called from two
-// functions and spliced into both.
 const inlinePrimitiveLeafProg = `function red(h: u64, l: u64, n: u64): u64 {
     let t: u64 = __mulhi_u64(l, n);
     if (h >= t) { return h - t; }
@@ -114,11 +107,6 @@ func TestSelfHostInlinePrimitiveLeaf(t *testing.T) {
 	}
 }
 
-// The arms of a `&&` or `||` lower to blocks that only name a constant for
-// the join, which the SSA backend threads away, so they do not count against
-// a leaf's block budget. `is_alnum` is two short-circuit leaves spliced
-// together, the lexer's identifier test; counted block by block it is past
-// the budget, and with two callers it is spliced only as a leaf.
 const inlineShortCircuitLeafProg = `function is_digit(b: i32): boolean { return b >= 48 && b <= 57; }
 function is_alpha(b: i32): boolean { return b >= 65 && b <= 90 || b >= 97 && b <= 122 || b == 95; }
 function is_alnum(b: i32): boolean { return is_digit(b) || is_alpha(b); }

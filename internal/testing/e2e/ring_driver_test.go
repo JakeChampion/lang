@@ -1,8 +1,3 @@
-// async.real_driver_io_uring() (docs/NET-P7-IO-URING-PLAN.md slice 1): the
-// io_uring readiness set behind the Driver reports what epoll does. One
-// probe runs natively on x86-64, where the ring is had, and in the
-// interpreter and under qemu-aarch64, where it is not and the driver keeps
-// the reactor; past the first line the three print the same.
 package e2e
 
 import (
@@ -12,16 +7,6 @@ import (
 	"testing"
 )
 
-// ringDriverProbe prints, over loopback: a listener watched exclusively
-// reported on a connect, and a second exclusive watch of it refused as
-// epoll refuses one; the listener reported on a connect when watched
-// plainly; an accepted socket reported while its bytes stay unread and not
-// once they are read, as level-triggered epoll reports it; writable once
-// asked for; nothing after an unwatch, and readable again once watched
-// anew, with a completion of the poll the unwatch removed not reported; a
-// peer's half-close reported readable and not hung up, as epoll reports it
-// to a loop that never asks for EPOLLRDHUP; and
-// forty connections each reported readable in one pass of waits.
 const ringDriverProbe = `import "std/async";
 import "std/i32";
 
@@ -144,9 +129,6 @@ func checkRingDriver(t *testing.T, out []byte, err error, ring bool) {
 	}
 }
 
-// The ring is had natively here (kernel 6.1 or later outside a seccomp
-// profile refusing it, which the CI runners are); a host without one is
-// a failure to investigate, not a skip.
 func TestRingDriverX86_64(t *testing.T) {
 	bin := buildFernCLI(t)
 	qemu := x86QemuOrEmpty(t)
@@ -169,8 +151,6 @@ func TestRingDriverInterp(t *testing.T) {
 	checkRingDriver(t, got, err, false)
 }
 
-// Under qemu-aarch64 there is no io_uring, so this is the fallback's leg;
-// on a native arm64 host the ring is had and the probe reads as x86-64's.
 func TestRingDriverArm64(t *testing.T) {
 	bin := buildFernCLI(t)
 	qemu := arm64QemuOrEmpty(t)
@@ -187,15 +167,6 @@ func TestRingDriverArm64(t *testing.T) {
 	checkRingDriver(t, got, err, qemu == "")
 }
 
-// ringRecvProbe prints, over loopback, what a descriptor watched with
-// interest 8 reads through recv_into (slice 3): a line read whole and then
-// nothing reported; bytes left unread reported again and read in pieces
-// smaller than they came, then EAGAIN; bytes received before the watch
-// dropped bit 8 read first, ahead of what came after; the end of the
-// stream; and forty connections that each sent 64 KiB before any was read,
-// more than the ring's buffers hold, every byte of every stream read in
-// order. Under epoll bit 8 is nothing and recv_into reads the socket, so
-// the three legs print the same.
 const ringRecvProbe = `import "std/async";
 import "std/i32";
 
@@ -391,11 +362,6 @@ func TestRingRecvX86_64(t *testing.T) { runRingRecvProbe(t, "x86-64-linux") }
 func TestRingRecvInterp(t *testing.T) { runRingRecvProbe(t, "interp") }
 func TestRingRecvArm64(t *testing.T)  { runRingRecvProbe(t, "arm64-linux") }
 
-// ringZcProbe prints what send_zc does (slice 4): a write of 32 KiB from
-// offset 0 and one of its second half from offset 16,384, each reported
-// writable once done, its result the bytes written, the peer reading them
-// in order, and its slot notified and released. Every driver but an
-// io_uring's answers -EOPNOTSUPP.
 const ringZcProbe = `import "std/async";
 import "std/i32";
 

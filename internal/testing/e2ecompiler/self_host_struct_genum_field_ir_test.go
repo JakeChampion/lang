@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// structGenEnumFieldIRCase is a self-host program with a (non-generic) struct
-// whose FIELD is typed as a user generic-enum instantiation — `struct S { o:
-// Opt[i32] }`. The enum monomorphiser rewrites struct field types as well as
-// function/param/return types (`o: Opt[i32]` -> `o: Opt__i32`), and
-// `me_scrutinee_type` recovers a struct field's type so `match (s.o)` rewrites
-// its arms. Each exit code is pinned against the interpreter oracle and kept
-// <= 120.
 type structGenEnumFieldIRCase struct {
 	name     string
 	src      string
@@ -21,29 +14,24 @@ type structGenEnumFieldIRCase struct {
 }
 
 var structGenEnumFieldIRCases = []structGenEnumFieldIRCase{
-	// the core shape: a struct field holding a user generic enum, matched via
-	// `s.o` (field-access scrutinee).
 	{"field_match_i32", `enum Opt[T] { Sm(T), Nn }
 struct S { o: Opt[i32] }
 function main(): i32 {
     let s = S { o: Sm(5) };
     match (s.o) { Sm(n) => { return n; }, Nn => { return 0; } }
 }`, 5},
-	// string payload, method dispatch on the bound value.
 	{"field_match_string", `enum Opt[T] { Sm(T), Nn }
 struct S { o: Opt[string] }
 function main(): i32 {
     let s = S { o: Sm("hi") };
     match (s.o) { Sm(n) => { return n.len(); }, Nn => { return 0; } }
 }`, 2},
-	// the field holds the unit variant.
 	{"field_unit", `enum Opt[T] { Sm(T), Nn }
 struct S { o: Opt[i32] }
 function main(): i32 {
     let s = S { o: Nn };
     match (s.o) { Sm(n) => { return n; }, Nn => { return 9; } }
 }`, 9},
-	// two generic-enum-typed fields on one struct.
 	{"two_fields", `enum Opt[T] { Sm(T), Nn }
 struct S { a: Opt[i32], b: Opt[i32] }
 function main(): i32 {
@@ -53,22 +41,18 @@ function main(): i32 {
     match (s.b) { Sm(n) => { x = x + n; }, Nn => { } }
     return x;
 }`, 7},
-	// the struct binding carries an explicit annotation.
 	{"annotated_binding", `enum Opt[T] { Sm(T), Nn }
 struct S { o: Opt[i32] }
 function main(): i32 {
     let s: S = S { o: Sm(8) };
     match (s.o) { Sm(n) => { return n; }, Nn => { return 0; } }
 }`, 8},
-	// the struct arrives as a function PARAMETER (its type comes from the param
-	// env, the field type from the struct table).
 	{"struct_param", `enum Opt[T] { Sm(T), Nn }
 struct S { o: Opt[i32] }
 function get(s: S): i32 {
     match (s.o) { Sm(n) => { return n; }, Nn => { return 0; } }
 }
 function main(): i32 { return get(S { o: Sm(6) }); }`, 6},
-	// two distinct instantiations as fields of one struct coexist.
 	{"mixed_instantiations", `enum Opt[T] { Sm(T), Nn }
 struct S { a: Opt[i32], b: Opt[string] }
 function main(): i32 {
@@ -80,8 +64,6 @@ function main(): i32 {
 }`, 7},
 }
 
-// TestSelfHostStructGenEnumFieldIRX86_64 runs each case through the self-host
-// asm_run driver.
 func TestSelfHostStructGenEnumFieldIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -115,8 +97,6 @@ func TestSelfHostStructGenEnumFieldIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStructGenEnumFieldWasmIR is the wasm sibling: the enum pass is a
-// target-independent parser pass, so the wasm IR backend gets these for free.
 func TestSelfHostStructGenEnumFieldWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range structGenEnumFieldIRCases {

@@ -1,8 +1,8 @@
-// A `dyn` dispatch whose trait no type in the program implements. No value
-// of the receiver's type can exist, so the call can never run — but the
-// function still has to compile: std/http's respond_error calls
-// `e.message()` on a `dyn error.Error` in every program that loads it,
-// implementer or not.
+
+
+
+
+
 trait Speak {
     function say(self: Self): i32;
     function shout(self: Self, n: i32): void;

@@ -5,17 +5,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostTcpClientIRArm64 is the arm64 half of slice 4
-// (docs/ASYNC-SELFHOST-IR.md): the tcp_* client family lowers to dedicated IR
-// ops on the self-host arm64 IR backend, emitting `bl __fern_tcp_*`. recv/send/
-// close already had arm64 runtime bodies (server side); this adds connect +
-// pollable (socket #198 / connect #203 / identity) and routes all five via the
-// IR. A tcp module is IR-eligible rather than bailing.
-//
-// Same loopback round-trip as the x86-64 sibling: the qemu'd client connects to
-// the host Go server (qemu user-mode forwards the socket syscalls to the host),
-// sends "ping", recvs the 6-byte reply, and exits 6. An asm-content check
-// confirms the client ops lowered through the IR.
 func TestSelfHostTcpClientIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -29,7 +18,6 @@ func TestSelfHostTcpClientIRArm64(t *testing.T) {
 	if len(asm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes")
 	}
-	// The socket calls use Fern helpers; pollable conversion is an identity.
 	if strings.Contains(string(asm), "__fern_tcp_pollable") {
 		t.Fatal("native pollable identity still calls a runtime helper")
 	}

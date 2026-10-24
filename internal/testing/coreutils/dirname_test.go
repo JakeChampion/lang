@@ -8,8 +8,6 @@ func init() {
 
 func dirnameCases(t *testing.T) []invocation {
 	return []invocation{
-		// The name rule: drop the last component and the slashes before
-		// it; nothing left is `.`, only slashes left is `/`.
 		{name: "plain name", args: []string{"a"}},
 		{name: "path", args: []string{"/a/b"}},
 		{name: "deeper path", args: []string{"/a/b/c/d"}},
@@ -44,7 +42,6 @@ func dirnameCases(t *testing.T) []invocation {
 		{name: "path that is not valid UTF-8", args: []string{"\xff\xfe/\xfd"}},
 		{name: "several names", args: []string{"a", "/b/c", "d/e"}},
 
-		// -z, and the scan permutes so it is found anywhere.
 		{name: "-z", args: []string{"-z", "a", "b"}},
 		{name: "-z after the name", args: []string{"a", "-z"}},
 		{name: "-z between names", args: []string{"a", "--zero", "b"}},
@@ -59,7 +56,6 @@ func dirnameCases(t *testing.T) []invocation {
 		{name: "posix stops at the first name", args: []string{"a", "-z"}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix option before the name", args: []string{"-z", "a"}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// Faults.
 		{name: "no arguments"},
 		{name: "-z alone", args: []string{"-z"}},
 		{name: "invalid short option", args: []string{"-x", "a"}},
@@ -72,9 +68,6 @@ func dirnameCases(t *testing.T) []invocation {
 		{name: "help with a value", args: []string{"--help=x"}},
 		{name: "bad option before help", args: []string{"--foo", "--help"}},
 
-		// A failing write: `>&-` and `> /dev/full` are the paths close_stdout
-		// and the exit status wire together, and they were left out until
-		// #8265 landed.
 		{name: "stdout closed", args: []string{"/a/b"}, stdout: stdoutClosed},
 		{name: "stdout full", args: []string{"/a/b"}, stdout: stdoutFull},
 		{name: "stdout closed on many operands", args: []string{"/a/b", "/c/d"}, stdout: stdoutClosed},

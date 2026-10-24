@@ -10,16 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
-// A method's implicit receiver type variables (`K` / `V` in
-// `(m: Map[K, V]) merge(…)`) are the receiver names that do not resolve
-// to a struct or enum. The merged program is flat, so before #6118 that
-// test consulted EVERY module's types at once: declaring `struct V` in
-// the importing module made core/map's own `V` look concrete, the
-// methods bound one type parameter instead of two, and the program
-// failed to check with errors reported inside stdlib source.
-//
-// The declaring module cannot name a type it does not import, so a
-// collision from outside its import closure must not be visible to it.
 func TestReceiverTypeVarsIgnoreTypesTheModuleCannotSee(t *testing.T) {
 	cases := []struct {
 		name string
@@ -36,8 +26,6 @@ function main(): i32 {
 }`,
 		},
 		{
-			// The trigger is the NAME, not the position: a struct named K
-			// collides with the key parameter even for a scalar-keyed map.
 			name: "key struct named K, scalar-keyed map",
 			src: `import "core/map";
 struct K { a: i32 }
@@ -48,9 +36,6 @@ function main(): i32 {
 }`,
 		},
 		{
-			// Not specific to core/map: std/array's element-polymorphic
-			// methods are `(xs: T[])`, so a struct named T disabled the
-			// whole array method surface at once.
 			name: "struct named T against std/array",
 			src: `import "std/array";
 struct T { a: i32 }
@@ -85,9 +70,6 @@ function main(): i32 {
 	}
 }
 
-// The scoping must not turn every receiver name into a type variable: a
-// struct the declaring module CAN see is still a concrete instantiation,
-// so `(b: Box[Payload]) …` binds nothing and only accepts a Box[Payload].
 func TestReceiverTypeVarsKeepVisibleTypesConcrete(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"main.fern": `struct Payload { n: i32 }
@@ -108,9 +90,6 @@ function main(): i32 {
 	}
 }
 
-// The same concreteness holds across an import: a struct the declaring
-// module reaches through its own `import` is visible to it, so it pins
-// the receiver rather than becoming a free type variable.
 func TestReceiverTypeVarsSeeImportedTypes(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"payload.fern": `pub struct Payload { n: i32 }`,
@@ -133,9 +112,6 @@ function main(): i32 {
 	}
 }
 
-// A local struct whose name matches an imported module's receiver type
-// variable must not leak into that module — the importing side keeps
-// using its own type, and neither side reports an error.
 func TestReceiverTypeVarCollisionAcrossUserModules(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"boxes.fern": `pub struct Box[T] { v: T }
@@ -156,9 +132,6 @@ function main(): i32 {
 	}
 }
 
-// Whatever diagnostics a colliding-name program does produce must point
-// at the user's own file. The pre-fix failure mode reported errors only
-// inside stdlib://core/map.fern, for code the user never wrote.
 func TestCollidingNameDiagnosticsNameTheUsersFile(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"main.fern": `import "core/map";
@@ -172,9 +145,6 @@ function main(): i32 {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A struct key still needs @derive(Eq, Hash) — that error is correct
-	// and identical for a struct named `Key`. What matters is where it
-	// points.
 	_, cerr := checker.Check(prog)
 	if cerr == nil {
 		t.Fatal("expected the missing @derive(Eq, Hash) error")

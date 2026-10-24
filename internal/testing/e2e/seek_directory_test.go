@@ -17,7 +17,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The paths are relative because wasm resolves every path against its preopen.
 const seekDirProg = `import "std/i32";
 import "std/i64";
 
@@ -76,10 +75,6 @@ function main(): i32 {
 }
 `
 
-// seekDirWant is what every target prints, with SEEK_END's answer in place of
-// %s: a native lseek's is the filesystem's own, so the interpreter and the
-// register runtimes print what the host says, and wasm, whose host refuses to
-// seek a directory, counts from the directory's size.
 const seekDirWant = `set 0 0
 at 0 read Is a directory
 set 5 5
@@ -97,8 +92,6 @@ closed
 reopened cur 0 0
 `
 
-// hostSeekEnd is the host lseek's answer to SEEK_END on dir, as the program
-// prints it.
 func hostSeekEnd(t *testing.T, dir string) string {
 	t.Helper()
 	f, err := os.Open(dir)
@@ -117,9 +110,6 @@ func hostSeekEnd(t *testing.T, dir string) string {
 	return fmt.Sprint(pos)
 }
 
-// A Reader opened on a directory seeks on every target, moving an offset no
-// read uses: each read is EISDIR wherever the offset stands (#11713). The
-// wasm hosts refuse to seek a directory, so its runtime keeps the offset.
 func TestSeekDirectoryReaderEveryTarget(t *testing.T) {
 	dir := t.TempDir()
 	d := filepath.Join(dir, "d")

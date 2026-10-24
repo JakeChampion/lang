@@ -1,4 +1,3 @@
-// Count allocations during RFC 7748 public-key generation, without networking.
 import "std/crypto/x25519";
 import "std/hex";
 import "std/i64";

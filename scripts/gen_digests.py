@@ -130,7 +130,7 @@ def load_word(i, bpw, big_endian, ty, width):
     return " | ".join(parts)
 
 
-def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endian, ivs, rounds_body, doc, hw=False, order_doc=()):
+def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endian, ivs, rounds_body, doc, hw=False):
     """Everything but the block function's round body: struct, constructors,
     absorb, update, final and the one-shot wrappers. `ivs` maps a constructor
     name to (iv words, output length). With `hw`, __{tag}_blocks takes the
@@ -142,7 +142,7 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
     p(f"pub struct {struct} {{")
     for i in range(nwords):
         p(f"    h{i}: {ty},")
-    p(f"    // Pending partial block ({block} bytes, `buf_len` of them live) and the byte count.")
+    p(f"    // The buffer holds {block} bytes. `buf_len` records the valid byte count.")
     p("    buf: u8[],")
     p("    buf_len: i32,")
     p("    total: u64,")
@@ -160,19 +160,7 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
     if hw:
         rounds = f"__{tag}_soft_blocks"
         emit_hw_blocks(p, tag, struct, nwords, block)
-        p(f"// {rounds} is __{tag}_blocks without the instructions.")
-        p(f"// Generated: the rounds are unrolled with the working variables renamed per")
-        p(f"// round and the message schedule a rolling window of locals, so the loop")
-        p(f"// touches no array but the input.{' ' + order_doc[0] if order_doc else ''}")
-        for line in order_doc[1:]:
-            p(f"// {line}")
-    else:
-        p(f"// __{tag}_blocks folds `nblocks` {block}-byte blocks of `bs`, starting at byte")
-        p(f"// `from`, into the state. Generated: the rounds are unrolled with the working")
-        p(f"// variables renamed per round and the message schedule a rolling window of")
-        p(f"// locals, so the loop touches no array but the input.{' ' + order_doc[0] if order_doc else ''}")
-        for line in order_doc[1:]:
-            p(f"// {line}")
+    p(f"// {rounds} updates the state from `nblocks` blocks at byte `from`.")
     p(f"function {rounds}(st: {struct}, bs: [u8], from: i32, nblocks: i32): {struct} {{")
     rounds_body(p)
     fields = ", ".join(f"h{i}: {'abcdefgh'[i]}" for i in range(nwords))
@@ -237,7 +225,7 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
     p("")
     for name in ivs:
         base = name[: -len("_new")]
-        p(f"// {base}_bytes / {base}_hex — the one-shot digest of `s`.")
+        p(f"// {base}_bytes and {base}_hex calculate the digest of `s`.")
         p(f"pub function {base}_bytes(s: string): u8[] {{")
         p(f"    return {name}().update(s).final_bytes();")
         p("}")
@@ -251,9 +239,7 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
 def emit_hw_blocks(p, tag, struct, nwords, block):
     """__{tag}_blocks over __{tag}_hw_blocks, which takes the state as
     little-endian u32 words, or over the rounds where __{tag}_hw is false."""
-    p(f"// __{tag}_blocks folds `nblocks` {block}-byte blocks of `bs`, starting at byte")
-    p(f"// `from`, into the state: with the target's instructions where it has them")
-    p(f"// (__{tag}_hw), else with __{tag}_soft_blocks's rounds.")
+    p(f"// __{tag}_blocks uses hardware instructions when the target supports them.")
     p(f"function __{tag}_blocks(st: {struct}, bs: [u8], from: i32, nblocks: i32): {struct} {{")
     p(f"    if (!__{tag}_hw()) {{ return __{tag}_soft_blocks(st, bs, from, nblocks); }}")
     p(f"    let words: u8[] = __alloc_u8({4 * nwords});")
@@ -267,10 +253,7 @@ def emit_hw_blocks(p, tag, struct, nwords, block):
 
 
 def emit_update(p, struct, tag):
-    p(f"// update / update_bytes absorb a chunk of arbitrary length — a string, or a")
-    p(f"// `[u8]` view (a `u8[]` lends itself, `arr[a:b]` slices one). Rebind the result")
-    p(f"// (`h = h.update(chunk)`): the state is a value, and the rebind is what lets the")
-    p(f"// pending block be reused in place rather than copied.")
+    p("// Use the returned state for the next update.")
     p(f"pub function (h: {struct}) update(chunk: string): {struct} {{")
     p(f"    h = __{tag}_absorb(h, chunk.as_bytes());")
     p("    return h;")
@@ -281,7 +264,7 @@ def emit_update(p, struct, tag):
     p("    return h;")
     p("}")
     p("")
-    p("// Borrow an owned byte buffer through the streaming digest interface.")
+    p("// This method reads an owned byte buffer without transfer of ownership.")
     p(f"pub function (h: {struct}) update_array(chunk: u8[]): {struct} {{")
     p(f"    h = __{tag}_absorb(h, chunk);")
     p("    return h;")
@@ -467,17 +450,15 @@ def emit_blake2b(p):
     p("pub struct Blake2b {")
     for i in range(8):
         p(f"    h{i}: u64,")
-    p("    // Pending block (up to 128 bytes live) and the count of bytes already")
-    p("    // compressed — BLAKE2b holds a full block back until more input arrives,")
-    p("    // since the last block is compressed with the final flag set.")
+    p("    // Keep the final block until more input arrives so the compressor can identify it.")
     p("    buf: u8[],")
     p("    buf_len: i32,")
     p("    total: u64,")
     p("    out_len: i32")
     p("}")
     p("")
-    p("// blake2b_new(out_len) — a hasher producing an `out_len`-byte digest (1..64).")
-    p("// b2sum's default is 64; `-l N` is N bits, so pass N / 8.")
+    p("// blake2b_new constructs a digest state for `out_len` bytes, from 1 through 64.")
+    p("// The default length for `b2sum` is 64 bytes. Its `-l` option accepts bits.")
     p("pub function blake2b_new(out_len: i32): Blake2b {")
     p("    let n: i32 = out_len;")
     p("    if (n < 1) { n = 1; }")
@@ -489,11 +470,8 @@ def emit_blake2b(p):
     p("    return Blake2b { ...h, h0: h.h0 ^ (0x01010000 as u64) ^ (n as u64) };")
     p("}")
     p("")
-    p("// __blake2b_blocks compresses `nblocks` 128-byte blocks of `bs` from byte")
-    p("// `from`; `t` is the byte counter after the first of them (it advances 128 per")
-    p("// block) and `last` marks the final block of the message. Generated, like the")
-    p("// SHA cores: the 12 rounds are unrolled over 16 state locals and 16 message")
-    p("// locals with the sigma permutation applied at generation time.")
+    p("// __blake2b_blocks compresses `nblocks` blocks from byte `from`.")
+    p("// `t` counts bytes after the first block. `last` identifies the final block.")
     p("function __blake2b_blocks(st: Blake2b, bs: [u8], from: i32, nblocks: i32, t: u64, last: boolean): Blake2b {")
     for i in range(8):
         p(f"    let h{i}: u64 = st.h{i};")
@@ -562,7 +540,6 @@ def emit_blake2b(p):
     emit_update(p, "Blake2b", "blake2b")
     p("pub function (h: Blake2b) final_bytes(): u8[] {")
     p("    let bl: i32 = h.buf_len;")
-    p("    // The tail of the block must be zero; the buffer may hold stale bytes.")
     p("    let pad: u8[] = __bytes_into(__zero_u8(128), 0, h.buf, 0, bl);")
     p("    let st: Blake2b = __blake2b_blocks(h, pad, 0, 1, h.total + (bl as u64), true);")
     p("    let full: u8[] = __alloc_u8(64);")
@@ -576,7 +553,7 @@ def emit_blake2b(p):
     p("    return __bytes_to_hex(h.final_bytes());")
     p("}")
     p("")
-    p("// blake2b_bytes / blake2b_hex — the one-shot `out_len`-byte digest of `s`.")
+    p("// blake2b_bytes and blake2b_hex calculate an `out_len`-byte digest of `s`.")
     p("pub function blake2b_bytes(s: string, out_len: i32): u8[] {")
     p("    return blake2b_new(out_len).update(s).final_bytes();")
     p("}")
@@ -605,26 +582,21 @@ def unformatted():
     p("")
     emit_family(p, tag="md5", struct="Md5", ty="u32", width=32, nwords=4, block=64, len_bytes=8,
                 big_endian=False, ivs={"md5_new": (MD5_IV, 16)}, rounds_body=md5_rounds,
-                doc="MD5 (RFC 1321)",
-                order_doc=("Each round adds the", "constant and the message word before the boolean function, and the",
-                           "function's term on the newest variable last, so only that term, the",
-                           "rotate and one add sit between one round's result and the next's."))
+                doc="MD5 (RFC 1321)")
     emit_family(p, tag="sha1", struct="Sha1", ty="u32", width=32, nwords=5, block=64, len_bytes=8,
                 big_endian=True, ivs={"sha1_new": (SHA1_IV, 20)}, rounds_body=sha1_rounds,
-                doc="SHA-1 (RFC 3174)", hw=True,
-                order_doc=("Each round adds the", "rotated newest variable last, after the constant, the word and the",
-                           "function, so one rotate and one add sit between consecutive rounds."))
+                doc="SHA-1 (RFC 3174)", hw=True)
     emit_family(p, tag="sha256", struct="Sha256", ty="u32", width=32, nwords=8, block=64, len_bytes=8,
                 big_endian=True, ivs={"sha256_new": (SHA256_IV, 32), "sha224_new": (SHA224_IV, 28)},
                 rounds_body=sha2_rounds(32, 64, SHA256_K, (2, 13, 22), (6, 11, 25), (7, 18, 3), (17, 19, 10)),
-                doc="SHA-224 / SHA-256 (FIPS 180-4) — one state type, the IV and output length differ", hw=True)
+                doc="SHA-224 and SHA-256 (FIPS 180-4)", hw=True)
     emit_family(p, tag="sha512", struct="Sha512", ty="u64", width=64, nwords=8, block=128, len_bytes=16,
                 big_endian=True, ivs={"sha512_new": (SHA512_IV, 64), "sha384_new": (SHA384_IV, 48)},
                 rounds_body=sha2_rounds(64, 80, SHA512_K, (28, 34, 39), (14, 18, 41), (1, 8, 7), (19, 61, 6)),
-                doc="SHA-384 / SHA-512 (FIPS 180-4) — u64 arithmetic, 128-byte blocks")
+                doc="SHA-384 and SHA-512 (FIPS 180-4)")
     emit_family(p, tag="sm3", struct="Sm3", ty="u32", width=32, nwords=8, block=64, len_bytes=8,
                 big_endian=True, ivs={"sm3_new": (SM3_IV, 32)}, rounds_body=sm3_rounds,
-                doc="SM3 (GB/T 32905-2016) — the digest cksum(1) reaches with -a sm3")
+                doc="SM3 (GB/T 32905-2016)")
     emit_blake2b(p)
     p(END)
     return "\n".join(out) + "\n"

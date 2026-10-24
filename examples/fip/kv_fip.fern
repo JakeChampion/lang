@@ -1,45 +1,13 @@
-// examples/fip/kv_fip.fern — the strict `fip` variant of the bounded key/value
-// core (#9585).
-//
-// One owned `Db` holds everything the data plane touches: an open-addressing
-// hash table with linear probing over `slot_count()` slots, the key and
-// value bytes of every slot in two preallocated byte regions, a bounded
-// response buffer, and the counters. A request batch is one borrowed `u8[]`
-// of fixed-size records, and `process_batch(own db, reqs, count)` is the
-// closest Fern form of the `fip process_batch(own database, own requests) ->
-// (database, responses)` the issue asked for: a `fip` function cannot return
-// two owned containers (a tuple literal has no donor to pair against), so the
-// responses are written into the `out` region the database owns.
-//
-// Deletion is backward-shift rather than tombstone: the entries after the hole
-// in its probe cluster are pulled back into it, so a lookup never scans past
-// dead slots and the table's cost does not degrade with churn. That needs the
-// home slot of every stored entry, which is why each slot keeps its hash.
-//
-// Every write into a byte region is one struct rebuild — `Db { ...db, keys:
-// db.keys.with(i, b) }` — because a field of an owned struct cannot be handed
-// to an `own` parameter (E051), so a 16-byte key copy is sixteen rebuilds.
-// `docs/FIP-KV-CORE.md` reports what that costs against the other variants.
-//
-// The request format, the workload and the response digest are shared by all
-// three variants byte for byte; `kv_baseline.fern` documents them.
 import "core/cmp";
 import "std/bench";
 import "std/i32";
 import "std/i64";
 import "std/string";
 
-// ===================== CAPACITIES =====================
-
 fip function max_entries(): i32 {
   return 4096;
 }
 
-// Twice as many slots as entries, so the table is at most half full and a
-// probe sequence stays short even at capacity. With one slot per entry a
-// full table made every miss walk all of it (1.9 µs per request at 150%
-// load against 0.5 µs below capacity); the extra slots are the price of a
-// defined full-capacity behaviour, and `docs/FIP-KV-CORE.md` has both numbers.
 fip function slot_count(): i32 {
   return 8192;
 }
@@ -67,8 +35,6 @@ fip function req_size(): i32 {
 fip function rsp_size(): i32 {
   return 1 + value_size();
 }
-
-// ===================== PROTOCOL =====================
 
 fip function op_put(): i32 {
   return 1;
@@ -114,8 +80,6 @@ fip function mix_mixed(): i32 {
   return 3;
 }
 
-// ===================== STATE =====================
-
 struct Db {
   live: i32,
   out_count: i32,
@@ -130,8 +94,6 @@ struct Db {
   vals: u8[],
   out: u8[],
 }
-
-// ===================== INITIALIZATION (allocating, once) =====================
 
 function zeros_i64(n: i32): i64[] {
   let xs: i64[] = [];
@@ -165,8 +127,6 @@ function new_db(): Db {
     out: zeros_u8(batch_size() * rsp_size()),
   };
 }
-
-// ===================== BYTE HELPERS (fip) =====================
 
 fip function pow256(k: i32): i64 {
   let v: i64 = 1 as i64;
@@ -218,12 +178,6 @@ fip function key_equal(keys: u8[], slot: i32, reqs: u8[], at: i32): boolean {
   return true;
 }
 
-// ===================== THE TABLE (fip) =====================
-
-// The slot holding the key at `at`, or -1. Probing stops at the first empty
-// slot; backward-shift deletion keeps that reading sound, since a cluster is
-// never broken by a hole. The probe count is bounded by the table all the
-// same, so no state can make it circle.
 fip function find(db: Db, reqs: u8[], at: i32, h: i64): i32 {
   let slot: i32 = home_slot(h);
   let probes: i32 = 0;
@@ -240,8 +194,6 @@ fip function find(db: Db, reqs: u8[], at: i32, h: i64): i32 {
   return 0 - 1;
 }
 
-// The first empty slot at or after the home slot. Only called with live <
-// max_entries(), so one exists.
 fip function free_slot(db: Db, h: i64): i32 {
   let slot: i32 = home_slot(h);
   while (db.used[slot] != 0 as i64) {
@@ -278,9 +230,6 @@ fip function copy_val(own db: Db, slot: i32, reqs: u8[], at: i32): Db {
   return db;
 }
 
-// Moves the entry in slot `from` into slot `to`, which is dead. Reading the
-// region being written is a read through a directly owned array, not a retain,
-// so the rebuilds still write in place (#9605).
 fip function move_entry(own db: Db, from: i32, to: i32): Db {
   let j: i32 = 0;
   while (j < key_size()) {
@@ -298,13 +247,9 @@ fip function move_entry(own db: Db, from: i32, to: i32): Db {
   return Db { ...db, hashes: db.hashes.with(to, h) };
 }
 
-// Backward-shift deletion: every entry after the hole in its cluster that
-// could have landed in the hole is moved back, so the cluster closes without a
-// tombstone.
 fip function remove_at(own db: Db, slot: i32): Db {
   let hole: i32 = slot;
   let j: i32 = slot + 1 & slot_mask();
-  // Bounded by the table, as find is: a lap offers every entry the hole.
   let steps: i32 = 1;
   while (steps < slot_count() && db.used[j] != 0 as i64) {
     let home: i32 = home_slot(db.hashes[j]);
@@ -317,8 +262,6 @@ fip function remove_at(own db: Db, slot: i32): Db {
   }
   return Db { ...db, used: db.used.with(hole, 0 as i64), live: db.live - 1 };
 }
-
-// ===================== RESPONSES (fip) =====================
 
 fip function emit_byte(own db: Db, b: u8): Db {
   let o: i32 = db.out_count;
@@ -345,8 +288,6 @@ fip function respond_value(own db: Db, slot: i32): Db {
   }
   return Db { ...db, m_val: db.m_val + 1 as i64 };
 }
-
-// ===================== OPERATIONS (fip) =====================
 
 fip function apply_put(own db: Db, reqs: u8[], at: i32): Db {
   let h: i64 = hash_key(reqs, at + 1);
@@ -395,8 +336,6 @@ fip function apply_delete(own db: Db, reqs: u8[], at: i32): Db {
   return respond(db, st_ok());
 }
 
-// INCREMENT adds the request's first eight value bytes, read little-endian,
-// to the stored value's first eight bytes, and answers the whole new value.
 fip function apply_incr(own db: Db, reqs: u8[], at: i32): Db {
   let h: i64 = hash_key(reqs, at + 1);
   let slot: i32 = find(db, reqs, at + 1, h);
@@ -433,10 +372,6 @@ fip function apply(own db: Db, reqs: u8[], at: i32): Db {
   return respond(db, st_missing());
 }
 
-// The data plane's entry point: `count` records of `reqs`, answered into the
-// response region in order. The region is sized for one batch, so the batch
-// is the unit of back-pressure — a caller hands over at most batch_size()
-// records and takes the responses before the next.
 fip function process_batch(own db: Db, reqs: u8[], count: i32): Db {
   db = Db { ...db, out_count: 0 };
   let i: i32 = 0;
@@ -454,11 +389,6 @@ fip function reset_metrics(own db: Db): Db {
     digest: 0 as i64,
   };
 }
-
-// ===================== THE WORKLOAD (fip) =====================
-//
-// Identical in every variant: `kv_baseline.fern` carries the description. Here
-// it is written straight into the request records.
 
 fip function mix64(n: i64): i64 {
   let x: i64 = n * (2654435761 as i64);
@@ -539,8 +469,6 @@ fip function fill_batch(own reqs: u8[], seed: i64, universe: i64, mix: i32): u8[
   return reqs;
 }
 
-// PUT for keys first_key .. first_key + batch_size(), valued key * 10: the
-// prefill, so reads have something to hit before the measured region.
 fip function fill_prefill(own reqs: u8[], first_key: i64): u8[] {
   let i: i32 = 0;
   while (i < batch_size()) {
@@ -550,8 +478,6 @@ fip function fill_prefill(own reqs: u8[], first_key: i64): u8[] {
   }
   return reqs;
 }
-
-// ===================== DRIVER =====================
 
 function mix_of(name: string): i32 {
   if (name == "read") {
@@ -563,8 +489,6 @@ function mix_of(name: string): i32 {
   return mix_mixed();
 }
 
-// `mix load_pct rounds` from the command line, each defaulting when absent
-// or unreadable.
 function options(argv: string[]): (string, i32, i32) {
   let mix_name: string = "mixed";
   let load_pct: i32 = 50;
@@ -606,8 +530,6 @@ function main(): i32 {
     prefilled = prefilled + batch_size() as i64;
   }
   db = reset_metrics(db);
-  // Built before the mark: the sample buffer is part of the instrument, not
-  // of the steady state being measured.
   let samples: i64[] = zeros_i64(rounds);
   let at_allocs: i64 = bench.alloc_count();
   let at_fresh: i64 = bench.bump_bytes();

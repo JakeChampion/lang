@@ -2,12 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A call through a function value or a dyn receiver names no body, so the
-// grow table's rows by callee name never bracketed it, and a body that grows
-// its borrowed parameter in place grew the caller's array, or moved a field
-// out of the caller's record, while the caller still read it (#12373). Each
-// row keeps the old value in a binding the caller reads after the call.
-// Answers are the interpreter's.
 var dispatchedBracketRows = []leakRow{
 	{"function_value_array", `function grow(xs: i32[]): i32[] {
     return xs.append(7);
@@ -105,10 +99,6 @@ func TestSelfHostDispatchedBracketWasm(t *testing.T) {
 	runLeakRowsWasm(t, dispatchedBracketRows)
 }
 
-// The bracket is only where a caller still reads: a value handed on as the
-// last reader of its box is grown in place through a function value as
-// through a direct call, so a fold-style loop allocates per doubling, not
-// per element. Exits 42 when it does.
 const dispatchedInPlaceSrc = `function push(acc: i32[], x: i32): i32[] {
     return acc.append(x);
 }

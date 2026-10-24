@@ -9,22 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostX86RipImmediateStoreLinks pins `mov $imm, sym(%rip)` through the
-// self-host's IN-PROCESS x86 assembler (#6764).
-//
-// `x86_native.fern` encoded every other rip-relative shape and refused the
-// immediate store, so a runtime helper opening with `movq $0, sym(%rip)`
-// emitted correct assembly that the assembler then could not consume. Every
-// x86 self-host program test that hands the emitted `.s` to gcc misses that,
-// so this one links in process.
-//
-// The failure mode worth pinning is an off-by-four displacement rather than a
-// refusal: a rip displacement is measured from the end of the instruction,
-// and this is the one shape whose instruction continues past its disp32. The
-// leak census's report clears `__fern_args_set` with exactly this store once
-// a program has called set_args, and a store four bytes off changes nothing
-// the program prints, so the test reads the linked binary back with objdump
-// and requires the store's resolved target to be the symbol itself.
 func TestSelfHostX86RipImmediateStoreLinks(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -49,8 +33,6 @@ func TestSelfHostX86RipImmediateStoreLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	progBin := filepath.Join(dir, "ripimm")
-	// `-o` links in process: no `.s`, no gcc, no ld — the path the refusal
-	// aborted with `rip-relative operand not encoded here`.
 	build := exec.Command(fernBin, "-g", "-target", "x86-64-linux", "-o", progBin, srcPath)
 	build.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
 	if out, err := build.CombinedOutput(); err != nil {
@@ -65,10 +47,6 @@ func TestSelfHostX86RipImmediateStoreLinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("objdump: %v", err)
 	}
-	// The report reads the word with an ordinary rip-relative load a few
-	// instructions before it clears it, and a load's displacement ends the
-	// instruction, so its target is the symbol's address: the store must
-	// resolve to the same one. objdump prints each resolved target after '#'.
 	load := regexp.MustCompile(`\smov\s+-?0x[0-9a-f]+\(%rip\),%rax\s+# ([0-9a-f]+)`)
 	store := regexp.MustCompile(`\smovq\s+\$0x0,-?0x[0-9a-f]+\(%rip\)\s+# ([0-9a-f]+)`)
 	lines := strings.Split(string(dis), "\n")

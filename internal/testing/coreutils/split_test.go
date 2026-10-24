@@ -10,10 +10,6 @@ import (
 	"time"
 )
 
-// splitSeed fills a case's own working directory with the inputs the
-// corpus names. Every case runs in a fresh copy of this, per side, and
-// the TREE each side leaves behind is compared as well as the streams —
-// split writes almost nothing to stdout, so the files are the output.
 func splitSeed(t *testing.T, dir string) {
 	t.Helper()
 	write := func(name, content string) {
@@ -21,41 +17,24 @@ func splitSeed(t *testing.T, dir string) {
 			t.Fatal(err)
 		}
 	}
-	// Ten two-byte records, 20 bytes: every `-n` division of it lands on
-	// a different mix of whole and split records.
 	write("in", "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n")
-	// Records of 5, 3, 2, 14 and 2 bytes — the 14 is longer than the
-	// `-C` budgets below, which is the only way a `-C` piece ends
-	// mid-record.
 	write("uneven", "aaaa\nbb\nc\nddddddddddddd\ne\n")
-	// No trailing separator: the last record is unterminated, which is
-	// what stops `-n l/N` running away when N exceeds the byte count.
 	write("nonl", "a\nb\nc")
 	write("empty", "")
-	// NUL-separated, for `-t '\0'`.
 	write("nul", "a\x00b\x00c\x00")
-	// 800 bytes: `-b 1` over this crosses the two-letter suffix space
-	// (650 names) into the widened four-letter one.
 	write("big", strings.Repeat("q", 800))
 	write("f name", "x\ny\n")
 	write("f'n", "x\ny\n")
-	// A name that is not valid UTF-8: it reaches the diagnostics as
-	// bytes, so nothing may re-encode it.
-	// Only where the filesystem holds it: this seed serves every split case
-	// and one names this file, so a t.Fatal here takes the other forty with it.
 	seedRawByteName(t, dir, "x\ny\n")
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// splitCase is one invocation in split's own working directory.
 func splitCase(name string, args ...string) invocation {
 	return invocation{name: name, args: args, seedTree: splitSeed}
 }
 
-// splitStdin is splitCase with something on stdin — a PIPE, so the
-// input is not seekable and `-n` has to learn its size another way.
 func splitStdin(name, stdin string, args ...string) invocation {
 	return invocation{name: name, args: args, stdin: stdin, seedTree: splitSeed}
 }
@@ -64,21 +43,8 @@ func init() {
 	registerCorpus("split", splitCases)
 }
 
-// splitCases is split(1)'s corpus.
-//
-// Three areas carry most of it. The suffix counter widens rather than
-// wrapping, and the widening reserves the alphabet's last character, so
-// `xyz` is followed by `xzaaa` and only 650 two-letter names exist. `-n`
-// divides by byte count, by record (`l/`) or round robin (`r/`), each
-// with a `K/N` form that writes one share to stdout instead of files.
-// And the diagnostics are glibc's getopt plus split's own, including the
-// two that read oddly and are GNU's wording rather than a slip here:
-// `-C` reports "invalid number of lines" for a byte count, and a
-// negative `-a` is `Numerical result out of range` while a huge one is
-// `Value too large for defined data type`.
 func splitCases(*testing.T) []invocation {
 	return []invocation{
-		// ---- defaults and the four ways to cut ----
 		splitCase("default 1000 lines", "in"),
 		splitCase("lines", "-l", "3", "in"),
 		splitCase("lines glued", "-l3", "in"),
@@ -99,7 +65,6 @@ func splitCases(*testing.T) []invocation {
 		splitCase("line bytes uneven large", "-C", "10", "uneven"),
 		splitCase("line bytes more than the file", "-C", "100", "in"),
 
-		// ---- -n, every form ----
 		splitCase("chunks one", "-n", "1", "in"),
 		splitCase("chunks three", "-n", "3", "in"),
 		splitCase("chunks seven", "-n", "7", "in"),
@@ -120,9 +85,6 @@ func splitCases(*testing.T) []invocation {
 		splitCase("line chunks uneven", "-n", "l/5", "uneven"),
 		splitCase("line chunks of an empty file", "-n", "l/4", "empty"),
 		splitCase("line chunks of an unterminated file", "-n", "l/10", "nonl"),
-		// N past the byte count with a terminated last record is GNU's
-		// violated `assert (n <= file_size)`: pieces until the suffixes
-		// run out. `-a 1` bounds it to 26 names.
 		splitCase("line chunks past the size", "-a", "1", "-n", "l/11", "in"),
 		splitCase("line chunk to stdout", "-n", "l/2/3", "in"),
 		splitCase("line chunk to stdout past the size", "-n", "l/2/30", "in"),
@@ -134,13 +96,11 @@ func splitCases(*testing.T) []invocation {
 		splitCase("round robin to stdout", "-n", "r/2/3", "in"),
 		splitCase("round robin to stdout unterminated", "-n", "r/1/2", "nonl"),
 
-		// ---- -e ----
 		splitCase("elide", "-e", "-n", "20", "in"),
 		splitCase("elide round robin", "-e", "-n", "r/20", "in"),
 		splitCase("elide reuses the names it skipped", "-e", "-n", "l/6", "in"),
 		splitCase("elide with nothing to elide", "-e", "-n", "3", "in"),
 
-		// ---- suffixes ----
 		splitCase("suffix length one", "-a", "1", "-l", "3", "in"),
 		splitCase("suffix length three", "-a", "3", "-l", "3", "in"),
 		splitCase("suffix length long", "--suffix-length=3", "-l", "3", "in"),
@@ -158,10 +118,6 @@ func splitCases(*testing.T) []invocation {
 		splitCase("hex suffixes", "-x", "-l", "3", "in"),
 		splitCase("hex suffixes widen", "-x", "-b", "1", "big"),
 		splitCase("hex suffixes long", "--hex-suffixes", "-l", "3", "in"),
-		// A FROM holding a hex LETTER is not here: GNU 9.4 seeds its
-		// counter with `FROM[i] - '0'` and then indexes its alphabet out
-		// of bounds, so the names it produces are whatever follows that
-		// string in the binary. docs/COREUTILS.md records it.
 		splitCase("hex suffixes from digits", "--hex-suffixes=10", "-l", "3", "in"),
 		splitCase("last suffix kind wins", "-d", "-x", "-l", "3", "in"),
 		splitCase("additional suffix", "--additional-suffix=.txt", "-l", "3", "in"),
@@ -172,7 +128,6 @@ func splitCases(*testing.T) []invocation {
 		splitCase("suffix one too small for the chunk count", "-n", "677", "big"),
 		splitCase("declared suffix large enough for the chunks", "-a", "5", "-n", "700", "big"),
 
-		// ---- separators ----
 		splitCase("separator", "-t", "b", "-l", "2", "in"),
 		splitCase("separator long", "--separator=b", "-l", "2", "in"),
 		splitCase("separator nul", "-t", `\0`, "-l", "2", "nul"),
@@ -181,7 +136,6 @@ func splitCases(*testing.T) []invocation {
 		splitCase("separator with line chunks", "-t", "b", "-n", "l/3", "in"),
 		splitCase("separator with round robin", "-t", "b", "-n", "r/3", "in"),
 
-		// ---- --verbose, -u, the prefix ----
 		splitCase("verbose", "--verbose", "-l", "3", "in"),
 		splitCase("verbose chunks", "--verbose", "-n", "4", "in"),
 		splitCase("verbose elided chunks", "--verbose", "-e", "-n", "20", "in"),
@@ -193,7 +147,6 @@ func splitCases(*testing.T) []invocation {
 		splitCase("prefix empty", "-l", "3", "in", ""),
 		splitCase("prefix into a subdirectory", "-l", "3", "in", "d/p"),
 
-		// ---- operands ----
 		splitStdin("stdin by default", "1\n2\n3\n4\n", "-l", "2"),
 		splitStdin("stdin named", "1\n2\n3\n4\n", "-l", "2", "-"),
 		splitStdin("stdin bytes", "12345", "-b", "2"),
@@ -205,8 +158,6 @@ func splitCases(*testing.T) []invocation {
 		splitStdin("stdin empty", "", "-l", "2"),
 		splitStdin("stdin empty chunks", "", "-n", "3"),
 		splitStdin("stdin unterminated", "a\nb", "-l", "1"),
-		// Past one read block, so `-n` cannot answer from what it has
-		// already read and spools the input to a temporary file.
 		splitStdin("stdin chunks past one block", strings.Repeat("0123456789\n", 20000), "-n", "3"),
 		splitStdin("stdin line chunks past one block", strings.Repeat("0123456789\n", 20000), "-n", "l/3"),
 		splitStdin("stdin chunk to stdout past one block", strings.Repeat("0123456789\n", 20000), "-n", "2/3"),
@@ -223,7 +174,6 @@ func splitCases(*testing.T) []invocation {
 		splitCase("extra operand", "in", "p", "q"),
 		splitCase("prefix cannot be created", "-l", "2", "in", "nodir/p"),
 
-		// ---- number faults ----
 		splitCase("lines zero", "-l", "0", "in"),
 		splitCase("lines not a number", "-l", "x", "in"),
 		splitCase("lines empty", "-l", "", "in"),
@@ -269,7 +219,6 @@ func splitCases(*testing.T) []invocation {
 		splitCase("hex start uppercase", "--hex-suffixes=A", "in"),
 		splitCase("hex start too large", "--hex-suffixes=111", "-a", "2", "in"),
 
-		// ---- other faults ----
 		splitCase("two ways", "-b", "5", "-l", "5", "in"),
 		splitCase("two ways reversed", "-l", "5", "-b", "5", "in"),
 		splitCase("two ways with chunks", "-b", "5", "-n", "3", "in"),
@@ -281,7 +230,6 @@ func splitCases(*testing.T) []invocation {
 		splitCase("separator contradicted", "-t", "a", "-t", "b", "-l", "2", "in"),
 		splitCase("additional suffix with a slash", "--additional-suffix=a/b", "in"),
 
-		// ---- getopt ----
 		splitCase("ambiguous s", "--s", "in"),
 		splitCase("ambiguous n", "--n", "in"),
 		splitCase("ambiguous h", "--h", "in"),
@@ -293,9 +241,6 @@ func splitCases(*testing.T) []invocation {
 		splitCase("long lines wants a value", "--lines", "in"),
 		splitCase("short a wants a value", "-a"),
 		splitCase("long filter wants a value", "--filter"),
-		// --filter: each piece is the stdin of `sh -c COMMAND`, its name
-		// in $FILE. The filters write to split's own stdout, so the order
-		// of their output against the --verbose lines is stdio buffering's.
 		splitCase("filter sees FILE and its piece", "-l", "3", `--filter=echo "$FILE:"; cat`, "in"),
 		splitCase("filter verbose", "--verbose", "-l", "4", "--filter=wc -c", "in"),
 		splitCase("filter round robin", "-n", "r/3", `--filter=tr -d '\n'; echo " $FILE"`, "in"),
@@ -325,10 +270,6 @@ func TestSplitHelpVersion(t *testing.T) {
 	requireVersion(t, "split", []string{"--vers"}, 0)
 }
 
-// `-n` on a pipe spools the input to `$TMPDIR`, and the spool never has a
-// name while it holds data (#8814): GNU's create_temp_file unlinks at
-// creation, so a signal mid-spool leaves nothing behind. The test holds
-// the pipe open past one read block, so split is mid-spool, and looks.
 func TestSplitSpoolHasNoName(t *testing.T) {
 	bin := fernBin(t, "split")
 	dir := t.TempDir()
@@ -346,8 +287,6 @@ func TestSplitSpoolHasNoName(t *testing.T) {
 	if _, err := io.WriteString(stdin, line); err != nil {
 		t.Fatal(err)
 	}
-	// The write returns once the pipe has taken the bytes; give split time
-	// to drain them into the spool, then look while it waits for more.
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		time.Sleep(50 * time.Millisecond)

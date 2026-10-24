@@ -9,19 +9,10 @@ func init() {
 	registerCorpus("base64", base64Cases)
 }
 
-// base64Cases is base64(1)'s corpus.
-//
-// The decoder is where the surprises are, and most of them are shapes a
-// round trip never produces: `AA==AA==` is two groups and decodes to two
-// bytes, `AB==` is accepted with its ignored low bits, and a group that
-// goes wrong still writes the bytes it had already completed. base64 is
-// also the one encoding whose SHORT final group writes anything at all
-// before failing — base32's writes nothing, which base32_test.go pins.
 func base64Cases(t *testing.T) []invocation {
 	f := baseFixtureFor(t)
 
 	cases := []invocation{
-		// Encoding, one case per residue and around the block.
 		{name: "empty", stdin: ""},
 		{name: "one byte", stdin: "a"},
 		{name: "two bytes", stdin: "ab"},
@@ -41,7 +32,6 @@ func base64Cases(t *testing.T) []invocation {
 		{name: "a block unwrapped", args: []string{"-w0", f.over}},
 		{name: "empty file", args: []string{f.empty}},
 
-		// Decoding: padding, and the counts that are not encodable.
 		{name: "decode", args: []string{"-d"}, stdin: "aGVsbG8="},
 		{name: "decode empty", args: []string{"-d"}, stdin: ""},
 		{name: "decode unpadded", args: []string{"-d"}, stdin: "aGVsbG8"},
@@ -63,15 +53,11 @@ func base64Cases(t *testing.T) []invocation {
 		{name: "decode pad then a group", args: []string{"-d"}, stdin: "AA==AA=="},
 		{name: "decode a fifth pad", args: []string{"-d"}, stdin: "aGVsbG8=="},
 		{name: "decode data after a full group", args: []string{"-d"}, stdin: "AAAA="},
-		// The bits a padded group cannot represent are ignored rather
-		// than rejected, so these are all valid.
 		{name: "decode non-canonical two-pad bits", args: []string{"-d"}, stdin: "AB=="},
 		{name: "decode non-canonical two-pad bits again", args: []string{"-d"}, stdin: "Ab=="},
 		{name: "decode non-canonical one-pad bits", args: []string{"-d"}, stdin: "AAB="},
 		{name: "decode the whole alphabet", args: []string{"-d"}, stdin: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"},
 
-		// What a decoder ignores: newlines always, everything else only
-		// under -i, and `=` under neither.
 		{name: "decode with a newline", args: []string{"-d"}, stdin: "aGVs\nbG8="},
 		{name: "decode with a leading newline", args: []string{"-d"}, stdin: "\naGVsbG8="},
 		{name: "decode with a trailing newline", args: []string{"-d"}, stdin: "aGVsbG8=\n"},
@@ -94,17 +80,13 @@ func base64Cases(t *testing.T) []invocation {
 		{name: "clustered with a wrap", args: []string{"-diw0"}, stdin: "aGVs bG8="},
 		{name: "wrap is ignored on decode", args: []string{"-d", "-w2"}, stdin: "aGVsbG8="},
 
-		// Decoding across the read block: the group carries over, so the
-		// fault lands on the tail rather than on a block boundary.
 		{name: "decode a block", args: []string{"-d", f.b64Exact}},
 		{name: "decode a block with a bad tail", args: []string{"-d", f.b64Bad}},
 
-		// Round trips through the file operand.
 		{name: "decode from a file", args: []string{"-d", f.b64Hello}},
 		{name: "decode from a directory", args: []string{"-d", f.subdir}},
 		{name: "decode a missing file", args: []string{"-d", f.nosuch}},
 
-		// Operands.
 		{name: "dash is stdin", args: []string{"-"}, stdin: "hi"},
 		{name: "dash twice is an extra operand", args: []string{"-", "-"}},
 		{name: "file operand", args: []string{f.hello}},
@@ -119,7 +101,6 @@ func base64Cases(t *testing.T) []invocation {
 		{name: "posix stops at the operand", args: []string{f.hello, "-w0"}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix option before the operand", args: []string{"-w0", f.hello}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// Option faults.
 		{name: "invalid short option", args: []string{"-x"}},
 		{name: "invalid option in a cluster", args: []string{"-dx"}},
 		{name: "unrecognized long option", args: []string{"--foo"}},
@@ -136,7 +117,6 @@ func base64Cases(t *testing.T) []invocation {
 		{name: "help rejects a glued value", args: []string{"--help=x"}},
 		{name: "version rejects a glued value", args: []string{"--version=x"}},
 
-		// Write failures.
 		{name: "stdout closed", stdin: "hello", stdout: stdoutClosed},
 		{name: "stdout full", stdin: "hello", stdout: stdoutFull},
 		{name: "stdout closed with nothing to write", stdin: "", stdout: stdoutClosed},

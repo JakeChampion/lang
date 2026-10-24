@@ -9,25 +9,12 @@ import (
 	"testing"
 )
 
-// fieldReclaimArrElemsCases pin #7067: a struct's ARRAY field whose ELEMENTS are
-// pointer-shaped releases its element boxes when the struct is REBOUND, not
-// only when it goes out of scope. Otherwise
-// `let b: Bag = Bag { es: [P { .. }, P { .. }], .. }` inside a loop strands one
-// element box per element on every iteration but the last. An element struct
-// with its own rc-array field has that level released too.
-//
-// The append case is why the element walk is not unconditional:
-// `d = Doc { ...d, vals: d.vals.append(v) }` hands the NEW buffer the same
-// element pointers the superseded one holds, so walking the old buffer would
-// free boxes the live one still references (it segfaulted the conformance case
-// alloc_flat_array_push_bound_elem).
 var fieldReclaimArrElemsCases = []struct {
 	name string
 	src  string
 	want int
-	wasm bool // exercised on the wasm leg too
+	wasm bool
 }{
-	// The reported shape: a struct-array field rebound per iteration. 98 before.
 	{"structarr-field-rebind", `struct P { x: i32, y: i32 }
 struct Bag { es: P[], n: i32 }
 function main(): i32 {
@@ -52,10 +39,6 @@ function main(): i32 {
     return 0;
 }`, 0, true},
 
-	// MULTI-LEVEL: the element struct carries its own rc-array field, so the
-	// element's buffer leaks too unless the reclaim runs
-	// __struct_arr_elems_drop_P before freeing the element boxes — the level
-	// __struct_drop's array arm already had.
 	{"structarr-field-rebind-elem-fields", `struct P { xs: i32[], a: i32 }
 struct Bag { es: P[], n: i32 }
 function main(): i32 {
@@ -80,10 +63,6 @@ function main(): i32 {
     return 0;
 }`, 0, true},
 
-	// ADMISSION (negative): the field is grown by `d.vals.append(v)`, so the
-	// superseded buffer shares every element with the live one. The type must
-	// NOT be admitted — walking it double-frees (segfault / 99), and the sound
-	// buffer-only dec has to stand instead.
 	{"structarr-field-append-carry-safe", `struct Val { kind: i32, kids: i32[] }
 struct Doc { vals: Val[], root: i32 }
 function main(): i32 {
@@ -105,11 +84,6 @@ function main(): i32 {
     return 0;
 }`, 0, true},
 
-	// The enum-array sibling: the element boxes are variant constructions, freed
-	// by the same walk (their PAYLOAD is one level deeper — the shared gap
-	// __struct_drop has as well — so the variants here stay scalar). Register
-	// backends only: wasm classifies a method-less enum element as scalar and
-	// keeps BOTH helpers on the flat dec.
 	{"enumarr-field-rebind", `enum Shape { Circle(i32), Square(i32) }
 struct Bag { es: Shape[], n: i32 }
 function main(): i32 {
@@ -135,8 +109,6 @@ function main(): i32 {
 }`, 0, false},
 }
 
-// TestSelfHostFieldReclaimArrElemsIRX86_64 drives the cases through the
-// self-hosted x86-64 compiler.
 func TestSelfHostFieldReclaimArrElemsIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -164,10 +136,6 @@ func TestSelfHostFieldReclaimArrElemsIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFieldReclaimArrElemsIRArm64 is the arm64 leg: the walk is a
-// transcription, not shared code (x10/x11/x12 hold new/old/snap across the field
-// loop, so the buffer/index registers are borrowed and reloaded), which is
-// exactly the kind of divergence a register backend hides until it runs.
 func TestSelfHostFieldReclaimArrElemsIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -191,8 +159,6 @@ func TestSelfHostFieldReclaimArrElemsIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFieldReclaimArrElemsWasmIR is the wasm leg: there the deep release
-// is $__fern_arr_dec_ptr, which rc-gates the element walk internally.
 func TestSelfHostFieldReclaimArrElemsWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping field-reclaim array-element wasm IR e2e")

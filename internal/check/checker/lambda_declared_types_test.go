@@ -7,16 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// A lambda's declared parameter / return types go through the same
-// `resolveType` pre-pass as every other declaration, so a name the parser
-// could only guess at — a union alias, an enum, a resource — reaches the
-// type-equality check in its resolved form.
-//
-// Before #6996 the pre-pass walked statements only and the check-time
-// fallback fired solely inside a generic function, so a lambda outside one
-// kept the parser's provisional `StructType{U}` while the signature it had
-// to match had already become `EnumType{U}`. `ast.Equal` said no and both
-// sides printed as `U`: "expected (U) => i32, got (U) => i32".
 func TestLambdaDeclaredTypesResolve(t *testing.T) {
 	const decls = `struct A { v: i32 }
 struct B { w: i32 }
@@ -28,8 +18,6 @@ function applyE(e: E, f: (E) => i32): i32 { return f(e); }
 function takesU(u: U): i32 { return 1; }
 `
 	for _, tc := range []struct{ name, src string }{
-		// The three rows that already passed before #6996 — the
-		// regression guard on the fix.
 		{"struct-annotated lambda param", decls + `
 function main(): i32 {
     return applyA(A { v: 7 }, (x: A) => x.v);
@@ -43,7 +31,6 @@ function main(): i32 {
     return h(A { v: 7 });
 }`},
 
-		// The rows that failed.
 		{"union-annotated lambda param in a non-generic function", decls + `
 function main(): i32 {
     return applyU(A { v: 7 }, (x: U) => 1);
@@ -54,15 +41,9 @@ function main(): i32 {
     return g(A { v: 7 });
 }`},
 
-		// The same defect reached every nominal name the parser cannot
-		// classify, not just union aliases.
 		{"enum-annotated lambda param", decls + `
 function main(): i32 { return applyE(E.X, (x: E) => 1); }`},
 
-		// Nesting: the pre-pass reaches a lambda at any expression
-		// depth, where the check-time fallback saw only the outermost
-		// one (an inner lambda's `c.current` is the outer lambda's
-		// synthetic decl, which carries no type parameters).
 		{"lambda nested inside a lambda", decls + `
 function main(): i32 {
     let outer: (i32) => i32 = ((n: i32) => applyU(A { v: n }, (x: U) => 1));
@@ -74,8 +55,6 @@ function main(): i32 {
     return inner();
 }`},
 
-		// A `let` annotation nested in an expression-position block is
-		// the other half of the same statement-only walk.
 		{"let annotation inside a value block", decls + `
 function main(): i32 {
     let t: i32 = {
@@ -97,9 +76,6 @@ function main(): i32 {
 	}
 }
 
-// A type that really is unknown still has to be reported. The pre-pass
-// rewrites names it recognises; it must not turn an undeclared one into
-// something that silently type-checks.
 func TestLambdaParamUnknownTypeStillReported(t *testing.T) {
 	const src = `function main(): i32 {
     let f: (i32) => i32 = ((x: Wibble) => 1);

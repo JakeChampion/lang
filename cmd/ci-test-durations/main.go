@@ -1,5 +1,3 @@
-// ci-test-durations measures complete top-level Go test lifetimes, including
-// their parallel children, from fresh full test2json event streams.
 package main
 
 import (
@@ -103,8 +101,6 @@ func durations(r io.Reader) (map[string]float64, error) {
 			delete(active, key)
 		}
 	}
-	// Timeouts can leave unfinished tests. Keep only completed observations.
-	// Cached Go output replays old events with fresh timestamps: exclude it.
 	result := map[string]float64{}
 	for key, seconds := range records {
 		if !cached[key.pkg] {

@@ -193,9 +193,6 @@ func TestSelfHostSSAPhysicalRCIRArm64(t *testing.T) {
 	testPhysicalRC(t, true)
 }
 
-// physicalRCRejectSource is the contract-rejection program: the fixture prefix
-// plus a main that asserts every refusal. Built apart from its test so the
-// fixture gate can type-check it without the x86_64 tooling.
 func physicalRCRejectSource() string {
 	return strings.Split(physicalRCSource("", ""), "function main(): i32 {")[0] + `
 function refused(r: irtables.LowerResult, why: string): boolean {
@@ -1365,7 +1362,6 @@ function carry_refused(f: ssasem.Func, p: ssaunits.Plan, reuse: ssaunits.Reuse, 
 }
 
 func TestSelfHostSSAPhysicalRCRejects(t *testing.T) {
-	// This pin-built driver needs an executor, not a GCC cross-linker.
 	runner := x86_64Runner(t)
 	dir := copySelfHostTree(t)
 	source := physicalRCRejectSource()
@@ -1400,8 +1396,6 @@ types = [i, bt, row, mixed, row]; ops = [inst(1, 0, [], 7), inst(2, 1, [], 1), i
 	return append(base, physicalRCBranchCases()...)
 }
 
-// Compile the compiler modules once, then select fixtures at runtime. This
-// keeps the bootstrap and self-host matrix on exactly the same fixture source.
 func physicalRCBundle(cases []physicalRCCase) string {
 	base := physicalRCSource("", "")
 	prefix := strings.Split(base, "function fixture():")[0]
@@ -1463,9 +1457,6 @@ func testPhysicalRC(t *testing.T, selfhost bool) {
 					if target == "x86-64-sanitize" {
 						emitTarget, mode = "x86-64-linux", "FERN_SANITIZE=1"
 					}
-					// Every compile runs the emitted-RC certifier (#11908) in its
-					// refusing mode: the lowering under test must certify, and
-					// the planted mutation must be refused naming produce.
 					compile := func(t *testing.T, omitRetains bool, certify string) []byte {
 						t.Helper()
 						args := []string{emitTarget, tc.name}
@@ -1519,9 +1510,9 @@ func testPhysicalRC(t *testing.T, selfhost bool) {
 						t.Run("missing-edge-retain", func(t *testing.T) {
 							bad := physicalRCRun(t, gcc, runner, dir, tc.name+"-broken", target, compile(t, true, "0"))
 							output, err := bad.CombinedOutput()
-							want := 99 // The post-frame underflow guard.
+							want := 99
 							if target == "x86-64-sanitize" {
-								want = 124 // The runtime sanitizer catches the invalid release earlier.
+								want = 124
 								if !strings.Contains(string(output), "fern-sanitizer:") {
 									t.Fatalf("missing sanitizer diagnostic: %v\n%s", err, output)
 								}

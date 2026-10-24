@@ -2,16 +2,12 @@ package e2ecompiler
 
 import "testing"
 
-// nativeAcceptedCases are programs native compiles and runs that the self-host
-// checker or the typed lowering used to refuse (#10767, #10763). Each answers the interpreter's exit code and
-// output on every target through the typed lowering.
 var nativeAcceptedCases = []struct {
 	name   string
 	src    string
 	want   int
 	stdout string
 }{
-	// A struct's bitand / bitor / bitxor / shl / shr / rem methods, reached only through their operators.
 	{"bitwise-and-shift-overloads", `struct F { b: i32 }
 function (self: F) rem(o: F): F { return F { b: self.b % o.b }; }
 function (self: F) bitand(o: F): F { return F { b: self.b & o.b }; }
@@ -31,7 +27,6 @@ function main(): i32 {
     return c.b;
 }
 `, 2, ""},
-	// A record-form variant matched by field name and rendered by a derived Display.
 	{"derived-display-record-variant", `import "std/i32";
 import "core/cmp";
 
@@ -60,7 +55,6 @@ function main(): i32 {
     return 0;
 }
 `, 0, "Rect { w: 3, h: 4 }\na=12\na=12\n"},
-	// Every payload of a positional variant and every field of a record one, as native renders them.
 	{"derived-display-every-payload", `import "std/i32";
 import "core/cmp";
 @derive(cmp.Display)
@@ -72,7 +66,6 @@ function main(): i32 {
     return 42;
 }
 `, 42, ""},
-	// Owned arrays lent to view parameters, a generic one among them.
 	{"owned-array-lent-to-views", `struct Sink { base: i32 }
 function sum_u8(bs: [u8]): i32 {
     let t: i32 = 0;
@@ -117,14 +110,12 @@ function main(): i32 {
     return 0;
 }
 `, 0, ""},
-	// A function named None is called, not read as the builtin variant.
 	{"function-shadows-builtin-none", `function None(v: i32): Option[i32] { return Some(v); }
 function mk_nullary(v: i32): Option[i32] { return None(v); }
 function main(): i32 {
     match (mk_nullary(5)) { Some(v) => { return v; }, None => { return 99; } }
 }
 `, 5, ""},
-	// A `?` inside a match value and an f-string returns from the function around it.
 	{"try-inside-match-values", `import "std/i32";
 function pick(p: Result[i32, i32]): Option[i32] {
     return (match (p) { Ok(v) => Some(v + 1), Err(e) => Some(((Some(e))?) + ((Some(40))?)) });
@@ -145,7 +136,6 @@ function main(): i32 {
     return a;
 }
 `, 44, ""},
-	// `?` on a success that carries `()` resumes with the unit value.
 	{"try-unit-success", `function ok(): Result[void, IoError] { return Ok(()); }
 function bad(): Result[void, IoError] { return Err(Interrupted); }
 function chain(fail: boolean): Result[void, IoError] {
@@ -160,7 +150,6 @@ function main(): i32 {
     return n;
 }
 `, 3, ""},
-	// An empty literal ahead of the argument that binds its element type.
 	{"empty-literal-before-binder", `import "std/i32";
 function head2[T](xs: [T], ys: T[]): i32 { return xs.len() + ys.len(); }
 function join2[T](a: T[], b: T[]): T[] {
@@ -176,7 +165,6 @@ function main(): i32 {
     return 42;
 }
 `, 42, ""},
-	// A `use` into a generic callee binds at the type its arguments give T.
 	{"use-generic-callee", `function each[T](items: T[], cb: (T) => i32): i32 { return cb(items[0]); }
 function first_len(): i32 {
     let words: string[] = ["abc", "de"];
@@ -189,7 +177,6 @@ function main(): i32 {
     return n + first_len();
 }
 `, 13, ""},
-	// A value block every path of which returns.
 	{"value-block-without-tail", `function f(n: i32): i32 { let x: i32 = { if (n < 0) { return 1; } return 2; }; return x; }
 function g(n: i32): i32 { let x: i32 = if (n < 0) { return 10; } else { return 20; }; return x; }
 function h(n: i32): i32 { let x: i32 = match (n) { 0 => { return 100; }, _ => { n * 2 } }; return x; }

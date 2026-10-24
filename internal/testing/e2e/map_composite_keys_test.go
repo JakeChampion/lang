@@ -6,18 +6,6 @@ import (
 	"testing"
 )
 
-// mapCompositeKeysProgram exercises Map[K, V] with COMPOSITE key types — a
-// struct, an enum, and a tuple — keyed by VALUE (#2671). Two distinct instances
-// that are value-equal must hit the same entry; distinct values must not
-// collide. Covers insert / get / get_or / has / delete / overwrite.
-//
-// This is the interpreter oracle: `findKey` deep-compares composite values
-// (interp.valuesEqual), so the reference compiler is value-correct for every
-// composite key, INCLUDING tuples. The struct/enum legs also lower on the
-// native backends (via the keyed hash/eq runtime — see the
-// map_struct_enum_keys fixture); a tuple key does not, and the self-host's
-// lowering of one is gated by TestSelfHostMapStructuralKeys. main returns 0
-// iff every check holds.
 const mapCompositeKeysProgram = `
 import "core/map";
 import "core/cmp" as cmp;
@@ -63,8 +51,6 @@ function main(): i32 {
 }
 `
 
-// TestInterpMapCompositeKeys gates composite (struct / enum / tuple) map keys
-// through the reference interpreter (#2671 slice 1).
 func TestInterpMapCompositeKeys(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")

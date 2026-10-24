@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// A default calling another default that has a type parameter of its own
-// (`count` through `fold[A]`), inherited by a generic impl and a plain one.
-// In the generic impl's clone the call reaches the hoisted fold through the
-// clone's spelling of the receiver; on the plain impl the Go re-check meets
-// fold's per-call clone, concrete where the trait is generic.
 const defaultCallsOwnParamDefaultSrc = `import "std/i32";
 pub trait It[T] {
   function next(self: Self): Option[(T, Self)];
@@ -85,8 +80,6 @@ func TestWasmDefaultCallsOwnParamDefault(t *testing.T) {
 	}
 }
 
-// A generic struct instantiated at a tuple type gets a clone name a symbol
-// can carry (#12115).
 const tupleStructInstanceSrc = `import "std/i32";
 pub struct Box[T] { v: T, n: i32 }
 function (b: Box[T]) bump(): Box[T] { return Box { v: b.v, n: b.n + 1 }; }

@@ -1,7 +1,7 @@
-// A const may hold an array or tuple literal of constant elements (#7987).
-// Every reference gets its own copy, so a `.with` on one leaves the const
-// alone. A field read straight off a tuple literal is what a tuple const
-// substitutes to, so it is exercised here too.
+
+
+
+
 const A: i32 = 2;
 const XS: i32[] = [A, A * 3, 7];
 const E: i32[] = [];

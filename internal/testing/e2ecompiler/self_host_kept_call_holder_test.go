@@ -5,25 +5,6 @@ import (
 	"testing"
 )
 
-// --- A holder handed whole to a call, and a closure array's clone -----------
-//
-// `let result: M = M { items: mod.items, funcs: fresh }` takes a counted share
-// of `mod.items`, which grants the holder its deep drop. That drop walks
-// `result.funcs`, whose element boxes `rebuild(result)` hands back inside its
-// own result, so the store of a handed-back borrow must be counted (#9021);
-// appended uncounted, every generation-2 self-host binary died reading a freed
-// FuncDecl body (#9016). The two holder rows keep the shape running under the
-// sanitizer, directly and through an alias.
-//
-// The other two rows are the value-form `.with` / `.append` on a
-// closure-element array, whose clone must retain its elements only where they
-// are rc-headed boxes (#9017).
-//
-// All four are pinned by the exit code against the interpreter and by the
-// sanitizer staying silent: a use-after-free or an over-release is a
-// `fern-sanitizer:` line and exit 124, and the interpreter never reaches
-// either. A leak line is not a finding here.
-
 type keptCallHolderCase struct {
 	name, src string
 }
@@ -65,8 +46,6 @@ function round(i: i32): i32 {
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 50) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }
 `},
-	// The holder handed on through an alias: `let alias = result` is the same
-	// box, so `infer(alias)` keeps it exactly as `infer(result)` would.
 	{"kept_call_alias", `enum E { A(i32), B }
 struct F { body: E[], n: i32 }
 struct M { funcs: F[], items: E[], k: i32 }
@@ -95,8 +74,6 @@ function round(i: i32): i32 {
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 50) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }
 `},
-	// The closure array reached through a struct field. The elements are read
-	// into locals before the call.
 	{"closure_field_with", `struct H { hs: ((i32) => i32)[], n: i32 }
 function inc(x: i32): i32 { return x + 7; }
 function dec(x: i32): i32 { return x - 1; }
@@ -124,8 +101,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 50) { t = t + 
 `},
 }
 
-// emittedFn returns the asm text of one emitted function: from its label to
-// the next `__fn_` label.
 func emittedFn(t *testing.T, asm, fn string) string {
 	t.Helper()
 	label := "__fn_" + fn
@@ -135,8 +110,6 @@ func emittedFn(t *testing.T, asm, fn string) string {
 	return functionListing(asm, label)
 }
 
-// The x86-64 leg runs each row: the exit is the interpreter's under the
-// sanitizer, which stays silent.
 func TestSelfHostKeptCallHolderX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)

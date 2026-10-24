@@ -2,13 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// u64ArrayIRCases cover u64[] arrays on the self-host IR path: the same 8-byte
-// element path as i64[] / f64[], with UNSIGNED element arithmetic, while the
-// array local itself stays a pointer (the wasm verifier rejects an i32 array
-// pointer stored into an i64 local).
-//
-// Each case is oracle-checked against the interpreter and returns a value
-// <= 120 (cf. the wasmtime exit-code gap #2908).
 var u64ArrayIRCases = []struct {
 	name string
 	main string
@@ -23,8 +16,6 @@ function main(): i32 { let xs: u64[] = [5 as u64, 6 as u64, 7 as u64]; return to
 	{"i64-regress", `function main(): i32 { let xs: i64[] = [10, 20, 30]; let s: i64 = 0; for x in xs { s = s + x; } return s as i32; }`},
 }
 
-// TestSelfHostU64ArrayIR compiles each case with the self-host CLI for
-// x86-64 and wasm and checks the exit code against the interpreter.
 func TestSelfHostU64ArrayIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)

@@ -8,19 +8,6 @@ import (
 	"testing"
 )
 
-// A call whose generic callee returns an UNBOUNDED type parameter — `fold[T, A,
-// I]: A`, where `A` is erased from `type_params`, so the monomorphiser never
-// substitutes it. `mono_infer` reports such a bare type variable as "unknown"
-// rather than as the call's type, so binding `let s = gfold(..)` cannot key a
-// spurious clone of a trait-bounded generic `s` flows into
-// (`assert_eq[T: Eq + Display](s, 6)` -> `assert_eq__A`, whose `A.eq` /
-// `A.to_string` cannot resolve); the other concrete-literal argument binds the
-// call at `i32`.
-//
-// `gfold` reproduces the exact shape (return type = an unbounded type param,
-// with the other type var only in a closure param so the key can't be inferred
-// from the call), and `showeq` reproduces assert_eq's `Eq + Display` trait-method
-// body — the combination the rule exists for.
 var genericRetTypeVarIRCases = []struct {
 	name string
 	src  string
@@ -36,25 +23,18 @@ function main(): i32 {
     return showeq(s, 7);
 }`},
 
-	// A generic identity `id[T](x: T): T` returns argument 0's type, so a
-	// numeric result chained directly on the call (`id(2.5) + 0.5`) must take
-	// that type: f64/f32 as a float op rather than an integer op on the
-	// double's bits, u64 as an unsigned shift rather than a signed one.
-	// f64: id(2.5) + 0.5 == 3.0 (float add, not an integer op on the bits).
 	{"typevar-f64-arith", `pub function id[T](x: T): T { return x; }
 function main(): i32 {
     let r: f64 = id(2.5) + 0.5;
     if (r == 3.0) { return 1; }
     return 0;
 }`},
-	// f32 (uses the f64 twin): id(2.5 as f32) + 1.0 as f32 == 3.5.
 	{"typevar-f32-arith", `pub function id[T](x: T): T { return x; }
 function main(): i32 {
     let r: f32 = id(2.5 as f32) + 1.0 as f32;
     if (r == 3.5) { return 1; }
     return 0;
 }`},
-	// u64 (bit 63 set): id(big) >> 1 needs the UNSIGNED shift, else it diverges.
 	{"typevar-u64-shift", `pub function id[T](x: T): T { return x; }
 function main(): i32 {
     let a: u64 = 18000000000000000000;
@@ -63,13 +43,6 @@ function main(): i32 {
     return 0;
 }`},
 
-	// TWO parameters declaring one type variable bound it from whichever
-	// argument the return-inference loop reached first, so `second(1, 2^62)`
-	// typed the call at the i32 reading of `1` and the wide argument came back
-	// truncated — refused here as "cannot assign i32 to i64", silently wrong
-	// wherever the destination was not annotated (#8722 part 4). Native settles
-	// the same call at i64. Every argument at the shared variable is now read
-	// and the readings settle at the wider integer one.
 	{"shared-typevar-widest-arg", `pub function second[T](a: T, b: T): T { return b; }
 function main(): i32 {
     let x: i64 = second(1, 4611686018427387904);
@@ -77,10 +50,6 @@ function main(): i32 {
     if (x == 0) { return 1; }
     return 3;
 }`},
-	// The CONTAINER spelling: a tuple return reads its element type off the
-	// first argument that declares the variable, so the call site's literal
-	// arguments are settled at the widest reading too, not only the checker's
-	// answer (#8722 part 4).
 	{"shared-typevar-tuple-return", `pub function both[T](a: T, b: T): (T, T) { return (a, b); }
 function main(): i32 {
     let q = both(1, 4611686018427387904);
@@ -111,11 +80,6 @@ function main(): i32 {
     if (q.1 - q.0 == 4611686018427387903) { return 7; }
     return 3;
 }`},
-	// The other positions that read a literal-bound variable (#10176): a
-	// scrutinee and a plain comparison take the widest reading as the
-	// unannotated `let` does, and a destination settles the variable at its
-	// own width — `u64`, which no literal reading gives, and through a field
-	// read of the result.
 	{"shared-typevar-scrutinee", `pub function pick[T](a: T, b: T): Option[T] { return Some(b); }
 function main(): i32 {
     match (pick(1, 4611686018427387904)) {
@@ -155,18 +119,12 @@ function main(): i32 {
     if (w == 4294967297) { return 7; }
     return 3;
 }`},
-	// A typed argument pins the variable: only a variable bound by literals
-	// alone takes the widest reading.
 	{"shared-typevar-typed-arg-pins", `pub function both[T](a: T, b: T): (T, T) { return (a, b); }
 function main(): i32 {
     let x: i32 = 1;
     let q = both(x, 2);
     return q.1 + q.0 + 4;
 }`},
-	// A generic struct literal whose type argument only literals bind takes
-	// i64 when one of them has no i32 reading (#10453), so neither field of
-	// the local is truncated — inside an array literal too. A written
-	// instantiation is what the literal is, and is not widened.
 	{"struct-literal-local-wide-field", `struct Same[T] { a: T, b: T }
 function main(): i32 {
     let q = Same { a: 1, b: 4611686018427387904 };
@@ -176,9 +134,6 @@ function main(): i32 {
     if (r == 4611686018427387904 && q.a + 1 == 2 && xs[0].b == r && w.a == 4294967296) { return 7; }
     return 3;
 }`},
-	// A written instantiation that spells the enclosing function's type
-	// variable is that variable, never a declared type of the same name, and
-	// a field holding the parameter inside an array widens it too (#10453).
 	{"struct-literal-written-type-variable", `struct T { z: i32 }
 struct Box[T] { v: T }
 struct Many[T] { xs: T[] }
@@ -194,8 +149,6 @@ function main(): i32 {
     if (r == 4294967296 && k == r && st.items[1] == 4611686018427387904) { return 7; }
     return 3;
 }`},
-	// A typed i64 binds T ahead of the untyped literal written before it,
-	// in a struct literal and a generic call (#10453).
 	{"typed-field-binds-ahead-of-literal", `struct Same[T] { a: T, b: T }
 @noinline function pair[T](a: T, b: T): T { return a; }
 function main(): i32 {
@@ -205,8 +158,6 @@ function main(): i32 {
     if (q.a + q.b == 8589934595 && r == 1) { return 7; }
     return 3;
 }`},
-	// A typed element widens an array of generic struct literals in either
-	// order, and a struct local's copy shares its width (#10453).
 	{"struct-literal-array-and-copy-widths", `struct Same[T] { a: T, b: T }
 function main(): i32 {
     let y: i64 = 8589934592;
@@ -218,8 +169,6 @@ function main(): i32 {
     if (xs[1].b == y && xs[0].a * 4294967296 == 4294967296 && ws[1].b * 4294967296 == 8589934592 && z == 4294967296) { return 7; }
     return 3;
 }`},
-	// A generic struct local takes the width its first fixing use names
-	// (#10453).
 	{"struct-literal-local-one-width", `struct Same[T] { a: T, b: T }
 struct Stack[T] { items: T[] }
 @noinline function take1(x: Same[i64]): i64 { return x.a + x.b + 8589934592; }
@@ -232,9 +181,6 @@ function main(): i32 {
     if (take1(q) == 8589934595 && r * 4294967296 == 21474836480 && take_stack(st) == 8589934592) { return 7; }
     return 3;
 }`},
-	// The widening reads INTEGERS only: wider_int keeps the first reading when
-	// either side is not one, so a shared variable bound by two strings types
-	// exactly as it did.
 	{"shared-typevar-strings", `pub function second[T](a: T, b: T): T { return b; }
 function main(): i32 {
     let s: string = second("ab", "cd");
@@ -243,10 +189,6 @@ function main(): i32 {
 }`},
 }
 
-// TestSelfHostGenericRetTypeVarIR — a generic call returning an (erased)
-// unbounded type param no longer keys a spurious bare-type-variable clone, so a
-// program that funnels its result into a trait-bounded generic routes the IR
-// path and runs correctly. Cross-checked against the interpreter oracle.
 func TestSelfHostGenericRetTypeVarIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)

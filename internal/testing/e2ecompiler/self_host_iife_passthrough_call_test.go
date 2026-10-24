@@ -2,13 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// An if-expression as a call argument, with an arm whose value is a generic
-// passthrough call carrying lambda arguments (#10927). The inline-closure
-// lift declined the whole if-expression because a call-valued arm was not a
-// boxable arm, so a capture-free lambda stayed a bare `__lam_N` address and a
-// capturing one stayed an `ExprLambda`, and the typed lowering refused main.
-// The array element keeps a passthrough call that is handed a nested
-// if-expression on the array path: that call is not boxable as an arm.
 const iifePassthroughArmSrc = `import "std/i32";
 function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }
 function apply(f: (i32) => i32, v: i32): i32 { return f(v); }

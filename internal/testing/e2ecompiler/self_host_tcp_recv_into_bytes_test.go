@@ -9,12 +9,6 @@ import (
 	"time"
 )
 
-// tcp_recv_into reads into the caller's u8[] (D9, #5714): every byte value
-// passes through unmodified, including 0x00; an empty buffer reads nothing;
-// and 0 is the end of the stream, which no error answers. The 5-byte
-// payload into a 4096-byte buffer also pins the short-read contract: the
-// count is the bytes read, not the capacity. The arm64 and wasm helpers are
-// covered by their own tcp e2e suites.
 func TestSelfHostTcpRecvIntoBytesX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 
@@ -25,9 +19,6 @@ func TestSelfHostTcpRecvIntoBytesX86_64(t *testing.T) {
 	port := probe.Addr().(*net.TCPAddr).Port
 	probe.Close()
 
-	// Distinct exit codes localise a failed step: 9x = setup,
-	// 97 = empty buffer, 93 = short-read count, 8x = byte value,
-	// 86 = end of stream, 42 = all paths held.
 	src := fmt.Sprintf(`function main(): i32 {
     let fd: i32 = tcp_listen(%d);
     if (fd < 0) { return 91; }
@@ -74,7 +65,7 @@ func TestSelfHostTcpRecvIntoBytesX86_64(t *testing.T) {
 			conn.Close()
 			t.Fatalf("write payload: %v", werr)
 		}
-		conn.Close() // close-after-write drives the EOF-sentinel read
+		conn.Close()
 		sent = true
 		break
 	}

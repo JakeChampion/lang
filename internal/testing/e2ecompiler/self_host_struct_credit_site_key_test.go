@@ -8,31 +8,10 @@ import (
 	"testing"
 )
 
-// --- The struct reclaim credit, keyed on the binding (#7253 step 1) ----------
-//
-// `slot_is_reclaimable_struct` resolved its credit with a bare-NAME lookup into
-// `reclaimable_names` — the one class whose entries carry no "TAG:" prefix at
-// all. A name has no scope, so two `let v` in sibling blocks are two slots under
-// one key, and when only one of them was proven fresh the other inherited its
-// verdict:
-//
-//	if (i % 2 == 0) { let v: P = P { xs: [i, i + 1], s: w("p") }; … }   // credited
-//	if (i % 2 == 1) { let v: P = base;                            … }   // an alias
-//
-// The alias holds the CALLER's box. Releasing it frees memory a live parameter
-// still owns, which the rc detector reports at exit 99; the byte census cannot
-// see it, because a doubly-released block goes straight back to the freelist.
-// So each colliding row is asserted on the exit code, and must match its rename
-// control's census exactly. On the typed lowering every row balances.
-//
-// Every want was confirmed against BOTH oracles — bin/fern -interp and the native
-// x86-64 backend agreed on each — never read off the self-host run under test.
-
 type structKeyCase struct {
-	name string
-	src  string
-	want int
-	// allocs/frees the self-host must report, or -1 to assert nothing.
+	name   string
+	src    string
+	want   int
 	allocs int64
 	frees  int64
 }
@@ -58,10 +37,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; ` +
 func structKeyCases() []structKeyCase {
 	return []structKeyCase{
 		{
-			// Two `let v` in sibling `if` arms: the first is a fresh struct
-			// literal, the second aliases a param. The census cannot see a
-			// collision here; the underflow guard (exit 99) is what pins
-			// it.
 			name: "collide_literal",
 			src: structKeyP + `function round(base: P, i: i32): i32 {
     let t: i32 = 0;
@@ -72,9 +47,6 @@ func structKeyCases() []structKeyCase {
 			want: 34, allocs: 152, frees: 152,
 		},
 		{
-			// THE PAIRWISE CONTROL: the same program with the second local
-			// renamed `u`. The COLLIDING program must measure identically
-			// to it, exit code and census alike.
 			name: "collide_literal_renamed",
 			src: structKeyP + `function round(base: P, i: i32): i32 {
     let t: i32 = 0;
@@ -85,9 +57,6 @@ func structKeyCases() []structKeyCase {
 			want: 34, allocs: 152, frees: 152,
 		},
 		{
-			// The same collision reached through a LOOP rather than two
-			// `if`s, so the two bindings are the same statement pair on
-			// different iterations.
 			name: "collide_loop",
 			src: structKeyP + `function round(base: P, i: i32): i32 {
     let t: i32 = 0;
@@ -102,9 +71,6 @@ func structKeyCases() []structKeyCase {
 			want: 68, allocs: 302, frees: 302,
 		},
 		{
-			// CONTROL — a BLOCK-SCOPED struct local. A reader keyed on the name
-			// rather than the binding takes this to 400/100 (7200 bytes) with the
-			// exit code unchanged, so this row catches what the exit code cannot.
 			name: "block_scoped",
 			src: structKeyP + `function round(i: i32): i32 {
     let t: i32 = 0;
@@ -114,13 +80,6 @@ func structKeyCases() []structKeyCase {
 			want: 34, allocs: 300, frees: 300,
 		},
 		{
-			// CONTROL — the same binding at FUNCTION scope, which resolves through
-			// the strict (retirement-refusing) predicate instead. Both predicates
-			// have to keep their own answer: the site key survives retire_locals'
-			// rename where the name did not, so resolving it without restoring that
-			// refusal would newly credit block-scoped slots at the fourteen other
-			// consumers — the flip reclaim_slot_name's class note records as
-			// segfaulting the gen1 self-compile.
 			name: "fn_scoped",
 			src: structKeyP + `function round(i: i32): i32 {
     let v: P = P { xs: [i, i + 1], s: w("p") };
@@ -129,7 +88,6 @@ func structKeyCases() []structKeyCase {
 			want: 34, allocs: 300, frees: 300,
 		},
 		{
-			// CONTROL — a struct from a producer returning the literal DIRECTLY.
 			name: "producer_literal",
 			src: structKeyP + `function mk(i: i32): P { return P { xs: [i, i + 1], s: w("p") }; }
 function round(i: i32): i32 {
@@ -139,9 +97,6 @@ function round(i: i32): i32 {
 			want: 34, allocs: 300, frees: 300,
 		},
 		{
-			// A local returned by a strict-fresh producer (#7343): the caller's
-			// binding owns the box and the shape balances. This row fails if that
-			// credit is ever withdrawn.
 			name: "producer_local_now_credited",
 			src: structKeyP + `function mk(i: i32): P { let p: P = P { xs: [i, i + 1], s: w("p") }; return p; }
 function round(i: i32): i32 {
@@ -151,22 +106,6 @@ function round(i: i32): i32 {
 			want: 34, allocs: 300, frees: 300,
 		},
 		{
-			// The "NODEEP:" witness. The header above explains that the marker is
-			// derived from the same entry as the credit and had to move with it —
-			// this is the row that FAILS if it ever stops resolving.
-			//
-			// The builder shape is the one the marker exists for: `s = s.emit(x)`
-			// hands the struct's array field to the callee's result with no counted
-			// reference (an in-place `b.ops.append(x)` returns the same buffer), so
-			// the deep drop of the superseded box must be withheld. A NODEEP that
-			// resolved to nothing would grant it and free a buffer the result still
-			// holds — an over-release the byte counts show as balanced, which is why
-			// `want` carries it rather than the frees column.
-			//
-			// The initial ops array goes through `id`, which hides the constant from the static-box plan,
-			// so the first B is a heap box rather than a static one.
-			//
-			// Confirmed against both oracles: interp and native x86-64 each exit 51.
 			name: "builder_nodeep",
 			src: `struct B { ops: i32[] }
 function (b: B) emit(x: i32): B { return B { ops: b.ops.append(x) }; }
@@ -182,15 +121,6 @@ function round(i: i32): i32 {
 	}
 }
 
-// TestSelfHostStructCreditSiteKeyX86_64 — each struct binding resolves the credit
-// it earned itself, and no same-named sibling inherits one.
-//
-// Both assertions carry signal, and they catch opposite failures. The exit code
-// is the over-release detector: a doubly-released block returns to the freelist,
-// so `live_bytes` reads 0 through the double free and only
-// `__rc_underflow_count()` reports it. The alloc/free counts are the leak detector,
-// which the exit code cannot see — and which is where a site key that resolves to
-// NO credit shows up.
 func TestSelfHostStructCreditSiteKeyX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -229,9 +159,6 @@ func TestSelfHostStructCreditSiteKeyX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStructCreditSiteKeyWasmIR — the wasm sibling. Exit codes only,
-// which is the whole signal for an over-release: it moves no byte count on any
-// backend.
 func TestSelfHostStructCreditSiteKeyWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping struct credit site-key wasm IR e2e")
@@ -270,7 +197,6 @@ func TestSelfHostStructCreditSiteKeyWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostStructCreditSiteKeyIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostStructCreditSiteKeyIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

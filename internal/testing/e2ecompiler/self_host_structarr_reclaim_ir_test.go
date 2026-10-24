@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructArrReclaimIRX86_64 checks that typed release of a struct
-// array reclaims its element boxes and outer buffer. Borrowed or escaped
-// elements remain readable, and every run leaves a balanced census.
 func TestSelfHostStructArrReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	t.Setenv("FERN_LEAKCHECK", "1")
@@ -39,8 +36,6 @@ func TestSelfHostStructArrReclaimIRX86_64(t *testing.T) {
 		}
 	}
 
-	// scalar-field struct[] churn (unannotated) — the slice target: fresh
-	// element boxes freed per rebind, flat at detector zero.
 	run(t, `struct P { x: i32, y: i32 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -64,8 +59,6 @@ function main(): i32 {
     return 0;
 }`, "structarr-scalar-flat", 0)
 
-	// ANNOTATED struct[] churn — the `let g: P[] = [..]` spelling must reclaim
-	// the same way as the inferred one.
 	run(t, `struct P { x: i32, y: i32 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -89,9 +82,6 @@ function main(): i32 {
     return 0;
 }`, "structarr-annotated-flat", 0)
 
-	// TRANSIENT ITERATION admitted: `for p in g { acc += p.x }` borrows each
-	// element only within the loop (dead before the rebind free), so the
-	// candidate is still credited and stays flat.
 	run(t, `struct P { x: i32, y: i32 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -115,8 +105,6 @@ function main(): i32 {
     return 0;
 }`, "structarr-iter-flat", 0)
 
-	// ELEMENT ALIAS: `let q = g[1]` binds an element struct box, which must stay
-	// a valid, correctly-valued box (never freed under it).
 	run(t, `struct P { x: i32, y: i32 }
 function main(): i32 {
     let bad: i32 = 0;

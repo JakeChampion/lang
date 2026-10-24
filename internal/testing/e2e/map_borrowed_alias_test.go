@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// An alias whose retain was cancelled must still see the original map after
-// a mutator consumes the source's last syntactic use. Both assertion forms
-// must preserve immutable values and reclaim every map.
 func TestMapBorrowedAliasCensus(t *testing.T) {
 	runMapBorrowedAliasCases(t, func(t *testing.T, program string) {
 		stdout, stderr, code := runLeakCheckWasm(t, program, false)

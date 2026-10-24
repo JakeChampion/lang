@@ -1,8 +1,8 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The `m.get(k)` rebox reaches the same join. Its free must stay
-// SHALLOW wherever it is emitted — the payload belongs to the map.
+
+
+
+
+
 import "core/map";
 function pick(m: Map[string, string], k: string): i32 {
     match (m.get(k)) { Some(v) => { return v.len(); }, None => { return 0; } }

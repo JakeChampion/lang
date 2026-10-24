@@ -13,13 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// `serve.Config { handler_deadline }` through std/serve's loop: a handler
-// reads its bound as `plat.deadline()`; one that sleeps past it is answered
-// 503, and one that works until `plat.cancelled()` stops at it and is
-// answered 503 too. The interpreter runs a handler to completion, so its
-// sleeper answers late and is replaced; the x86-64 loop cancels the parked
-// sleeper at the deadline, and cancels a handler whose client reset the
-// connection, which `plat.cancelled()` then reports before any deadline.
 func TestHandlerDeadlineServeInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := writeHandlerDeadlineServeSource(t)
@@ -46,7 +39,6 @@ func TestHandlerDeadlineServeX86_64(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(100 * time.Millisecond)
-	// A reset, not a FIN: the loop answers a half-closed client.
 	conn.(*net.TCPConn).SetLinger(0)
 	conn.Close()
 	e2eharness.WaitStderrContains(t, stderrPath, "hangup: cancelled before the deadline", 10*time.Second)
@@ -122,9 +114,6 @@ function main(): i32 {
 }
 `
 
-// checkHandlerDeadlineServe asks each route; `within`, when set, bounds how
-// long the sleeper's 503 may take, which only a loop that cancels it at the
-// deadline meets.
 func checkHandlerDeadlineServe(t *testing.T, addr string, within time.Duration) {
 	t.Helper()
 	cases := []struct{ path, want string }{

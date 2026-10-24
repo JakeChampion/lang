@@ -1,10 +1,10 @@
 import "core/int";
 import "std/i32";
 
-// Struct patterns: `Type{field: binding}` and the `Type{field}`
-// shorthand, in match arms and in a `let` destructure. A struct-pattern
-// arm followed by another arm needs its trailing comma — the arm body's
-// `{` and the pattern's `{` are otherwise ambiguous.
+
+
+
+
 struct Point { x: i32, y: i32 }
 
 function classify(p: Point): i32 {

@@ -1,4 +1,3 @@
-// Startup dimensions belong to each value, so independent configurations coexist.
 pub struct Db {
   capacity: i32,
   key_bytes: i32,
@@ -62,7 +61,6 @@ pub fip function fits(db: Db, input: u8[], offset: i32, count: i32): boolean {
   return fits_widths(db.key_bytes, db.value_bytes, db.batch, input, offset, count);
 }
 
-// All representations validate the same complete wire batch before updates.
 pub fip function fits_widths(key_bytes: i32, value_bytes: i32, batch: i32, input: u8[], offset: i32, count: i32): boolean {
   if (offset < 0 || offset > input.len() || count < 0 || count > batch) {
     return false;
@@ -187,7 +185,6 @@ fip function emit_value(own db: Db, slot: i32): Db {
   return db;
 }
 
-// Unsigned byte-wise carry implements wrapping addition without signed division.
 fip function increment(own db: Db, slot: i32, input: u8[], at: i32): Db {
   let carry: i32 = 0;
   let i: i32 = 0;
@@ -248,7 +245,6 @@ fip function apply(own db: Db, input: u8[], at: i32): Db {
   return emit_value(db, slot);
 }
 
-// Validate the complete batch before touching entries or the prior output.
 pub fip function process(own db: Db, input: u8[], offset: i32, count: i32): Db {
   if (!fits(db, input, offset, count)) {
     return Db { ...db, refused: true };

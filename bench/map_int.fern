@@ -1,7 +1,5 @@
 import "core/map";
 
-// map_int — the same shape as map_string with i32 keys, so the difference
-// between the two isolates what string keys cost over scalar ones.
 function main(): i32 {
   let m: Map[i32, i32] = Map { };
   let i: i32 = 0;

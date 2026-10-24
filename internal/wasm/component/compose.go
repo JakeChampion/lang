@@ -1,68 +1,33 @@
 package component
 
-// compose.go holds the shared preview-2 composition infrastructure: the
-// p2composer index tracker (which bumps every component/core index space
-// exactly once per emit — the fragile arithmetic) and the core-import
-// signature constants the trampolines mirror. The unified composer
-// (compose_unified.go) and the general engine (compose_general.go) build
-// on this; WasiImport describes an individual structured import.
-
-// blockWriteParams / blockReadParams are the core import signatures
-// the trampolines mirror: blocking-write-and-flush lowers to
-// (i32,i32,i32,i32)->() and blocking-read to (i32,i64,i32)->().
 var (
 	composeBlockWriteParams = []byte{0x7f, 0x7f, 0x7f, 0x7f}
 	composeBlockReadParams  = []byte{0x7f, 0x7e, 0x7f}
-	composeGetDirsParams    = []byte{0x7f} // (ret_ptr)
+	composeGetDirsParams    = []byte{0x7f}
 	composeOpenAtParams     = []byte{0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f}
-	composeReadViaParams    = []byte{0x7f, 0x7e, 0x7f} // (self, offset, ret_ptr)
-	composeAppendViaParams  = []byte{0x7f, 0x7f}       // (self, ret_ptr) — append, no offset
-	composeOneI32Params     = []byte{0x7f}             // (ret_ptr) — wall-clock/args/env
-	composeConfigGetParams  = []byte{0x7f, 0x7f, 0x7f} // (key_ptr, key_len, ret_ptr) — config/store.get
+	composeReadViaParams    = []byte{0x7f, 0x7e, 0x7f}
+	composeAppendViaParams  = []byte{0x7f, 0x7f}
+	composeOneI32Params     = []byte{0x7f}
+	composeConfigGetParams  = []byte{0x7f, 0x7f, 0x7f}
 
-	// The path mutators all lower identically: the string param flattens
-	// to (ptr, len) and the `result<_, error-code>` return goes through a
-	// return area, so (self, path_ptr, path_len, ret_ptr) -> ().
 	composePathMutatorParams = []byte{0x7f, 0x7f, 0x7f, 0x7f}
 
-	// stat-at takes a path-flags argument the mutators do not:
-	// (self, path-flags, path_ptr, path_len, ret_ptr) -> ().
 	composeStatAtParams = []byte{0x7f, 0x7f, 0x7f, 0x7f, 0x7f}
 
-	// read-directory and read-directory-entry both take just a handle
-	// and a return area: (self, ret_ptr) -> ().
 	composeSelfRetParams = []byte{0x7f, 0x7f}
 
-	// link-at carries a path-flags word AND a second descriptor:
-	// (self, old-path-flags, old_ptr, old_len, new_desc, new_ptr,
-	// new_len, ret_ptr) -> ().
 	composeLinkAtParams = []byte{0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f}
 
-	// symlink-at takes two strings and no flags — the target is stored
-	// verbatim, so it has no descriptor of its own:
-	// (self, old_ptr, old_len, new_ptr, new_len, ret_ptr) -> ().
 	composeSymlinkAtParams = []byte{0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f}
 
-	// rename-at is symlink-at plus the destination descriptor, and no
-	// path-flags: (self, old_ptr, old_len, new_desc, new_ptr, new_len,
-	// ret_ptr) -> ().
 	composeRenameAtParams = []byte{0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f}
 
-	// set-times-at carries two `new-timestamp` variants. A variant
-	// flattens to its discriminant followed by the JOIN of its arms, and
-	// the only arm with a payload is `timestamp(datetime)` — {u64, u32} —
-	// so each becomes (i32 disc, i64 seconds, i32 nanoseconds):
-	// (self, path-flags, path_ptr, path_len, a_disc, a_sec, a_nsec,
-	// m_disc, m_sec, m_nsec, ret_ptr) -> ().
 	composeSetTimesAtParams = []byte{
 		0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7e, 0x7f, 0x7f, 0x7e, 0x7f, 0x7f,
 	}
 
-	// set-size is a method on the descriptor itself, with no path:
-	// (self, size: i64, ret_ptr) -> ().
 	composeSetSizeParams = []byte{0x7f, 0x7e, 0x7f}
-	// advise: (self, offset: i64, length: i64, advice, retptr).
-	composeAdviseParams = []byte{0x7f, 0x7e, 0x7e, 0x7f, 0x7f}
+	composeAdviseParams  = []byte{0x7f, 0x7e, 0x7e, 0x7f, 0x7f}
 )
 
 const (
@@ -94,13 +59,13 @@ const (
 
 type p2composer struct {
 	buf       []byte
-	nType     uint32 // next component type index
-	nInst     uint32 // next component instance index
-	nCFunc    uint32 // next component func index
-	nMod      uint32 // next core module index
-	nCoreFunc uint32 // next core func index
-	nCoreInst uint32 // next core instance index
-	nCoreTab  uint32 // next aliased core table index
+	nType     uint32
+	nInst     uint32
+	nCFunc    uint32
+	nMod      uint32
+	nCoreFunc uint32
+	nCoreInst uint32
+	nCoreTab  uint32
 }
 
 func (c *p2composer) typeRaw(body []byte) uint32 {

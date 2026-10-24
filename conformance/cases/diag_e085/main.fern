@@ -1,9 +1,9 @@
-// E085: a lane value lives only in a local, a parameter or a result. An
-// array, a tuple, a map, a field, a payload or a function type that holds
-// one is refused, and so is a function value that would carry one: a
-// function with a lane parameter named as a value, a lambda that takes or
-// returns one, and a lambda that captures one. A generic type from another
-// module is named as the program writes it. `ok` shows what is accepted.
+
+
+
+
+
+
 import "std/f64";
 import "std/simd" as simd;
 

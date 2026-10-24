@@ -2,17 +2,6 @@ package e2e
 
 import "testing"
 
-// memcpySizeClassesProgram drives `__memcpy` across every length 0..96 at four
-// source/destination misalignments and checks two things per copy: that the n
-// bytes landed, and that NOTHING outside the destination range moved. A size
-// class that copies with a pair of overlapping loads anchored at the end of
-// the operands goes wrong by writing past the requested length, which only the
-// 0xEE poison around the destination catches.
-//
-// The buffers are raw `__alloc` blocks rather than `u8[]`: an array's
-// `as usize` is its own representation's pointer and differs between the
-// compilers (#8799), while a raw block's bytes are at its address on all of
-// them.
 const memcpySizeClassesProgram = `
 function check(n: i32, soff: i32, doff: i32): i32 {
     let src: usize = __alloc(160);
@@ -52,9 +41,6 @@ function main(): i32 {
 }
 `
 
-// bulkMemoryProgram clears the back half of a 16-byte block with `__memset`,
-// then copies the first four bytes onto it, so the block reads
-// ABCDEFGHABCD0000; each wrong byte returns its own code.
 const bulkMemoryProgram = `function main(): i32 {
     let base: usize = __alloc(16);
     let i: i32 = 0;

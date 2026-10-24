@@ -2,8 +2,6 @@ package e2eharness
 
 import "strings"
 
-// ByteSetScansSource compares raw scans with element-wise oracles, including
-// short membership tables, non-boolean entries and chunk boundary state.
 func ByteSetScansSource(allocations bool) string {
 	probe := ""
 	if allocations {

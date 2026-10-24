@@ -45,7 +45,6 @@ func testComponentLongWrites(t *testing.T, compiler string, runner []string, std
 			if stream == "stderr" {
 				data, empty = stderr.String(), stdout.String()
 			}
-			// write_some moves one 4096-byte chunk, as native's preview-2 body does.
 			if data != strings.Repeat("x", 8193+4096) || empty != "" {
 				t.Fatalf("output differs: data=%d other=%d", len(data), len(empty))
 			}
@@ -72,8 +71,6 @@ func TestSelfHostArm64DarwinComponentWrites(t *testing.T) {
 	copySelfHostDriver(t, dir, "fern.fern")
 	cli := buildSelfHostBinArm64Darwin(t, dir, "fern.fern", "fern")
 	testComponentLongWrites(t, cli, nil, e2eharness.SelfHostStdlibRoot(t))
-	// Emit the actual shim and link it to a deterministic host. This checks
-	// failures that a successful wasmtime stdout cannot exercise.
 	src := filepath.Join(dir, "shim.fern")
 	if err := os.WriteFile(src, []byte(`import "./wasm_ir";
 function main(): i32 { write(wasm_ir.component_io_shims([], true, false, false)); return 0; }

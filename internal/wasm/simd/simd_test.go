@@ -12,21 +12,13 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/simd"
 )
 
-// vecCase pairs one instruction's WAT spelling with the bytes this package
-// produces for it. `wat` is a complete function body, `enc` builds the same
-// body with the encoders — including the surrounding local.get / v128.load /
-// drop, so the byte sequence being matched is long enough that a coincidental
-// hit inside the module's other sections is not a real possibility.
 type vecCase struct {
-	name string
-	wat  string
-	enc  func([]byte) []byte
-	// params/result of the enclosing function, defaulting to (param i32).
+	name   string
+	wat    string
+	enc    func([]byte) []byte
 	params string
 }
 
-// loadV128 pushes a v128 read from the address in local 0, at the natural
-// alignment wasm-tools defaults to when the text omits `align=`.
 func loadV128(b []byte) []byte {
 	b = inst.InstLocalGet(b, 0)
 	return simd.InstV128Load(b, 4, 0)
@@ -108,10 +100,6 @@ func vecCases() []vecCase {
 				return inst.InstDrop(simd.InstF64x2Splat(inst.InstF64Const(b, 0)))
 			},
 		},
-		// 242, so the sub-opcode is two uleb bytes. Written as a raw one
-		// it absorbs the byte that follows, which in some streams is a
-		// rejected module and in others a different valid instruction —
-		// the second is what this case exists to refuse.
 		{
 			name: "f64x2.mul",
 			wat:  watLoad + watLoad + "f64x2.mul\ndrop\n",
@@ -149,11 +137,6 @@ func vecCases() []vecCase {
 	return cases
 }
 
-// TestVectorOpcodes pins each encoding byte-for-byte. Hand-written tables are
-// exactly what the wasm-tools differential below exists to distrust, so this
-// test is the CHEAP half: it runs everywhere, catches a typo introduced later,
-// and does not claim to have verified the opcode numbers against the spec.
-// TestVectorOpcodesAgainstWasmTools is what does that.
 func TestVectorOpcodes(t *testing.T) {
 	cases := []struct {
 		name string
@@ -168,10 +151,6 @@ func TestVectorOpcodes(t *testing.T) {
 		{"i32x4.splat", simd.InstI32x4Splat(nil), []byte{0xfd, 0x11}},
 		{"i64x2.splat", simd.InstI64x2Splat(nil), []byte{0xfd, 0x12}},
 		{"f64x2.splat", simd.InstF64x2Splat(nil), []byte{0xfd, 0x14}},
-		// 242 is past the one-byte uleb boundary, so two bytes. A raw
-		// 0xf2 has the continuation bit set and absorbs the byte after it:
-		// 0xf2 0x00 is sub-opcode 114, i8x16.sub_sat_s, which runs. That
-		// is why this is pinned rather than left to the module failing.
 		{"f64x2.mul", simd.InstF64x2Mul(nil), []byte{0xfd, 0xf2, 0x01}},
 		{"i8x16.eq", simd.InstI8x16Eq(nil), []byte{0xfd, 0x23}},
 		{"i8x16.ne", simd.InstI8x16Ne(nil), []byte{0xfd, 0x24}},
@@ -190,13 +169,6 @@ func TestVectorOpcodes(t *testing.T) {
 		{"i8x16.all_true", simd.InstI8x16AllTrue(nil), []byte{0xfd, 0x63}},
 		{"i8x16.bitmask", simd.InstI8x16Bitmask(nil), []byte{0xfd, 0x64}},
 
-		// THE ULEB BOUNDARY. Sub-opcode 127 would be one byte and 128 is
-		// two; every entry below is on the far side of it. Emitting the
-		// sub-opcode as a raw byte instead of a uleb would turn
-		// i16x8.bitmask (132) into 0xfd 0x84, and 0x84's continuation bit
-		// makes the decoder read the next instruction's first byte as part
-		// of the sub-opcode. Which failure that is depends on what follows,
-		// and one of them is silent, so it is pinned on both sides.
 		{"i16x8.all_true", simd.InstI16x8AllTrue(nil), []byte{0xfd, 0x83, 0x01}},
 		{"i16x8.bitmask", simd.InstI16x8Bitmask(nil), []byte{0xfd, 0x84, 0x01}},
 		{"i32x4.all_true", simd.InstI32x4AllTrue(nil), []byte{0xfd, 0xa3, 0x01}},
@@ -204,9 +176,6 @@ func TestVectorOpcodes(t *testing.T) {
 		{"i64x2.all_true", simd.InstI64x2AllTrue(nil), []byte{0xfd, 0xc3, 0x01}},
 		{"i64x2.bitmask", simd.InstI64x2Bitmask(nil), []byte{0xfd, 0xc4, 0x01}},
 
-		// i64x2.eq/ne are NOT at the 55+10 stride the i8x16 → i16x8 → i32x4
-		// series would predict; they were added later and sit at 214/215.
-		// Extrapolating gives 0xfd 0x41, a valid f32x4.eq — again silent.
 		{"i64x2.eq", simd.InstI64x2Eq(nil), []byte{0xfd, 0xd6, 0x01}},
 		{"i64x2.ne", simd.InstI64x2Ne(nil), []byte{0xfd, 0xd7, 0x01}},
 	}
@@ -217,15 +186,6 @@ func TestVectorOpcodes(t *testing.T) {
 	}
 }
 
-// TestVectorOpcodesAgainstWasmTools is the differential: for each instruction,
-// wasm-tools assembles a module containing it and this test asserts the bytes
-// this package produces appear verbatim in that module.
-//
-// This is the wasm analogue of the GNU-`as` gate on the native assemblers. It
-// exists because the failure mode of a vector opcode table is not a crash —
-// the sub-opcode space is dense, so a wrong number is another valid
-// instruction, and the module still validates and still runs. Only an external
-// assembler can say which instruction was actually meant.
 func TestVectorOpcodesAgainstWasmTools(t *testing.T) {
 	wasmTools, err := exec.LookPath("wasm-tools")
 	if err != nil {
@@ -259,15 +219,6 @@ func TestVectorOpcodesAgainstWasmTools(t *testing.T) {
 	}
 }
 
-// TestVectorOpcodesRejectedByWasmTools is the counter-test: it confirms the
-// containment check above can actually FAIL, by feeding it an encoding that is
-// wrong in the one way the table is most likely to be wrong — a sub-opcode
-// written as a raw byte rather than a uleb.
-//
-// Without this, a bug that made every `enc` return an empty slice would leave
-// the differential passing on every case (an empty slice is contained in
-// everything), which is precisely the shape of silent green this project has
-// hit before.
 func TestVectorOpcodesRejectedByWasmTools(t *testing.T) {
 	wasmTools, err := exec.LookPath("wasm-tools")
 	if err != nil {
@@ -287,7 +238,6 @@ func TestVectorOpcodesRejectedByWasmTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read wasm: %v", err)
 	}
-	// The truncated form: 0xfd 0x84 with the uleb continuation dropped.
 	truncated := []byte{simd.Prefix, 0x84}
 	full := simd.InstI16x8Bitmask(nil)
 	if !bytes.Contains(mod, full) {
@@ -300,9 +250,6 @@ func TestVectorOpcodesRejectedByWasmTools(t *testing.T) {
 	}
 }
 
-// TestVectorMemargShape asserts the vector load/store memarg is encoded in the
-// same (align, offset) uleb pair shape as the scalar loads next door, so the
-// two families cannot drift.
 func TestVectorMemargShape(t *testing.T) {
 	scalar := memory.InstI32Load(nil, 2, 300)
 	vector := simd.InstV128Load(nil, 2, 300)

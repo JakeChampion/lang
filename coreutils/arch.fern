@@ -1,12 +1,3 @@
-// arch.fern — GNU-compatible `arch`.
-//
-//   arch    print the machine hardware name
-//
-// coreutils builds arch from uname's source with the mode switched: the
-// option table is the two standard options and nothing else, the output
-// is `uname -m` and there are no operands. Every operand is
-// `extra operand`; the scan permutes, so `arch x --help` prints the help
-// before it ever complains about `x`.
 import "./lib/gnu";
 import "./lib/sys";
 

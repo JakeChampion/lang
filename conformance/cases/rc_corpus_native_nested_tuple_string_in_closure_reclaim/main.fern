@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Nested-tuple reclamation: a tuple captured by a CLOSURE
-// reaches __drop_tuple_<mangled> through the generated
-// __closure_drop_<name> thunk, which dispatches captures via
-// dropFnNameFor (already did for arrays/structs/enums; post-fix
-// now also for tuples). Per iter: 33; 500x → 16500.
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/string";
 function mk(): i32 {

@@ -1,16 +1,3 @@
-// shared_quotients lets a remainder and a division with the same operands
-// share one division. Where a function computes both `x / y` and `x % y` and
-// one of them dominates the other, the dominating one computes `q = x / y`, a
-// remainder it dominates becomes `x - q * y`, and a division a copy of `q`. A divisor is the same SSA value, or a
-// constant of the same value; a constant 0, ±1 or power of two is left alone,
-// since its division and remainder are already a shift and a mask. A
-// division by any other constant is a multiply-high and shifts, which the
-// remainder no longer repeats; by a variable it is the hardware divide.
-//
-// The identity holds for every operand under the wrapping arithmetic every
-// target computes in, including the two cases the language defines rather
-// than traps on: `x / 0` is 0 and `x % 0` is x, and `MIN / -1` wraps to MIN
-// with `MIN % -1` 0.
 import "./ssa";
 import "./ssadeps";
 import "./ssasem";
@@ -27,8 +14,6 @@ pub function shared_quotients(f: ssasem.Func): ssasem.Func {
     return f;
   }
   let values: typeinfo.Type[] = f.values;
-  // quotient[g] is the value holding group g's quotient: its leading
-  // division's result, or a division added ahead of its leading remainder.
   let quotient: i32[] = util.minus_ones(gs.x.len());
   let g: i32 = 0;
   while (g < gs.x.len()) {
@@ -77,11 +62,6 @@ pub function shared_quotients(f: ssasem.Func): ssasem.Func {
   return ssasem.Func { ...f, values: values, graph: ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() } };
 }
 
-// Groups gathers the divisions and remainders of one dividend by one divisor
-// under a leader whose position dominates every other member's. Group g leads
-// from instruction index[g] of block position block[g]; member[bi][ii] is the
-// group of instruction ii of block position bi, or -1. `any` is whether some
-// group both divides and takes the remainder.
 struct Groups {
   x: i32[],
   y: i32[],
@@ -93,13 +73,9 @@ struct Groups {
   any: boolean,
 }
 
-// grouped walks the reachable blocks in preorder of the dominator tree, so a
-// leader is met before every member it dominates, and puts each division or
-// remainder in the first group whose leader dominates it, or leads a new one.
 function grouped(f: ssasem.Func, divisor: Divisors): Groups {
   let n: i32 = f.graph.blocks.len();
   let d: ssadeps.Dom = ssadeps.dominates(f.graph);
-  // pre and post share one clock, so a preorder number runs to 2n.
   let by_pre: i32[] = util.minus_ones(2 * n);
   let member: i32[][] = [];
   let bi: i32 = 0;
@@ -144,10 +120,6 @@ function grouped(f: ssasem.Func, divisor: Divisors): Groups {
   return Groups { ...gs, member: member };
 }
 
-// Divisors marks the integer constants, with their values, and among them the
-// ones a division or remainder could share a quotient by, magnitude neither
-// 0, 1 nor a power of two. A cast of a non-negative constant its target type
-// holds, `100 as u64`, counts as the constant.
 struct Divisors { constant: boolean[], shared: boolean[], value: i64[], any: boolean }
 
 function shared_divisors(f: ssasem.Func): Divisors {
@@ -198,8 +170,6 @@ function divides(f: ssasem.Func, divisor: Divisors, ins: ssa.SInst): boolean {
     && ssasem.is_integer(f.values[ins.result]) && (divisor.shared[ins.args[1]] || !divisor.constant[ins.args[1]]);
 }
 
-// same_divisor is whether two divisors are one value: the same constant, or
-// the same SSA value.
 function same_divisor(divisor: Divisors, a: i32, b: i32): boolean {
   if (divisor.shared[a] && divisor.shared[b]) {
     return divisor.value[a] == divisor.value[b];

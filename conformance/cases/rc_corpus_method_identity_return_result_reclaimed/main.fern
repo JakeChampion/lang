@@ -1,13 +1,13 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A source-declared receiver method with an identity return, whose
-// result is consumed by another call. The caller reclaims that
-// result under the is_unique gate, so the identity path — where the
-// result aliases a receiver the caller still owns — is what the gate
-// has to hold: `base` and `b` are both read after the aliasing call.
-// 200 * (18 + 20 + 21 + 21) for the string half, 200 * (15 + 15) for
-// the struct half.
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/i32";
 import "std/string";

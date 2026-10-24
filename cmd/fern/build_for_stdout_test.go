@@ -7,8 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// buildFernForStdoutTest builds this package, with the current self-host
-// compiler beside it, for tests that drive the CLI as a subprocess.
 func buildFernForStdoutTest(t *testing.T) string {
 	t.Helper()
 	return e2eharness.FernCLI(t)

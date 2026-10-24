@@ -7,18 +7,11 @@ import (
 	"testing"
 )
 
-// stringCases bundle the full std/string module (its imports are
-// prelude-resident: core/int, std/i32, std/array) plus a main, and
-// check the exit code. std/string links on the self-host once
-// __memcpy + s.as_bytes() resolve (its bytes() body, which the
-// self-host instead dispatches to __fern_str_bytes). Exit codes
-// cross-checked vs the Go backend.
 var stringCases = []struct {
 	name string
 	main string
 	exit int
 }{
-	// The search family answers None when the needle is absent.
 	{"index-of-hit", `match ("hello world".index_of("world")) { Some(i) => { return i; }, None => { return 99; } } return 0;`, 6},
 	{"index-of-miss", `match ("abc".index_of("zz")) { Some(_) => { return 1; }, None => { return 7; } } return 0;`, 7},
 	{"last-index-of-hit", `match ("hello hello".last_index_of("hello")) { Some(i) => { return i; }, None => { return 99; } } return 0;`, 6},
@@ -33,24 +26,10 @@ var stringCases = []struct {
 	{"split-count", `return "a,b,c".split(",").len();`, 3},
 }
 
-// stringImportSource is the well-formed spelling of the same program: IMPORT
-// std/string rather than concatenating its source with a main.
-//
-// The concatenated form would be ill-formed: `capitalize` calls
-// `unicode.capitalize`, and std/unicode imports std/utf8, which imports
-// std/string back, so the three are mutually recursive and only the module
-// loader resolves them.
-//
-// So BOTH legs compile through asm_load_run (the loader driver) with the stdlib
-// root, which is also how a real program uses std/string. Verified to route "ir".
 func stringImportSource(mainBody string) []byte {
 	return []byte("import \"std/string\";\nfunction main(): i32 { " + mainBody + " }\n")
 }
 
-// TestSelfHostStringX86_64 compiles a program IMPORTING std/string with the
-// self-hosted x86-64 compiler and checks exit codes. It goes through the loader
-// driver (asm_load_run) rather than the single-module one, because std/string is
-// no longer self-contained — see stringImportSource.
 func TestSelfHostStringX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -90,12 +69,6 @@ func TestSelfHostStringX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStringArm64 — CI-gated arm64 counterpart. Like the x86 leg it goes
-// through the LOADER driver (asm_load_run -target arm64-linux) rather than the
-// single-module one, because std/string is not self-contained — see
-// stringImportSource. The compiler runs as an x86 host binary emitting aarch64
-// asm (the cross-compiler-on-host pattern), which the arm64 toolchain then
-// assembles and qemu runs.
 func TestSelfHostStringArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

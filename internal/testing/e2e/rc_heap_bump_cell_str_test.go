@@ -4,26 +4,6 @@ import (
 	"testing"
 )
 
-// Cell[string] reclamation (#6885). A cell is a one-element array box, and
-// its element is a heap string it CO-OWNS: `cell_new` moves or retains the
-// value in, `get` retains what it hands out, `set` pre-drops the old buffer,
-// and the cell's own drop releases the slot. Three of those four were short.
-//
-//   - The cell drop and the `set` pre-drop released a native single-word
-//     string with __fern_drop_arr_ptr / __fern_rc_dec, which decrement and
-//     never free — so on x86-64 a cell whose element was never read, and
-//     every overwrite, stranded a buffer.
-//   - `get` retains unconditionally, and only a BINDING balanced that. Every
-//     borrowing consumer — `.len()`, `==`, a concat operand, a call argument
-//     — left the retained reference unreclaimed, on all three backends.
-//
-// The probes are those six spellings measured apart, because that is what
-// separates the two causes: pre-fix x86-64 leaked on all six and arm64 / wasm
-// on the four `get`-as-a-temp ones. Each is a callee, so the reclaim under
-// test is the function-exit sweep rather than the loop-body reinit.
-//
-// The program returns the 1-based index of the FIRST shape that is not flat
-// (0 when all are), so a failure names the spelling instead of a byte count.
 const cellStrChurnSrc = `import "std/i32";
 function wide(k: i32): string { return "a-value-well-past-the-inline-threshold-" + k.to_string(); }
 function eat(s: string): i32 { return s.len(); }
@@ -90,7 +70,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// cellStrShapes names cellStrChurnSrc's probes by the index it returns.
 var cellStrShapes = []string{"", "c.get().len()", "c.get() == …", "c.get() + …", "eat(c.get())", "c.set(…) overwrite", "cell never read"}
 
 func cellStrVerdict(code int) string {

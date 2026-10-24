@@ -1,19 +1,5 @@
 import "std/test";
 
-// tests/stdlib/array_prefix_suffix_subseq_test.fern —
-// batch 27 additions to std/test:
-//   * `test.assert_array_starts_with_i32(arr, prefix)` /
-//     `_string` — `arr` begins with `prefix` element-wise.
-//   * `test.assert_array_ends_with_i32(arr, suffix)` /
-//     `_string` — `arr` ends with `suffix` element-wise.
-//   * `test.assert_array_contains_subseq_i32(arr, needle)` /
-//     `_string` — `needle` appears as a contiguous
-//     sub-array anywhere in `arr`.
-//
-// Order-sensitive complements to the existing set-style
-// helpers (`assert_set_eq_*` / `assert_subset_*` /
-// `assert_array_intersects_*` / `_disjoint_*`).
-
 function test_starts_with_i32_pass(): test.TestOutcome {
   return test.assert_array_starts_with_i32([1, 2, 3, 4, 5], [1, 2, 3]);
 }
@@ -47,7 +33,6 @@ function test_starts_with_i32_mismatch_at_index(): test.TestOutcome {
       return test.fail("mismatch should fail");
     },
     Fail(msg) => {
-      // First differing index is 1.
       if (!msg.contains("at index 1")) {
         return test.fail("expected 'at index 1': " + msg);
       }
@@ -87,9 +72,6 @@ function test_ends_with_i32_suffix_too_long(): test.TestOutcome {
 }
 
 function test_ends_with_i32_mismatch_reports_arr_index(): test.TestOutcome {
-  // arr[2] = 99, suffix expects 3 there. The diagnostic
-  // names index 2 (in arr coords), not 0 in suffix coords
-  // — so test failures pinpoint the actual array slot.
   match (test.assert_array_ends_with_i32([1, 2, 99, 4, 5], [3, 4, 5])) {
     Pass => {
       return test.fail("mismatch should fail");
@@ -148,8 +130,6 @@ function test_subseq_i32_needle_longer(): test.TestOutcome {
 }
 
 function test_subseq_i32_order_matters(): test.TestOutcome {
-  // The pieces are present but in the wrong order —
-  // subseq is order-sensitive, unlike `assert_subset`.
   match (test.assert_array_contains_subseq_i32(
     [1, 2, 3, 4, 5], [2, 4],
   )) {
@@ -166,8 +146,6 @@ function test_subseq_i32_order_matters(): test.TestOutcome {
 }
 
 function test_subseq_i32_almost_match(): test.TestOutcome {
-  // Needle partly matches then diverges — the scan must
-  // try the next start position, NOT bail out.
   return test.assert_array_contains_subseq_i32(
     [1, 2, 3, 1, 2, 4], [1, 2, 4],
   );

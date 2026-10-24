@@ -2,11 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A `return` in a value-position block leaves the enclosing function, as the
-// same block in statement position does (#10818). The lift hoisted a
-// capture-free block into a function of its own, where the `return` left the
-// hoisted body instead and its value became the block's. A hand-written IIFE
-// is a call with a scope of its own, so its `return` stays the lambda's.
 const valueBlockReturnSrc = `function bare(c: boolean): i32 { let t: i32 = { return 5; }; return 100 + t; }
 function led(c: boolean): i32 { let t: i32 = { let z: i32 = 0; return 5; }; return 100 + t; }
 function nested(c: boolean): i32 { let t: i32 = { if (c) { return 5; } return 6; }; return 100 + t; }
@@ -16,7 +11,7 @@ function main(): i32 { return bare(true) + led(true) + nested(true) + valued(tru
 `
 
 func TestSelfHostValueBlockReturnLeavesFunction(t *testing.T) {
-	const want = 36 // 5 + 5 + 5 + 6 + 15
+	const want = 36
 	if got := interpExit(t, buildLangBinForInterp(t), valueBlockReturnSrc); got != want {
 		t.Fatalf("interpreter exit %d, want %d", got, want)
 	}

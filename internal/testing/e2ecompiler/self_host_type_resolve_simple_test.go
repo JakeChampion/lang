@@ -4,22 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostTypeResolveSimple pins the self-hosted checker's three simpler
-// type-name resolvers (compiler/checker.fern's
-// type_from_name_with_structs / _with_struct_names / _with_names_and_unions —
-// docs/SELF-HOST-AUDIT.md T2). All three share the one resolution ladder
-// (type_from_ref_names) with the richest resolver, so they differ from it only
-// in the name context each carries: the two struct-only ones cannot name a
-// union, and none of them substitutes a type parameter. A tuple, a Map, a fn
-// value and a generic instantiation resolve in every one of them — they used to
-// collapse to unknown by their full spelling here, which is how a struct field
-// declared `(i32, f64)[]` reached irlower as `unknown[]` and had its f64
-// element read at 4 bytes (#8459).
-//
-// The type_resolve_simple_run driver resolves a corpus through all three and
-// prints type_debug of each result.
-//
-// The driver is built natively via the Go x86-64 backend; its stdout is the map.
 func TestSelfHostTypeResolveSimple(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

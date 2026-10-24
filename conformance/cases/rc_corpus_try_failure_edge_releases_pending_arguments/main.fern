@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// #8719: the argument half. An argument evaluated ahead of a later
-// `?` — a temp for an `own` or a borrowed parameter, an `own`
-// parameter passed on, a closure call's temp — is released when the
-// `?` leaves. An `own` parameter passed AFTER the `?` is the
-// walkDominatingExprs half: its move is not claimed past the exit.
-// Before: 2240 bytes live on arm64 and wasm.
+
+
+
+
+
+
+
+
+
 @noinline
 function g(c: i32): Result[i32, i32] {
     if (c == 0) { return Err(7); }

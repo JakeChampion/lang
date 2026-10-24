@@ -12,21 +12,6 @@ func init() {
 	registerCorpus("sort", sortCases)
 }
 
-// sortCases is sort(1)'s corpus.
-//
-// sort has more surface than anything else here, and most of it is in
-// how a key is CUT rather than in how two keys compare: a field starts
-// at the blanks in front of it, `-k1` is the whole line, `-k2,1` is
-// empty, and every one of `bdfgiMhnRrV` can be attached to one end of
-// one key and override the global option there. The corpus is built
-// around that, then around the six ordering modes (each with the input
-// that separates it from a byte comparison), then around the option
-// parsing — glibc's ambiguity lists, the obsolete `+POS -POS` form and
-// the environment that turns it off, and the four numeric options
-// whose only observable effect is their own diagnostics.
-//
-// `-R` is deterministic only with --random-source, so every random case
-// names one; the default source is the kernel's and is a shuffle.
 func sortCases(t *testing.T) []invocation {
 	dir := t.TempDir()
 	ab := catFile(t, dir, "ab", "a\nb\n")
@@ -46,10 +31,6 @@ func sortCases(t *testing.T) []invocation {
 	empty := catFile(t, dir, "e0", "")
 	blanksFile := catFile(t, dir, "blanks", "  b\n a\nc\n")
 	nums := catFile(t, dir, "nums", "10\n9\n100\n1\n")
-	// Every shape the one-word numeric key summarises or leaves to the
-	// digit walk: signs and blanks, zeros of both signs, fractions,
-	// non-numbers, equal fourteen-digit prefixes, and digit strings past
-	// the width the key's length field holds.
 	numkeys := catFile(t, dir, "numkeys", "5\n-5\n  5\n\t-5\n0\n-0\n.5\n-.5\n0.5\n-0.5\n3\n-3\nx\n+1\n1e2\n--1\n"+
 		"123456789012345678\n123456789012345679\n123456789012345670\n12345678901234\n12345678901235\n"+
 		"99999999999999999999\n100000000000000000000\n-99999999999999999999\n-100000000000000000000\n"+
@@ -57,17 +38,9 @@ func sortCases(t *testing.T) []invocation {
 		strings.Repeat("9", 40000)+"\n"+strings.Repeat("8", 40000)+"\n"+strings.Repeat("9", 32767)+"\n"+
 		"1"+strings.Repeat("0", 32766)+"\n1"+strings.Repeat("0", 32767)+"\n-"+strings.Repeat("9", 40000)+"\n-"+strings.Repeat("8", 40000)+"\n"+
 		"b 5\na -5\nc 0\nd 0.5\ne x\nf 12345678901234567\ng 12345678901234568\n")
-	// Lines whose first eight bytes tie, and ones shorter than eight that
-	// are a prefix of a longer line: the byte word orders only what it
-	// separates, and the rest is the whole comparison.
 	wordkeys := catFile(t, dir, "wordkeys", "abcdefgh1\nabcdefgh0\nabcdefg\nabcdefgh\nabcdefgh\nABCDEFGHz\nABCDEFGHA\nabcdefgH\n"+
 		"abcdefgh\x00\nabcdefgh\x01\nab\n\nb\nB\n\x80\n\xff\n\x00\nabcdefghijk\nabcdefghIJK\nAbcdefghijk\n"+
 		"x 1\nx 2\nx 10\ny 1\nx 1\n")
-	// The same tie shapes at a size the radix sort takes: 20000 lines,
-	// each an eight-byte prefix shared by fifty lines and a tail that
-	// differs, some lines the bare prefix, some in upper case, and the
-	// second field a number shared by many lines with a fourteen-digit
-	// run in some.
 	var wide strings.Builder
 	for i := 0; i < 20000; i++ {
 		pre := fmt.Sprintf("k%07d", i%400)
@@ -99,25 +72,17 @@ func sortCases(t *testing.T) []invocation {
 	}
 	d := filepath.Join(dir, "d")
 
-	// A fixed random source: sixteen zero bytes is what GNU reads out
-	// of /dev/zero, so both sides seed the same MD5 state.
 	randSrc := catFile(t, dir, "rand16", strings.Repeat("\x00", 64))
 	randShort := catFile(t, dir, "rand2", "ab")
 
-	// Names for --files0-from.
 	names0 := catFile(t, dir, "names0", ab+"\x00"+cd+"\x00")
 	namesEmpty := catFile(t, dir, "names1", ab+"\x00\x00")
 	namesDash := catFile(t, dir, "names2", "-\x00")
 
-	// Enough lines to cross a dozen merge passes, with duplicate keys so
-	// stability is observable. Kept to five thousand because the
-	// self-host leg runs the same corpus over a build with no -O, where
-	// a comparison costs far more than it does natively.
 	big := catFile(t, dir, "big", shuffledLines(5000))
 	bigStdin := shuffledLines(5000)
 
 	cases := []invocation{
-		// The plain sort.
 		{name: "stdin", args: nil, stdin: "b\na\nc\n"},
 		{name: "one file", args: []string{ba}},
 		{name: "two files", args: []string{ba, cd}},
@@ -137,7 +102,6 @@ func sortCases(t *testing.T) []invocation {
 		{name: "big file", args: []string{big}},
 		{name: "big stdin", args: nil, stdin: bigStdin},
 
-		// -r, -u, -s.
 		{name: "reverse", args: []string{"-r", ba}},
 		{name: "reverse long", args: []string{"--reverse", ba}},
 		{name: "unique", args: []string{"-u", dupes}},
@@ -152,7 +116,6 @@ func sortCases(t *testing.T) []invocation {
 		{name: "unique big", args: []string{"-u", big}},
 		{name: "reverse big", args: []string{"-r", big}},
 
-		// -z.
 		{name: "zero terminated", args: []string{"-z", zeros}},
 		{name: "zero terminated long", args: []string{"--zero-terminated", zeros}},
 		{name: "zero terminated stdin", args: []string{"-z"}, stdin: "b\x00a\x00"},
@@ -161,7 +124,6 @@ func sortCases(t *testing.T) []invocation {
 		{name: "zero terminated fields", args: []string{"-z", "-k2"}, stdin: "b\nx\x00a\ny\x00"},
 		{name: "zero terminated empty", args: []string{"-z"}, stdin: ""},
 
-		// -n.
 		{name: "numeric", args: []string{"-n", nums}},
 		{name: "numeric key shapes", args: []string{"-n", numkeys}},
 		{name: "numeric key shapes reversed", args: []string{"-rn", numkeys}},
@@ -219,7 +181,6 @@ func sortCases(t *testing.T) []invocation {
 		{name: "version and dictionary compatible", args: []string{"-Vd"}, stdin: "a\nb\n"},
 		{name: "dictionary and ignore compatible", args: []string{"-di"}, stdin: "a\nb\n"},
 
-		// -h.
 		{name: "human", args: []string{"-h"}, stdin: "1K\n1M\n1\n-1K\n0K\n1000\n1.5K\n"},
 		{name: "human long", args: []string{"--human-numeric-sort"}, stdin: "2K\n1G\n"},
 		{name: "human every suffix", args: []string{"-h"}, stdin: "1Q\n1R\n1Y\n1Z\n1E\n1P\n1T\n1G\n1M\n1K\n1k\n1\n"},
@@ -233,7 +194,6 @@ func sortCases(t *testing.T) []invocation {
 		{name: "human unknown suffix", args: []string{"-h"}, stdin: "1x\n2\n"},
 		{name: "human iB", args: []string{"-h"}, stdin: "1KiB\n1K\n2K\n"},
 
-		// -g.
 		{name: "general", args: []string{"-g"}, stdin: "1e2\n99\n1e-3\n0\n"},
 		{name: "general long", args: []string{"--general-numeric-sort"}, stdin: "2\n10\n"},
 		{name: "general errors first", args: []string{"-g"}, stdin: "x\n1\ny\n-1\n"},
@@ -242,14 +202,12 @@ func sortCases(t *testing.T) []invocation {
 		{name: "general precision", args: []string{"-g"}, stdin: "1.0000000000000000001\n1\n"},
 		{name: "general zeros", args: []string{"-g"}, stdin: "-0\n0\n0.0\n"},
 
-		// -M.
 		{name: "month", args: []string{"-M"}, stdin: "JAN\nDEC\nFEB\n"},
 		{name: "month long", args: []string{"--month-sort"}, stdin: "MAR\nAPR\n"},
 		{name: "month case and unknown", args: []string{"-M"}, stdin: "jan\nJAN\nFOO\nDEC\n\n  MAR x\n"},
 		{name: "month every name", args: []string{"-M"}, stdin: "SEP\nOCT\nNOV\nDEC\nJAN\nFEB\nMAR\nAPR\nMAY\nJUN\nJUL\nAUG\n"},
 		{name: "month prefixes", args: []string{"-M"}, stdin: "JANUARY\nJA\nJ\nDECEMBER\n"},
 
-		// -V.
 		{name: "version", args: []string{"-V"}, stdin: "v1.2\nv1.10\nv1.9\nv1.2.3\na\n"},
 		{name: "version long", args: []string{"--version-sort"}, stdin: "1.2\n1.10\n"},
 		{name: "version suffixes", args: []string{"-V"}, stdin: "1.0.tar.gz\n1.0.1.tar.gz\n1.0.tar\n"},
@@ -258,7 +216,6 @@ func sortCases(t *testing.T) []invocation {
 		{name: "version leading zeros", args: []string{"-V"}, stdin: "a007\na7\na08\n"},
 		{name: "version mixed", args: []string{"-V"}, stdin: "foo-1.0\nfoo-1.0.1\nfoo\nfoo.tar.gz\n"},
 
-		// -d, -f, -i.
 		{name: "dictionary", args: []string{"-d"}, stdin: "a-b\nab\na b\n"},
 		{name: "dictionary long", args: []string{"--dictionary-order"}, stdin: "a.b\nab\n"},
 		{name: "fold", args: []string{"-f"}, stdin: "b\nA\na\nB\n"},
@@ -271,12 +228,10 @@ func sortCases(t *testing.T) []invocation {
 		{name: "fold and ignore", args: []string{"-fi"}, stdin: "A\x01b\nab\n"},
 		{name: "ignore everything equal", args: []string{"-i"}, stdin: "\x01\n\x02\n"},
 
-		// -b.
 		{name: "ignore leading blanks", args: []string{"-b", blanksFile}},
 		{name: "ignore leading blanks long", args: []string{"--ignore-leading-blanks", blanksFile}},
 		{name: "without ignore leading blanks", args: []string{blanksFile}},
 
-		// -k: what a key selects.
 		{name: "key one is the whole line", args: []string{"-k1", blanksFile}},
 		{name: "key one one", args: []string{"-k1,1", fields}},
 		{name: "key two", args: []string{"-k2", fields}},
@@ -318,7 +273,6 @@ func sortCases(t *testing.T) []invocation {
 		{name: "key fold", args: []string{"-k1,1f"}, stdin: "B\na\n"},
 		{name: "key big file", args: []string{"-k2,2n", big}},
 
-		// -t.
 		{name: "tab colon", args: []string{"-t:", "-k2,2", colons}},
 		{name: "tab colon spaced", args: []string{"-t", ":", "-k2,2", colons}},
 		{name: "tab long", args: []string{"--field-separator=:", "-k2,2", colons}},
@@ -330,7 +284,6 @@ func sortCases(t *testing.T) []invocation {
 		{name: "tab is a blank", args: []string{"-t", " ", "-k2,2"}, stdin: "b  a\na a\n"},
 		{name: "tab tab character", args: []string{"-t", "\t", "-k2,2"}, stdin: "b\t2\na\t3\n"},
 
-		// -m.
 		{name: "merge", args: []string{"-m", ab, cd}},
 		{name: "merge long", args: []string{"--merge", ab, cd}},
 		{name: "merge interleaves", args: []string{"-m", ba, ab}},
@@ -343,19 +296,14 @@ func sortCases(t *testing.T) []invocation {
 		{name: "merge unterminated first", args: []string{"-m", nonl, cd}},
 		{name: "merge three", args: []string{"-m", cd, ba, ab}},
 		{name: "merge zero terminated", args: []string{"-m", "-z", "--", "-", ab}, stdin: "a\x00c\x00"},
-		// -m holds one read of each input at a time: lines straddle reads,
-		// one input runs out mid-merge, and -u compares across refills.
 		{name: "merge across reads", args: []string{"-m", mergeNine, mergeSixteen}},
 		{name: "merge across reads unique", args: []string{"-m", "-u", mergeNine, mergeNine}},
 		{name: "merge across reads with a key", args: []string{"-m", "-n", mergeSixteen, mergeNine}},
 		{name: "merge across reads from stdin", args: []string{"-m", "-", mergeSixteen}, stdin: checkLines(9, -1, false)},
 		{name: "merge a line longer than a read", args: []string{"-m", mergeWide, ab}},
-		// Opening the -o file empties it, so an input that is the output is
-		// read whole before that, and a named one is not the only way in.
 		{name: "merge onto an input", args: []string{"-m", "-o", mergeSelf, mergeSelf, cd}, prepare: prepMergeSelf, artifacts: []string{mergeSelf}},
 		{name: "merge onto stdin's file", args: []string{"-m", "-o", mergeSelf, "-", ab}, stdinPath: mergeSelf, prepare: prepMergeSelf, artifacts: []string{mergeSelf}},
 
-		// -c and -C.
 		{name: "check sorted", args: []string{"-c", ab}},
 		{name: "check unsorted", args: []string{"-c", ba}},
 		{name: "check stdin", args: []string{"-c"}, stdin: "b\na\n"},
@@ -378,16 +326,12 @@ func sortCases(t *testing.T) []invocation {
 		{name: "check directory", args: []string{"-c", d}},
 		{name: "check two files", args: []string{"-c", ab, cd}},
 		{name: "check capital two files", args: []string{"-C", ab, cd}},
-		// Input already in order is returned as it stands; these are the
-		// orderings where "in order" has to mean what the sort means.
 		{name: "sorted input with duplicates", stdin: "a\na\nb\nb\nc\n"},
 		{name: "sorted input unique", args: []string{"-u"}, stdin: "a\na\nb\nb\nc\n"},
 		{name: "sorted input by a key, stable", args: []string{"-s", "-k1,1"}, stdin: "a 2\na 1\nb 3\n"},
 		{name: "sorted input by a key, last resort", args: []string{"-k1,1"}, stdin: "a 2\na 1\nb 3\n"},
 		{name: "sorted input reversed", args: []string{"-r"}, stdin: "c\nb\nb\na\n"},
 		{name: "sorted input numeric", args: []string{"-n"}, stdin: "-1\n2\n02\n10\n"},
-		// -c reads as it goes, 256 KiB at a time, and carries the last line
-		// over each read. These put the disorder at a read's edge.
 		{name: "check long sorted", args: []string{"-c", checkLong(t, dir, "long", 9, -1, false)}},
 		{name: "check long sorted from stdin", args: []string{"-c"}, stdin: checkLines(9, -1, false)},
 		{name: "check disorder straddling a read", args: []string{"-c", checkLong(t, dir, "straddle", 9, 262144/9, false)}},
@@ -401,7 +345,6 @@ func sortCases(t *testing.T) []invocation {
 		{name: "check capital and output", args: []string{"-C", "-o", "/dev/null", ab}},
 		{name: "check big", args: []string{"-c", big}},
 
-		// -o.
 		{name: "output to a new file", args: []string{"-o", filepath.Join(dir, "out1"), ba}},
 		{name: "output long", args: []string{"--output=" + filepath.Join(dir, "out2"), ba}},
 		{name: "output same twice", args: []string{"-o", "/dev/null", "-o", "/dev/null", ba}},
@@ -410,7 +353,6 @@ func sortCases(t *testing.T) []invocation {
 		{name: "output into a missing directory", args: []string{"-o", filepath.Join(missing, "x"), ba}},
 		{name: "output to dev full", args: []string{"-o", "/dev/full", ba}},
 
-		// --files0-from.
 		{name: "files0", args: []string{"--files0-from=" + names0}},
 		{name: "files0 zero length name", args: []string{"--files0-from=" + namesEmpty}},
 		{name: "files0 dash name", args: []string{"--files0-from=" + namesDash}},
@@ -421,8 +363,6 @@ func sortCases(t *testing.T) []invocation {
 		{name: "files0 from stdin", args: []string{"--files0-from=-"}, stdin: ab + "\x00"},
 		{name: "files0 with check", args: []string{"-c", "--files0-from=" + empty}},
 
-		// --debug: the warnings, then one underline row per key and a
-		// last-resort row unless -u or -s dropped it.
 		{name: "debug", args: []string{"--debug"}, stdin: "a b c\n"},
 		{name: "debug no input", args: []string{"--debug"}, stdin: ""},
 		{name: "debug empty line", args: []string{"--debug", "-k1,1"}, stdin: "\n"},
@@ -490,7 +430,6 @@ func sortCases(t *testing.T) []invocation {
 		{name: "debug and output", args: []string{"--debug", "-o", "/dev/null"}},
 		{name: "debug big", args: []string{"--debug", "-k1,1n", big}},
 
-		// -R.
 		{name: "random", args: []string{"-R", "--random-source=" + randSrc}, stdin: "a\nb\nc\nd\ne\n"},
 		{name: "random groups equal keys", args: []string{"-R", "--random-source=" + randSrc}, stdin: "a\nb\na\nc\n"},
 		{name: "random with a key", args: []string{"-R", "--random-source=" + randSrc, "-k1,1"}, stdin: "a x\nb y\na z\n"},
@@ -503,7 +442,6 @@ func sortCases(t *testing.T) []invocation {
 		{name: "random source unused", args: []string{"--random-source=" + missing}, stdin: "b\na\n"},
 		{name: "random big", args: []string{"-R", "--random-source=" + randSrc, big}},
 
-		// --sort=WORD.
 		{name: "sort word numeric", args: []string{"--sort=numeric", nums}},
 		{name: "sort word abbreviated", args: []string{"--sort=n", nums}},
 		{name: "sort word general", args: []string{"--sort=general-numeric"}, stdin: "1e2\n99\n"},
@@ -517,7 +455,6 @@ func sortCases(t *testing.T) []invocation {
 		{name: "check word empty", args: []string{"--check="}},
 		{name: "check word abbreviated", args: []string{"--check=q", ba}},
 
-		// The obsolete +POS -POS form.
 		{name: "obsolete plus", args: []string{"+1"}, stdin: "b a\na b\n"},
 		{name: "obsolete plus zero", args: []string{"+0"}, stdin: "b a\na b\n"},
 		{name: "obsolete plus minus", args: []string{"+1", "-2"}, stdin: "b a c\na b d\n"},
@@ -536,7 +473,6 @@ func sortCases(t *testing.T) []invocation {
 		{name: "obsolete posixly correct and 200112", args: []string{"+1", "-2"}, stdin: "b a\na b\n", env: []string{"POSIXLY_CORRECT=1", "_POSIX2_VERSION=200112"}},
 		{name: "obsolete after double dash", args: []string{"--", "+1"}},
 
-		// Option scanning.
 		{name: "options after operands", args: []string{ba, "-r"}},
 		{name: "posixly correct stops at the first operand", args: []string{ba, "-r"}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posixly correct before an operand", args: []string{"-r", ba}, env: []string{"POSIXLY_CORRECT=1"}},
@@ -578,7 +514,6 @@ func sortCases(t *testing.T) []invocation {
 		{name: "merge does not take a value", args: []string{"--merge=x"}},
 		{name: "check takes an optional value", args: []string{"-c", "x"}},
 
-		// -k errors.
 		{name: "key zero", args: []string{"-k0"}},
 		{name: "key char zero", args: []string{"-k1.0"}},
 		{name: "key not a number", args: []string{"-kx"}},
@@ -603,13 +538,11 @@ func sortCases(t *testing.T) []invocation {
 		{name: "key random and version", args: []string{"-k1RV,1", "--random-source=" + randSrc, ba}},
 		{name: "two keys each with one ordering", args: []string{"-k1n", "-k2M", ba}},
 
-		// -t errors.
 		{name: "tab empty", args: []string{"-t", ""}},
 		{name: "tab multi character", args: []string{"-tab"}},
 		{name: "tab backslash zero", args: []string{"-t", "\\0", ba}},
 		{name: "tab incompatible", args: []string{"-t:", "-t,"}},
 
-		// -S, --parallel, --batch-size, --compress-program, -T.
 		{name: "buffer size", args: []string{"-S", "1M", ba}},
 		{name: "buffer size bare", args: []string{"-S", "1000", ba}},
 		{name: "buffer size percent", args: []string{"-S", "50%", ba}},
@@ -645,7 +578,6 @@ func sortCases(t *testing.T) []invocation {
 		{name: "tmpdir long", args: []string{"--temporary-directory=/tmp", ba}},
 		{name: "tmpdir twice", args: []string{"-T", "/tmp", "-T", "/var/tmp", ba}},
 
-		// Inputs that fail.
 		{name: "missing file", args: []string{missing}},
 		{name: "missing before an existing one", args: []string{missing, ab}},
 		{name: "missing after an existing one", args: []string{ab, missing}},
@@ -660,7 +592,6 @@ func sortCases(t *testing.T) []invocation {
 		{name: "missing raw name", args: []string{filepath.Join(dir, "no\xffsuch")}},
 		{name: "missing quoted name", args: []string{filepath.Join(dir, "no'such")}},
 
-		// Write failures.
 		{name: "stdout full", args: []string{ba}, stdout: stdoutFull},
 		{name: "stdout full big", args: []string{big}, stdout: stdoutFull},
 		{name: "stdout full with nothing to write", args: []string{empty}, stdout: stdoutFull},
@@ -672,9 +603,6 @@ func sortCases(t *testing.T) []invocation {
 	return append(cases, sortByteComparisonCases()...)
 }
 
-// Exercise the short overlapping windows and SIMD boundaries of the byte
-// comparison, including equal spans and prefixes. Keep these in the shared
-// corpus so native and self-hosted sort both run against the same oracle.
 func sortByteComparisonCases() []invocation {
 	var lines []string
 	for _, n := range []int{0, 1, 3, 4, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65} {
@@ -689,8 +617,6 @@ func sortByteComparisonCases() []invocation {
 	plain := strings.Join(lines, "\n") + "\n"
 	var keys strings.Builder
 	for i, line := range lines {
-		// A nonzero key offset and equal keys whose last-resort ordering
-		// differs from input order exercise both routes through cmp_bytes.
 		keys.WriteString(itoa(len(lines) - i))
 		keys.WriteByte(':')
 		keys.WriteString(line)
@@ -707,10 +633,6 @@ func sortByteComparisonCases() []invocation {
 	}
 }
 
-// checkLines is 100,000 zero-padded numbers, each `width` bytes with its
-// newline, in order except at line `bad`: there the line is all zeros,
-// which sorts before its predecessor, or with `dup` a copy of it. -1
-// leaves every line in order.
 func checkLines(width, bad int, dup bool) string {
 	var b strings.Builder
 	for i := 0; i < 100000; i++ {
@@ -730,8 +652,6 @@ func checkLong(t *testing.T, dir, name string, width, bad int, dup bool) string 
 	return catFile(t, dir, name, checkLines(width, bad, dup))
 }
 
-// shuffledLines is n lines with duplicate keys, in an order no ordering
-// mode leaves alone.
 func shuffledLines(n int) string {
 	var b strings.Builder
 	x := 12345

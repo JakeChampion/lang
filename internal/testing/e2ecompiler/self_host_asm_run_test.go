@@ -9,34 +9,18 @@ import (
 	"testing"
 )
 
-// Bootstrap-style end-to-end demo. asm_run.fern is a driver
-// that reads Fern source from stdin, runs it through the
-// self-host lexer + parser + typed lowering + x86-64 IR
-// backend, and prints the resulting AT&T x86_64 assembly to
-// stdout. This table-driven test runs every entry through that
-// pipeline:
-//
-//   1. Build asm_run.fern once with the stage0 compiler.
-//   2. For each test case: pipe its source to the driver,
-//      capture stdout (= emitted asm), gcc-assemble the asm
-//      into a standalone Linux ELF, run it, assert the inner
-//      exit code matches the entry's expected value.
-
 func TestSelfHostAsmRunX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/asm_run.fern")
-	// Build the driver once.
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
-	// Each case: pipe source to driver, capture asm, assemble,
-	// run, verify exit code.
 	cases := []struct {
 		name     string
 		source   string
 		expected int
-		stdout   string // "" means don't check
-		stdin    string // "" means no stdin
+		stdout   string
+		stdin    string
 	}{
 		{"return-literal", "return 42;", 42, "", ""},
 		{"arithmetic", "return 1 + 2 * 3;", 7, "", ""},
@@ -82,18 +66,14 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"recursive-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(8); }", 21, "", ""},
 		{"mutual-recursion", "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); } function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); } function main(): i32 { return is_even(6); }", 1, "", ""},
 		{"func-with-local-vars", "function compute(a: i32): i32 { let b = a * 2; let c = b + 1; return c; } function main(): i32 { return compute(5); }", 11, "", ""},
-		// if-expressions — desugar to an immediately-invoked closure.
 		{"if-expr-true", "function main(): i32 { let x: i32 = if (true) { 3 } else { 4 }; return x; }", 3, "", ""},
 		{"if-expr-capture", "function main(): i32 { let n: i32 = 10; let x: i32 = if (n > 5) { n + 1 } else { 0 }; return x; }", 11, "", ""},
 		{"if-expr-else-if", "function main(): i32 { let n: i32 = 2; let x: i32 = if (n == 1) { 10 } else if (n == 2) { 20 } else { 30 }; return x; }", 20, "", ""},
 		{"direct-iife", "function main(): i32 { return ((): i32 => { return 3; })(); }", 3, "", ""},
 		{"iife-with-args", "function main(): i32 { return ((a: i32, b: i32): i32 => { return a + b; })(4, 5); }", 9, "", ""},
-		// Local (nested) functions — desugar to a closure-valued local.
 		{"local-fn-basic", "function main(): i32 { function helper(): i32 { return 5; } return helper(); }", 5, "", ""},
 		{"local-fn-capture", "function main(): i32 { let n: i32 = 10; function bump(): i32 { return n + 1; } return bump(); }", 11, "", ""},
 		{"local-fn-two", "function main(): i32 { function f(): i32 { return 2; } function g(): i32 { return 3; } return f() * g(); }", 6, "", ""},
-		// defer — action runs at function exit (LIFO, conditional, value
-		// captured before cleanup).
 		{"defer-fires", "function inc(): i32 { defer write(\"d\"); write(\"b\"); return 1; } function main(): i32 { return inc(); }", 1, "bd", ""},
 		{"defer-retval-before-cleanup", "function f(): i32 { let x = 5; defer x = 99; return x; } function main(): i32 { return f(); }", 5, "", ""},
 		{"defer-lifo", "function f(): i32 { defer write(\"1\"); defer write(\"2\"); return 0; } function main(): i32 { return f(); }", 0, "21", ""},
@@ -210,10 +190,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"sum(1..10) = 55\n",
 			"",
 		},
-		// read_int demos — pipe stdin via the cases struct's
-		// stdin field. The inner binary reads, parses, computes,
-		// and either prints the result or returns it via exit
-		// code.
 		{
 			"read-int-double-via-exit",
 			"function main(): i32 { return read_int() * 2; }",
@@ -273,11 +249,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
-			// A struct element of a destructured tuple must keep its
-			// type so its receiver method dispatches through the
-			// shape-pointer path (__fn_Box__bump), not mis-mangle as
-			// __fn_i32__bump. Regression for the tuple-destructure
-			// element-typing fix.
 			"tuple-destructure-struct-method",
 			"struct Box { n: i32 } " +
 				"pub function (b: Box) bump(): i32 { return b.n + 1; } " +
@@ -288,13 +259,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
-			// Method call with a `fn`-typed parameter: passing a bare
-			// function ident must box it as a closure value, not call
-			// it as a 0-arg function and pass the return value.
-			// Without this `f.bench("…", n, my_workload)` silently
-			// invoked my_workload zero times and the callee's `fn()`
-			// crashed on the garbage closure box. Free-function calls
-			// already had this; the method-call arg loop didn't.
 			"method-fn-arg-boxed-not-called",
 			"struct Foo { n: i32 } " +
 				"pub function (f: Foo) call_one(fn: () => void): Foo { " +
@@ -307,13 +271,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
-			// Receiver-method calls returning Option[T] / Result[T, E]
-			// (e.g. `s.parse_int(): Option[i32]`) must surface their
-			// payload type in match arms — otherwise `Some(got) =>`
-			// binds got as "unknown" and got.to_string() falls to
-			// struct shape-dispatch and segfaults. Regression for
-			// the match_payload_type ExprFieldAccess lookup that now
-			// walks s.funcs for receiver methods.
 			"match-receiver-method-option-payload",
 			"struct Wrap { n: i32 } " +
 				"pub function (w: Wrap) try_get(): Option[i32] { " +
@@ -329,14 +286,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
-			// IEEE NaN semantics for f64 compares. Per IEEE, every
-			// relation with NaN is false except `!=`. ucomisd sets
-			// CF=ZF=PF=1 on unordered, so naked setb / setbe / sete
-			// would mis-report `NaN < x` / `NaN <= x` / `NaN == NaN`
-			// as true. `<` / `<=` / `==` now AND with `setnp`; `!=`
-			// ORs with `setp` so it returns true on unordered.
-			// Regression: is_nan (x != x) + strict-monotonic checks
-			// (a < b with a NaN-tainted array) must agree with IEEE.
 			"f64-nan-compares",
 			"function main(): i32 { " +
 				"let nan: f64 = 0.0 / 0.0; let one: f64 = 1.0; " +
@@ -354,11 +303,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		},
 		{"small-builtins-roundtrip", "function main(): i32 { let a: f64 = 3.5; if (f64_from_bits(f64_bits(a)) != a) { return 1; } let b: f32 = 3.5; if (f32_from_bits(f32_bits(b)) != b) { return 2; } sleep_ms(0); match (remove_file(\"/tmp/lang-no-such-file-zzz\")) { Err(_) => {}, Ok(_) => { return 3; } } return 42; }", 42, "", ""},
 		{
-			// Ok(x) / Err(x) must lower as Result heap boxes (tag @0,
-			// payload @8 — same shape as Some/None), not as calls to
-			// __fn_Ok / __fn_Err. Without this every Fern body that
-			// constructs a Result inside a function (std/fuzz, user
-			// helpers, the obvious `return Ok(...)` pattern) link-errors.
 			"result-ok-err-constructors",
 			"function ok_path(): Result[i32, string] { return Ok(40); } " +
 				"function err_path(): Result[i32, string] { return Err(\"nope\"); } " +
@@ -450,8 +394,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		},
 		{"match-single-variant-binding", "struct Circle { r: i32 } function main(): i32 { let c = Circle { r: 5 }; match (c) { Circle { r } => { return r; } } return 0 - 2; }", 5, "", ""},
 		{
-			// String-literal match arms (#4407): lower to an str_eq
-			// if-else-if chain on the self-host path (build_literal_match).
 			"match-string-literal-hit",
 			"function main(): i32 { let s: string = \"no\"; match (s) { \"yes\" => { return 1; }, \"no\" => { return 2; }, _ => { return 9; } } return 0; }",
 			2,
@@ -459,7 +401,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
-			// Exact match: \"nope\" is not \"no\", so it falls to `_`.
 			"match-string-literal-wildcard",
 			"function main(): i32 { let s: string = \"nope\"; match (s) { \"yes\" => { return 1; }, \"no\" => { return 2; }, _ => { return 9; } } return 0; }",
 			9,
@@ -602,9 +543,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
-			// Outer reassignment after the closure is created is visible to the
-			// closure — by-reference capture, matching the interpreter (#5301;
-			// the pre-fix pin of 5 froze the by-value make-time snapshot).
 			"closure-capture-by-reference",
 			"function main(): i32 { let n = 5; let f = (): i32 => { return n; }; n = 99; return f(); }",
 			99,
@@ -814,9 +752,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"bc",
 			"",
 		},
-		// 64-bit-element arrays (i64[] / f64[]): the x86-64 backend uses
-		// 8-byte element slots, so values above 2^31 round-trip.
-		// Mirrors the wasm i64arr-* cases.
 		{
 			"arr-i64-literal-index-large",
 			"function main(): i32 { let xs: i64[] = [5000000000, 42]; if (xs[0] == 5000000000) { return xs[1] as i32; } return 0; }",
@@ -983,7 +918,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 			"",
 		},
-		// String indexing `s[i]` -> the i32 byte value (str_index op).
 		{"str-index-local", "function main(): i32 { let s = \"hello\"; return s[0] as i32; }", 104, "", ""},
 		{"str-index-sum", "function main(): i32 { let s = \"hello\"; return (s[1] as i32) + (s[4] as i32); }", 212, "", ""},
 		{"str-index-loop", "function main(): i32 { let s = \"abc\"; let sum = 0; let i = 0; while (i < 3) { sum = sum + (s[i] as i32); i = i + 1; } return sum % 200; }", 94, "", ""},
@@ -1112,9 +1046,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 			"",
 		},
-		// Scalar-field structs via the IR path (struct_make / struct_get,
-		// leak-only): literal construction + field read, field-order independence,
-		// struct params, boolean fields. Exit codes must be exact.
 		{"struct-lit-fields", "struct P { x: i32, y: i32 } function main(): i32 { let p = P { x: 3, y: 4 }; return p.x + p.y; }", 7, "", ""},
 		{"struct-field-order", "struct P { x: i32, y: i32 } function main(): i32 { let p = P { y: 40, x: 2 }; return p.x + p.y; }", 42, "", ""},
 		{"struct-one-field", "struct W { n: i32 } function main(): i32 { let w = W { n: 99 }; return w.n; }", 99, "", ""},
@@ -1125,28 +1056,19 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"struct-two-instances", "struct P { x: i32, y: i32 } function main(): i32 { let a = P { x: 1, y: 2 }; let b = P { x: 10, y: 20 }; return a.x + b.y; }", 21, "", ""},
 		{"struct-in-loop", "struct P { x: i32, y: i32 } function main(): i32 { let s = 0; let i = 0; while (i < 4) { let p = P { x: i, y: i * 2 }; s = s + p.x + p.y; i = i + 1; } return s; }", 18, "", ""},
 		{"struct-field-from-expr", "struct P { x: i32, y: i32 } function main(): i32 { let n = 5; let p = P { x: n * 2, y: n + 1 }; return p.x + p.y; }", 16, "", ""},
-		// Functional struct update `P { ...base, f: v }` via the IR path
-		// (desugars to struct_make with struct_get copying non-overridden fields
-		// from the base). The base must be a simple ident; mutation still bails.
 		{"struct-update-one", "struct P { x: i32, y: i32 } function main(): i32 { let p = P { x: 1, y: 2 }; let q = P { ...p, y: 9 }; return q.x + q.y; }", 10, "", ""},
 		{"struct-update-first", "struct P { x: i32, y: i32 } function main(): i32 { let p = P { x: 1, y: 2 }; let q = P { ...p, x: 40 }; return q.x + q.y; }", 42, "", ""},
-		// 3-field updates (exit codes are u8, so keep results < 256): the override
-		// can be the first / middle / last field — non-overridden fields copy from
-		// the base via struct_get (each lowered field pushes exactly one value).
 		{"struct-update-mid", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { let v = V { a: 1, b: 2, c: 3 }; let w = V { ...v, b: 20 }; return w.a + w.b + w.c; }", 24, "", ""},
 		{"struct-update-none", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { let v = V { a: 1, b: 2, c: 3 }; let w = V { ...v }; return w.a + w.b + w.c; }", 6, "", ""},
 		{"struct-update-3a", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { let v = V { a: 1, b: 2, c: 3 }; let w = V { ...v, a: 50 }; return w.a + w.b + w.c; }", 55, "", ""},
 		{"struct-update-3c", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { let v = V { a: 1, b: 2, c: 3 }; let w = V { ...v, c: 90 }; return w.a + w.b + w.c; }", 93, "", ""},
 		{"struct-update-keeps-base", "struct P { x: i32, y: i32 } function main(): i32 { let p = P { x: 5, y: 6 }; let q = P { ...p, x: 50 }; return p.x + q.x; }", 55, "", ""},
-		// A field rebound through a struct-update literal.
 		{"field-mutate", "struct P { x: i32, y: i32 } function main(): i32 { let p = P { x: 1, y: 2 }; p = P { ...p, x: 40 }; return p.x + p.y; }", 42, "", ""},
 		{"field-mutate-both", "struct P { x: i32, y: i32 } function main(): i32 { let p = P { x: 0, y: 0 }; p = P { ...p, x: 30 }; p = P { ...p, y: 12 }; return p.x + p.y; }", 42, "", ""},
 		{"field-mutate-loop", "struct C { n: i32 } function main(): i32 { let c = C { n: 0 }; let i = 0; while (i < 5) { c = C { ...c, n: c.n + i }; i = i + 1; } return c.n; }", 10, "", ""},
 		{"field-mutate-alias", "struct P { x: i32 } function main(): i32 { let p = P { x: 1 }; let q = p; q = P { ...q, x: 9 }; return p.x; }", 1, "", ""},
-		// String-returning functions: the call result types as a string.
 		{"str-return", "function greet(): string { return \"hi\"; } function main(): i32 { let s = greet(); return s.len(); }", 2, "", ""},
 		{"str-return-concat", "function shout(s: string): string { return s + \"!\"; } function main(): i32 { let g = shout(\"hey\"); return g.len(); }", 4, "", ""},
-		// String-typed struct/enum fields (leak-safe — strings never freed, no RC).
 		{"struct-str-field", "struct Token { text: string, kind: i32 } function main(): i32 { let t = Token { text: \"hello\", kind: 7 }; return t.text.len() + t.kind; }", 12, "", ""},
 		{"struct-str-method", "struct N { s: string } function (n: N) sz(): i32 { return n.s.len(); } function main(): i32 { let x = N { s: \"abcd\" }; return x.sz(); }", 4, "", ""},
 		{"struct-str-mutate", "struct N { s: string } function main(): i32 { let n = N { s: \"a\" }; n = N { ...n, s: \"abcde\" }; return n.s.len(); }", 5, "", ""},
@@ -1231,29 +1153,20 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"arr-slice-len", "function main(): i32 { let a = [1, 2, 3, 4, 5]; let b = a[1:4]; return b.len(); }", 3, "", ""},
 		{"arr-slice-strarr", "function main(): i32 { let a = [\"x\", \"yy\", \"zzz\", \"w\"]; let b = a[1:3]; return b[0].len() + b[1].len(); }", 5, "", ""},
 		{"arr-slice-full", "function main(): i32 { let a = [5, 10, 15, 20]; let b = a[0:2]; return b[0] + b[1]; }", 15, "", ""},
-		// Scalar-array struct fields (i32[]) — fresh-literal construction, leak-only
-		// (the field array is owned by the struct + never swept, so no RC).
 		{"struct-arr-field", "struct Buf { data: i32[], n: i32 } function main(): i32 { let b = Buf { data: [10, 20, 30], n: 3 }; let s = 0; let i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; }", 60, "", ""},
 		{"struct-arr-survives-alloc", "struct Buf { data: i32[] } function main(): i32 { let b = Buf { data: [10, 20, 30] }; let other = [99, 99, 99, 99, 99]; return b.data[0] + b.data[2]; }", 40, "", ""},
 		{"struct-arr-param", "struct Buf { data: i32[], n: i32 } function sum(b: Buf): i32 { let s = 0; let i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; } function main(): i32 { let b = Buf { data: [5, 10, 15], n: 3 }; return sum(b); }", 30, "", ""},
 		{"struct-arr-extract", "struct Buf { data: i32[] } function main(): i32 { let b = Buf { data: [7, 8, 9] }; let a = b.data; return a[0] + a[2]; }", 16, "", ""},
 		{"struct-arr-aliased-falls-back", "struct Buf { data: i32[] } function main(): i32 { let arr = [1, 2, 3]; let b = Buf { data: arr }; return b.data[1] + arr[0]; }", 3, "", ""},
-		// Typed string[] arrays: literals, indexing (element is a string), params,
-		// aliasing (array rc-tracked), string-op on elements. Elements leak.
 		{"strarr-index", "function main(): i32 { let names = [\"foo\", \"bar\", \"hello\"]; return names[0].len() + names[2].len(); }", 8, "", ""},
 		{"strarr-param", "function f(names: string[]): i32 { return names[0].len(); } function main(): i32 { return f([\"abcd\"]); }", 4, "", ""},
 		{"strarr-loop", "function main(): i32 { let names = [\"a\", \"bb\", \"ccc\"]; let s = 0; let i = 0; while (i < 3) { s = s + names[i].len(); i = i + 1; } return s; }", 6, "", ""},
 		{"strarr-eq-elem", "function main(): i32 { let names = [\"hi\", \"ho\"]; if (names[0] == \"hi\") { return 7; } return 0; }", 7, "", ""},
-		// string[]-returning functions: the array moves out on return and the
-		// call site types the result as string[], so `xs[i]` is a string.
 		{"strarr-ret", "function names(): string[] { return [\"a\", \"bb\", \"ccc\"]; } function main(): i32 { let xs = names(); return xs[1].len(); }", 2, "", ""},
 		{"strarr-ret-direct-index", "function names(): string[] { return [\"a\", \"bb\", \"ccc\"]; } function main(): i32 { return names()[2].len(); }", 3, "", ""},
 		{"strarr-ret-len", "function names(): string[] { let a = [\"x\", \"yy\"]; return a; } function main(): i32 { let xs = names(); return xs.len() + xs[1].len(); }", 4, "", ""},
 		{"strarr-ret-param", "@noinline function id(a: string[]): string[] { return a; } function main(): i32 { let xs = [\"q\", \"ww\", \"eee\"]; let ys = id(xs); return ys[1].len() + ys.len(); }", 5, "", ""},
 		{"strarr-ret-loop", "function names(): string[] { return [\"a\", \"bb\", \"ccc\", \"dddd\"]; } function main(): i32 { let xs = names(); let i = 0; let s = 0; while (i < xs.len()) { s = s + xs[i].len(); i = i + 1; } return s; }", 10, "", ""},
-		// Methods (receiver functions) via the IR path: receiver = arg 0, static
-		// dispatch to __fn_<Type>.<name>. Field access on the receiver, args,
-		// methods on params, and method-to-method (self) dispatch.
 		{"ir-method-field", "struct P { x: i32 } function (p: P) get(): i32 { return p.x; } function main(): i32 { let p = P { x: 42 }; return p.get(); }", 42, "", ""},
 		{"ir-method-two-fields", "struct P { x: i32, y: i32 } function (p: P) sum(): i32 { return p.x + p.y; } function main(): i32 { let p = P { x: 3, y: 4 }; return p.sum(); }", 7, "", ""},
 		{"ir-method-with-arg", "struct B { v: i32 } function (b: B) scale(n: i32): i32 { return b.v * n; } function main(): i32 { let x = B { v: 4 }; return x.scale(3); }", 12, "", ""},
@@ -1353,13 +1266,8 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 			"",
 		},
-		// Match-arm guards (`Pat when <expr> =>`): a true guard runs the arm;
-		// a false guard falls through to the next arm. The guard reads the
-		// pattern binding.
 		{"match-guard-pass", "enum O { Has(i32), Nil } function main(): i32 { let o: O = Has(8); match (o) { Has(n) when n > 5 => { return 1; }, _ => { return 2; } } return 0 - 1; }", 1, "", ""},
 		{"match-guard-false-to-wildcard", "enum O { Has(i32), Nil } function main(): i32 { let o: O = Has(3); match (o) { Has(n) when n > 5 => { return 1; }, _ => { return 2; } } return 0 - 1; }", 2, "", ""},
-		// Match expressions (`match (e) { Pat => E, … }` in value position):
-		// desugar to an IIFE wrapping a statement-match with `return` arms.
 		{"match-expr", "enum O { Has(i32), Nil } function main(): i32 { let o: O = Has(5); let x: i32 = match (o) { Has(n) => n, Nil => 0 }; return x; }", 5, "", ""},
 		{"match-expr-other-arm", "enum O { Has(i32), Nil } function main(): i32 { let o: O = Nil; let x: i32 = match (o) { Has(n) => n, Nil => 42 }; return x; }", 42, "", ""},
 		{"match-expr-arith", "enum O { Has(i32), Nil } function main(): i32 { let o: O = Has(20); return match (o) { Has(n) => n + 1, Nil => 0 } + 1; }", 22, "", ""},
@@ -1367,12 +1275,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Each case only pipes source through the already-built
-			// driver, gcc-assembles, and runs — no recompile of the
-			// 35k-line self-host driver — so the cases are independent
-			// and cheap. Run them in parallel to spread the dozens of
-			// gcc+exec cycles across the runner's cores (this test was
-			// a ~50s CI long pole serially).
 			t.Parallel()
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
@@ -1416,10 +1318,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		})
 	}
 
-	// Negative: the self-host type-check pass must REJECT a program that
-	// uses an Option[i32] (`.max()`) where an i32 is declared, rather than
-	// silently emitting a box pointer. The driver should exit non-zero and
-	// print an E002 diagnostic; no asm is produced.
 	t.Run("rejects-option-as-i32", func(t *testing.T) {
 		t.Parallel()
 		var cmd *exec.Cmd
@@ -1441,10 +1339,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		}
 	})
 
-	// Negative: parser failures must fail loudly. A reserved keyword used
-	// as a function name (`use`) used to parse into an empty-name stub and
-	// still emit asm (`__fn_:`), which could silently miscompile/hang.
-	// The driver must now exit non-zero with a parse diagnostic.
 	t.Run("rejects-parser-unknowns", func(t *testing.T) {
 		t.Parallel()
 		var cmd *exec.Cmd

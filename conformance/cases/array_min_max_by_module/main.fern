@@ -1,6 +1,6 @@
-// std/array's max_by / min_by under a three-way comparator. Empty gives None;
-// ties keep the first extremum.
-// The shipped module's free and method forms.
+
+
+
 import "std/array" as arr;
 struct Rec { id: i32, name: string }
 function by_name(a: Rec, b: Rec): i32 { return a.name.cmp(b.name); }

@@ -5,43 +5,10 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64WholeProgramMatchesGas is
-// TestSelfHostArm64AsmEncodingMatchesGas scaled from a hand-written snippet
-// to a WHOLE PROGRAM: it takes the arm64 emitter's own GAS text — runtime and
-// all — and requires the self-host in-process assembler and GNU as + ld to
-// agree on every word of it.
-//
-// # Why this is worth having on top of the snippet
-//
-// The snippet covers ~110 forms somebody thought to list. This covers every
-// instruction the emitter actually produces, in the proportions it produces
-// them, including the runtime helpers nobody writes rows for. #6062 wanted it
-// specifically: it recorded four FP instructions appearing one time fewer in a
-// linked binary than in the emitted asm, and a count cannot distinguish "an
-// instruction was dropped" from "the counting method is off by one" — an
-// alignment can, by naming the first index where the two streams differ.
-//
-// On its first run it found cset assembling as its 64-bit sibling 73 times —
-// behaviourally invisible, so no execution test could ever have caught it, and
-// not a form anyone had added a snippet row for.
-//
-// # Why adrp / add-immediate are excluded
-//
-// Those two carry ADDRESSES, and the two images are laid out differently
-// (different data-segment vaddr, different rodata placement), so they
-// legitimately differ. Everything else — every ALU op, every load/store, every
-// branch displacement, every literal-pool word — must match exactly.
 func TestSelfHostArm64WholeProgramMatchesGas(t *testing.T) {
 	gas := gnuArm64Oracle(t)
 	gcc, runner := x86_64Tooling(t)
 
-	// Import-free on purpose: asm_ir_run has no module loader. That bounds what
-	// this reaches — the emitter DCEs the runtime down to what the program
-	// touches, so this is ~4k asm lines rather than the ~117k a stdlib-using
-	// program produces through the full CLI. So it is deliberately written to
-	// touch a spread of runtime: refcounted arrays, string concat and slicing,
-	// f64 arithmetic and comparison, i64, division/remainder, a closure, and
-	// nested indexing. Widen the program before reaching for a heavier driver.
 	const program = `
 function fib(n: i32): i32 {
     if (n < 2) { return n; }
@@ -108,8 +75,6 @@ function main(): i32 {
 	}
 }
 
-// isAddressBearing reports whether a word is an adrp or an add-immediate, the
-// two forms whose operands depend on where the assembler placed its sections.
 func isAddressBearing(w uint32) bool {
 	return w&0x9f000000 == 0x90000000 || w&0x7f800000 == 0x11000000
 }

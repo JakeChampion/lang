@@ -7,19 +7,11 @@ import (
 	"testing"
 )
 
-// The doc-only exclusion every heavy lane carries. Narrow on purpose: `*.md`
-// does not cross a `/` in a GitHub path filter, so it covers root-level prose
-// and leaves the literate sources under examples/literate/*.fern.md — which
-// are compiled — triggering everything.
 var docOnlyPathsIgnore = []string{
 	"docs/**",
 	"*.md",
 }
 
-// selfHostOnlyPaths are the trees only the self-host compiler and its tests
-// read. A lane whose tests never read them may add them to the doc-only block,
-// provided every one of its jobs deletes them first (dropSelfHostAction), so
-// that a test starting to read them fails on every run of that lane.
 var selfHostOnlyPaths = []string{
 	"compiler/**",
 	"internal/testing/e2ecompiler/**",
@@ -27,23 +19,8 @@ var selfHostOnlyPaths = []string{
 
 const dropSelfHostAction = "./.github/actions/drop-selfhost-sources"
 
-// alwaysRunOnPR names the lane that must NEVER carry a filter. A doc-only PR
-// still has to run one real gate: a pull request reporting no checks at all is
-// indistinguishable from one whose CI never fired, and this repo merges on the
-// checks list.
 const alwaysRunOnPR = "lint"
 
-// Every lane in ci.yml's table either scopes itself with a `paths:` allowlist
-// or carries the shared doc-only `paths-ignore`, and the two are exclusive. The
-// lane in alwaysRunOnPR is the single deliberate exception, and it is kept out
-// of the table altogether (TestCILaneFiltersMatchTheirJobs).
-//
-// This is a drift guard, and the drift it guards against has happened here
-// before in the same shape: a list maintained by hand in one place while the
-// thing it describes grows somewhere else (see scripts/unit-test-packages for
-// the version of this that cost four rounds of silently-unrun tests). A lane
-// row with an empty filter is a lane that runs the whole compiler suite on a
-// typo fix, and nothing else would say so.
 func TestPRLanesShareOneDocOnlyFilter(t *testing.T) {
 	for lane, f := range laneTable(t) {
 		switch {
@@ -51,8 +28,6 @@ func TestPRLanesShareOneDocOnlyFilter(t *testing.T) {
 			t.Errorf("%s: %q carries both `paths` and `paths-ignore`; GitHub requires both to "+
 				"be satisfied, which no lane here means", ciFile, lane)
 		case len(f.Paths) > 0:
-			// An allowlist already scopes the lane to the sources it gates,
-			// which is strictly narrower than the doc-only exclusion.
 		case len(f.PathsIgnore) == 0:
 			t.Errorf("%s: %q has no path filter: a doc-only PR would launch it. Give it the "+
 				"shared paths-ignore block or a `paths` allowlist.", ciFile, lane)
@@ -68,10 +43,6 @@ func TestPRLanesShareOneDocOnlyFilter(t *testing.T) {
 	}
 }
 
-// checkDropsSelfHostSources holds a lane that skips self-host-only changes to
-// deleting those trees in every job, straight after checkout: without that, a
-// test that starts to read them passes on a stale tree while the changes that
-// would break it never run the lane.
 func checkDropsSelfHostSources(t *testing.T, lane string) {
 	t.Helper()
 	src := workflowSource(t, lane+".yml")
@@ -103,10 +74,6 @@ func checkDropsSelfHostSources(t *testing.T, lane string) {
 	}
 }
 
-// onBlock returns the workflow's top-level `on:` mapping: everything from the
-// `on:` line to the next line that starts in column zero. Path filters and
-// trigger types are nested inside it, so matching within this block cannot pick
-// up a `paths:` that belongs to a step.
 func onBlock(src string) (string, bool) {
 	lines := strings.Split(src, "\n")
 	start := -1
@@ -130,19 +97,6 @@ func onBlock(src string) (string, bool) {
 	return b.String(), true
 }
 
-// Every gate lane runs on main as well as on the pull request, under the same
-// path filter.
-//
-// PRs here are rebase-merged, so each commit lands on a main that its own PR's
-// CI never saw: a coupling between two individually-green PRs exists only in
-// the combination, and only a run against the merge reports it. For a long
-// time only test-units.yml and check-sources.yml covered main, which left the
-// compiler suite — every e2e lane, the fuzzers, the fixpoints — proving
-// something about PR heads and nothing at all about the branch people ship
-// from. A red main was discoverable only by dispatching the lanes by hand.
-//
-// Main calls the same orchestration through ci-main.yml. Main's selected tip
-// runs full coverage because pending commits coalesce; PRs retain path filters.
 func TestGateLanesRunOnMain(t *testing.T) {
 	src := workflowSource(t, ciFile)
 	on, ok := onBlock(src)
@@ -175,9 +129,6 @@ func TestGateLanesRunOnMain(t *testing.T) {
 		}
 	}
 
-	// Whether main cancels its own runs is settled in main_concurrency_test.go.
-	// What stays here is the grouping KEY, which is what makes a burst of
-	// merges queue instead of each holding a run.
 	if conc, ok := concurrencyBlock(main); ok && strings.Contains(conc, "github.sha") {
 		t.Errorf("%s: main is keyed on the SHA, so every merge gets its own concurrency "+
 			"group and waits on nothing. A burst of rebase-merges then holds an "+
@@ -186,8 +137,6 @@ func TestGateLanesRunOnMain(t *testing.T) {
 	}
 }
 
-// triggerBlock returns the body of one trigger inside an `on:` mapping —
-// everything indented under `  <name>:` up to the next key at that indent.
 func triggerBlock(on, name string) (string, bool) {
 	lines := strings.Split(on, "\n")
 	start := -1
@@ -211,9 +160,6 @@ func triggerBlock(on, name string) (string, bool) {
 	return b.String(), true
 }
 
-// concurrencyBlock returns the body of the workflow-level `concurrency:`
-// mapping. Scoped rather than matched against the whole file so a job-level
-// group, or the word in a comment, is not read as the workflow's own.
 func concurrencyBlock(src string) (string, bool) {
 	lines := strings.Split(src, "\n")
 	start := -1

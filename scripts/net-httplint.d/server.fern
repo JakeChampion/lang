@@ -1,8 +1,3 @@
-// The server scripts/net-httplint reads: one response of each shape
-// std/http and its middleware produce, so httplint's notes cover a routed
-// text and JSON API, a redirect, a problem, a 405 with its Allow, an
-// upload echoed back, a compressed body, a static file with its
-// validators and a response that says how long it may be cached.
 import "std/http";
 import "std/http/router";
 import "std/http/static";
@@ -32,8 +27,6 @@ function echo(req: HttpRequest, params: router.Params, plat: platform.Host): Res
   return Ok(http.text(200, body));
 }
 
-// A body past the compressor's minimum, so `Accept-Encoding: gzip` gets a
-// coded one.
 function essay(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
   use req2 <- compress.compressed(req);
   let text: string = "";

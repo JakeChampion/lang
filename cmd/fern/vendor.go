@@ -12,18 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/pkgcache"
 )
 
-// runVendor implements `fern -vendor [START]`: flatten the full
-// transitive dependency graph of the manifest governing START into
-// `<root>/vendor/<name>/`, one directory per package keyed by its
-// manifest `name`. After vendoring, builds are fully offline — the
-// loader resolves every declared dependency out of `vendor/` and never
-// touches the network or the deps' original path/url locations (Rec §6,
-// the `BOOTSTRAP-RESEARCH.md` no-build-time-network constraint).
-//
-// url dependencies must already be in the content-addressed store
-// (`fern -fetch` first); vendoring copies from the store, it does not
-// download. A name collision between two distinct packages is a hard
-// error — the flat namespace requires unique names.
 func runVendor(start string) error {
 	st, err := os.Stat(start)
 	dir := start
@@ -41,10 +29,7 @@ func runVendor(start string) error {
 		return fmt.Errorf("vendor: no %s governs %s", manifest.FileName, dir)
 	}
 
-	// Collect every transitive package's source directory, keyed by name.
-	// Walk manifests (not the vendor tree — we're building it), following
-	// path deps to their directories and url deps to the store.
-	srcOf := map[string]string{} // name -> source directory
+	srcOf := map[string]string{}
 	seenDir := map[string]bool{}
 	var walk func(m *manifest.Manifest) error
 	walk = func(m *manifest.Manifest) error {
@@ -53,8 +38,6 @@ func runVendor(start string) error {
 		}
 		seenDir[m.Dir] = true
 		for name, d := range m.Deps {
-			// Workspace-member deps live in the workspace tree (resolved by
-			// name), not in vendor/ — skip them.
 			if d.Workspace {
 				continue
 			}
@@ -82,10 +65,6 @@ func runVendor(start string) error {
 		}
 		return nil
 	}
-	// A workspace root vendors the UNION of all members' external
-	// dependencies into the root's vendor/ (members resolve out of it, per
-	// the resolver's workspace-root vendor fallback). A plain package
-	// vendors its own transitive deps.
 	if root.IsWorkspace() {
 		for _, rel := range root.Members {
 			mm, err := manifest.Load(root.MemberDir(rel))
@@ -117,15 +96,8 @@ func runVendor(start string) error {
 	return nil
 }
 
-// depSourceDir resolves a dependency to its on-disk source directory: a
-// path dep's directory, a versioned dep's fern.lock-pinned source, or an
-// already-fetched url dep's store directory.
 func depSourceDir(m *manifest.Manifest, name string, d manifest.Dep) (string, error) {
 	if d.Version != "" {
-		// A versioned dep names no directory of its own, so DepDir below
-		// would answer the manifest's own directory — vendoring the package
-		// into its own vendor/ and dropping the dependency. The lock is
-		// where its source lives, exactly as at load time.
 		return modload.LockedDepDir(m.Dir, name)
 	}
 	if d.URL != "" {
@@ -142,12 +114,6 @@ func depSourceDir(m *manifest.Manifest, name string, d manifest.Dep) (string, er
 	return dir, nil
 }
 
-// copyPackage copies a package's Fern sources into dst: fern.toml plus
-// every .fern / .fern.md file, preserving subdirectory layout. A nested
-// `vendor/` directory is skipped (the flat top-level vendor is the only
-// one that matters) as are dot-directories (.git and the like). Anything
-// that isn't a source file is left behind — a vendored package is
-// source, not a working tree.
 func copyPackage(src, dst string) error {
 	return filepath.WalkDir(src, func(p string, de os.DirEntry, err error) error {
 		if err != nil {

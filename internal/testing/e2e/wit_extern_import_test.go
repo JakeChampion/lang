@@ -12,18 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternImportScalarRunsUnderWasmtime is P4b's end-to-end gate
-// (bring-your-own WIT, docs/WIT-BRING-YOUR-OWN.md): a Fern program declares a
-// scalar WASI import via `@import` on a body-less function and calls it. The
-// call must lower to a real core wasm function import of the declared
-// (interface, wit-name) — proven by the core module carrying that import —
-// and the world-driven composer must wire it so the component validates and
-// runs under wasmtime.
-//
-// `wasi:random/random@0.2.0` `get-random-u64: func() -> u64` is the canonical
-// scalar extern: no params, a single u64 result, no memory. It is declared by
-// the embedded `fern` world, so ComposeFromWorldAuto classifies and wires the
-// core import with no hardcoded list.
 func TestExternImportScalarRunsUnderWasmtime(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -35,9 +23,6 @@ func TestExternImportScalarRunsUnderWasmtime(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	// `r & 0` is deterministically 0, so the program prints a fixed string and
-	// exits 0 — but the random_u64() result flows into the branch condition,
-	// so the call (and thus the import) survives optimisation.
 	const want = "extern-import-ok"
 	src := `@import("wasi:random/random@0.2.0", "get-random-u64")
 function random_u64(): u64;
@@ -63,8 +48,6 @@ function main(): i32 {
 	}
 	core := componentCoreSection(t, ref)
 
-	// Codegen gate: the `@import` lowered to a concrete core wasm function
-	// import of the declared (interface, wit-name).
 	if !bytes.Contains(core, []byte("wasi:random/random@0.2.0")) {
 		t.Errorf("core module is missing the imported interface %q", "wasi:random/random@0.2.0")
 	}
@@ -72,8 +55,6 @@ function main(): i32 {
 		t.Errorf("core module is missing the imported function %q", "get-random-u64")
 	}
 
-	// Compose via the world-driven path: the wired imports are derived from
-	// the core's own imports, classified against the embedded fern world.
 	w, err := componenttype.DecodeWorld("fern")
 	if err != nil {
 		t.Fatalf("DecodeWorld: %v", err)

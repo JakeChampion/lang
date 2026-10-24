@@ -1,44 +1,5 @@
-// std/math — random integers, integer ranges, numeric-width
-// constants, packed-RGB helper.
-//
-// No prelude: these are in scope only after a program
-// declares `import "std/math";` (docs/PRELUDE-TO-MODULES.md,
-// Phase 5).
+// This module provides random integers, integer ranges, numeric constants, and RGB operations.
 
-// `random_int(lo, hi)` — random i32 in [lo, hi). Returns `lo`
-// when hi <= lo (empty range fallback). Pulls 4 bytes from
-// random_bytes (kernel CSPRNG on natives, wasi_random on
-// wasm), combines into a full 32-bit value, and modulo-maps
-// to the range width `(hi - lo) as u32` — so the WHOLE
-// requested range is reachable, including ranges wider than
-// 2^24 up to the full u32 span (`INT_MIN..INT_MAX` → width
-// 2^32-1). The `hi - lo` width is computed in wrapping i32
-// then read as u32: for the widest range it wraps to -1 =
-// 2^32-1, which is the correct unsigned width.
-//
-// (Previously this drew only 3 bytes / 24 bits, which silently
-// TRUNCATED any range > 2^24: since `u < 2^24 <= range`, `u %
-// range == u`, so `random_int(0, 2e9)` only ever returned the
-// low ~16M. The u32-modulo codegen bug that motivated the cap
-// is fixed — full 32-bit `u % range` is differential-verified
-// across interp / x86-64 / wasm — so the draw is widened here.)
-//
-// The result is UNBIASED: every value in [lo, hi) is equally
-// likely. The previous revision mapped the draw with a bare
-// `u % range`, which is biased whenever `range` does not divide
-// 2^32 — the first `2^32 mod range` values come up one extra
-// time out of every 2^32 draws. That is invisible in a spot
-// check but it is a real defect, and it made `rand.shuffle`
-// (which is Fisher-Yates over this function) a NON-UNIFORM
-// permutation. `__random_below` below removes it by rejection.
-//
-// The `range` local intentionally shares its name with the
-// module-level `range()` function below — a deliberate regression
-// guard for the self-host module loader, which previously mangled
-// such a shadowing local into the function reference on import
-// (see flatten.fern + TestSelfHostLocalShadowsImportedDecl). The
-// earlier `rng` rename worked around that; the loader now resolves
-// the shadow correctly, so the natural name is restored.
 pub function random_int(lo: i32, hi: i32): i32 {
   if (hi <= lo) {
     return lo;
@@ -47,8 +8,6 @@ pub function random_int(lo: i32, hi: i32): i32 {
   return lo + __random_below(range) as i32;
 }
 
-// __random_u32 draws a full 32-bit value from the platform CSPRNG
-// (kernel getrandom on natives, wasi_random on wasm).
 function __random_u32(): u32 {
   let b: u8[] = random_bytes(4);
   return b[0] as u32 << 24 as u32
@@ -57,35 +16,12 @@ function __random_u32(): u32 {
     | b[3] as u32;
 }
 
-// __random_below(range) — a uniformly distributed u32 in [0, range),
-// by Lemire's nearly-divisionless bounded method. `range >= 1`.
-//
-// The idea: multiplying a uniform 32-bit draw by `range` gives a
-// 64-bit product whose HIGH half is already in [0, range) — that is
-// the multiply-shift map, and it needs no division at all. It is
-// slightly biased on its own, because 2^32 values cannot split evenly
-// into `range` buckets: `2^32 mod range` of the buckets get one extra
-// value. Lemire's insight is that the LOW half of the same product
-// identifies exactly which draws fall in that surplus, so rejecting
-// `low < (2^32 mod range)` leaves a perfectly uniform result.
-//
-// The cost is a single comparison in the common case: the expensive
-// modulo that computes the rejection threshold is only evaluated when
-// `low < range`, which happens with probability `range / 2^32`. For
-// the range sizes real callers use (array lengths, byte values) that
-// branch is essentially never taken, so this is cheaper in practice
-// than the biased `%` it replaces, not merely more correct.
-//
-// Termination: each retry independently accepts with probability
-// `1 - (2^32 mod range)/2^32 > 1/2`, so the loop ends with
-// probability 1 and takes under two iterations on average.
 function __random_below(range: u32): u32 {
   let wide: u64 = range as u64;
   let mask: u64 = (1 as u64 << 32 as u64) - 1 as u64;
   let product: u64 = __random_u32() as u64 * wide;
   let low: u64 = product & mask;
   if (low < wide) {
-    // 2^32 mod range — the size of the surplus zone to reject.
     let threshold: u64 = ((1 as u64 << 32 as u64) - wide) % wide;
     while (low < threshold) {
       product = __random_u32() as u64 * wide;
@@ -95,8 +31,6 @@ function __random_below(range: u32): u32 {
   return (product >> 32 as u64) as u32;
 }
 
-// `range(start, end)` — i32[] of [start, end). Empty if
-// start >= end. Standard half-open range.
 pub function range(start: i32, end: i32): i32[] {
   let out: i32[] = [];
   let i: i32 = start;
@@ -107,9 +41,6 @@ pub function range(start: i32, end: i32): i32[] {
   return out;
 }
 
-// `range_step(start, end, step)` — same as range but with
-// arbitrary positive step. Step <= 0 returns empty (no
-// reverse ranges — use a manual while loop for that).
 pub function range_step(start: i32, end: i32, step: i32): i32[] {
   let out: i32[] = [];
   if (step <= 0) {
@@ -123,10 +54,6 @@ pub function range_step(start: i32, end: i32, step: i32): i32[] {
   return out;
 }
 
-// Function-style accessors for the width boundaries. Plain
-// constants would be cleaner but lang doesn't have a const
-// declaration syntax yet; these constant-functions inline at
-// the call site via the IR's constant-folding pass.
 pub function i32_max(): i32 {
   return 2147483647;
 }
@@ -143,83 +70,46 @@ pub function i64_min(): i64 {
   return 0 as i64 - 9223372036854775807 - 1 as i64;
 }
 
-// --- floating-point angle + interpolation helpers ---
-//
-// Pure f64 arithmetic (no libm / transcendentals), so std/math keeps
-// its zero-dependency, every-backend-exact posture.
-
-// `pi()` — the ratio of a circle's circumference to its diameter, as the
-// closest f64 to π. A function (not a constant) to match how std/math
-// exposes all its values.
 pub function pi(): f64 {
   return 3.141592653589793;
 }
 
-// `tau()` — 2π, one whole turn in radians and the more natural base unit
-// for angular math (`tau() / 4.0` is a quarter turn). Exactly `2.0 *
-// pi()`, since scaling an f64 by two only bumps the exponent.
 pub function tau(): f64 {
   return 6.283185307179586;
 }
 
-// `to_radians(deg)` — convert an angle from degrees to radians
-// (`deg × π / 180`). Inverse of `to_degrees`. `to_radians(0.0)` is
-// exactly 0.0; other conversions round to the nearest f64.
 pub function to_radians(deg: f64): f64 {
   return deg * (pi() / 180.0);
 }
 
-// `to_degrees(rad)` — convert an angle from radians to degrees
-// (`rad × 180 / π`). Inverse of `to_radians`. `to_degrees(0.0)` is
-// exactly 0.0; other conversions round to the nearest f64.
 pub function to_degrees(rad: f64): f64 {
   return rad * (180.0 / pi());
 }
 
-// `lerp(a, b, t)` — linear interpolation from `a` to `b` by fraction `t`:
-// `t == 0.0` returns `a`, `t == 1.0` returns `b`, and `t` outside [0, 1]
-// extrapolates. Uses the `a·(1−t) + b·t` form, which reproduces BOTH
-// endpoints exactly (the cheaper `a + (b−a)·t` form drifts off `b` at
-// `t == 1.0`); in exchange it is not guaranteed monotonic for `a`, `b` of
-// wildly different magnitude — the standard trade for endpoint fidelity.
 pub function lerp(a: f64, b: f64, t: f64): f64 {
   return a * (1.0 - t) + b * t;
 }
 
-// `pack_rgb(r, g, b)` — pack three 0..255 components into a
-// 24-bit i32. Inverse of `(n).to_rgb_hex()`'s shifts. Each
-// component is masked to its low 8 bits; values outside
-// 0..255 silently wrap. Pairs with `to_rgb_hex` for the
-// "construct then format" colour pipeline.
 pub function pack_rgb(r: i32, g: i32, b: i32): i32 {
   return (r & 255) << 16 | (g & 255) << 8 | b & 255;
 }
 
-// __hex_digit(b) — value 0..15 of an ASCII hex byte, or -1 if it isn't
-// one. Self-contained so std/math keeps zero module dependencies.
 function __hex_digit(b: i32): i32 {
-  if (b >= 48 && b <= 57) {  // '0'..'9'
+  if (b >= 48 && b <= 57) {
     return b - 48;
   }
-  if (b >= 97 && b <= 102) {  // 'a'..'f'
+  if (b >= 97 && b <= 102) {
     return b - 97 + 10;
   }
-  if (b >= 65 && b <= 70) {  // 'A'..'F'
+  if (b >= 65 && b <= 70) {
     return b - 65 + 10;
   }
   return -1;
 }
 
-// `parse_rgb_hex(s)` — parse a hex colour string into a packed RGB i32
-// (the `pack_rgb` layout `(r<<16)|(g<<8)|b`), or `None` if malformed.
-// The inverse of `(n).to_rgb_hex()`, completing the colour pipeline:
-// `parse_rgb_hex("#ff8800")` → `Some(pack_rgb(255,136,0))`, ready for
-// `to_rgb_hex()` or `std/ansi.fg_rgb`. Accepts an optional leading `#`
-// and both the 6-digit form (`#rrggbb`) and 3-digit shorthand (`#rgb`,
-// each nibble doubled so `#f80` == `#ff8800`). Hex is case-insensitive.
 pub function parse_rgb_hex(s: string): Option[i32] {
   let start: i32 = 0;
-  if (s.len() > 0 && s[0] == 35) {  // optional '#'
+  if (s.len() > 0 && s[0] == 35) {
     start = 1;
   }
   let body: i32 = s.len() - start;
@@ -243,17 +133,11 @@ pub function parse_rgb_hex(s: string): Option[i32] {
     if (r < 0 || g < 0 || b < 0) {
       return None;
     }
-    // Double each nibble: 0xF -> 0xFF.
     return Some((r << 4 | r) << 16 | (g << 4 | g) << 8 | (b << 4 | b));
   }
   return None;
 }
 
-// `rgb_luminance(rgb)` — perceived brightness (0..255) of a packed RGB
-// colour, via the ITU-R BT.601 luma weights (0.299 R + 0.587 G +
-// 0.114 B), scaled to integers (299/587/114 per 1000) so it's exact on
-// every backend. The standard cheap "how bright does this look?"
-// measure — brighter greens read lighter than equally-valued blues.
 pub function rgb_luminance(rgb: i32): i32 {
   let r: i32 = rgb >> 16 & 255;
   let g: i32 = rgb >> 8 & 255;
@@ -261,10 +145,6 @@ pub function rgb_luminance(rgb: i32): i32 {
   return (r * 299 + g * 587 + b * 114) / 1000;
 }
 
-// `rgb_is_dark(rgb)` — true when a colour is dark enough that white text
-// reads better on it than black (luma < 128, the midpoint of 0..255).
-// The one-call helper for picking a readable foreground over a coloured
-// background: `if (rgb_is_dark(bg)) { white } else { black }`.
 pub function rgb_is_dark(rgb: i32): boolean {
   return rgb_luminance(rgb) < 128;
 }

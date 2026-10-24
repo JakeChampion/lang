@@ -1,103 +1,7 @@
-// std/regex — a small regular-expression matcher.
-//
-// Fern had no pattern-matching engine (#2680). This one parses a pattern
-// into a tree (`RNode`) and matches it as a Thompson-style NFA: each step
-// carries the SET of text positions the pattern could be at, so
-// alternation and the star/plus closures are handled without
-// backtracking blow-up (and a star over an empty match can't loop — the
-// position set only ever grows, then stops). It's ordinary Fern.
-//
-// All offsets here (parse positions, match starts/ends, capture spans) are
-// byte indices. Matches can split a UTF-8 scalar. Text-producing APIs
-// return Option and reject invalid UTF-8; their `_bytes` counterparts
-// preserve the raw output. Both accept string inputs and byte patterns.
-//
-// Supported syntax:
-//   .            any single byte
-//   c            the literal byte `c`
-//   [abc]        character class — any one of the listed bytes
-//   [a-z]        class with ranges (inclusive, by byte value)
-//   [^...]       negated class — any byte NOT listed
-//   ( ... )      capturing group (scopes a quantifier or an alternation;
-//                its span is extractable via `regex_captures`)
-//   (?<name>...) named capturing group — captures like `( … )` and is also
-//                reachable by name (`.group_named("name")`, `${name}`)
-//   (?: ... )    non-capturing group — same scoping, no capture slot
-//   a|b|c        alternation — match any one alternative
-//   *  +  ?      zero-or-more / one-or-more / optional, on the preceding
-//                atom OR group (`(ab)+`, `(a|b)*`)
-//   {n} {n,} {n,m}  counted repetition: exactly n / at-least n / between n
-//                and m, of the preceding atom or group (`a{3}`, `\d{2,4}`)
-//   ^            anchor at the start of the text
-//   $            anchor at the end of the text
-//   \d \w \s     shorthand classes: digit / word (`[A-Za-z0-9_]`) /
-//                whitespace; `\D \W \S` are their negations
-//   \b \B        word boundary / non-boundary (zero-width, between a
-//                `\w` and a non-`\w` byte or a text edge)
-//   (?i)…        a leading `(?i)` turns on ASCII case-insensitive matching
-//                (A–Z ↔ a–z) for the whole pattern. Any other `(?…` form
-//                (mid-pattern flags, lookaround) is unsupported: it parses
-//                as a non-capturing group whose body starts with the
-//                literal `?`, so it will usually just fail to match
-//   \n \t \r     the newline / tab / carriage-return bytes
-//   \<meta>      a backslash before any other byte is that literal byte —
-//                use it to match a metacharacter (`\.`, `\(`, `\*`, `\\`, …)
-//
-// Three entry points, all SEARCHES (the pattern may match anywhere; anchor
-// with `^` / `$` for a whole-string match like `"^(cat|dog)$"`):
-//   - `regex_match(pattern, text)`  → boolean: did it match anywhere?
-//   - `regex_find(pattern, text)`   → Option[i32]: start byte index of the
-//                                     leftmost match.
-//   - `regex_search(pattern, text)` → Option[RMatch { start, end }]: the
-//                                     leftmost-longest match span; the
-//                                     matched bytes span [start, end).
-// `regex_full_match` requires the pattern to match the whole text;
-// `regex_count` returns the number of matches; `regex_find_all` /
-// `regex_replace` / `regex_replace_all` / `regex_split` cover the bulk
-// operations.
-//
-// Capturing groups: `regex_captures(pattern, text)` returns the leftmost-
-// longest match WITH the byte span of every `( … )` group as an
-// `Option[RCaps]`
-// (`.group(i)` / `.group_start(i)` / `.group_end(i)` / `.has_group(i)` /
-// `.group_count()`; group 0 is the whole match). `regex_captures_all`
-// returns every non-overlapping match's captures left to right. Groups are
-// numbered by their `(` from 1, left to right; `(?:…)` groups without
-// capturing. A `(?<name>…)` group captures like `( … )` AND is reachable
-// by name — `.group_named(name)` / `.group_named_start(name)` /
-// `.group_named_end(name)` / `.has_group_named(name)` / `.group_index(name)`
-// (an unknown name reads as a group that did not participate; duplicate names
-// use the lowest index).
-// A group inside a quantifier reports its LAST iteration's span
-// (`(a|b)+` on "ab" captures "b"). `regex_replace_groups` /
-// `regex_replace_all_groups` substitute a `$`-template per match
-// (`$1`…`$9` group text, `${name}` named-group text, `$0` whole match,
-// `$$` literal dollar). Capture extraction runs on a compiled
-// instruction program (a Pike-VM thread simulation — see `RInst` below),
-// so it stays linear-time per scan position with no backtracking blow-up,
-// same as the span matcher. Backreferences (`\1` in a PATTERN) are not
-// supported.
-//
-// Matching is on raw bytes, so multi-byte UTF-8 is matched byte-wise.
-//
-// Backend note: the matcher and the whole module compile and run on
-// x86-64, arm64 and wasm, and under the interpreter (the array-payload-enum
-// parser bug #3720 that once blocked grouped patterns is fixed — see
-// internal/testing/e2ecompiler/self_host_regex_ir_test.go).
+// This module evaluates regular expressions.
+
 import "std/utf8" as utf8;
 
-// RNode is the parsed pattern tree. Leaf atoms (`RChar` / `RAny` /
-// `RClass` / `RStart` / `REnd`, plus `RBound` for a `\b` / `\B`
-// word-boundary assertion) and the composites `RSeq` (concatenation)
-// / `RAlt` (alternation) / `RStar` / `RPlus` / `ROpt` (quantifiers over a
-// sub-node, which a group makes an arbitrary tree). `RGroup(RGroupData)`
-// marks a CAPTURING `( … )` group with 1-based index `idx` — transparent
-// to the span matcher, a save-slot pair to the capture engine. A
-// non-capturing `(?:…)` group contributes no RGroup (its inner tree is
-// spliced in directly, like `( … )` did before captures existed).
-//
-// RGroupData holds a capture group's index and child node.
-// __rx_group_names recovers group names from the pattern when they are needed.
 struct RGroupData { idx: i32, node: RNode }
 
 pub enum RNode {
@@ -115,153 +19,114 @@ pub enum RNode {
   RGroup(RGroupData),
 }
 
-// RParse threads the recursive-descent parser's cursor: the node parsed
-// so far, the index just past it, and the next unused capture-group
-// index (groups are numbered by their `(` from 1, left to right).
 struct RParse { node: RNode, pos: i32, g: i32 }
 
-// __rx_atom parses one atom: a `( … )` capturing group (wrapped in an
-// RGroup carrying its 1-based index), a `(?: … )` non-capturing group
-// (transparent — the inner tree is returned directly), a `[ … ]` class,
-// `.` / `^` / `$`, or a literal byte. `g` is the next unused capture-group
-// index, threaded through every parse function and returned (updated) in
-// the RParse.
 function __rx_atom(p: string, i: i32, g: i32): RParse {
   let c: i32 = p[i] as i32;
-  if (c == 92) {  // '\' escape
-    if (i + 1 >= p.len()) {  // trailing → literal '\'
+  if (c == 92) {
+    if (i + 1 >= p.len()) {
       return RParse { node: RChar(92), pos: i + 1, g: g };
     }
     let d: i32 = p[i + 1] as i32;
-    // Shorthand classes (and their negations) desugar to an equivalent
-    // `[ … ]` class token the matcher already understands.
-    if (d == 100) {  // \d
+    if (d == 100) {
       return RParse { node: RClass("[0-9]"), pos: i + 2, g: g };
     }
-    if (d == 68) {  // \D
+    if (d == 68) {
       return RParse { node: RClass("[^0-9]"), pos: i + 2, g: g };
     }
-    if (d == 119) {  // \w
+    if (d == 119) {
       return RParse { node: RClass("[A-Za-z0-9_]"), pos: i + 2, g: g };
     }
-    if (d == 87) {  // \W
+    if (d == 87) {
       return RParse { node: RClass("[^A-Za-z0-9_]"), pos: i + 2, g: g };
     }
-    if (d == 115) {  // \s
+    if (d == 115) {
       return RParse { node: RClass("[ \t\n\r]"), pos: i + 2, g: g };
     }
-    if (d == 83) {  // \S
+    if (d == 83) {
       return RParse { node: RClass("[^ \t\n\r]"), pos: i + 2, g: g };
     }
-    // Word-boundary assertions (zero-width).
-    if (d == 98) {  // \b
+    if (d == 98) {
       return RParse { node: RBound(true), pos: i + 2, g: g };
     }
-    if (d == 66) {  // \B
+    if (d == 66) {
       return RParse { node: RBound(false), pos: i + 2, g: g };
     }
-    // Escaped control bytes.
-    if (d == 110) {  // \n
+    if (d == 110) {
       return RParse { node: RChar(10), pos: i + 2, g: g };
     }
-    if (d == 116) {  // \t
+    if (d == 116) {
       return RParse { node: RChar(9), pos: i + 2, g: g };
     }
-    if (d == 114) {  // \r
+    if (d == 114) {
       return RParse { node: RChar(13), pos: i + 2, g: g };
     }
-    // Any other escaped byte is that literal byte — covers the
-    // metacharacters `\. \* \+ \? \( \) \[ \] \| \^ \$ \\` etc.
-    // NOTE: this includes `\1`…`\9` — they are literal digit bytes,
-    // NOT backreferences (which this engine does not support).
     return RParse { node: RChar(d), pos: i + 2, g: g };
   }
-  if (c == 40) {  // '('
-    // Any `(? … )` form is NON-capturing. `(?:` is the supported
-    // spelling (the `?:` is skipped); an unrecognised `(?` construct —
-    // a mid-pattern `(?i)`, a lookaround `(?=` / `(?!` — keeps its old
-    // lenient behaviour (the `?…` parses as literal bytes, so the
-    // pattern likely won't match) but must NOT claim a capture index,
-    // or every later group's number would silently shift.
-    if (i + 1 < p.len() && p[i + 1] == 63) {  // '?'
-      // `(?<name>…)` — a NAMED capturing group: claims an index like a
-      // bare group (the NAME itself is recovered separately by
-      // `__rx_group_names`, which mirrors this exact recognition — the
-      // node stays a plain 2-field RGroupData). Recognised as `(?<`
-      // followed by a name byte that is NOT `=`/`!` (those would be
-      // `(?<=` / `(?<!` lookbehind, unsupported). A `(?<…` with no
-      // closing `>` falls through to non-capturing.
+  if (c == 40) {
+    if (i + 1 < p.len() && p[i + 1] == 63) {
       if (i + 3 < p.len() && p[i + 2] == 60
-        && p[i + 3] != 61 && p[i + 3] != 33) {  // '?' '<' !'=' !'!'
+        && p[i + 3] != 61 && p[i + 3] != 33) {
         let ne: i32 = i + 3;
-        while (ne < p.len() && p[ne] != 62) {  // scan to '>'
+        while (ne < p.len() && p[ne] != 62) {
           ne = ne + 1;
         }
-        if (ne < p.len()) {  // found '>'
+        if (ne < p.len()) {
           let gi: RParse = __rx_alt(p, ne + 1, g + 1);
           let gpos: i32 = gi.pos;
-          if (gpos < p.len() && p[gpos] == 41) {  // ')'
+          if (gpos < p.len() && p[gpos] == 41) {
             gpos = gpos + 1;
           }
           return RParse { node: RGroup(RGroupData { idx: g, node: gi.node }), pos: gpos, g: gi.g };
         }
       }
       let nb: i32 = i + 1;
-      if (i + 2 < p.len() && p[i + 2] == 58) {  // '?:' → skip both
+      if (i + 2 < p.len() && p[i + 2] == 58) {
         nb = i + 3;
       }
       let ni: RParse = __rx_alt(p, nb, g);
       let npos: i32 = ni.pos;
-      if (npos < p.len() && p[npos] == 41) {  // ')'
+      if (npos < p.len() && p[npos] == 41) {
         npos = npos + 1;
       }
       return RParse { node: ni.node, pos: npos, g: ni.g };
     }
-    // `( … )` — capturing: claim index `g`, then parse the body (which
-    // numbers any nested groups after this one, left to right).
     let inner: RParse = __rx_alt(p, i + 1, g + 1);
     let pos: i32 = inner.pos;
-    if (pos < p.len() && p[pos] == 41) {  // ')'
+    if (pos < p.len() && p[pos] == 41) {
       pos = pos + 1;
     }
     return RParse { node: RGroup(RGroupData { idx: g, node: inner.node }), pos: pos, g: inner.g };
   }
-  if (c == 91) {  // '['
+  if (c == 91) {
     let j: i32 = i + 1;
-    if (j < p.len() && p[j] == 94) {  // leading '^'
+    if (j < p.len() && p[j] == 94) {
       j = j + 1;
     }
-    if (j < p.len() && p[j] == 93) {  // ']' as first member
+    if (j < p.len() && p[j] == 93) {
       j = j + 1;
     }
     while (j < p.len() && p[j] != 93) {
       j = j + 1;
     }
     let endb: i32 = j;
-    if (endb < p.len()) {  // include ']'
+    if (endb < p.len()) {
       endb = endb + 1;
     }
     return RParse { node: RClass(slice_unchecked(p, i, endb) + ""), pos: endb, g: g };
   }
-  if (c == 46) {  // '.'
+  if (c == 46) {
     return RParse { node: RAny, pos: i + 1, g: g };
   }
-  if (c == 94) {  // '^'
+  if (c == 94) {
     return RParse { node: RStart, pos: i + 1, g: g };
   }
-  if (c == 36) {  // '$'
+  if (c == 36) {
     return RParse { node: REnd, pos: i + 1, g: g };
   }
-  return RParse { node: RChar(c), pos: i + 1, g: g };  // literal
+  return RParse { node: RChar(c), pos: i + 1, g: g };
 }
 
-// __rx_repeat desugars a counted quantifier `node{n,m}` into the existing
-// node kinds: `n` required copies, then either an `RStar` (unbounded
-// `{n,}`) or `m - n` `ROpt` copies (bounded `{n,m}`). `{n}` is `m == n`.
-// Reusing the same `node` value across the copies is safe — the tree is
-// immutable during matching. A capturing group inside the node keeps ONE
-// index across all copies, so (like a quantified group) it reports the
-// last iteration's span to the capture engine.
 function __rx_repeat(node: RNode, n: i32, m: i32, has_max: boolean): RNode {
   let items: RNode[] = [];
   let i: i32 = 0;
@@ -284,11 +149,6 @@ function __rx_repeat(node: RNode, n: i32, m: i32, has_max: boolean): RNode {
   return RSeq(items);
 }
 
-// __rx_count parses a `{n}` / `{n,}` / `{n,m}` counted quantifier following
-// an atom and applies it. A malformed run (no leading count, or no closing
-// `}`) is NOT consumed — the caller leaves the `{` to be read as a literal
-// byte, matching the lenient behaviour of most engines. `a` is the
-// already-parsed atom at index `pos` (the `{`).
 function __rx_count(p: string, pos: i32, a: RParse): RParse {
   let j: i32 = pos + 1;
   let n: i32 = 0;
@@ -303,9 +163,9 @@ function __rx_count(p: string, pos: i32, a: RParse): RParse {
   }
   let m: i32 = n;
   let has_max: boolean = true;
-  if (j < p.len() && p[j] == 44) {  // ','
+  if (j < p.len() && p[j] == 44) {
     j = j + 1;
-    if (j < p.len() && p[j] == 125) {  // `{n,}`
+    if (j < p.len() && p[j] == 125) {
       has_max = false;
     } else {
       m = 0;
@@ -315,14 +175,12 @@ function __rx_count(p: string, pos: i32, a: RParse): RParse {
       }
     }
   }
-  if (j >= p.len() || p[j] != 125) {  // no closing '}' → literal '{'
+  if (j >= p.len() || p[j] != 125) {
     return a;
   }
   return RParse { node: __rx_repeat(a.node, n, m, has_max), pos: j + 1, g: a.g };
 }
 
-// __rx_quant parses an atom plus an optional trailing quantifier:
-// `*` / `+` / `?`, or a counted `{n}` / `{n,}` / `{n,m}`.
 function __rx_quant(p: string, i: i32, g: i32): RParse {
   let a: RParse = __rx_atom(p, i, g);
   let pos: i32 = a.pos;
@@ -337,21 +195,18 @@ function __rx_quant(p: string, i: i32, g: i32): RParse {
     if (c == 63) {
       return RParse { node: ROpt(a.node), pos: pos + 1, g: a.g };
     }
-    if (c == 123) {  // '{'
+    if (c == 123) {
       return __rx_count(p, pos, a);
     }
   }
   return a;
 }
 
-// __rx_seq parses a concatenation of quantified atoms, stopping at `|` or
-// `)` (or end). An empty run yields `RSeq([])`, which matches the empty
-// string (so `a|` and `()` behave).
 function __rx_seq(p: string, i: i32, g: i32): RParse {
   let items: RNode[] = [];
   let pos: i32 = i;
   let gi: i32 = g;
-  while (pos < p.len() && p[pos] != 124 && p[pos] != 41) {  // not '|' / ')'
+  while (pos < p.len() && p[pos] != 124 && p[pos] != 41) {
     let q: RParse = __rx_quant(p, pos, gi);
     items = items.append(q.node);
     pos = q.pos;
@@ -363,14 +218,12 @@ function __rx_seq(p: string, i: i32, g: i32): RParse {
   return RParse { node: RSeq(items), pos: pos, g: gi };
 }
 
-// __rx_alt parses `seq ('|' seq)*`, the top of the grammar (also entered
-// for the body of each group).
 function __rx_alt(p: string, i: i32, g: i32): RParse {
   let first: RParse = __rx_seq(p, i, g);
   let branches: RNode[] = [first.node];
   let pos: i32 = first.pos;
   let gi: i32 = first.g;
-  while (pos < p.len() && p[pos] == 124) {  // '|'
+  while (pos < p.len() && p[pos] == 124) {
     let nxt: RParse = __rx_seq(p, pos + 1, gi);
     branches = branches.append(nxt.node);
     pos = nxt.pos;
@@ -382,19 +235,17 @@ function __rx_alt(p: string, i: i32, g: i32): RParse {
   return RParse { node: RAlt(branches), pos: pos, g: gi };
 }
 
-// __rx_is_word reports whether byte `c` is a word character (`[A-Za-z0-9_]`)
-// — the alphabet a `\b` word boundary is defined against.
 function __rx_is_word(c: i32): boolean {
-  if (c >= 48 && c <= 57) {  // 0-9
+  if (c >= 48 && c <= 57) {
     return true;
   }
-  if (c >= 65 && c <= 90) {  // A-Z
+  if (c >= 65 && c <= 90) {
     return true;
   }
-  if (c >= 97 && c <= 122) {  // a-z
+  if (c >= 97 && c <= 122) {
     return true;
   }
-  if (c == 95) {  // _
+  if (c == 95) {
     return true;
   }
   return false;
@@ -411,9 +262,6 @@ function __rx_has(xs: i32[], v: i32): boolean {
   return false;
 }
 
-// __rx_fold lowercases an ASCII uppercase byte when case-insensitive
-// matching (`ci`) is on; otherwise returns the byte unchanged. The whole
-// case-insensitive rule is ASCII A–Z ↔ a–z.
 function __rx_fold(c: i32, ci: boolean): i32 {
   if (ci && c >= 65 && c <= 90) {
     return c + 32;
@@ -421,62 +269,47 @@ function __rx_fold(c: i32, ci: boolean): i32 {
   return c;
 }
 
-// RProg is a compiled pattern: the parsed tree, whether matching is
-// case-insensitive (set by a leading `(?i)` flag), how many capturing
-// groups the pattern declares (for the capture engine's slot allocation),
-// and the positional group-name table (`names[i]` = the `(?<name>…)` label
-// of group i+1, or "" for a bare positional group).
 pub struct RProg { root: RNode, ci: boolean, ngroups: i32, names: string[] }
 
-// __rx_group_names scans `pattern` and returns the positional group-name
-// table: `names[k]` is the `(?<name>…)` label of capture group k+1, or ""
-// for a bare `( … )` group. It recognises capturing parens with the SAME
-// rules `__rx_atom` applies — a bare `(`, or a `(?<name>` with a closing
-// `>` whose first name byte is not `=`/`!` (lookbehind); `(?:` / `(?i)` /
-// other `(?…` claim no index — and it skips `\(` escapes and `[ … ]`
-// character classes so a paren inside them isn't miscounted. Reading names
-// off the source (not the tree) keeps RGroupData at its stable 2-field
-// shape; the shared recognition keeps the numbering in lockstep with the
-// parser (guarded by the group_index checks in the e2e fixture).
 function __rx_group_names(pattern: string): string[] {
   let names: string[] = [];
   let i: i32 = 0;
   let n: i32 = pattern.len();
   while (i < n) {
     let c: i32 = pattern[i] as i32;
-    if (c == 92) {  // '\' escape — skip next byte
+    if (c == 92) {
       i = i + 2;
-    } else if (c == 91) {  // '[' character class
+    } else if (c == 91) {
       let j: i32 = i + 1;
-      if (j < n && pattern[j] == 94) {  // leading '^'
+      if (j < n && pattern[j] == 94) {
         j = j + 1;
       }
-      if (j < n && pattern[j] == 93) {  // ']' as first member
+      if (j < n && pattern[j] == 93) {
         j = j + 1;
       }
       while (j < n && pattern[j] != 93) {
         j = j + 1;
       }
-      i = j + 1;  // past the closing ']'
-    } else if (c == 40) {  // '('
-      if (i + 1 < n && pattern[i + 1] == 63) {  // '(?'
+      i = j + 1;
+    } else if (c == 40) {
+      if (i + 1 < n && pattern[i + 1] == 63) {
         if (i + 3 < n && pattern[i + 2] == 60
-          && pattern[i + 3] != 61 && pattern[i + 3] != 33) {  // '(?<' name
+          && pattern[i + 3] != 61 && pattern[i + 3] != 33) {
           let ne: i32 = i + 3;
-          while (ne < n && pattern[ne] != 62) {  // to '>'
+          while (ne < n && pattern[ne] != 62) {
             ne = ne + 1;
           }
-          if (ne < n) {  // named capturing group
+          if (ne < n) {
             names = names.append(slice_unchecked(pattern, i + 3, ne) + "");
             i = ne + 1;
           } else {
-            i = i + 1;  // `(?<…` no '>' → non-capturing
+            i = i + 1;
           }
         } else {
-          i = i + 1;  // `(?:` / `(?i)` / … → non-capturing
+          i = i + 1;
         }
       } else {
-        names = names.append("");  // bare capturing group
+        names = names.append("");
         i = i + 1;
       }
     } else {
@@ -486,11 +319,6 @@ function __rx_group_names(pattern: string): string[] {
   return names;
 }
 
-// __rx_compile parses `pattern`, honouring a leading `(?i)` flag that turns
-// on ASCII case-insensitive matching for the entire pattern. All the public
-// entry points compile through here, so `(?i)` works uniformly. The
-// `(?i)` prefix is itself a `(?…` form, so __rx_group_names skips it (no
-// index claimed), matching the parser which strips it before numbering.
 function __rx_compile(pattern: string): RProg {
   let names: string[] = __rx_group_names(pattern);
   if (pattern.starts_with("(?i)")) {
@@ -501,21 +329,18 @@ function __rx_compile(pattern: string): RProg {
   return RProg { root: r0.node, ci: false, ngroups: r0.g - 1, names: names };
 }
 
-// __rx_class tests a byte against a `[ … ]` class token (including its
-// brackets): ranges `a-b`, a leading `^` negation, and bare members. Under
-// `ci`, the candidate byte and the class members/bounds are folded.
 function __rx_class(tok: string, c0: i32, ci: boolean): boolean {
   let c: i32 = __rx_fold(c0, ci);
-  let j: i32 = 1;  // skip '['
+  let j: i32 = 1;
   let neg: boolean = false;
   if (j < tok.len() && tok[j] == 94) {
     neg = true;
     j = j + 1;
   }
   let found: boolean = false;
-  let end: i32 = tok.len() - 1;  // index of ']'
+  let end: i32 = tok.len() - 1;
   while (j < end) {
-    if (tok[j + 1] == 45 && j + 2 < end) {  // 'a' '-' 'b'
+    if (tok[j + 1] == 45 && j + 2 < end) {
       if (c >= __rx_fold(tok[j] as i32, ci) && c <= __rx_fold(tok[j + 2] as i32, ci)) {
         found = true;
       }
@@ -533,10 +358,6 @@ function __rx_class(tok: string, c0: i32, ci: boolean): boolean {
   return found;
 }
 
-// __rx_closure computes every text position reachable from `ti` by
-// matching `inner` zero-or-more (`allow_zero`, for `*`) or one-or-more
-// (for `+`) times. A breadth-first set expansion: dedup against `seen`
-// guarantees termination even when `inner` can match the empty string.
 function __rx_closure(inner: RNode, t: string, ti: i32, allow_zero: boolean, ci: boolean): i32[] {
   let seen: i32[] = [];
   let frontier: i32[] = [];
@@ -574,10 +395,6 @@ function __rx_closure(inner: RNode, t: string, ti: i32, allow_zero: boolean, ci:
   return seen;
 }
 
-// __rx_match returns the set of text positions at which a match of `n`
-// starting at `ti` can END (empty = no match). Anchors contribute the
-// current position when satisfied; `RSeq` threads the set through each
-// child; `RAlt` unions the alternatives.
 function __rx_match(n: RNode, t: string, ti: i32, ci: boolean): i32[] {
   match (n) {
     RChar(c) => {
@@ -602,9 +419,6 @@ function __rx_match(n: RNode, t: string, ti: i32, ci: boolean): i32[] {
       return e;
     },
     RStart => {
-      // The zero-width arms delegate to __rx_assert_ok — the capture
-      // engine's IAssert shares the same definitions, so the two engines
-      // cannot drift on anchor / word-boundary semantics.
       let e: i32[] = [];
       if (__rx_assert_ok(0, t, ti)) {
         e = e.append(ti);
@@ -624,7 +438,7 @@ function __rx_match(n: RNode, t: string, ti: i32, ci: boolean): i32[] {
         k = 2;
       }
       let e: i32[] = [];
-      if (__rx_assert_ok(k, t, ti)) {  // zero-width
+      if (__rx_assert_ok(k, t, ti)) {
         e = e.append(ti);
       }
       return e;
@@ -685,21 +499,14 @@ function __rx_match(n: RNode, t: string, ti: i32, ci: boolean): i32[] {
     RPlus(inner) => {
       return __rx_closure(inner, t, ti, false, ci);
     },
-    RGroup(gd) => {  // transparent to the span matcher
+    RGroup(gd) => {
       return __rx_match(gd.node, t, ti, ci);
     }
   }
 }
 
-// RMatch is a match's half-open byte span `[start, end)` in the text; the
-// matched substring is `text[start:end]`.
 pub struct RMatch { start: i32, end: i32 }
 
-// __rx_search_from finds the LEFTMOST match of an already-parsed tree at or
-// after byte offset `from`, returning its span. Among matches that start at
-// the leftmost position it takes the longest end (greedy), so
-// `text[start:end]` is the longest leftmost match — the conventional search
-// semantics. The scanning helper behind search / find_all / replace / split.
 function __rx_search_from(root: RNode, text: string, from: i32, ci: boolean): Option[RMatch] {
   let ti: i32 = from;
   while (true) {
@@ -723,17 +530,11 @@ function __rx_search_from(root: RNode, text: string, from: i32, ci: boolean): Op
   return None;
 }
 
-// `regex_search(pattern, text)` — find the leftmost-longest match of
-// `pattern` in `text` and return its `RMatch` span, or None on no match. The
-// pattern is parsed once; a `^` / `$` anchor self-limits the match.
 pub function regex_search(pattern: string, text: string): Option[RMatch] {
   let prog: RProg = __rx_compile(pattern);
   return __rx_search_from(prog.root, text, 0, prog.ci);
 }
 
-// `regex_match(pattern, text)` — true when `pattern` matches anywhere in
-// `text` (a search). A `^` / `$` anchor in the pattern self-limits the
-// match.
 pub function regex_match(pattern: string, text: string): boolean {
   if let Some(_) = regex_search(pattern, text) {
     return true;
@@ -741,10 +542,6 @@ pub function regex_match(pattern: string, text: string): boolean {
   return false;
 }
 
-// `regex_find(pattern, text)` — the start byte index of the leftmost match,
-// or None if the pattern doesn't match anywhere. The position counterpart to
-// the boolean `regex_match`; pair with `regex_search` when the end / the
-// matched substring is also needed.
 pub function regex_find(pattern: string, text: string): Option[i32] {
   if let Some(m) = regex_search(pattern, text) {
     return Some(m.start);
@@ -752,9 +549,6 @@ pub function regex_find(pattern: string, text: string): Option[i32] {
   return None;
 }
 
-// __rx_advance returns the next scan position after a match, always making
-// progress: the match's end, or one past its start for a zero-width match
-// (`a*` matching empty) so the left-to-right scanners can't loop forever.
 function __rx_advance(m: RMatch): i32 {
   if (m.end > m.start) {
     return m.end;
@@ -762,9 +556,6 @@ function __rx_advance(m: RMatch): i32 {
   return m.start + 1;
 }
 
-// `regex_find_all(pattern, text)` — every non-overlapping leftmost-longest
-// match, left to right, as an `RMatch[]`. A zero-width match advances one
-// byte so the scan terminates; the result is empty when nothing matches.
 pub function regex_find_all(pattern: string, text: string): RMatch[] {
   let prog: RProg = __rx_compile(pattern);
   let out: RMatch[] = [];
@@ -779,7 +570,6 @@ pub function regex_find_all(pattern: string, text: string): RMatch[] {
   return out;
 }
 
-// Transfer the completed buffer as bytes without constructing invalid text.
 function __rx_finish(h: usize): u8[] {
   let bytes: u8[] = buf_take_bytes(h);
   buf_free(h);
@@ -792,11 +582,6 @@ function __rx_bytes(text: string, lo: i32, hi: i32): u8[] {
   return __rx_finish(h);
 }
 
-// `regex_replace_all(pattern, text, repl)` — replace every non-overlapping
-// match of `pattern` with the literal string `repl`, returning the new
-// string in Some, or None if a partial-byte match makes it invalid UTF-8.
-// `repl` is inserted verbatim (no `$1` group substitution - for
-// that, see `regex_replace_all_groups`).
 pub function regex_replace_all(pattern: string, text: string, repl: string): Option[string] {
   let prog: RProg = __rx_compile(pattern);
   let first: Option[RMatch] = __rx_search_from(prog.root, text, 0, prog.ci);
@@ -809,7 +594,6 @@ pub function regex_replace_all(pattern: string, text: string, repl: string): Opt
   return utf8.from_bytes(__rx_replace_all_from(prog, text, repl, first));
 }
 
-// Raw output of regex_replace_all, including partial UTF-8 scalars.
 pub function regex_replace_all_bytes(pattern: string, text: string, repl: string): u8[] {
   let prog: RProg = __rx_compile(pattern);
   return __rx_replace_all_from(prog, text, repl, __rx_search_from(prog.root, text, 0, prog.ci));
@@ -840,14 +624,6 @@ function __rx_replace_all_from(prog: RProg, text: string, repl: string, first: O
   return __rx_finish(h);
 }
 
-// `regex_split(text, pattern)` — split `text` on non-overlapping matches of
-// `pattern`, returning the pieces between matches (the separators are
-// dropped). Zero-width matches are skipped as separators (so splitting on a
-// nullable pattern doesn't shatter the string); a non-matching pattern
-// yields the whole text as a single element. Returns None if any nonempty
-// piece starts or ends inside a UTF-8 scalar, otherwise Some(pieces).
-// Each piece is materialised with `+ ""`: a bare slice views `text`, which
-// the returned array outlives.
 pub function regex_split(text: string, pattern: string): Option[string[]] {
   let prog: RProg = __rx_compile(pattern);
   let out: string[] = [];
@@ -861,7 +637,7 @@ pub function regex_split(text: string, pattern: string): Option[string[]] {
       out = out.append(slice_unchecked(text, last, text.len()) + "");
       return Some(out);
     };
-    if (m.end > m.start) {  // non-empty separator
+    if (m.end > m.start) {
       if (last != m.start && (!utf8.is_char_boundary(text, last) || !utf8.is_char_boundary(text, m.start))) {
         return None;
       }
@@ -869,7 +645,7 @@ pub function regex_split(text: string, pattern: string): Option[string[]] {
       last = m.end;
       pos = m.end;
     } else {
-      pos = m.start + 1;  // skip a zero-width match
+      pos = m.start + 1;
     }
   }
   if (!utf8.is_char_boundary(text, last)) {
@@ -879,7 +655,6 @@ pub function regex_split(text: string, pattern: string): Option[string[]] {
   return Some(out);
 }
 
-// Raw pieces from regex_split, preserving partial scalars.
 pub function regex_split_bytes(text: string, pattern: string): u8[][] {
   let prog: RProg = __rx_compile(pattern);
   let out: u8[][] = [];
@@ -890,22 +665,18 @@ pub function regex_split_bytes(text: string, pattern: string): u8[][] {
       out = out.append(__rx_bytes(text, last, text.len()));
       return out;
     };
-    if (m.end > m.start) {  // non-empty separator
+    if (m.end > m.start) {
       out = out.append(__rx_bytes(text, last, m.start));
       last = m.end;
       pos = m.end;
     } else {
-      pos = m.start + 1;  // skip a zero-width match
+      pos = m.start + 1;
     }
   }
   out = out.append(__rx_bytes(text, last, text.len()));
   return out;
 }
 
-// `regex_full_match(pattern, text)` — true only when `pattern` matches the
-// ENTIRE text (as if anchored `^…$`). Tests whether a match starting at 0
-// can end exactly at `text.len()`, so it's correct even when the pattern
-// has shorter matches too (`a|aa` fully matches "aa").
 pub function regex_full_match(pattern: string, text: string): boolean {
   let prog: RProg = __rx_compile(pattern);
   let ends: i32[] = __rx_match(prog.root, text, 0, prog.ci);
@@ -919,16 +690,10 @@ pub function regex_full_match(pattern: string, text: string): boolean {
   return false;
 }
 
-// `regex_count(pattern, text)` — the number of non-overlapping matches of
-// `pattern` in `text` (0 when it doesn't match).
 pub function regex_count(pattern: string, text: string): i32 {
   return regex_find_all(pattern, text).len();
 }
 
-// `regex_replace(pattern, text, repl)` — replace only the FIRST match of
-// `pattern` with the literal `repl`, returning the new string; the text is
-// returned unchanged when there is no match. The single-match counterpart
-// to `regex_replace_all`. Returns None if the resulting bytes are not UTF-8.
 pub function regex_replace(pattern: string, text: string, repl: string): Option[string] {
   let Some(m) = regex_search(pattern, text) else {
     return Some(text);
@@ -944,7 +709,6 @@ function __rx_replace_span(text: string, repl: string, m: RMatch): u8[] {
   return __rx_finish(h);
 }
 
-// Raw output of regex_replace, including partial UTF-8 scalars.
 pub function regex_replace_bytes(pattern: string, text: string, repl: string): u8[] {
   let Some(m) = regex_search(pattern, text) else {
     return __rx_bytes(text, 0, text.len());
@@ -952,32 +716,6 @@ pub function regex_replace_bytes(pattern: string, text: string, repl: string): u
   return __rx_replace_span(text, repl, m);
 }
 
-// ---------------------------------------------------------------------------
-// Capture engine.
-//
-// Extraction of `( … )` group spans needs to know WHICH path through the
-// pattern produced the match, which the position-SET matcher above throws
-// away. So captures run on a second engine: the tree is compiled to a flat
-// instruction program (a classic Thompson construction) and simulated as a
-// Pike VM — a lockstep thread list where each thread carries its own copy
-// of the capture slots. Threads are kept in priority order (earlier
-// alternative / greedy-quantifier paths first) and deduplicated per
-// instruction per step, so the simulation stays linear in the text per scan
-// position — no backtracking, same ReDoS-immunity as the span matcher.
-//
-// Disambiguation, matching `regex_search`'s semantics: the match is
-// leftmost (first start position that matches wins) then longest (among
-// that start's matches, the greatest end). Among paths reaching that same
-// longest end, the highest-priority thread's captures win — quantifiers
-// capture greedily and earlier `|` alternatives are preferred.
-// RInst is one compiled instruction. `IChar` / `IAny` / `IClass` consume a
-// byte; `IAssert(k)` is a zero-width test (0 = `^`, 1 = `$`, 2 = `\b`,
-// 3 = `\B`); `ISplit(RSplit{a, b})` forks a thread to both targets with `a`
-// preferred; `IJmp(a)` continues at `a`; `ISave(s)` records the current
-// text position in capture slot `s` (slot 2i = group i's start, 2i + 1 =
-// its end; group 0 is the whole match); `IMatch` accepts.
-//
-// RSplit names the two branch targets of an ISplit instruction.
 struct RSplit { a: i32, b: i32 }
 
 enum RInst {
@@ -991,15 +729,10 @@ enum RInst {
   IMatch,
 }
 
-// __rx_split builds an ISplit instruction targeting `a` (preferred) then `b`.
 function __rx_split(a: i32, b: i32): RInst {
   return ISplit(RSplit { a: a, b: b });
 }
 
-// __rx_emit appends the instructions for `n` to `prog` and returns the
-// extended program. Split targets that point past code not yet emitted are
-// appended as placeholders and patched (`.with`) once the target address is
-// known.
 function __rx_emit(prog: RInst[], n: RNode): RInst[] {
   match (n) {
     RChar(c) => {
@@ -1038,9 +771,6 @@ function __rx_emit(prog: RInst[], n: RNode): RInst[] {
       return ps;
     },
     RAlt(xs) => {
-      // Each non-last branch: `split(branch, next-alternative)`,
-      // branch code, `jmp end`. The last branch falls through. All
-      // jmps are patched to the common end.
       let pa: RInst[] = prog;
       let jmps: i32[] = [];
       let k2: i32 = 0;
@@ -1048,10 +778,10 @@ function __rx_emit(prog: RInst[], n: RNode): RInst[] {
       while (k2 < nb) {
         if (k2 < nb - 1) {
           let sp: i32 = pa.len();
-          pa = pa.append(__rx_split(0, 0));  // placeholder
+          pa = pa.append(__rx_split(0, 0));
           pa = __rx_emit(pa, xs[k2]);
           jmps = jmps.append(pa.len());
-          pa = pa.append(IJmp(0));  // placeholder
+          pa = pa.append(IJmp(0));
           pa = pa.with(sp, __rx_split(sp + 1, pa.len()));
         } else {
           pa = __rx_emit(pa, xs[k2]);
@@ -1067,47 +797,31 @@ function __rx_emit(prog: RInst[], n: RNode): RInst[] {
       return pa;
     },
     RStar(inner) => {
-      // split(body, end); body; split(body, end) — entering the body
-      // is the preferred (greedy) leg at both splits. The loop-back is
-      // a SECOND split rather than a jmp to the first: a body
-      // iteration that matched empty re-arrives at a fresh pc, so its
-      // exit leg (carrying the iteration's ISave captures) survives
-      // the per-step dedup. With a `jmp` back, that thread would die
-      // at the already-seen entry split and a group matching only
-      // empty would wrongly read as non-participating —
-      // `(a?)*b` on "b" must capture group 1 = [0,0], like
-      // Go/RE2/Perl. (The dedup still kills a SECOND empty
-      // iteration, so nullable bodies terminate.)
       let s1: i32 = prog.len();
-      let pst: RInst[] = prog.append(__rx_split(0, 0));  // placeholder
+      let pst: RInst[] = prog.append(__rx_split(0, 0));
       pst = __rx_emit(pst, inner);
       let s2: i32 = pst.len();
-      pst = pst.append(__rx_split(0, 0));  // placeholder
+      pst = pst.append(__rx_split(0, 0));
       let send: i32 = pst.len();
       pst = pst.with(s1, __rx_split(s1 + 1, send));
       return pst.with(s2, __rx_split(s1 + 1, send));
     },
     RPlus(inner) => {
-      // body; split(body, next) — looping again is preferred (greedy).
       let b1: i32 = prog.len();
       let pp: RInst[] = __rx_emit(prog, inner);
       let sp2: i32 = pp.len();
-      pp = pp.append(__rx_split(0, 0));  // placeholder
+      pp = pp.append(__rx_split(0, 0));
       return pp.with(sp2, __rx_split(b1, sp2 + 1));
     },
     ROpt(inner) => {
-      // split(body, next) — taking the body is preferred (greedy).
       let s3: i32 = prog.len();
-      let po: RInst[] = prog.append(__rx_split(0, 0));  // placeholder
+      let po: RInst[] = prog.append(__rx_split(0, 0));
       po = __rx_emit(po, inner);
       return po.with(s3, __rx_split(s3 + 1, po.len()));
     }
   }
 }
 
-// __rx_cprog compiles a parsed tree to the full capture program:
-// `save 0; <body>; save 1; match`, so slots 0/1 always hold the whole
-// match's span.
 function __rx_cprog(root: RNode): RInst[] {
   let prog: RInst[] = [];
   prog = prog.append(ISave(0));
@@ -1116,8 +830,6 @@ function __rx_cprog(root: RNode): RInst[] {
   return prog.append(IMatch);
 }
 
-// __rx_assert_ok evaluates a zero-width assertion at text position `ti`
-// (same definitions as the span matcher's RStart / REnd / RBound arms).
 function __rx_assert_ok(k: i32, t: string, ti: i32): boolean {
   if (k == 0) {
     return ti == 0;
@@ -1133,10 +845,10 @@ function __rx_assert_ok(k: i32, t: string, ti: i32): boolean {
   if (ti < t.len()) {
     after = __rx_is_word(t[ti] as i32);
   }
-  if (k == 2) {  // \b
+  if (k == 2) {
     return before != after;
   }
-  return before == after;  // \B
+  return before == after;
 }
 
 function __rx_fill(n: i32, v: i32): i32[] {
@@ -1149,27 +861,11 @@ function __rx_fill(n: i32, v: i32): i32[] {
   return out;
 }
 
-// RThread is one VM thread: its instruction pointer and its private copy
-// of the capture slots. RAdd threads the per-step state through
-// __rx_addthread: `seen[pc] == gen` marks instructions already reached
-// this step (first — highest-priority — arrival wins; `gen` is bumped per
-// step so one seen array serves the whole run without re-zeroing),
-// `threads` is the priority-ordered runnable list being built.
 struct RThread { pc: i32, caps: i32[] }
 
 struct RAdd { seen: i32[], gen: i32, threads: RThread[] }
 
-// __rx_addthread adds the thread at `pc` to the step's list, eagerly
-// following the zero-width instructions (split / jmp / save / assert) so
-// the list only ever holds byte-consuming instructions and IMatch. The
-// `seen` dedup makes epsilon cycles (a star over a nullable body, like
-// `(a?)*`) terminate, and implements thread priority: a lower-priority
-// path reaching an already-seen instruction is dropped.
 function __rx_addthread(st: RAdd, prog: RInst[], pc: i32, caps: i32[], t: string, ti: i32): RAdd {
-  // Destructure the state up front: `st` is dead after these reads, so
-  // under RC the arrays are uniquely referenced and the `.with` /
-  // `.append` below update in place rather than copying the whole seen
-  // array on every epsilon step.
   let sn: i32[] = st.seen;
   let g: i32 = st.gen;
   let ths: RThread[] = st.threads;
@@ -1195,20 +891,11 @@ function __rx_addthread(st: RAdd, prog: RInst[], pc: i32, caps: i32[], t: string
       return RAdd { seen: sn, gen: g, threads: ths };
     },
     _ => {
-      // Everything else (IChar / IAny / IClass / IMatch) is runnable:
-      // append in priority order.
       return RAdd { seen: sn, gen: g, threads: ths.append(RThread { pc: pc, caps: caps }) };
     }
   }
 }
 
-// __rx_cvm_at runs the capture program anchored at start position `ti0`,
-// returning the winning capture-slot array, or an EMPTY array when no
-// match starts there. `init` is the caller-built all -1 slot template
-// (shared; the first ISave copy-on-writes it per thread). All threads run
-// to exhaustion and the longest end wins (`>` keeps the first — highest-
-// priority — thread on a tie), so the span agrees with
-// `__rx_search_from`'s leftmost-longest result.
 function __rx_cvm_at(prog: RInst[], t: string, ti0: i32, ci: boolean, init: i32[]): i32[] {
   let seen: i32[] = __rx_fill(prog.len(), 0);
   let gen: i32 = 1;
@@ -1240,8 +927,6 @@ function __rx_cvm_at(prog: RInst[], t: string, ti0: i32, ci: boolean, init: i32[
           }
         },
         IMatch => {
-          // Slot 1 (whole-match end) was saved during __rx_addthread's
-          // epsilon closure, so caps[1] == pos for this thread.
           if (best.len() == 0 || pos > best[1]) {
             best = th.caps;
           }
@@ -1251,16 +936,11 @@ function __rx_cvm_at(prog: RInst[], t: string, ti0: i32, ci: boolean, init: i32[
         IJmp(_) => {},
         ISave(_) => {}
       }
-      // Zero-width instructions never appear in the runnable list —
-      // __rx_addthread resolves them eagerly. Kept as explicit
-      // empty arms (not `_`) so a future consuming RInst variant
-      // fails exhaustiveness here instead of silently dropping
-      // threads.
       k = k + 1;
     }
     clist = nst.threads;
     seen = nst.seen;
-    if (pos >= t.len()) {  // final position processed — done
+    if (pos >= t.len()) {
       clist = [];
     }
     pos = pos + 1;
@@ -1268,10 +948,6 @@ function __rx_cvm_at(prog: RInst[], t: string, ti0: i32, ci: boolean, init: i32[
   return best;
 }
 
-// __rx_csearch_from scans left to right for the leftmost start position
-// with a match (same scan the span matcher's `__rx_search_from` does) and
-// returns its capture slots, or an empty array when the pattern matches
-// nowhere at or after `from`.
 function __rx_csearch_from(prog: RInst[], t: string, from: i32, ci: boolean, nslots: i32): i32[] {
   let init: i32[] = __rx_fill(nslots, 0 - 1);
   let ti: i32 = from;
@@ -1285,25 +961,12 @@ function __rx_csearch_from(prog: RInst[], t: string, from: i32, ci: boolean, nsl
   return [];
 }
 
-// RCaps is a match from `regex_captures`: the input text (kept so
-// `.group(i)` can slice the matched substrings out) and the half-open byte
-// span of every group — `starts[0]` / `ends[0]` are the whole match,
-// `starts[i]` / `ends[i]` group `i`. A group that did not participate in the
-// match (an untaken `(a)?` or untaken `|` alternative) has span -1 / -1.
-// `names` is the positional group-name table (`names[i]` = the `(?<name>…)`
-// label of group i+1, or "") so `.group_named` can resolve a name to its
-// index.
 pub struct RCaps { text: string, starts: i32[], ends: i32[], names: string[] }
 
-// `.group_count()` — the number of capturing groups the PATTERN declares
-// (not counting group 0, and regardless of which participated).
 pub function (c: RCaps) group_count(): i32 {
   return c.starts.len() - 1;
 }
 
-// `.group_start(i)` / `.group_end(i)` — group `i`'s half-open byte span in
-// the text, or None when the group didn't participate in the match or `i`
-// is out of range. Group 0 is the whole match.
 pub function (c: RCaps) group_start(i: i32): Option[i32] {
   if (i < 0 || i >= c.starts.len() || c.starts[i] < 0) {
     return None;
@@ -1318,9 +981,6 @@ pub function (c: RCaps) group_end(i: i32): Option[i32] {
   return Some(c.ends[i]);
 }
 
-// `.has_group(i)` — true when group `i` participated in the match (its
-// span is set; an empty span still counts — `(a*)` can match "" AT a
-// position, which is participation with `start == end`).
 pub function (c: RCaps) has_group(i: i32): boolean {
   if let Some(_) = c.group_start(i) {
     return true;
@@ -1328,8 +988,6 @@ pub function (c: RCaps) has_group(i: i32): boolean {
   return false;
 }
 
-// __rx_span is group `i`'s span, or (-1, -1) when it did not participate or
-// `i` is out of range.
 function __rx_span(c: RCaps, i: i32): (i32, i32) {
   if (i < 0 || i >= c.starts.len() || c.starts[i] < 0 || c.ends[i] < 0) {
     return (0 - 1, 0 - 1);
@@ -1337,9 +995,6 @@ function __rx_span(c: RCaps, i: i32): (i32, i32) {
   return (c.starts[i], c.ends[i]);
 }
 
-// `.group(i)` returns Some(matched text), or None for a partial UTF-8
-// scalar. Missing and nonparticipating groups return Some(""). Group 0
-// is the whole match; use has_group to distinguish absent and empty.
 pub function (c: RCaps) group(i: i32): Option[string] {
   let (s, e) = __rx_span(c, i);
   if (s < 0) {
@@ -1351,7 +1006,6 @@ pub function (c: RCaps) group(i: i32): Option[string] {
   return Some(slice_unchecked(c.text, s, e) + "");
 }
 
-// Raw captured bytes, or [] for a missing or nonparticipating group.
 pub function (c: RCaps) group_bytes(i: i32): u8[] {
   let (s, e) = __rx_span(c, i);
   if (s < 0) {
@@ -1360,14 +1014,10 @@ pub function (c: RCaps) group_bytes(i: i32): u8[] {
   return __rx_bytes(c.text, s, e);
 }
 
-// `.group_index(name)` — the 1-based index of the `(?<name>…)` group, or
-// None when no group has that name. The lookup behind the `_named`
-// accessors; exposed so callers can map a name to `.group_start(i)` etc.
-// themselves.
 pub function (c: RCaps) group_index(name: string): Option[i32] {
   let i: i32 = 0;
   while (i < c.names.len()) {
-    if (c.names[i] == name) {  // names[i] is group i+1
+    if (c.names[i] == name) {
       return Some(i + 1);
     }
     i = i + 1;
@@ -1375,8 +1025,6 @@ pub function (c: RCaps) group_index(name: string): Option[i32] {
   return None;
 }
 
-// __rx_named_index is `group_index(name)`, or -1 (out of range for every
-// accessor) for an unknown name.
 function __rx_named_index(c: RCaps, name: string): i32 {
   if let Some(i) = c.group_index(name) {
     return i;
@@ -1384,16 +1032,10 @@ function __rx_named_index(c: RCaps, name: string): i32 {
   return 0 - 1;
 }
 
-// `.group_named(name)` has the same checked-text contract as group(i), an
-// unknown name reading as a group that did not participate.
-// `.has_group_named(name)` / `.group_named_start(name)` /
-// `.group_named_end(name)` mirror the positional accessors. On a duplicate
-// name the first (lowest-index) group wins.
 pub function (c: RCaps) group_named(name: string): Option[string] {
   return c.group(__rx_named_index(c, name));
 }
 
-// Raw named capture with the same missing-group behavior as group_bytes.
 pub function (c: RCaps) group_named_bytes(name: string): u8[] {
   return c.group_bytes(__rx_named_index(c, name));
 }
@@ -1410,8 +1052,6 @@ pub function (c: RCaps) has_group_named(name: string): boolean {
   return c.has_group(__rx_named_index(c, name));
 }
 
-// __rx_caps_wrap converts a raw capture-slot array (empty = no match) to
-// the public RCaps shape, attaching the compiled name table.
 function __rx_caps_wrap(caps: i32[], text: string, ngroups: i32, names: string[]): Option[RCaps] {
   if (caps.len() == 0) {
     return None;
@@ -1427,11 +1067,6 @@ function __rx_caps_wrap(caps: i32[], text: string, ngroups: i32, names: string[]
   return Some(RCaps { text: text, starts: starts, ends: ends, names: names });
 }
 
-// `regex_captures(pattern, text)` — find the leftmost-longest match (the
-// same span `regex_search` reports) and return it WITH every capturing
-// group's span as an `RCaps`. Quantified groups report their last
-// iteration; on paths of equal span, greedy / earlier-alternative captures
-// win. None on no match.
 pub function regex_captures(pattern: string, text: string): Option[RCaps] {
   let prog: RProg = __rx_compile(pattern);
   let insts: RInst[] = __rx_cprog(prog.root);
@@ -1440,10 +1075,6 @@ pub function regex_captures(pattern: string, text: string): Option[RCaps] {
   return __rx_caps_wrap(caps, text, prog.ngroups, prog.names);
 }
 
-// `regex_captures_all(pattern, text)` — the captures of every
-// non-overlapping leftmost-longest match, left to right (the capture
-// counterpart of `regex_find_all`, with the same zero-width advance rule).
-// Empty when nothing matches.
 pub function regex_captures_all(pattern: string, text: string): RCaps[] {
   let prog: RProg = __rx_compile(pattern);
   let insts: RInst[] = __rx_cprog(prog.root);
@@ -1456,23 +1087,11 @@ pub function regex_captures_all(pattern: string, text: string): RCaps[] {
       return out;
     };
     out = out.append(c);
-    // Slots 0/1 are the whole-match span; advance through the shared
-    // helper so this stays mechanically in step with regex_find_all.
     pos = __rx_advance(RMatch { start: caps[0], end: caps[1] });
   }
   return out;
 }
 
-// __rx_expand_into appends a template's literal and captured byte spans:
-// `$0`–`$9` insert that group's matched text (`$0` = the whole match; an
-// unmatched group inserts ""), `${name}` inserts the `(?<name>…)` group's
-// text (unknown name → ""), `$$` inserts a literal `$`, and a `$` followed
-// by anything else (or at the end) is a literal `$`. Single digits only —
-// `$12` is group 1 followed by a literal `2`; use `${12}`-style names only
-// for actual `(?<…>)` labels.
-// Decode the reference after a dollar. The second result is the next byte
-// offset; unchanged means a literal dollar. Group -2 denotes $$, and -1
-// denotes a recognized but unknown named group (which expands to nothing).
 function __rx_template_ref(tmpl: string, i: i32, c: RCaps): (i32, i32) {
   if (i + 1 >= tmpl.len()) {
     return (0 - 1, i);
@@ -1524,13 +1143,6 @@ function __rx_expand_into(h: usize, tmpl: string, c: RCaps): void {
   buf_push_range(h, tmpl, lit, tmpl.len());
 }
 
-// `regex_replace_groups(pattern, text, tmpl)` — replace the FIRST match of
-// `pattern` with the `$`-template `tmpl` expanded against its captures
-// (`$1` = group 1's text, `$0` = the whole match, `$$` = literal `$`;
-// unmatched groups expand to ""). The text is returned unchanged when
-// there is no match. The group-substituting counterpart to
-// `regex_replace`. Returns None for invalid UTF-8. Validation happens
-// after expansion, so partial captures can recombine into valid text.
 pub function regex_replace_groups(pattern: string, text: string, tmpl: string): Option[string] {
   let Some(c) = regex_captures(pattern, text) else {
     return Some(text);
@@ -1538,7 +1150,6 @@ pub function regex_replace_groups(pattern: string, text: string, tmpl: string): 
   return utf8.from_bytes(__rx_replace_capture(text, tmpl, c));
 }
 
-// Raw template replacement without a UTF-8 requirement on the result.
 pub function regex_replace_groups_bytes(pattern: string, text: string, tmpl: string): u8[] {
   let Some(c) = regex_captures(pattern, text) else {
     return __rx_bytes(text, 0, text.len());
@@ -1554,12 +1165,6 @@ function __rx_replace_capture(text: string, tmpl: string, c: RCaps): u8[] {
   return __rx_finish(h);
 }
 
-// `regex_replace_all_groups(pattern, text, tmpl)` — replace every
-// non-overlapping match with the `$`-template expanded against THAT
-// match's captures. Matches, ordering, and zero-width advancement are
-// exactly `regex_captures_all`'s (which mirrors `regex_find_all` /
-// `regex_replace_all`). Returns Some(valid text) or None after assembling
-// the complete output, allowing partial captures to recombine.
 pub function regex_replace_all_groups(pattern: string, text: string, tmpl: string): Option[string] {
   let all: RCaps[] = regex_captures_all(pattern, text);
   if (all.len() == 0) {
@@ -1568,7 +1173,6 @@ pub function regex_replace_all_groups(pattern: string, text: string, tmpl: strin
   return utf8.from_bytes(__rx_replace_captures(text, tmpl, all));
 }
 
-// Raw output of regex_replace_all_groups, including partial scalars.
 pub function regex_replace_all_groups_bytes(pattern: string, text: string, tmpl: string): u8[] {
   let all: RCaps[] = regex_captures_all(pattern, text);
   return __rx_replace_captures(text, tmpl, all);

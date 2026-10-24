@@ -1,8 +1,8 @@
-// A path with a non-directory component fails in open(2) with ENOTDIR;
-// IoError.Other carries glibc's text for it (#8265). /dev/null is a
-// character device on Linux and Darwin alike, so the component that is
-// not a directory exists everywhere the natives and the interpreter run.
-// The errno is ENOTDIR's Linux number on every target (#11296).
+
+
+
+
+
 function main(): i32 {
   match (read_file("/dev/null/x")) {
     Ok(_) => { print("read through a device"); return 1; },

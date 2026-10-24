@@ -7,49 +7,6 @@ import (
 	"testing"
 )
 
-// install(1) is the copy engine's third caller, after `cp` and `mv`'s
-// cross-device fallback, so most of what it does is already gated by
-// their corpora. What this one is about is the part that is install's
-// alone, and every item below is a behaviour the documentation does not
-// give and a differential against the reference binary does.
-//
-//   - THE UMASK IS NOT CONSULTED. The default mode is 0755 under `umask
-//     077`, and `-m u=rw,g=r` lands 0640. `cp` would mislead you here:
-//     its three mode states all filter through the mask or copy the
-//     source's bits, and install's does neither.
-//   - `-m`'s symbolic form resolves against a base of ZERO, not against
-//     the 0755 default. `-m +x` is 0111, `-m go-w` is 0, `-m o=` is 0.
-//     0755 is what install uses when `-m` is ABSENT; it is not something
-//     `-m` edits. Even the bare `+w`, which POSIX lets consult the
-//     umask, is 0222 under every mask.
-//   - `-m` with `-d` reaches only the LAST component: `-d -m 700 a/b/c`
-//     leaves `a` and `a/b` at 0755.
-//   - a directory's line is `install: creating directory 'X'`, on STDOUT
-//     and carrying the program prefix, where the file line has none.
-//   - `-C` on a match does NOTHING, mtime included; on a mismatch it
-//     prints `removed 'X'` and copies.
-//   - a failed `-s` prints the `-v` line TWICE and leaves no destination.
-//     Both are consequences of how GNU does it rather than choices: the
-//     `cannot run` message comes from the forked CHILD, and both
-//     processes carry the same unflushed stdout across the fork, so each
-//     one's flush emits its own copy of the line. The destination is
-//     made and then taken away again.
-//
-// `-o` / `-g` run as root here, where every chown succeeds, so those
-// rows set `ownership` to put uid/gid into the tree comparison. Without
-// it an install that parsed the option and called nothing would pass.
-//
-// `install: cannot change permissions of 'X'` is in the issue's quirk
-// list and is NOT covered: it needs a destination whose mode cannot be
-// set, which as root wants the same unreachable setup `cp -f`'s retry
-// did. The code path is there; the case that would prove it is not
-// something this harness can rely on.
-
-// installBasic is the ordinary fixture: a source with a mode the umask
-// would not have produced, a directory to install into, an existing
-// destination to replace, a symbolic link to be dereferenced, and a
-// leading path that already exists so `-D` can be seen not announcing
-// it.
 func installBasic(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "src", "SRC\n")
@@ -64,9 +21,6 @@ func installBasic(t *testing.T, dir string) {
 	seedMkdir(t, dir, "empty")
 }
 
-// installSame is the `-C` fixture: a destination that already holds
-// exactly what installing would put there, and two that differ in one
-// way each — the content, and the mode.
 func installSame(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "src", "SAME\n")
@@ -92,7 +46,6 @@ func installCases(t *testing.T) []invocation {
 	t.Helper()
 	var out []invocation
 
-	// The operand forms, and the shapes that refuse.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -122,7 +75,6 @@ func installCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: installBasic})
 	}
 
-	// The mode rules, which are the reason this corpus exists.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -149,8 +101,6 @@ func installCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: installBasic})
 	}
 
-	// The same rules under a umask that would change the answer if one
-	// were applied. Every row here is the point of the fixture.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -164,7 +114,6 @@ func installCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: installBasic, umask: withMask(0o077)})
 	}
 
-	// -d and -D.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -191,7 +140,6 @@ func installCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: installBasic})
 	}
 
-	// -C, against a destination that matches and two that do not.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -207,8 +155,6 @@ func installCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: installSame})
 	}
 
-	// Raw comparisons must preserve both the no-copy result for equal files
-	// and differences beyond the first read, including incomplete final blocks.
 	allBytes := make([]byte, 256)
 	for i := range allBytes {
 		allBytes[i] = byte(i)
@@ -233,9 +179,6 @@ func installCases(t *testing.T) []invocation {
 		})
 	}
 
-	// -s, on a strip program that is deterministic because it does
-	// nothing. A case comparing the bytes a real `strip` leaves would be
-	// pinned to this container's binutils instead of to install.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -250,8 +193,6 @@ func installCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: installBasic})
 	}
 
-	// Ownership. Root makes every chown succeed, so the tree comparison
-	// has to read the ids for these to prove anything.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -275,7 +216,6 @@ func installCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: installBasic, ownership: true})
 	}
 
-	// Backups, timestamps and the ignored flag.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -299,7 +239,6 @@ func installCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: installBasic})
 	}
 
-	// The environment the backup control reads.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -314,9 +253,6 @@ func installCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, env: c.env, seedTree: installBasic})
 	}
 
-	// The getopt surface: the ambiguity lists print their candidates in
-	// the option table's declaration order, which is the one place that
-	// order is observable.
 	for _, pre := range []string{"--s", "--st", "--stri", "--p", "--pre", "--preserve", "--c", "--co", "--d", "--v", "--ve", "--b", "--n", "--a", "--z", "--Z"} {
 		out = append(out, invocation{name: "prefix" + pre, args: []string{pre, "src", "out"}, seedTree: installBasic})
 	}
@@ -344,12 +280,6 @@ func TestInstallParity(t *testing.T) {
 	requireParity(t, "install", installCases(t))
 }
 
-// TestInstallDebug holds `--debug` to its exit status and stream shape
-// rather than its bytes, for the reason docs/COREUTILS.md records: GNU's
-// second line names its own copy_file_range offload and SEEK_HOLE
-// probing, and ours states what the copy actually did. What IS compared
-// is that the option implies -v, that the report follows the verbose
-// line, and that both go to stdout.
 func TestInstallDebug(t *testing.T) {
 	ours := fernBin(t, "install")
 	dir := t.TempDir()

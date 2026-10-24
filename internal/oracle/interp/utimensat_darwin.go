@@ -13,9 +13,6 @@ const (
 	utimeNow  = 1<<30 - 1
 )
 
-// setFileTimes uses setattrlistat, as the native Darwin runtime does.
-// Leaving an attribute out preserves it atomically; reading its old value
-// and writing it back would overwrite concurrent timestamp changes.
 func setFileTimes(path string, times *[2]syscall.Timespec, nofollow bool) error {
 	p, err := syscall.BytePtrFromString(path)
 	if err != nil {
@@ -42,7 +39,6 @@ func setFileTimes(path string, times *[2]syscall.Timespec, nofollow bool) error 
 		options |= fsoptNofollow
 	}
 	if times[0].Nsec == utimeNow && times[1].Nsec == utimeNow {
-		// Both now requires write access, rather than ownership.
 		options |= fsoptUtimesNull
 	}
 	var now syscall.Timespec
@@ -52,7 +48,6 @@ func setFileTimes(path string, times *[2]syscall.Timespec, nofollow bool) error 
 	}
 	var values [2]syscall.Timespec
 	count := 0
-	// Attributes are packed in ascending bit order: mtime before atime.
 	for _, i := range [...]int{1, 0} {
 		stamp := times[i]
 		switch stamp.Nsec {
@@ -73,7 +68,7 @@ func setFileTimes(path string, times *[2]syscall.Timespec, nofollow bool) error 
 		values[count] = stamp
 		count++
 	}
-	dirfd := -2 // AT_FDCWD
+	dirfd := -2
 	_, _, errno := syscall.Syscall6(sysSetattrlistat, uintptr(dirfd),
 		uintptr(unsafe.Pointer(p)), uintptr(unsafe.Pointer(&attrs)),
 		uintptr(unsafe.Pointer(&values[0])), uintptr(count)*unsafe.Sizeof(values[0]), options)

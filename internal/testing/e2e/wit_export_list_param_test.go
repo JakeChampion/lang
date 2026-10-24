@@ -12,16 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExportListParamRunsViaConsumer is the P6 numeric-array (`list<T>`)
-// PARAMETER export gate (docs/WIT-BRING-YOUR-OWN.md): the inverse of the
-// list-result export. A Fern reactor `@export sum(xs: i32[]): i32` is lifted
-// with the realloc lift — the canonical ABI materialises the incoming list in
-// the core memory via cabi_realloc and passes (ptr,len). The wasmbin wrapper
-// rebuilds the length-prefixed Fern array (count at ptr-4) from that pair and
-// calls the user func; the composer emits the `list<s32>` param component type.
-// A Fern consumer that `@import`s `sum(xs: list<s32>) -> s32` calls it with
-// [10,20,30,40] and expects 100 — linked with `wasm-tools compose` and run
-// under wasmtime.
 func TestExportListParamRunsViaConsumer(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -39,7 +29,6 @@ func TestExportListParamRunsViaConsumer(t *testing.T) {
 		}
 	}
 
-	// --- exporter: Fern reactor `@export sum(xs: i32[]): i32`. ---
 	expWit := filepath.Join(dir, "expwit")
 	if err := os.MkdirAll(expWit, 0o755); err != nil {
 		t.Fatalf("mkdir expwit: %v", err)
@@ -82,7 +71,6 @@ function sum(xs: i32[]): i32 {
 	}
 	run(wasmtools, "validate", exporter)
 
-	// --- consumer: Fern, @imports sum(xs: list<s32>) -> s32 and checks it. ---
 	userWit := filepath.Join(dir, "userwit")
 	if err := os.MkdirAll(userWit, 0o755); err != nil {
 		t.Fatalf("mkdir userwit: %v", err)

@@ -1,8 +1,8 @@
-// An UNANNOTATED `let it = m.iter()` types the slot as MapIter[K, V] from
-// the receiver's map type. The annotation used to be required on the
-// self-host IR path: without it the slot stayed untyped and the first
-// `it.has_next()` bailed the whole module — at any value type, an i32-keyed
-// i32-valued map included, with `.value()` never called.
+
+
+
+
+
 import "core/map";
 
 function main(): i32 {
@@ -10,7 +10,7 @@ function main(): i32 {
     m = m.insert(1, 10);
     m = m.insert(2, 20);
 
-    // No `: MapIter[i32, i32]` here — that is the point of the fixture.
+
     let it = m.iter();
     let total: i32 = 0;
     let seen: i32 = 0;
@@ -22,8 +22,8 @@ function main(): i32 {
     if (total != 30) { return 1; }
     if (seen != 3) { return 2; }
 
-    // Same over a string-keyed, string-valued map: the recovered K and V
-    // both have to survive, since key()/value() dispatch on them.
+
+
     let s: Map[string, string] = map_new(4);
     s = s.insert("a", "xy");
     let it2 = s.iter();

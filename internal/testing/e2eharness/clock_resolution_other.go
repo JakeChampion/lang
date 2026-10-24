@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// HostClockResolution is the tick of the wall clock on a Darwin host, the
-// microsecond of gettimeofday; XNU has no clock_getres syscall to ask.
 func HostClockResolution(t testing.TB) int64 {
 	t.Helper()
 	if runtime.GOOS != "darwin" {

@@ -28,12 +28,6 @@ func writeCapsTree(t *testing.T, files map[string]string) string {
 	return root
 }
 
-// The report attributes stdlib usage to the calling package (app gets
-// `net` via std/net → tcp_connect_with), gives a path dependency its own
-// row (helper uses fs directly), and includes the dependency's
-// capabilities in the caller's row too — the walk crosses package
-// boundaries, mirroring the brief's enforcement rule. Golden output:
-// deterministic, sorted by package name.
 func TestCapabilitiesReportPathDep(t *testing.T) {
 	root := writeCapsTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../helper\" }\n",
@@ -62,9 +56,6 @@ function main(): i32 {
 	}
 }
 
-// runEnforce mirrors the pipeline seam the -check / -interp / codegen
-// paths run enforcement at (load → constfold → check → enforce),
-// capturing warnings in the returned builder.
 func runEnforce(t *testing.T, entry string) (error, string) {
 	t.Helper()
 	e, err := loadEntry(entry)
@@ -85,8 +76,6 @@ func runEnforce(t *testing.T, entry string) (error, string) {
 	return err, warns.String()
 }
 
-// (a) A dependency granted exactly what it uses is clean — no error,
-// no warning.
 func TestEnforceCapabilitiesGrantedClean(t *testing.T) {
 	root := writeCapsTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../helper\", capabilities = [\"fs\"] }\n",
@@ -109,8 +98,6 @@ function main(): i32 {
 	}
 }
 
-// (b) The same dependency reaching outside its grant is an E070 error
-// carrying the exact chain.
 func TestEnforceCapabilitiesViolation(t *testing.T) {
 	root := writeCapsTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../helper\", capabilities = [\"fs\"] }\n",
@@ -134,8 +121,6 @@ function main(): i32 {
 	if got := err.Error(); !strings.Contains(got, want) {
 		t.Errorf("error:\ngot  %q\nwant substring %q", got, want)
 	}
-	// It is reported at the package function the chain starts from: its
-	// `function` keyword, after `pub`.
 	var ce *checker.Error
 	if errs, ok := err.(diag.Errors); !ok || len(errs) != 1 || !errors.As(errs[0], &ce) ||
 		!strings.HasSuffix(ce.Path, filepath.Join("helper", "lib.fern")) || ce.Pos.Line != 1 || ce.Pos.Col != 5 {
@@ -144,7 +129,6 @@ function main(): i32 {
 	if warns != "" {
 		t.Errorf("governed package should error, not warn: %q", warns)
 	}
-	// Wiring: -check and -interp both surface the violation.
 	if cerr := runCheck(entry, ""); cerr == nil || !strings.Contains(cerr.Error(), "E070") {
 		t.Errorf("runCheck should fail with E070, got: %v", cerr)
 	}
@@ -153,9 +137,6 @@ function main(): i32 {
 	}
 }
 
-// A trait default the importer inherits is the trait package's code: its
-// E070 sits at the default in that package's file, and the chain names the
-// method as declared rather than the impl's hoisted name.
 func TestEnforceCapabilitiesTraitDefaultChain(t *testing.T) {
 	root := writeCapsTree(t, capsTraitDefaultTree)
 	err, _ := runEnforce(t, filepath.Join(root, "app", "main.fern"))
@@ -170,8 +151,6 @@ func TestEnforceCapabilitiesTraitDefaultChain(t *testing.T) {
 	}
 }
 
-// capsTraitDefaultTree is an app inheriting package b's trait default, which
-// reads a file b is granted no capability for.
 var capsTraitDefaultTree = map[string]string{
 	"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\nb = { path = \"../b\", capabilities = [] }\n",
 	"app/main.fern": `import "b";
@@ -195,9 +174,6 @@ function main(): i32 {
 }`,
 }
 
-// (c) A dependency with NO capabilities key is warn-and-allow: the
-// compile succeeds and each package+capability warns once with an
-// example chain.
 func TestEnforceCapabilitiesUngovernedWarns(t *testing.T) {
 	root := writeCapsTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../helper\" }\n",
@@ -225,8 +201,6 @@ function main(): i32 {
 	}
 }
 
-// (d) The root package is unrestricted: capability usage in the root
-// is silent — no error, no warning — even with a manifest present.
 func TestEnforceCapabilitiesRootSilent(t *testing.T) {
 	root := writeCapsTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n",
@@ -248,13 +222,6 @@ func TestEnforceCapabilitiesRootSilent(t *testing.T) {
 	}
 }
 
-// (e) Transitive: a dependency whose OWN dependency reaches net is
-// held to its own grant — the violation attributes to every governed
-// package that reaches the builtin, with the cross-package chain.
-// Here `a` (granted fs only) reaches net through `b`. a cannot grant
-// b 'net' itself — attenuation (phase 3) forbids granting what the
-// grantor doesn't hold — so b stays ungoverned and warns while a's
-// transitive reach is the E070 error.
 func TestEnforceCapabilitiesTransitiveAttribution(t *testing.T) {
 	root := writeCapsTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\na = { path = \"../a\", capabilities = [\"fs\"] }\n",
@@ -291,11 +258,6 @@ pub function fetch(s: string): void {
 	}
 }
 
-// Attenuation (phase 3): an amplifying grant — a governed dependency
-// granting its own dep a capability it doesn't hold — fails the LOAD,
-// so every user-facing path (-check here) reports it before any
-// reachability analysis runs. The load-level semantics live in
-// internal/pkg/modload's TestLoadAttenuation* suite.
 func TestEnforceCapabilitiesAttenuationSurfacesInCheck(t *testing.T) {
 	root := writeCapsTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\na = { path = \"../a\", capabilities = [\"fs\"] }\n",
@@ -317,7 +279,6 @@ pub function one(): i32 { return b.one(); }`,
 	}
 }
 
-// No fern.toml anywhere: a single `(root)` row.
 func TestCapabilitiesReportNoManifest(t *testing.T) {
 	root := writeCapsTree(t, map[string]string{
 		"main.fern": `function main(): i32 {

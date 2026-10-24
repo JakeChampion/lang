@@ -8,30 +8,10 @@ import (
 	"testing"
 )
 
-// --- The Option-family reclaim credits, keyed on the binding (#7253 step 1) --
-//
-// A name has no scope, so two same-named Option locals in sibling blocks must
-// each keep their own reclaim verdict; a collision releases a payload the other
-// local owns. That shows as exit 99 on __rc_underflow_count() where the source
-// has another owner, and as the colliding row's census differing from its
-// rename control where it does not. The census alone cannot see the first, so
-// every row is asserted on the exit code AND on exact counts. On the typed
-// lowering every pair has identical, balanced censuses.
-//
-// The `credited_*` rows pin that every class still reclaims where there is no
-// collision.
-//
-// Every want was confirmed against BOTH oracles — bin/fern -interp and the
-// native x86-64 backend agreed on each — never read off the self-host run.
-
 type optKeyCase struct {
-	name string
-	src  string
-	// want is the exit code; 99 means the rc over-release detector fired.
-	want int
-	// allocs/frees are the SELF-HOST's numbers. Several of these shapes carry
-	// residual leaks belonging to other issues (#7351's string doubling among
-	// them), so a balance assertion would pin the wrong thing.
+	name   string
+	src    string
+	want   int
 	allocs int64
 	frees  int64
 }
@@ -39,9 +19,6 @@ type optKeyCase struct {
 func optKeyCases() []optKeyCase {
 	return []optKeyCase{
 		{
-			// Two `let o` in sibling `if` arms: the first a fresh
-			// Some((..)), the second a bare alias of a local that outlives
-			// the block AND is released elsewhere.
 			name: "opttup_collide",
 			src: `
 function round(b: Option[(i32, i32[])], i: i32): i32 {
@@ -61,9 +38,6 @@ function main(): i32 {
 			want: 61, allocs: 152, frees: 152,
 		},
 		{
-			// The pairwise control — the same program with the second local
-			// named `u`. The colliding program must measure identically to
-			// it, exit code and census alike.
 			name: "opttup_renamed",
 			src: `
 function round(b: Option[(i32, i32[])], i: i32): i32 {
@@ -83,9 +57,6 @@ function main(): i32 {
 			want: 61, allocs: 152, frees: 152,
 		},
 		{
-			// The same shape on an Option of a struct. `b`'s array goes
-			// through `id`, which hides the constant from the static-box plan, so its P is a
-			// heap box rather than a static one.
 			name: "optstruct_collide",
 			src: `struct P { xs: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
@@ -106,7 +77,6 @@ function main(): i32 {
 			want: 34, allocs: 152, frees: 152,
 		},
 		{
-			// Its pairwise control.
 			name: "optstruct_renamed",
 			src: `struct P { xs: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
@@ -127,9 +97,6 @@ function main(): i32 {
 			want: 34, allocs: 152, frees: 152,
 		},
 		{
-			// The same shape on an Option of a struct array. A collision
-			// here does not show in the census at all, only in the exit
-			// code (99).
 			name: "optaarr_collide",
 			src: `function round(i: i32): i32 {
     let keep: Option[i32[]][] = [Some([7, 8]), None];
@@ -142,7 +109,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 68, allocs: 350, frees: 350,
 		},
 		{
-			// Its pairwise control.
 			name: "optaarr_renamed",
 			src: `function round(i: i32): i32 {
     let keep: Option[i32[]][] = [Some([7, 8]), None];
@@ -155,11 +121,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 68, allocs: 350, frees: 350,
 		},
 		{
-			// The same shape on an Option of an array of arrays, whose
-			// source has no other owner: a stray release would show as the
-			// census moving away from its rename control, not as an
-			// underflow.
-			// `id` keeps keep's outer array a heap box around its static rows.
 			name: "optarrarr_collide",
 			src: `@noinline function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
@@ -174,7 +135,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 68, allocs: 400, frees: 400,
 		},
 		{
-			// Its pairwise control.
 			name: "optarrarr_renamed",
 			src: `@noinline function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
@@ -189,7 +149,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 68, allocs: 400, frees: 400,
 		},
 		{
-			// The same shape on an Option of an array (the unmatched half).
 			name: "optarr_collide",
 			src: `@noinline function hold(o: Option[i32[]]): i32 { return 0; }
 function round(i: i32): i32 {
@@ -204,7 +163,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 20, allocs: 200, frees: 200,
 		},
 		{
-			// Its pairwise control.
 			name: "optarr_renamed",
 			src: `@noinline function hold(o: Option[i32[]]): i32 { return 0; }
 function round(i: i32): i32 {
@@ -219,7 +177,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 20, allocs: 200, frees: 200,
 		},
 		{
-			// The same shape on an Option of a string.
 			name: "optstr_collide",
 			src: `@noinline function hold(o: Option[string]): i32 { return 0; }
 function round(i: i32): i32 {
@@ -234,7 +191,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 3, allocs: 150, frees: 150,
 		},
 		{
-			// Its pairwise control.
 			name: "optstr_renamed",
 			src: `@noinline function hold(o: Option[string]): i32 { return 0; }
 function round(i: i32): i32 {
@@ -249,10 +205,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 3, allocs: 150, frees: 150,
 		},
 		{
-			// POSITIVE CONTROL — a single credited binding with no sibling.
-			// This is the silent half of a key migration: a site key that resolves
-			// to nothing denies the credit, which no exit code would show. All six
-			// of these must keep balancing at live_bytes 0.
 			name: "credited_opttup",
 			src: `function round(i: i32): i32 {
     let o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
@@ -264,7 +216,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 53, allocs: 300, frees: 300,
 		},
 		{
-			// Positive control.
 			name: "credited_optstruct",
 			src: `struct P { xs: i32[] }
 function round(i: i32): i32 {
@@ -277,7 +228,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 34, allocs: 300, frees: 300,
 		},
 		{
-			// Positive control.
 			name: "credited_optaarr",
 			src: `function round(i: i32): i32 {
     let xs: Option[i32[]][] = [Some([i, i + 1]), None];
@@ -287,7 +237,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 34, allocs: 300, frees: 300,
 		},
 		{
-			// Positive control.
 			name: "credited_optarrarr",
 			src: `function round(i: i32): i32 {
     let o: Option[i32[][]] = Some([[i, i + 1], [i + 2, i + 3]]);
@@ -299,7 +248,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 34, allocs: 400, frees: 400,
 		},
 		{
-			// Positive control.
 			name: "credited_optarr",
 			src: `@noinline function hold(o: Option[i32[]]): i32 { return 0; }
 function round(i: i32): i32 {
@@ -310,7 +258,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 70, allocs: 200, frees: 200,
 		},
 		{
-			// Positive control.
 			name: "credited_optstr",
 			src: `@noinline function hold(o: Option[string]): i32 { return 0; }
 function round(i: i32): i32 {
@@ -321,9 +268,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 70, allocs: 100, frees: 100,
 		},
 		{
-			// A `for` element binder in one block and a same-named `let o`
-			// in the sibling: the binder must not inherit the var's verdict
-			// and release elements of `keep` that `keep` still owns.
 			name: "binder_forin_collide",
 			src: `@noinline function hold(o: Option[i32[]]): i32 { return 0; }
 function round(i: i32): i32 {
@@ -337,9 +281,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 25, allocs: 700, frees: 700,
 		},
 		{
-			// Its pairwise control — the element binder named `e`. It and the
-			// colliding row move together, which is the property this pair
-			// exists to assert.
 			name: "binder_forin_renamed",
 			src: `@noinline function hold(o: Option[i32[]]): i32 { return 0; }
 function round(i: i32): i32 {
@@ -354,8 +295,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 		}}
 }
 
-// TestSelfHostOptionCreditSiteKeyX86_64 — each Option binding resolves the
-// credit it earned itself, and no same-named sibling inherits one.
 func TestSelfHostOptionCreditSiteKeyX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -394,9 +333,6 @@ func TestSelfHostOptionCreditSiteKeyX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostOptionCreditSiteKeyWasmIR — the wasm sibling. Exit codes only,
-// which is the whole signal for the three faulting rows: an over-release moves
-// no byte count on any backend.
 func TestSelfHostOptionCreditSiteKeyWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping Option credit site-key wasm IR e2e")
@@ -435,7 +371,6 @@ func TestSelfHostOptionCreditSiteKeyWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostOptionCreditSiteKeyIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostOptionCreditSiteKeyIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

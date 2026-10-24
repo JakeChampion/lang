@@ -4,29 +4,20 @@ import (
 	"testing"
 )
 
-// auditDataCases isolate string / array / map features and run them
-// through the SELF-HOSTED compiler, asserting the exit code. Self-host
-// arm of the §A / §B / §C audit (docs/FEATURE-AUDIT.md).
-//
-// `.with` uses the canonical reassignment idiom (`a = a.with(i, v)`) —
-// reading the pre-`.with` binding diverges across backends (#2832).
 var auditDataCases = []struct {
 	name string
 	src  string
 	exit int
 }{
-	// strings
 	{"string-len", `function main(): i32 { let s: string = "hello"; return s.len(); }`, 5},
 	{"string-concat", `function main(): i32 { let s: string = "ab" + "cde"; return s.len(); }`, 5},
 	{"string-eq", `function main(): i32 { if ("abc" == "abc" && "abc" != "abd") { return 5; } return 0; }`, 5},
 	{"string-index", `function main(): i32 { let s: string = "ABC"; return (s[0] as i32) + (s[2] as i32); }`, 132},
 	{"string-slice", `function main(): i32 { let s: string = "hello"; let t: string = slice_unchecked(s, 1, 4) + ""; return t.len(); }`, 3},
-	// arrays
 	{"array-literal-index", `function main(): i32 { let a: i32[] = [10, 20, 30]; return a[0] + a[2]; }`, 40},
 	{"array-len", `function main(): i32 { let a: i32[] = [1, 2, 3, 4]; return a.len(); }`, 4},
 	{"array-with", `function main(): i32 { let a: i32[] = [1, 2, 3]; a = a.with(1, 20); return a[0] + a[1] + a[2]; }`, 24},
 	{"array-foreach", `function main(): i32 { let a: i32[] = [2, 3, 4]; let s: i32 = 0; for x in a { s = s + x; } return s; }`, 9},
-	// maps
 	{"map-i32-insert-getor", `import "core/map";
 function main(): i32 { let m: Map[i32,i32] = map_new(8); m = m.insert(1,10); m = m.insert(2,20); m = m.insert(1,99); return m.get_or(1,0) + m.get_or(2,0); }`, 119},
 	{"map-has", `import "core/map";
@@ -37,8 +28,6 @@ function main(): i32 { let m: Map[string,i32] = map_new(8); m = m.insert("a",3);
 function main(): i32 { let m: Map[i32,i32] = map_new(8); m = m.insert(1,1); m = m.insert(2,2); m = m.insert(3,3); return m.len(); }`, 3},
 }
 
-// TestSelfHostAuditDataX86_64 runs each string/array/map case through the
-// self-hosted x86-64 load driver and asserts the exit code.
 func TestSelfHostAuditDataX86_64(t *testing.T) {
 	l := newStdlibLoader(t)
 	for _, tc := range auditDataCases {
@@ -53,7 +42,6 @@ func TestSelfHostAuditDataX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostAuditDataArm64 — CI-gated arm64 counterpart.
 func TestSelfHostAuditDataArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range auditDataCases {

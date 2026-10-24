@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-// A comparison operator on a value of a bounded type variable is the
-// instance's own operator (#12697): at f64 it is IEEE, so NaN is unordered and
-// unequal to itself, as it is in concrete code. The core/cmp, core/iter and
-// std/array helpers call `cmp`, so they keep its total order, NaN above every
-// number. NaN prints as "nan": 0.0 / 0.0 is a negative NaN on x86-64 and a
-// positive one on arm64.
 const genericOrdOperatorsSrc = `import "core/cmp" as cmp;
 import "core/iter" as iter;
 import "std/array";

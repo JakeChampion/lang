@@ -9,10 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmTempDirName runs temp_dir on both wasm framings the self-host
-// CLI builds: the default component and the preview-1 core module. Each makes
-// `<prefix>-` and eight hex digits under the preopen, the name native's
-// wasm temp_dir draws from the CSPRNG, and returns that preopen-relative path.
 func TestSelfHostWasmTempDirName(t *testing.T) {
 	requireWasmTools(t)
 	cli := buildSelfHostCLI(t)
@@ -57,10 +53,6 @@ func TestSelfHostWasmTempDirName(t *testing.T) {
 	}
 }
 
-// TestSelfHostTempDirErrorNamesPrefix makes temp_dir fail with a prefix longer
-// than a file name may be. The IoError names the prefix the caller passed, as
-// the interpreter reports it, and not the path the runtime built from it
-// (/tmp/<prefix>-<ns> on x86-64 and arm64, <prefix>-<ns> on wasm).
 func TestSelfHostTempDirErrorNamesPrefix(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()

@@ -1,5 +1,5 @@
-// A trait method whose `self` names a concrete type is implemented only by
-// that type: the impl's receiver is the impl type, so the signatures differ.
+
+
 trait Tr {
   function d(self: i32): i32;
 }

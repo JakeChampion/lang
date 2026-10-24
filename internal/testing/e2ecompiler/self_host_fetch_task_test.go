@@ -10,10 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestSelfHostFetchTask is slice 4's gate (docs/NET-P3-SUSPENSION-PLAN.md
-// §4): the fetch client's connect and receive waits go through
-// async.wait_any, so a fetch inside a task parks at them and the program's
-// own loop fetches /plain while the task's /slow request is in flight.
 func TestSelfHostFetchTask(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	up := e2eharness.StartFetchUpstream(t)

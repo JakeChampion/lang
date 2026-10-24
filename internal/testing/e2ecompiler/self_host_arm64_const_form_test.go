@@ -8,22 +8,6 @@ import (
 	"testing"
 )
 
-// The emitter-shape gates for asm_arm64_ir.fern's register path on constants:
-// the immediate operand forms and the i64 constant forms — the arm64 twin of
-// self_host_x86_const_form_test.go.
-//
-// Each case asserts two things that have to travel together: the selected
-// form is present in the function that produces it and the form it replaces
-// is absent, AND the program still exits with the value the unfolded path
-// gives it. Either alone is easy to satisfy wrongly. The program is linked by
-// the cross gcc and run under qemu, so every selected form is also assembled
-// by an independent assembler.
-//
-// The shapes are asserted per FUNCTION BODY rather than over the whole
-// module, because the hand-written runtime carries its own `add x0, x0, #N`
-// lines. The allocator picks the register, so each line is a pattern with the
-// register left open, and a back-reference where two operands must agree.
-
 func arm64ShapeHarness(t *testing.T) (func(t *testing.T, src string) string, func(t *testing.T, name, asm string) int) {
 	t.Helper()
 	arm64gcc, qemu := arm64Tooling(t)
@@ -75,14 +59,6 @@ func runArm64ShapeCases(t *testing.T, cases []shapeCase) {
 	runShapeCases(t, emit, run, cases)
 }
 
-// TestSelfHostConstOperandReachesImmediateFormArm64 pins the immediate
-// operand: add, sub and cmp against a literal in imm12's 0..4095 read it as
-// an immediate and never materialise it first. Width is the rule's whole
-// risk, so the refusals are pinned too: a literal past 4095 goes through a
-// register, by one MOVZ up to 65535 and the literal pool beyond, and still
-// computes the right answer. 4096 is pinned at the boundary on purpose: it
-// is the first value imm12 cannot hold unshifted, and the one the shifted
-// form (recorded as a gap in the ssa-log entry) would take first.
 func TestSelfHostConstOperandReachesImmediateFormArm64(t *testing.T) {
 	runArm64ShapeCases(t, []shapeCase{
 		{
@@ -128,11 +104,6 @@ function main(): i32 { return page(1) - 4000 + odd(1) - 4090 + ((wide(1i64) % 10
 	})
 }
 
-// TestSelfHostI64ConstantTakesMovzFormArm64 pins the i64 constant form: a
-// literal in 0..65535 is one `mov`, one a single shifted halfword spells is
-// one `movz` (TestSelfHostArm64MovWideConstants covers the movn forms), a
-// wider one keeps the literal pool, and a small negative one, which
-// `0i64 - 5i64` folds to, is one `mov` too.
 func TestSelfHostI64ConstantTakesMovzFormArm64(t *testing.T) {
 	runArm64ShapeCases(t, []shapeCase{
 		{

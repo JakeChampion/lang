@@ -1,38 +1,11 @@
-// std/array — methods on arrays: map, filter, fold, zip, windows, and more.
-//
-// Import std/array to use its receiver methods.
-// Generic methods operate on T[] values. Other methods select a specific
-// element type, such as string[] for join.
+// This module provides array methods.
 
-// core/cmp supplies the `Eq` trait that bounds the equality-driven verbs
-// (`contains` / `index_of` / `distinct`) below, plus the primitive `impl Eq`
-// instances (i32 / string / …) that satisfy it.
 import "core/cmp";
-// std/array's bodies dispatch (i32) byte methods like `.abs()`
-// in abs_each and (string) methods like `.contains(needle)` /
-// `.index_of(...)` / `.count(...)` / `.join(...)` in the
-// string-array helpers. Declaring those imports makes the
-// dispatch resolve under no-prelude; the cycles with
-// std/string + std/i32 are handled by modload's stdlib-cycle
-// support.
 import "std/i32";
 import "std/string";
-// std/num supplies the `Add`/`Zero`/`Mul`/`One` traits bounding `sum` /
-// `product` below, and the primitive impls that satisfy them.
 import "std/num";
 
-// === i32 array math ===
-//
-// What is left here is genuinely i32-shaped — `gcd_all` / `median` /
-// `avg` and friends, whose bodies need integer division. The element-polymorphic reductions (`sum` / `max` /
-// `min` / `product` / `count` / …) live at the bottom of
-// the file as bounded generic methods.
-
-// `(arr: i32[]) avg()` — integer mean (truncated toward zero).
-// None on empty input. The running sum is accumulated in i64,
-// so a long / large-valued array can't overflow BEFORE the
-// divide the way the i32 `sum()` does (#2687) — the truncated
-// mean of any i32[] always fits back in i32.
+// avg returns the integer mean, or None for an empty array.
 pub function (arr: i32[]) avg(): Option[i32] {
   let n: i32 = arr.len();
   if (n == 0) {
@@ -47,10 +20,6 @@ pub function (arr: i32[]) avg(): Option[i32] {
   return Some((s / (n as i64)) as i32);
 }
 
-// `(arr: i32[]) gcd_all()` — fold gcd across the array.
-// Option[i32] None on empty. Single-element array returns
-// Some(arr[0].abs()). Negative inputs use their magnitude
-// (gcd is sign-invariant).
 pub function (arr: i32[]) gcd_all(): Option[i32] {
   let n: i32 = arr.len();
   if (n == 0) {
@@ -65,10 +34,6 @@ pub function (arr: i32[]) gcd_all(): Option[i32] {
   return Some(g);
 }
 
-// `(arr: i32[]) lcm_all()` — fold lcm across the array.
-// Option[i32] None on empty. Overflow wraps silently;
-// callers handling unbounded ranges should pre-check or
-// widen to i64.
 pub function (arr: i32[]) lcm_all(): Option[i32] {
   let n: i32 = arr.len();
   if (n == 0) {
@@ -83,10 +48,6 @@ pub function (arr: i32[]) lcm_all(): Option[i32] {
   return Some(l);
 }
 
-// `(arr: i32[]) abs_each()` — fresh array of absolute
-// values. Empty → empty. Standard map shape; collapses
-// to `arr.map(abs)` once first-class higher-order
-// methods land.
 pub function (arr: i32[]) abs_each(): i32[] {
   let n: i32 = arr.len();
   let out: i32[] = [];
@@ -98,9 +59,6 @@ pub function (arr: i32[]) abs_each(): i32[] {
   return out;
 }
 
-// `(arr: i32[]) min_max()` — Option[(min, max)] in a single
-// pass. Empty → None. Saves a second iteration when callers
-// need both bounds.
 pub function (arr: i32[]) min_max(): Option[(i32, i32)] {
   let n: i32 = arr.len();
   if (n == 0) {
@@ -121,9 +79,6 @@ pub function (arr: i32[]) min_max(): Option[(i32, i32)] {
   return Some((lo, hi));
 }
 
-// `(arr: i32[]) every_positive()` — true if every element is
-// strictly positive (n > 0). Empty → true (vacuous). Useful
-// for input validation on count / size arrays.
 pub function (arr: i32[]) every_positive(): boolean {
   let n: i32 = arr.len();
   let i: i32 = 0;
@@ -136,10 +91,6 @@ pub function (arr: i32[]) every_positive(): boolean {
   return true;
 }
 
-// `(arr: i32[]) sum_squared()` — sum of squares (x*x for
-// each element). Empty array → 0. Useful for variance /
-// magnitude calculations. No overflow detection — squares
-// of larger ints will wrap.
 pub function (arr: i32[]) sum_squared(): i32 {
   let n: i32 = arr.len();
   let s: i32 = 0;
@@ -151,10 +102,6 @@ pub function (arr: i32[]) sum_squared(): i32 {
   return s;
 }
 
-// `(arr: i32[]) median()` — middle value after ascending
-// sort. For even-length arrays returns the lower middle
-// (no float averaging since the result type is i32).
-// Option[i32] None on empty.
 pub function (arr: i32[]) median(): Option[i32] {
   let n: i32 = arr.len();
   if (n == 0) {
@@ -164,11 +111,6 @@ pub function (arr: i32[]) median(): Option[i32] {
   return Some(sorted[(n - 1) / 2]);
 }
 
-// `(arr: i32[]) mode()` — most frequently occurring
-// element. Ties resolve to the first occurrence in the
-// original array order. Option[i32] None on empty. O(n^2)
-// naive count; fine for the small-n use cases this
-// module targets.
 pub function (arr: i32[]) mode(): Option[i32] {
   let n: i32 = arr.len();
   if (n == 0) {
@@ -188,17 +130,6 @@ pub function (arr: i32[]) mode(): Option[i32] {
   return Some(best);
 }
 
-// `arr.join(sep)` — concatenate a string-array into a single
-// string with `sep` between every pair. Standard glue function
-// (Go's `strings.Join`, Python's `sep.join(arr)`, etc.). Empty
-// array → empty string; single-element array → just that
-// element; longer arrays → out[0] + sep + out[1] + sep + ...
-//
-// The receiver-dispatch path lives in the checker: see
-// `Array.join` in internal/check/checker/checker.go. The constrained
-// string-element signature there makes `nums.join(",")` on
-// i32[] surface as a clean type error rather than a missing-
-// method one.
 pub function (arr: string[]) join(sep: string): string {
   let n: i32 = arr.len();
   if (n == 0) {
@@ -207,10 +138,6 @@ pub function (arr: string[]) join(sep: string): string {
   if (n == 1) {
     return arr[0];
   }
-  // Size the result once and fill a builder, which is a memcpy per
-  // element and hands its bytes over as the string without copying them
-  // — O(total), where the `out = out + …` chain recopies the whole
-  // prefix on every step (O(total²), the #4379 hot path).
   let total: i32 = 0;
   let i: i32 = 0;
   while (i < n) {
@@ -232,10 +159,6 @@ pub function (arr: string[]) join(sep: string): string {
   return out;
 }
 
-// `(arr: string[]) filter_non_empty()` — fresh string[] with
-// only the non-empty entries. Useful for cleaning up the
-// output of `split(sep)` when adjacent separators left empty
-// holes (e.g. `"a,,b".split(",")` → `["a", "", "b"]`).
 pub function (arr: string[]) filter_non_empty(): string[] {
   let n: i32 = arr.len();
   let out: string[] = [];
@@ -249,9 +172,6 @@ pub function (arr: string[]) filter_non_empty(): string[] {
   return out;
 }
 
-// `(arr: string[]) count_non_empty()` — number of non-empty
-// entries. The "how many real values" counterpart to
-// filter_non_empty when callers only need the count.
 pub function (arr: string[]) count_non_empty(): i32 {
   let n: i32 = arr.len();
   let c: i32 = 0;
@@ -265,9 +185,6 @@ pub function (arr: string[]) count_non_empty(): i32 {
   return c;
 }
 
-// `(arr: string[]) distinct_count()` — number of unique
-// elements. Same algorithm as `cmp.distinct` but skips
-// building the output array.
 pub function (arr: string[]) distinct_count(): i32 {
   let n: i32 = arr.len();
   let seen: string[] = [];
@@ -281,9 +198,6 @@ pub function (arr: string[]) distinct_count(): i32 {
   return seen.len();
 }
 
-// `(arr: string[]) max_by_len()` — element with the
-// longest length; Option[string] None on empty. Ties go to
-// the first occurrence.
 pub function (arr: string[]) max_by_len(): Option[string] {
   let n: i32 = arr.len();
   if (n == 0) {
@@ -300,9 +214,6 @@ pub function (arr: string[]) max_by_len(): Option[string] {
   return Some(best);
 }
 
-// `(arr: string[]) min_by_len()` — element with the
-// shortest length; Option[string] None on empty. Ties go
-// to the first occurrence. Counterpart to max_by_len.
 pub function (arr: string[]) min_by_len(): Option[string] {
   let n: i32 = arr.len();
   if (n == 0) {
@@ -319,9 +230,6 @@ pub function (arr: string[]) min_by_len(): Option[string] {
   return Some(best);
 }
 
-// `(arr: string[]) sum_lens()` — total bytes across every
-// element. Useful for capacity-planning a join() output
-// buffer or reporting size statistics.
 pub function (arr: string[]) sum_lens(): i32 {
   let n: i32 = arr.len();
   let s: i32 = 0;
@@ -333,10 +241,6 @@ pub function (arr: string[]) sum_lens(): i32 {
   return s;
 }
 
-// `(arr: string[]) all_non_empty()` — true iff every entry
-// has at least one byte. Empty array returns true
-// (vacuously — there are no empty entries). Useful for
-// post-split validation.
 pub function (arr: string[]) all_non_empty(): boolean {
   let n: i32 = arr.len();
   let i: i32 = 0;
@@ -349,9 +253,6 @@ pub function (arr: string[]) all_non_empty(): boolean {
   return true;
 }
 
-// `(arr: string[]) any_contains(needle)` — true if any entry
-// contains needle as a substring. Useful for searching a
-// list of values for a common token.
 pub function (arr: string[]) any_contains(needle: string): boolean {
   let n: i32 = arr.len();
   let i: i32 = 0;
@@ -364,10 +265,6 @@ pub function (arr: string[]) any_contains(needle: string): boolean {
   return false;
 }
 
-// `(arr: string[]) all_starts_with(prefix)` — true if
-// every element starts with `prefix`. Empty array → true
-// (vacuous). Empty prefix → true (every string starts
-// with "").
 pub function (arr: string[]) all_starts_with(prefix: string): boolean {
   let n: i32 = arr.len();
   let i: i32 = 0;
@@ -380,8 +277,6 @@ pub function (arr: string[]) all_starts_with(prefix: string): boolean {
   return true;
 }
 
-// `(arr: string[]) all_ends_with(suffix)` — true if every
-// element ends with `suffix`. Empty array → true.
 pub function (arr: string[]) all_ends_with(suffix: string): boolean {
   let n: i32 = arr.len();
   let i: i32 = 0;
@@ -394,12 +289,6 @@ pub function (arr: string[]) all_ends_with(suffix: string): boolean {
   return true;
 }
 
-// `(arr: string[]) join_with_last(sep, last_sep)` — like
-// `join(sep)` but use `last_sep` between the final two
-// entries. The Oxford-comma shape: ["a","b","c","d"] +
-// (", ", " and ") → "a, b, c and d". Empty array → "";
-// single-element array → that element; two-element array
-// → joined with `last_sep` only.
 pub function (arr: string[]) join_with_last(sep: string, last_sep: string): string {
   let n: i32 = arr.len();
   if (n == 0) {
@@ -411,11 +300,6 @@ pub function (arr: string[]) join_with_last(sep: string, last_sep: string): stri
   if (n == 2) {
     return arr[0] + last_sep + arr[1];
   }
-  // Two-pass exact-size buffer (#4379), mirroring join:
-  // the gap before element i is `sep` for the inner joins and `last_sep`
-  // before the final element, so size = sum(elem lens) + sep*(n-2) +
-  // last_sep. Replaces the `out = out + …` chain that recopied the whole
-  // prefix each step (O(total²)). Byte-for-byte identical output.
   let total: i32 = 0;
   let i: i32 = 0;
   while (i < n) {
@@ -453,9 +337,6 @@ pub function (arr: string[]) join_with_last(sep: string, last_sep: string): stri
   return string_from_bytes_unchecked(buf);
 }
 
-// `(arr: i32[]) sum_abs()` — sum of |x| for each element.
-// Useful for L1 norm / "ignore sign, total magnitude" cases.
-// Empty → 0. Overflow wraps silently.
 pub function (arr: i32[]) sum_abs(): i32 {
   let n: i32 = arr.len();
   let s: i32 = 0;
@@ -467,8 +348,6 @@ pub function (arr: i32[]) sum_abs(): i32 {
   return s;
 }
 
-// `(arr: i32[]) all_zero()` — true iff every element is 0.
-// Empty array → true (vacuously).
 pub function (arr: i32[]) all_zero(): boolean {
   let n: i32 = arr.len();
   let i: i32 = 0;
@@ -481,8 +360,6 @@ pub function (arr: i32[]) all_zero(): boolean {
   return true;
 }
 
-// `(arr: string[]) all_eq_str(target)` — true iff every element
-// equals `target`. Empty array → true (vacuously).
 pub function (arr: string[]) all_eq_str(target: string): boolean {
   let n: i32 = arr.len();
   let i: i32 = 0;
@@ -495,24 +372,6 @@ pub function (arr: string[]) all_eq_str(target: string): boolean {
   return true;
 }
 
-// =================== WIDER-INT / FLOAT REDUCTIONS ===================
-//
-// What stays width-specific here has no exact bounded equivalent: `avg_*`
-// divides by the element count, which needs a count-to-`T` conversion the
-// numeric traits do not provide; `variance_f64` / `stddev_f64` / `norm_f64` /
-// `distance_f64` / `normalize_f64` need float division and `sqrt`;
-// `median_f64` averages the middle pair; and `dot_f64` / `add_f64` /
-// `scale_f64` / `outer_mul_f64` / `inner_mul_add_f64` are the f64 vector
-// surface docs/ARRAY-ALGEBRA.md specifies. Everything with an exact generic
-// form is a bounded generic: `xs.sum()` / `xs.product()` / `xs.cumsum()` /
-// `xs.cumproduct()` / `xs.adjacent_diff()` / `xs.range()` / `xs.max()` /
-// `xs.min()` below.
-//
-// Empty-input semantics: `avg_*` returns None (no sensible default).
-
-// avg_i64 — integer mean (floor toward zero for positive
-// sums, toward zero for negative — Go's int64 division
-// semantics). Returns None on empty.
 pub function avg_i64(arr: i64[]): Option[i64] {
   let n: i32 = arr.len();
   if (n == 0) {
@@ -541,10 +400,6 @@ pub function avg_f64(arr: f64[]): Option[f64] {
   return Some(total / (n as f64));
 }
 
-// `variance_f64(arr)` — the POPULATION variance (mean of the squared deviations
-// from the mean, dividing by n, not n-1). `None` for an empty array. Uses the
-// two-pass form (compute the mean, then the sum of squared deviations), which
-// is numerically stabler than the one-pass sum-of-squares.
 pub function variance_f64(arr: f64[]): Option[f64] {
   let n: i32 = arr.len();
   if (n == 0) {
@@ -567,9 +422,6 @@ pub function variance_f64(arr: f64[]): Option[f64] {
   return Some(acc / (n as f64));
 }
 
-// `stddev_f64(arr)` — the POPULATION standard deviation, `sqrt(variance)`.
-// `None` for an empty array. `sqrt` goes through the `__sqrt_f64` builtin
-// directly so this needs no std/f64 import.
 pub function stddev_f64(arr: f64[]): Option[f64] {
   match (variance_f64(arr)) {
     Some(v) => {
@@ -581,10 +433,6 @@ pub function stddev_f64(arr: f64[]): Option[f64] {
   }
 }
 
-// `median_f64(arr)` — the median after an ascending sort. Unlike the i32
-// `median` (which returns the lower middle), this AVERAGES the two middle
-// elements for even-length input, the standard continuous-data convention.
-// `None` for empty. Odd length returns the exact middle element.
 pub function median_f64(arr: f64[]): Option[f64] {
   let n: i32 = arr.len();
   if (n == 0) {
@@ -598,10 +446,6 @@ pub function median_f64(arr: f64[]): Option[f64] {
   return Some((sorted[hi - 1] + sorted[hi]) * 0.5);
 }
 
-// `dot_f64(a, b)` — the dot product `sum(a[i] * b[i])`. When the two arrays
-// differ in length, the extra tail of the longer one is ignored (the sum runs
-// to the shorter length); empty inputs give `0`. Returns a plain f64 (no
-// Option) since the natural identity for the empty sum is `0`.
 pub function dot_f64(a: f64[], b: f64[]): f64 {
   let n: i32 = a.len();
   let m: i32 = b.len();
@@ -617,10 +461,6 @@ pub function dot_f64(a: f64[], b: f64[]): f64 {
   return s;
 }
 
-// `norm_f64(arr)` — the Euclidean norm (L2 magnitude) `sqrt(sum(x*x))`, i.e.
-// `sqrt(dot(arr, arr))`. `0` for empty. A naive sum of squares, so very large
-// magnitudes can overflow before the sqrt — callers near the f64 max should
-// scale first; typical data is fine.
 pub function norm_f64(arr: f64[]): f64 {
   let n: i32 = arr.len();
   let s: f64 = 0.0;
@@ -632,9 +472,6 @@ pub function norm_f64(arr: f64[]): f64 {
   return __sqrt_f64(s);
 }
 
-// `distance_f64(a, b)` — the Euclidean distance `sqrt(sum((a[i]-b[i])^2))`, i.e.
-// `norm(a - b)`. On a length mismatch the sum runs to the shorter length; equal
-// vectors (and empty inputs) give `0`. Returns a plain f64.
 pub function distance_f64(a: f64[], b: f64[]): f64 {
   let n: i32 = a.len();
   let m: i32 = b.len();
@@ -651,10 +488,6 @@ pub function distance_f64(a: f64[], b: f64[]): f64 {
   return __sqrt_f64(s);
 }
 
-// `normalize_f64(arr)` — the unit vector in the same direction: each element
-// divided by `norm(arr)`, so the result has norm 1. A zero vector (norm 0) and
-// the empty vector are returned unchanged rather than producing NaNs from a
-// divide-by-zero.
 pub function normalize_f64(arr: f64[]): f64[] {
   let mag: f64 = norm_f64(arr);
   if (mag == 0.0) {
@@ -670,33 +503,18 @@ pub function normalize_f64(arr: f64[]): f64[] {
   return out;
 }
 
-// `scale_f64(arr, k)` — every element multiplied by the scalar `k`, returning a
-// new array of the same length (the input is untouched). `scale(arr, 0)` is the
-// zero vector; empty in, empty out. It is the `__scale_f64` kernel
-// (docs/ATLAS-PLATFORM-PLAN.md §3.4): one allocation and one multiply per
-// element, with nothing for a loop here to add.
 pub function scale_f64(arr: f64[], k: f64): f64[] {
   return __scale_f64(arr, k);
 }
 
-// Every a[i] * b[j], with i as the outer index. Inputs remain unchanged.
-// The result is empty if either input is empty. A result length greater
-// than the largest i32 aborts with the bounds status before allocation.
 pub function outer_mul_f64(a: f64[], b: f64[]): f64[] {
   return __outer_mul_f64(a, b);
 }
 
-// Packed matrix contraction: a is rows*extent, b is extent*columns.
-// Each result starts at init and adds a[row,k]*b[k,column] in increasing k.
-// Negative dimensions, mismatched lengths or oversized results abort. Inputs
-// are borrowed and unchanged; zero extent yields rows*columns copies of init.
 pub function inner_mul_add_f64(a: f64[], b: f64[], rows: i32, extent: i32, columns: i32, init: f64): f64[] {
   return __inner_mul_add_f64(a, b, rows, extent, columns, init);
 }
 
-// `add_f64(a, b)` — the element-wise sum `a[i] + b[i]`. On a length mismatch
-// the result runs to the shorter length (the longer tail is dropped); empty in,
-// empty out. The vector-addition companion to `scale_f64`.
 pub function add_f64(a: f64[], b: f64[]): f64[] {
   let n: i32 = a.len();
   let m: i32 = b.len();
@@ -712,40 +530,10 @@ pub function add_f64(a: f64[], b: f64[]): f64[] {
   return out;
 }
 
-// =================== GENERIC ARRAY COMBINATORS ===================
-//
-// `map` / `filter` / `fold` / `any` / `all` / `find` /
-// `enumerate` over a parametric `T[]` — STDLIB-ROADMAP item #1,
-// "the single biggest expressivity win; everything else builds
-// on these." Free generic functions (not receiver methods) because
-// Array-method dispatch keys on the method name only and can't fan out
-// on element type, and because the roadmap pins this exact
-// free-function surface.
-//
-// The generic-fn-over-`T[]` machinery is the same one `push`
-// already exercises: a body that does `out = out.append(f(x))`
-// stamps the `push` call's TypeArgs to the body's type params,
-// and monomorph rewrites them to the concrete instantiation at
-// each call site. (That substitution walker had an `*ast.Assign`
-// gap that blocked this exact shape; fixed and pinned by
-// `internal/testing/e2e/generic_array_combinators_test.go`.)
-//
-// Eager by design — every combinator returns a fresh array (or a
-// scalar). Allocation is a cheap single-cursor heap bump, and the
-// intermediate arrays are reclaimed by reference counting as their
-// last references drop (the OS reclaims the rest at process exit) —
-// the right v1 trade for the small-n CLI / edge-handler workloads.
-// A lazy `std/iter` can layer on later without reworking these
-// bodies.
-
-// `is_empty(xs)` — `true` iff `xs` has no elements. The readable spelling of
-// `xs.len() == 0`.
 pub function is_empty[T](xs: T[]): boolean {
   return xs.len() == 0;
 }
 
-// `first(xs)` — `Some` of the first element, or `None` when empty. The safe,
-// bounds-checked alternative to `xs[0]` (which traps on an empty array).
 pub function first[T](xs: T[]): Option[T] {
   if (xs.len() == 0) {
     return None;
@@ -753,8 +541,6 @@ pub function first[T](xs: T[]): Option[T] {
   return Some(xs[0]);
 }
 
-// `last(xs)` — `Some` of the final element, or `None` when empty. The safe
-// alternative to `xs[xs.len() - 1]`.
 pub function last[T](xs: T[]): Option[T] {
   let n: i32 = xs.len();
   if (n == 0) {
@@ -763,9 +549,6 @@ pub function last[T](xs: T[]): Option[T] {
   return Some(xs[n - 1]);
 }
 
-// `get(xs, i)` — bounds-checked indexing: `Some(xs[i])` when `0 <= i < len`,
-// else `None`. Turns an out-of-range access (which `xs[i]` would trap on) into
-// a value you can match on; negative `i` is `None`, never a from-the-end index.
 pub function get[T](xs: T[], i: i32): Option[T] {
   if (i < 0 || i >= xs.len()) {
     return None;
@@ -773,8 +556,6 @@ pub function get[T](xs: T[], i: i32): Option[T] {
   return Some(xs[i]);
 }
 
-// `map(xs, f)` — fresh `U[]` with `f` applied to every element.
-// Empty → empty. The most common transform.
 pub function map[T, U](xs: T[], f: (T) => U): U[] {
   let out: U[] = [];
   for x in xs {
@@ -783,8 +564,6 @@ pub function map[T, U](xs: T[], f: (T) => U): U[] {
   return out;
 }
 
-// `filter(xs, keep)` — fresh `T[]` of the elements for which
-// `keep` returns true, original order preserved. Empty → empty.
 pub function filter[T](xs: T[], keep: (T) => boolean): T[] {
   let out: T[] = [];
   for x in xs {
@@ -795,10 +574,6 @@ pub function filter[T](xs: T[], keep: (T) => boolean): T[] {
   return out;
 }
 
-// `fold(xs, init, f)` — left fold. Threads `acc` (starting at
-// `init`) through `f(acc, x)` for each element, returning the
-// final accumulator. The general reduction; `sum` / `product` /
-// `min` / `max` are all special cases.
 pub function fold[T, A](xs: T[], init: A, f: (A, T) => A): A {
   let acc: A = init;
   for x in xs {
@@ -807,8 +582,6 @@ pub function fold[T, A](xs: T[], init: A, f: (A, T) => A): A {
   return acc;
 }
 
-// `any(xs, pred)` — true if `pred` holds for at least one
-// element. Short-circuits on the first match. Empty → false.
 pub function any[T](xs: T[], pred: (T) => boolean): boolean {
   for x in xs {
     if (pred(x)) {
@@ -818,8 +591,6 @@ pub function any[T](xs: T[], pred: (T) => boolean): boolean {
   return false;
 }
 
-// `all(xs, pred)` — true if `pred` holds for every element.
-// Short-circuits on the first failure. Empty → true (vacuous).
 pub function all[T](xs: T[], pred: (T) => boolean): boolean {
   for x in xs {
     if (!pred(x)) {
@@ -829,10 +600,6 @@ pub function all[T](xs: T[], pred: (T) => boolean): boolean {
   return true;
 }
 
-// `none(xs, pred)` — true if `pred` holds for NO element (the readable
-// complement of `any`: `none(xs, is_error)` reads better than
-// `!any(xs, is_error)`). Short-circuits on the first match. Empty → true
-// (vacuous). Completes the any / all / none predicate triad.
 pub function none[T](xs: T[], pred: (T) => boolean): boolean {
   for x in xs {
     if (pred(x)) {
@@ -842,9 +609,6 @@ pub function none[T](xs: T[], pred: (T) => boolean): boolean {
   return true;
 }
 
-// `find(xs, pred)` — `Some(x)` for the first element matching
-// `pred`, else `None`. Short-circuits. The Option return keeps
-// "not found" out-of-band rather than leaning on a sentinel.
 pub function find[T](xs: T[], pred: (T) => boolean): Option[T] {
   for x in xs {
     if (pred(x)) {
@@ -854,11 +618,6 @@ pub function find[T](xs: T[], pred: (T) => boolean): Option[T] {
   return None;
 }
 
-// `find_last(xs, pred)` — `Some` of the LAST element satisfying `pred`,
-// scanning from the end, else `None`. The right-to-left mirror of `find`
-// (which returns the first match): `find` answers "the first matching
-// element", `find_last` "the last". Works for any element type via the
-// closure; empty → `None`.
 pub function find_last[T](xs: T[], pred: (T) => boolean): Option[T] {
   let i: i32 = xs.len() - 1;
   while (i >= 0) {
@@ -870,13 +629,6 @@ pub function find_last[T](xs: T[], pred: (T) => boolean): Option[T] {
   return None;
 }
 
-// `find_map(xs, f)` — apply `f` to each element and return the FIRST
-// `Some` it produces, else `None`. The map-and-search fusion of
-// `map(...).find(is_some)` in a single short-circuiting pass, keeping
-// only the mapped value (not the element that produced it). Handy when
-// the projection itself decides membership — e.g. the first line that
-// parses to a valid config entry. Mirrors Rust's `Iterator::find_map`;
-// the closure lowers on every backend and the self-host IR path.
 pub function find_map[T, U](xs: T[], f: (T) => Option[U]): Option[U] {
   for x in xs {
     match (f(x)) {
@@ -889,16 +641,6 @@ pub function find_map[T, U](xs: T[], f: (T) => Option[U]): Option[U] {
   return None;
 }
 
-// `max_by_i32_key(xs, key)` / `min_by_i32_key(xs, key)` — the ELEMENT of `xs`
-// whose i32 `key(x)` projection is largest / smallest, as `Option[T]` (`None`
-// for an empty array). The "which record has the max timestamp" case, the
-// projection sibling of `cmp.sort_by_key` and of `core/cmp`'s value-returning
-// `max_of` / `min_of` (which need the elements themselves to be `Ord`; these
-// only need an i32 key, so they work for any element type via the closure).
-// Each element's `key` is evaluated once. Ties keep the FIRST extremal element
-// (a strict `>` / `<` only replaces on a genuine improvement), so the result is
-// stable w.r.t. input order. Like `find` / `sort_by`, the closure lowers on
-// every backend and the self-host IR path.
 pub function max_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] {
   if (xs.len() == 0) {
     return None;
@@ -917,8 +659,6 @@ pub function max_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] {
   return Some(best);
 }
 
-// `min_by_i32_key` is `max_by_i32_key`'s mirror: the element with the smallest
-// i32 key, or `None` when empty.
 pub function min_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] {
   if (xs.len() == 0) {
     return None;
@@ -937,15 +677,6 @@ pub function min_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] {
   return Some(best);
 }
 
-// `max_index(xs)` / `min_index(xs)` — the INDEX of the largest / smallest
-// element under the element type's `Ord` ordering, as `Option[i32]` (`None`
-// for an empty array). The index-returning companions to `core/cmp`'s
-// value-returning `max_of` / `min_of`: use these when you need the position
-// (e.g. to look the element up in a parallel array, or to remove it). Ties keep
-// the FIRST extremal index — a strict improvement (`> 0` / `< 0` from `.cmp`)
-// only replaces. The `T: cmp.Ord` bound monomorphises the compare per element
-// type (scalar for `i32`, lexicographic for `string`); the return is
-// `Option[i32]` regardless of `T`.
 pub function max_index[T: cmp.Ord](xs: T[]): Option[i32] {
   if (xs.len() == 0) {
     return None;
@@ -961,7 +692,6 @@ pub function max_index[T: cmp.Ord](xs: T[]): Option[i32] {
   return Some(best);
 }
 
-// `min_index` is `max_index`'s mirror: the index of the smallest element.
 pub function min_index[T: cmp.Ord](xs: T[]): Option[i32] {
   if (xs.len() == 0) {
     return None;
@@ -977,12 +707,6 @@ pub function min_index[T: cmp.Ord](xs: T[]): Option[i32] {
   return Some(best);
 }
 
-// `running_max(xs)` / `running_min(xs)` — the running (prefix) maximum /
-// minimum: `out[i]` is the largest / smallest of `xs[0..=i]`, so the result
-// is monotonic and its last element is the overall max / min
-// (`running_max([3,1,4,1,5]) == [3,3,4,4,5]`). The `cmp.Ord` cumulative
-// siblings of `num.cumsum`, useful for high-water marks, drawdowns, and
-// monotone-envelope scans. Empty in, empty out.
 pub function running_max[T: cmp.Ord](xs: T[]): T[] {
   let out: T[] = [];
   if (xs.len() == 0) {
@@ -1017,16 +741,6 @@ pub function running_min[T: cmp.Ord](xs: T[]): T[] {
   return out;
 }
 
-// `max_by(xs, cmp)` — `Some` of the element that is greatest under the
-// comparator `cmp` (same three-way convention as `sort_by`: `cmp(a, b)` < 0
-// when `a` orders before `b`), or `None` when empty. The comparator form of
-// the extremal search: where `max_by_i32_key` needs a projection to an i32
-// key, this takes an arbitrary ordering, so it finds the "largest" element by
-// lexicographic string order, a struct field, or any custom rule without
-// materialising a key. Ties keep the FIRST maximal element — `best` is only
-// replaced when a later element is STRICTLY greater (`cmp(xs[i], best) > 0`),
-// so the result is stable w.r.t. input order. Like `sort_by`, the closure
-// lowers on every backend and the self-host IR path.
 pub function max_by[T](xs: T[], cmp: (T, T) => i32): Option[T] {
   if (xs.len() == 0) {
     return None;
@@ -1042,9 +756,6 @@ pub function max_by[T](xs: T[], cmp: (T, T) => i32): Option[T] {
   return Some(best);
 }
 
-// `min_by(xs, cmp)` is `max_by`'s mirror: the element that is least under the
-// comparator, or `None` when empty. `best` is replaced only on a STRICTLY
-// smaller element (`cmp(xs[i], best) < 0`), so ties keep the first minimal one.
 pub function min_by[T](xs: T[], cmp: (T, T) => i32): Option[T] {
   if (xs.len() == 0) {
     return None;
@@ -1060,11 +771,6 @@ pub function min_by[T](xs: T[], cmp: (T, T) => i32): Option[T] {
   return Some(best);
 }
 
-// `position(xs, pred)` — `Some(i)` for the FIRST index whose element
-// satisfies `pred`, else `None`. The predicate sibling of `index_of` (which
-// matches by `Eq` value) and the index-returning companion of `find` (which
-// returns the element): `find` answers "which element", `position` answers
-// "where". Works for any element type via the closure; empty → `None`.
 pub function position[T](xs: T[], pred: (T) => boolean): Option[i32] {
   let i: i32 = 0;
   while (i < xs.len()) {
@@ -1076,12 +782,6 @@ pub function position[T](xs: T[], pred: (T) => boolean): Option[i32] {
   return None;
 }
 
-// `find_indices(xs, pred)` — the indices (ascending) of every element that
-// satisfies `pred`, as a plain `i32[]`: the "all matches" plural of
-// `position`, which returns only the first. `find_indices([1,2,3,4], is_even)`
-// is `[1, 3]`; none matching yields the empty array. Pairs with `filter`
-// (which keeps the values) when it is the positions you need — a selection
-// mask, later `swap` / `remove_at` targets, gap analysis.
 pub function find_indices[T](xs: T[], pred: (T) => boolean): i32[] {
   let out: i32[] = [];
   let i: i32 = 0;
@@ -1094,11 +794,6 @@ pub function find_indices[T](xs: T[], pred: (T) => boolean): i32[] {
   return out;
 }
 
-// `rposition(xs, pred)` — `Some(i)` for the LAST index whose element
-// satisfies `pred`, scanning from the end, else `None`. The right-to-left
-// mirror of `position` (first matching index) and the predicate sibling of
-// `index_of_last` (which matches by `Eq` value). Works for any element type
-// via the closure; empty → `None`.
 pub function rposition[T](xs: T[], pred: (T) => boolean): Option[i32] {
   let i: i32 = xs.len() - 1;
   while (i >= 0) {
@@ -1110,10 +805,6 @@ pub function rposition[T](xs: T[], pred: (T) => boolean): Option[i32] {
   return None;
 }
 
-// `count_where(xs, pred)` — how many elements satisfy `pred`. The aggregate
-// companion to `filter` (which materialises the matches) and `position` (which
-// finds the first): `count_where` just tallies, so it avoids `filter(…).len()`'s
-// throwaway allocation. Works for any element type via the closure; empty → 0.
 pub function count_where[T](xs: T[], pred: (T) => boolean): i32 {
   let c: i32 = 0;
   let i: i32 = 0;
@@ -1126,11 +817,6 @@ pub function count_where[T](xs: T[], pred: (T) => boolean): i32 {
   return c;
 }
 
-// `sum_by(xs, key)` — the sum of the i32 projection `key(x)` over every
-// element. The projection sibling of the `i32[]`-only `sum`: where `sum` needs
-// the elements to already be i32, this sums an i32 field / derived value of any
-// element type (e.g. total line length over a `string[]`, total price over a
-// `Cart[]`). `key` is evaluated once per element; empty → 0.
 pub function sum_by[T](xs: T[], key: (T) => i32): i32 {
   let total: i32 = 0;
   let i: i32 = 0;
@@ -1141,11 +827,6 @@ pub function sum_by[T](xs: T[], key: (T) => i32): i32 {
   return total;
 }
 
-// `take_while(xs, pred)` — fresh `T[]` of the LONGEST leading run whose every
-// element satisfies `pred`; stops at (and excludes) the first that doesn't.
-// The predicate form of the count-based `take`. `[]` when the first element
-// fails, a full copy when all pass. Complement of `drop_while`:
-// `take_while(xs, p) ++ drop_while(xs, p) == xs`.
 pub function take_while[T](xs: T[], pred: (T) => boolean): T[] {
   let out: T[] = [];
   let i: i32 = 0;
@@ -1156,10 +837,6 @@ pub function take_while[T](xs: T[], pred: (T) => boolean): T[] {
   return out;
 }
 
-// `drop_while(xs, pred)` — fresh `T[]` starting at the FIRST element that fails
-// `pred` (the suffix `take_while` stops before). The predicate form of the
-// count-based `drop`. A full copy when the first element fails, `[]` when all
-// pass.
 pub function drop_while[T](xs: T[], pred: (T) => boolean): T[] {
   let i: i32 = 0;
   while (i < xs.len() && pred(xs[i])) {
@@ -1173,10 +850,6 @@ pub function drop_while[T](xs: T[], pred: (T) => boolean): T[] {
   return out;
 }
 
-// `enumerate(xs)` — pair each element with its 0-based index:
-// `[(0, xs[0]), (1, xs[1]), ...]`. Lets a single `for (i, x) in
-// enumerate(xs)`-style loop carry the index without a manual
-// counter. Empty → empty.
 pub function enumerate[T](xs: T[]): (i32, T)[] {
   let out: (i32, T)[] = [];
   let i: i32 = 0;
@@ -1187,9 +860,6 @@ pub function enumerate[T](xs: T[]): (i32, T)[] {
   return out;
 }
 
-// `reverse(xs)` — fresh `T[]` with the elements in reverse order.
-// Empty → empty. Structural (no element comparison), so it works
-// for any element type, unlike the i32/string-specific reversers.
 pub function reverse[T](xs: T[]): T[] {
   let out: T[] = [];
   let i: i32 = xs.len() - 1;
@@ -1200,20 +870,12 @@ pub function reverse[T](xs: T[]): T[] {
   return out;
 }
 
-// `rotate_left(xs, n)` — fresh `T[]` with the elements cyclically shifted
-// left by `n`: the first `n` move to the end. `[1,2,3,4,5]` rotated left by 2
-// is `[3,4,5,1,2]`. `n` is taken modulo the length (so `n >= len` and large
-// `n` wrap), and negative `n` rotates the other way — `rotate_left(xs, -1) ==
-// rotate_right(xs, 1)`. Empty / length-1 / `n % len == 0` → an unchanged copy.
-// Structural (no element comparison), so it works for any element type.
 pub function rotate_left[T](xs: T[], n: i32): T[] {
   let len: i32 = xs.len();
   let out: T[] = [];
   if (len == 0) {
     return out;
   }
-  // Normalise the shift into [0, len) — `%` can be negative in Fern, so add
-  // len and take `%` again to fold negatives back into range.
   let sh: i32 = (n % len + len) % len;
   let i: i32 = 0;
   while (i < len) {
@@ -1223,17 +885,10 @@ pub function rotate_left[T](xs: T[], n: i32): T[] {
   return out;
 }
 
-// `rotate_right(xs, n)` — the mirror of `rotate_left`: the last `n` elements
-// move to the front. `[1,2,3,4,5]` rotated right by 2 is `[4,5,1,2,3]`.
-// Implemented as a left-rotate by `len - (n mod len)`; same wrap / negative /
-// empty handling.
 pub function rotate_right[T](xs: T[], n: i32): T[] {
   return rotate_left(xs, 0 - n);
 }
 
-// `take(xs, n)` — fresh `T[]` of the first `n` elements (the prefix).
-// Clamped: `n <= 0` → empty, `n >= len` → a full copy. The
-// complement of `drop`: `take(xs, n) ++ drop(xs, n) == xs`.
 pub function take[T](xs: T[], n: i32): T[] {
   let out: T[] = [];
   let i: i32 = 0;
@@ -1244,8 +899,6 @@ pub function take[T](xs: T[], n: i32): T[] {
   return out;
 }
 
-// `drop(xs, n)` — fresh `T[]` with the first `n` elements removed
-// (the suffix). Clamped: `n <= 0` → a full copy, `n >= len` → empty.
 pub function drop[T](xs: T[], n: i32): T[] {
   let out: T[] = [];
   let i: i32 = n;
@@ -1259,11 +912,6 @@ pub function drop[T](xs: T[], n: i32): T[] {
   return out;
 }
 
-// `take_last(xs, n)` / `drop_last(xs, n)` — the back-of-the-array mirrors
-// of `take` / `drop`: `take_last` keeps the LAST `n` elements
-// (`take_last([1,2,3,4,5], 2) == [4,5]`), `drop_last` keeps everything but
-// them (`[1,2,3]`). Like `take` / `drop`, `n` is clamped: `n <= 0` and
-// `n >= len` behave as the natural empty / whole-array cases, never fault.
 pub function take_last[T](xs: T[], n: i32): T[] {
   if (n <= 0) {
     return [];
@@ -1286,11 +934,6 @@ pub function drop_last[T](xs: T[], n: i32): T[] {
   return slice(xs, 0, end);
 }
 
-// `slice(xs, start, end)` — fresh `T[]` of the half-open range
-// `[start, end)`. Both bounds are clamped to `[0, len]` and a start
-// past end yields empty, so out-of-range indices never fault:
-// `slice(xs, -3, 100)` copies the whole array. `take`/`drop` are the
-// one-bound special cases; `slice` is the general window into a range.
 pub function slice[T](xs: T[], start: i32, end: i32): T[] {
   let lo: i32 = start;
   let hi: i32 = end;
@@ -1309,11 +952,6 @@ pub function slice[T](xs: T[], start: i32, end: i32): T[] {
   return out;
 }
 
-// `chunks(xs, size)` — split `xs` into consecutive, non-overlapping
-// `T[]` groups of length `size`; the last group is shorter when `len`
-// isn't a multiple of `size`. `size <= 0` yields empty (rather than
-// looping forever) and empty input → empty. The batch-processing verb:
-// `for batch in chunks(rows, 100) { flush(batch); }`.
 pub function chunks[T](xs: T[], size: i32): T[][] {
   let out: T[][] = [];
   if (size <= 0) {
@@ -1322,9 +960,6 @@ pub function chunks[T](xs: T[], size: i32): T[][] {
   let n: i32 = xs.len();
   let i: i32 = 0;
   while (i < n) {
-    // Each group is a fresh `slice` return rather than a reused
-    // loop-local buffer — the latter is miscompiled by the
-    // self-host RC reuse pass (all groups alias the last one).
     let hi: i32 = i + size;
     if (hi > n) {
       hi = n;
@@ -1335,14 +970,6 @@ pub function chunks[T](xs: T[], size: i32): T[][] {
   return out;
 }
 
-// `chunks_exact(xs, size)` — like `chunks`, but only the full-length
-// groups: any trailing `< size` remainder is dropped
-// (`chunks_exact([1,2,3,4,5], 2)` is `[[1,2],[3,4]]`). `size <= 0`
-// yields empty. Mirrors Rust's `slice::chunks_exact`; the guarantee
-// that every group has exactly `size` elements is what SIMD-style and
-// fixed-record loops want. Each group is a fresh `slice` (a reused
-// loop-local buffer is miscompiled by the self-host RC reuse pass — see
-// `chunks`).
 pub function chunks_exact[T](xs: T[], size: i32): T[][] {
   let out: T[][] = [];
   if (size <= 0) {
@@ -1357,11 +984,6 @@ pub function chunks_exact[T](xs: T[], size: i32): T[][] {
   return out;
 }
 
-// `windows(xs, size)` — every contiguous length-`size` sub-slice,
-// sliding one element at a time: `windows([1,2,3,4], 2)` is
-// `[[1,2],[2,3],[3,4]]`. `size <= 0` or `size > len` yields empty (no
-// window fits). Unlike `chunks`, windows OVERLAP and each one has
-// exactly `size` elements — the shape pairwise/rolling scans want.
 pub function windows[T](xs: T[], size: i32): T[][] {
   let out: T[][] = [];
   if (size <= 0) {
@@ -1370,16 +992,12 @@ pub function windows[T](xs: T[], size: i32): T[][] {
   let n: i32 = xs.len();
   let i: i32 = 0;
   while (i + size <= n) {
-    // Fresh `slice` return per window (see the note in `chunks`).
     out = out.append(slice(xs, i, i + size));
     i = i + 1;
   }
   return out;
 }
 
-// `concat(a, b)` — fresh `T[]` of `a`'s elements followed by `b`'s.
-// Neither input is mutated. Empty inputs are fine (`concat([], b)`
-// copies `b`).
 pub function concat[T](a: T[], b: T[]): T[] {
   let out: T[] = [];
   for x in a {
@@ -1391,10 +1009,6 @@ pub function concat[T](a: T[], b: T[]): T[] {
   return out;
 }
 
-// `zip(a, b)` — pair up elements positionally into a fresh `(T, U)[]`,
-// truncated to the shorter input (the usual zip-stops-at-shortest rule).
-// Structural (no callback / comparison), so it works for any element
-// types. `zip([1,2,3], ["a","b"])` → `[(1,"a"), (2,"b")]`.
 pub function zip[T, U](a: T[], b: U[]): (T, U)[] {
   let out: (T, U)[] = [];
   let n: i32 = a.len();
@@ -1409,11 +1023,6 @@ pub function zip[T, U](a: T[], b: U[]): (T, U)[] {
   return out;
 }
 
-// `flat_map(xs, f)` — map each element to a `U[]` and concatenate the
-// results into one flat `U[]` (`map` then flatten). `f`'s return is the
-// array `U[]` (pointer-shaped), so it uses the same indirect-call path
-// as `map`/`filter`. `flat_map([1,2], dup)` with `dup(x) = [x, x]` →
-// `[1,1,2,2]`.
 pub function flat_map[T, U](xs: T[], f: (T) => U[]): U[] {
   let out: U[] = [];
   for x in xs {
@@ -1424,9 +1033,6 @@ pub function flat_map[T, U](xs: T[], f: (T) => U[]): U[] {
   return out;
 }
 
-// `flatten(xss)` — concatenate a nested `T[][]` into one flat `T[]`,
-// preserving order (`flat_map` with the identity callback, but
-// structural — no closure). `flatten([[1,2],[],[3]])` → `[1,2,3]`.
 pub function flatten[T](xss: T[][]): T[] {
   let out: T[] = [];
   for xs in xss {
@@ -1437,10 +1043,6 @@ pub function flatten[T](xss: T[][]): T[] {
   return out;
 }
 
-// `partition(xs, pred)` — split `xs` into `(kept, rejected)`: the first
-// array holds the elements satisfying `pred` (in order), the second the
-// rest (in order). `partition([1,2,3,4], is_even)` → `([2,4], [1,3])`.
-// A single pass, so `pred` runs exactly once per element.
 pub function partition[T](xs: T[], pred: (T) => boolean): (T[], T[]) {
   let kept: T[] = [];
   let rejected: T[] = [];
@@ -1454,11 +1056,6 @@ pub function partition[T](xs: T[], pred: (T) => boolean): (T[], T[]) {
   return (kept, rejected);
 }
 
-// `scan(xs, init, f)` — the running accumulators of a left fold: element
-// `i` of the result is `f` applied cumulatively through `xs[0..=i]`, so
-// the output has the SAME length as `xs` (the seed `init` is not
-// emitted). `scan([1,2,3], 0, add)` → `[1,3,6]` (a generic `cumsum`).
-// The final element equals `fold(xs, init, f)`.
 pub function scan[T, A](xs: T[], init: A, f: (A, T) => A): A[] {
   let out: A[] = [];
   let acc: A = init;
@@ -1469,11 +1066,6 @@ pub function scan[T, A](xs: T[], init: A, f: (A, T) => A): A[] {
   return out;
 }
 
-// `intersperse(xs, sep)` — a fresh `T[]` with `sep` inserted between
-// each pair of adjacent elements (never before the first or after the
-// last). Structural (no callback), so it works for any element type.
-// `intersperse([1,2,3], 0)` → `[1,0,2,0,3]`; a 0- or 1-element input is
-// returned element-for-element (no gap to fill).
 pub function intersperse[T](xs: T[], sep: T): T[] {
   let out: T[] = [];
   let i: i32 = 0;
@@ -1488,10 +1080,6 @@ pub function intersperse[T](xs: T[], sep: T): T[] {
   return out;
 }
 
-// `step_by(xs, n)` — a fresh array of every `n`-th element starting at
-// index 0 (`step_by([10,20,30,40], 2) == [10, 30]`). `n <= 0` yields an
-// empty array (there is no sensible non-positive stride). Mirrors Rust's
-// `Iterator::step_by`, minus its panic on a zero step.
 pub function step_by[T](xs: T[], n: i32): T[] {
   let out: T[] = [];
   if (n <= 0) {
@@ -1505,11 +1093,6 @@ pub function step_by[T](xs: T[], n: i32): T[] {
   return out;
 }
 
-// `reduce(xs, f)` — left fold with no explicit seed: the first element
-// is the initial accumulator and `f` combines it with each remaining
-// element. `None` for an empty array (there is no value to start from) —
-// the difference from `fold`, which always has its `init`. `reduce([3,1,2], max2)`
-// → `Some(3)`.
 pub function reduce[T](xs: T[], f: (T, T) => T): Option[T] {
   if (xs.len() == 0) {
     return None;
@@ -1523,15 +1106,6 @@ pub function reduce[T](xs: T[], f: (T, T) => T): Option[T] {
   return Some(acc);
 }
 
-// `binary_search(xs, target)` — `Some(i)` for an index where `xs[i] == target`,
-// or `None` if absent, assuming `xs` is sorted ASCENDING by the element type's
-// `Ord` ordering (the order `sort` produces). O(log n) — halve the search range
-// each step via the three-way `xs[mid].cmp(target)`. The `T: cmp.Ord` bound
-// monomorphises the compare per element type (scalar for `i32`, lexicographic
-// for `string`), the same mechanism as `sort`. On duplicates, returns SOME
-// matching index (not necessarily the first). The return is `Option[i32]`
-// regardless of `T`. Precondition: `xs` must be sorted — on unsorted input the
-// result is unspecified (it won't crash, but may miss a present element).
 pub function binary_search[T: cmp.Ord](xs: T[], target: T): Option[i32] {
   let lo: i32 = 0;
   let hi: i32 = xs.len();
@@ -1550,33 +1124,6 @@ pub function binary_search[T: cmp.Ord](xs: T[], target: T): Option[i32] {
   return None;
 }
 
-// =================== EQ-DRIVEN ARRAY VERBS ===================
-//
-// `all_equal` / `dedup` (below) and the set-algebra verbs (further down) over
-// an arbitrary `T[]`, driven by structural equality: the element type is bound
-// `T: cmp.Eq` — `i32` / `string` / the other primitives satisfy it out of the
-// box (their `impl Eq` lives in core/cmp), and a `@derive(Eq)` struct or enum
-// qualifies too. The `Eq` bound is also what lets these monomorphise (and so
-// dispatch the compare correctly per element type) on the self-host IR path,
-// where an UNBOUNDED `[T]` would erase to a single pointer-compare clone and
-// silently miscompare strings.
-//
-// Every body compares through the bound's `eq` method, never the `==` operator:
-// `==` desugars through a `Type.eq` lookup that is not visible from this module,
-// so `==` here would reject a caller's `@derive(Eq)` element type (#6846).
-//
-// The free-function `contains` / `index_of` / `distinct` / `eq_arrays` verbs
-// live in core/cmp with the `Eq` trait they depend on; `import "core/cmp"` for
-// those, and do not add a second copy here. The `.contains()` / `.index_of()` /
-// `.distinct()` receiver methods (method-form block at the end of this file)
-// are element-generic over the same bound and delegate to core/cmp; the only
-// string[]-specific member of this family is `.distinct_count()`.
-
-// `all_equal(xs)` — true iff every element equals the first (i.e. the array has
-// at most one DISTINCT value). Vacuously true for an empty or single-element
-// array. Short-circuits on the first element that differs. The `T: cmp.Eq`
-// bound supplies the compare (the type's structural equality). Useful for "is
-// this column constant" / "did every worker agree" checks.
 pub function all_equal[T: cmp.Eq](xs: T[]): boolean {
   let n: i32 = xs.len();
   if (n < 2) {
@@ -1592,12 +1139,6 @@ pub function all_equal[T: cmp.Eq](xs: T[]): boolean {
   return true;
 }
 
-// `dedup(xs)` — fresh `T[]` with each run of CONSECUTIVE equal elements
-// collapsed to a single element: `[1,1,2,2,1]` → `[1,2,1]`. Unlike
-// `cmp.distinct` (which removes ALL duplicates anywhere), `dedup` only removes
-// adjacent ones — so on a sorted array it behaves like `cmp.distinct` but in a
-// single O(n) pass, and on unsorted data it compresses runs while keeping later
-// repeats. Empty → empty. Same `T: cmp.Eq` bound / per-type monomorphisation.
 pub function dedup[T: cmp.Eq](xs: T[]): T[] {
   let out: T[] = [];
   let i: i32 = 0;
@@ -1610,20 +1151,6 @@ pub function dedup[T: cmp.Eq](xs: T[]): T[] {
   return out;
 }
 
-// =================== EQ-DRIVEN SET ALGEBRA ===================
-//
-// `count` / `union` / `intersection` / `difference` over an arbitrary `T[]`,
-// driven by the same `T: cmp.Eq` bound (and the same per-element-type
-// monomorphisation on the self-host IR path) as core/cmp's `contains`. The
-// three set operations treat the inputs as multisets but return SET results —
-// each element appears at most once, in first-seen order — built on
-// `cmp.contains`, so the compare they perform is the type's structural equality
-// (`str_eq` for strings, the scalar compare for `i32`). O(n·m) membership
-// scans; fine for the small-n CLI / edge-handler workloads, reach for a
-// Map/Set at larger N.
-
-// `count(xs, target)` — how many elements equal `target`; the free form of
-// `xs.count(target)`. Empty → 0.
 pub function count[T: cmp.Eq](xs: T[], target: T): i32 {
   let c: i32 = 0;
   for x in xs {
@@ -1634,9 +1161,6 @@ pub function count[T: cmp.Eq](xs: T[], target: T): i32 {
   return c;
 }
 
-// `union(a, b)` — set union: the distinct elements of `a`, then the distinct
-// elements of `b` not already present. First-seen order across `a` then `b`
-// (equivalent to `cmp.distinct(concat(a, b))`, one pass).
 pub function union[T: cmp.Eq](a: T[], b: T[]): T[] {
   let out: T[] = [];
   for x in a {
@@ -1652,8 +1176,6 @@ pub function union[T: cmp.Eq](a: T[], b: T[]): T[] {
   return out;
 }
 
-// `intersection(a, b)` — set intersection: the distinct elements of `a` that
-// also appear in `b`, in `a`'s first-seen order.
 pub function intersection[T: cmp.Eq](a: T[], b: T[]): T[] {
   let out: T[] = [];
   for x in a {
@@ -1664,8 +1186,6 @@ pub function intersection[T: cmp.Eq](a: T[], b: T[]): T[] {
   return out;
 }
 
-// `difference(a, b)` — set difference (`a \ b`): the distinct elements of `a`
-// that do NOT appear in `b`, in `a`'s first-seen order.
 pub function difference[T: cmp.Eq](a: T[], b: T[]): T[] {
   let out: T[] = [];
   for x in a {
@@ -1676,13 +1196,6 @@ pub function difference[T: cmp.Eq](a: T[], b: T[]): T[] {
   return out;
 }
 
-// (Structural array equality lives in core/cmp as `eq_arrays[T: Eq]`; the
-// method form `xs.equal(other)` below delegates to it — #5348 removed the
-// duplicate free-function copy that used to live here.)
-
-// `index_of_last(xs, target)` — `Some(i)` for the LAST index whose element
-// equals `target`, else `None`. The reverse-scan companion to `index_of`
-// (first match); the Option keeps "not found" out of band.
 pub function index_of_last[T: cmp.Eq](xs: T[], target: T): Option[i32] {
   let i: i32 = xs.len() - 1;
   while (i >= 0) {
@@ -1694,10 +1207,6 @@ pub function index_of_last[T: cmp.Eq](xs: T[], target: T): Option[i32] {
   return None;
 }
 
-// `starts_with(xs, prefix)` — true iff `xs` begins with `prefix`: every element
-// of `prefix` equals the element of `xs` at the same index. A `prefix` longer
-// than `xs` is never a prefix (false); an empty `prefix` always matches (true).
-// The array analogue of `string.starts_with`, over any `T: cmp.Eq`.
 pub function starts_with[T: cmp.Eq](xs: T[], prefix: T[]): boolean {
   if (prefix.len() > xs.len()) {
     return false;
@@ -1712,9 +1221,6 @@ pub function starts_with[T: cmp.Eq](xs: T[], prefix: T[]): boolean {
   return true;
 }
 
-// `ends_with(xs, suffix)` — true iff `xs` ends with `suffix`: every element of
-// `suffix` equals the element of `xs` at the matching tail index. A `suffix`
-// longer than `xs` is false; an empty `suffix` always matches.
 pub function ends_with[T: cmp.Eq](xs: T[], suffix: T[]): boolean {
   let n: i32 = xs.len();
   let m: i32 = suffix.len();
@@ -1731,21 +1237,10 @@ pub function ends_with[T: cmp.Eq](xs: T[], suffix: T[]): boolean {
   return true;
 }
 
-// ---- Generic array methods --------------------------------------
-//
-// Method forms of the combinators above, so pipelines read
-// left-to-right — `xs.map(f).filter(keep)` instead of the inside-out
-// `filter(map(xs, f), keep)`. Enabled by element-polymorphic method
-// receivers (#2692). Each delegates to the free function. Callbacks accept
-// strings and composite values on every backend.
-
-// `xs.is_empty()` — true iff `xs` has no elements.
 pub function (xs: T[]) is_empty(): boolean {
   return is_empty(xs);
 }
 
-// `xs.first()` / `xs.last()` — `Some` of the first / last element, `None` when
-// empty. Safe, bounds-checked alternatives to `xs[0]` / `xs[len-1]`.
 pub function (xs: T[]) first(): Option[T] {
   return first(xs);
 }
@@ -1754,27 +1249,22 @@ pub function (xs: T[]) last(): Option[T] {
   return last(xs);
 }
 
-// `xs.get(i)` — bounds-checked indexing: `Some(xs[i])` in range, else `None`.
 pub function (xs: T[]) get(i: i32): Option[T] {
   return get(xs, i);
 }
 
-// `xs.map(f)` — apply `f` to every element, yielding a new array.
 pub function (xs: T[]) map[U](f: (T) => U): U[] {
   return map(xs, f);
 }
 
-// `xs.filter(keep)` — keep only elements where `keep` holds.
 pub function (xs: T[]) filter(keep: (T) => boolean): T[] {
   return filter(xs, keep);
 }
 
-// `xs.fold(init, f)` — left fold over the elements.
 pub function (xs: T[]) fold[A](init: A, f: (A, T) => A): A {
   return fold(xs, init, f);
 }
 
-// `xs.any(pred)` / `xs.all(pred)` — existential / universal quantifier.
 pub function (xs: T[]) any(pred: (T) => boolean): boolean {
   return any(xs, pred);
 }
@@ -1783,69 +1273,54 @@ pub function (xs: T[]) all(pred: (T) => boolean): boolean {
   return all(xs, pred);
 }
 
-// `xs.none(pred)` — true iff `pred` holds for no element (complement of `any`).
 pub function (xs: T[]) none(pred: (T) => boolean): boolean {
   return none(xs, pred);
 }
 
-// `xs.find(pred)` — first element satisfying `pred`, or `None`.
 pub function (xs: T[]) find(pred: (T) => boolean): Option[T] {
   return find(xs, pred);
 }
 
-// `xs.find_last(pred)` — LAST element satisfying `pred`, or `None`.
 pub function (xs: T[]) find_last(pred: (T) => boolean): Option[T] {
   return find_last(xs, pred);
 }
 
-// `xs.rposition(pred)` — index of the LAST element satisfying `pred`, or `None`.
 pub function (xs: T[]) rposition(pred: (T) => boolean): Option[i32] {
   return rposition(xs, pred);
 }
 
-// `xs.count_where(pred)` — how many elements satisfy `pred`.
 pub function (xs: T[]) count_where(pred: (T) => boolean): i32 {
   return count_where(xs, pred);
 }
 
-// `xs.sum_by(key)` — sum of the i32 projection `key(x)` over all elements.
 pub function (xs: T[]) sum_by(key: (T) => i32): i32 {
   return sum_by(xs, key);
 }
 
-// `xs.enumerate()` — pair each element with its 0-based index.
 pub function (xs: T[]) enumerate(): (i32, T)[] {
   return enumerate(xs);
 }
 
-// `xs.concat(other)` — `xs` followed by `other` (fresh array).
 pub function (xs: T[]) concat(other: T[]): T[] {
   return concat(xs, other);
 }
 
-// `xs.zip(other)` — positional pairing, truncated to the shorter input.
 pub function (xs: T[]) zip[U](other: U[]): (T, U)[] {
   return zip(xs, other);
 }
 
-// `xs.step_by(n)` — every n-th element from index 0; empty for `n <= 0`.
 pub function (xs: T[]) step_by(n: i32): T[] {
   return step_by(xs, n);
 }
 
-// `xs.flat_map(f)` — map to `U[]` per element, then flatten.
 pub function (xs: T[]) flat_map[U](f: (T) => U[]): U[] {
   return flat_map(xs, f);
 }
 
-// `xs.intersperse(sep)` — insert `sep` between each pair of adjacent
-// elements (fresh array).
 pub function (xs: T[]) intersperse(sep: T): T[] {
   return intersperse(xs, sep);
 }
 
-// `xs.rotate_left(n)` / `xs.rotate_right(n)` — cyclic shift by `n` (mod len);
-// negative `n` rotates the other way. Fresh array.
 pub function (xs: T[]) rotate_left(n: i32): T[] {
   return rotate_left(xs, n);
 }
@@ -1854,13 +1329,10 @@ pub function (xs: T[]) rotate_right(n: i32): T[] {
   return rotate_right(xs, n);
 }
 
-// `xs.reduce(f)` — seedless left fold; `None` on an empty array.
 pub function (xs: T[]) reduce(f: (T, T) => T): Option[T] {
   return reduce(xs, f);
 }
 
-// `xs.max_by(cmp)` / `xs.min_by(cmp)` — extremal element under the comparator
-// (first on a tie); `None` when empty.
 pub function (xs: T[]) max_by(cmp: (T, T) => i32): Option[T] {
   return max_by(xs, cmp);
 }
@@ -1869,32 +1341,14 @@ pub function (xs: T[]) min_by(cmp: (T, T) => i32): Option[T] {
   return min_by(xs, cmp);
 }
 
-// ---- Element-polymorphic method forms of the Ord/Eq verbs ----------
-//
-// These are method-form companions to the `cmp.Ord` / `cmp.Eq` free
-// generics, so pipelines read left-to-right — `xs.map(f).is_sorted()`
-// instead of the inside-out `cmp.is_sorted(map(xs, f))` — for ANY bounded
-// element type (i32 / i64 / u32 / u64 / f32 / f64 / string and
-// `@derive(Ord)` / `@derive(Eq)` types), not just the i32- / string-
-// specific hand-written receivers. Each is READ-ONLY over its inputs
-// (no copy-on-write). (Bounded-receiver generic methods: carried by the
-// same fold that already lowers `map`/`filter`/`fold`.)
-
-// `xs.is_sorted()` — true iff `xs` is in non-decreasing `Ord` order
-// (vacuously true for length < 2).
 pub function (xs: T[]) is_sorted[T: cmp.Ord](): boolean {
   return cmp.is_sorted(xs);
 }
 
-// `xs.binary_search(target)` — `Some(i)` where `xs[i] == target`, else `None`,
-// assuming `xs` is sorted ascending. O(log n). The method form of
-// array.binary_search.
 pub function (xs: T[]) binary_search[T: cmp.Ord](target: T): Option[i32] {
   return binary_search(xs, target);
 }
 
-// `xs.max_index()` / `xs.min_index()` — index of the largest / smallest element
-// by `Ord` (first on a tie), `None` when empty.
 pub function (xs: T[]) max_index[T: cmp.Ord](): Option[i32] {
   return max_index(xs);
 }
@@ -1903,25 +1357,18 @@ pub function (xs: T[]) min_index[T: cmp.Ord](): Option[i32] {
   return min_index(xs);
 }
 
-// `xs.equal(other)` — structural element-wise equality (same length and
-// equal elements at every index); delegates to core/cmp's `eq_arrays`.
 pub function (xs: T[]) equal[T: cmp.Eq](other: T[]): boolean {
   return cmp.eq_arrays(xs, other);
 }
 
-// `xs.dedup()` — collapse each run of consecutive equal elements to one.
 pub function (xs: T[]) dedup[T: cmp.Eq](): T[] {
   return dedup(xs);
 }
 
-// `xs.all_equal()` — true iff every element is equal (≤ 1 distinct value);
-// vacuously true for length < 2.
 pub function (xs: T[]) all_equal[T: cmp.Eq](): boolean {
   return all_equal(xs);
 }
 
-// `xs.starts_with(prefix)` / `xs.ends_with(suffix)` — array analogues of
-// the string prefix/suffix tests, over any `T: cmp.Eq`.
 pub function (xs: T[]) starts_with[T: cmp.Eq](prefix: T[]): boolean {
   return starts_with(xs, prefix);
 }
@@ -1930,53 +1377,30 @@ pub function (xs: T[]) ends_with[T: cmp.Eq](suffix: T[]): boolean {
   return ends_with(xs, suffix);
 }
 
-// `xs.index_of(target)` — `Some(i)` for the first index equal to `target`,
-// `None` when absent. The reverse-scan companion is `.index_of_last`;
-// `.position(pred)` is the predicate-driven form.
 pub function (xs: T[]) index_of[T: cmp.Eq](target: T): Option[i32] {
   return cmp.index_of(xs, target);
 }
 
-// `xs.contains(target)` — boolean membership test; delegates to core/cmp's
-// `contains`.
 pub function (xs: T[]) contains[T: cmp.Eq](target: T): boolean {
   return cmp.contains(xs, target);
 }
 
-// `xs.index_of_last(target)` — `Some(i)` for the LAST index equal to
-// `target`, else `None`. The reverse-scan companion to `.index_of` /
-// `.position`, over any `T: cmp.Eq`.
 pub function (xs: T[]) index_of_last[T: cmp.Eq](target: T): Option[i32] {
   return index_of_last(xs, target);
 }
 
-// (No `T[][]` receiver method for `flatten` — array-receiver methods
-// must be element-polymorphic `(xs: T[])`, so a nested-array receiver
-// is rejected by E021. Call the free `flatten(xss)` form instead.)
-
-// `xs.partition(pred)` — method form of `partition`: `(kept, rejected)`
-// split by the predicate.
 pub function (xs: T[]) partition[T](pred: (T) => boolean): (T[], T[]) {
   return partition(xs, pred);
 }
 
-// `xs.scan(init, f)` — method form of `scan`: the running accumulators
-// of a left fold (same length as `xs`).
 pub function (xs: T[]) scan[T, A](init: A, f: (A, T) => A): A[] {
   return scan(xs, init, f);
 }
 
-// `xs.chunks(size)` / `xs.windows(size)` — method forms of the free
-// `chunks` / `windows`, completing the receiver-method surface every
-// other array transform already has (`take` / `drop` / `partition` / …).
-// `chunks` splits into non-overlapping `T[]` groups of length `size`
-// (last group shorter); `windows` yields every contiguous length-`size`
-// sub-slice, sliding one element at a time. Both return `T[][]`.
 pub function (xs: T[]) chunks[T](size: i32): T[][] {
   return chunks(xs, size);
 }
 
-// `xs.chunks_exact(size)` — full-length groups only; drops a short tail.
 pub function (xs: T[]) chunks_exact[T](size: i32): T[][] {
   return chunks_exact(xs, size);
 }
@@ -1985,20 +1409,6 @@ pub function (xs: T[]) windows[T](size: i32): T[][] {
   return windows(xs, size);
 }
 
-// ---- Element-polymorphic method forms of the reductions ------------
-//
-// `sum` / `product` / `max` / `min` / `count` / `index_of` /
-// `reverse` / `take` / `drop` / `distinct`
-// used to exist twice, once for an `i32[]` receiver and once for a
-// `string[]` one, under names invented to dodge a namespace that keyed on
-// the method name alone (`count` vs `count_str`, `reversed` vs `reverse`).
-// They are one bounded generic each now, so the same call works for every element type that satisfies the bound —
-// i32 / i64 / u32 / u64 / f32 / f64 / string and `@derive(Ord)` /
-// `@derive(Eq)` types alike (#2663).
-
-// `xs.sum()` / `xs.product()` — additive / multiplicative fold over any
-// element type carrying the identity its bound names, so the same call
-// works for i32 / i64 / f64 / … and for a user type with `impl Add`.
 pub function (xs: T[]) sum[T: num.Add + num.Zero](): T {
   return num.sum(xs);
 }
@@ -2007,8 +1417,6 @@ pub function (xs: T[]) product[T: num.Mul + num.One](): T {
   return num.product(xs);
 }
 
-// `xs.cumsum()` / `xs.cumproduct()` — the running sums / products;
-// `xs.adjacent_diff()` — the differences between neighbours, one shorter.
 pub function (xs: T[]) cumsum[T: num.Add + num.Zero](): T[] {
   return num.cumsum(xs);
 }
@@ -2021,8 +1429,6 @@ pub function (xs: T[]) adjacent_diff[T: num.Sub](): T[] {
   return num.adjacent_diff(xs);
 }
 
-// `xs.max()` / `xs.min()` — extremal element by `Ord`, `None` when empty.
-// The Option arm is necessary: no sentinel is safe across a full numeric range.
 pub function (xs: T[]) max[T: cmp.Ord](): Option[T] {
   return cmp.max_of(xs);
 }
@@ -2031,8 +1437,6 @@ pub function (xs: T[]) min[T: cmp.Ord](): Option[T] {
   return cmp.min_of(xs);
 }
 
-// `xs.range()` — the spread `max - min` by `Ord`, `None` when empty. A single
-// element has range zero.
 pub function (xs: T[]) range[T: cmp.Ord + num.Sub](): Option[T] {
   if (xs.len() == 0) {
     return None;
@@ -2050,18 +1454,14 @@ pub function (xs: T[]) range[T: cmp.Ord + num.Sub](): Option[T] {
   return Some(hi.sub(lo));
 }
 
-// `xs.count(target)` — how many elements equal `target`.
 pub function (xs: T[]) count[T: cmp.Eq](target: T): i32 {
   return count(xs, target);
 }
 
-// `xs.reverse()` — fresh array, elements in reverse order.
 pub function (xs: T[]) reverse(): T[] {
   return reverse(xs);
 }
 
-// `xs.take(n)` / `xs.drop(n)` — the first `n` elements / everything after
-// them. Both clamp: `n <= 0` and `n >= len` give empty or a full copy.
 pub function (xs: T[]) take(n: i32): T[] {
   return take(xs, n);
 }
@@ -2070,14 +1470,10 @@ pub function (xs: T[]) drop(n: i32): T[] {
   return drop(xs, n);
 }
 
-// `xs.distinct()` — duplicates removed, first occurrence wins, order kept.
 pub function (xs: T[]) distinct[T: cmp.Eq](): T[] {
   return cmp.distinct(xs);
 }
 
-// `xs.position(pred)` — index of the first element satisfying `pred`, or
-// `None`. Predicate-driven, matching the free `position(xs, pred)`; the
-// value-driven form is `index_of`.
 pub function (xs: T[]) position(pred: (T) => boolean): Option[i32] {
   return position(xs, pred);
 }

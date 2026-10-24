@@ -1,21 +1,4 @@
-// core/cmp — the comparison + display trait foundation.
-//
-// Six traits supply display, comparison, hashing, defaults, and debug text:
-//
-//   - Display supplies to_string for messages.
-//   - Eq compares values for equality.
-//   - Ord returns -1, 0, or 1 from cmp.
-//   - Hash supplies a value hash.
-//   - Default constructs a default value.
-//   - Debug supplies diagnostic text through to_debug.
-//
-// The primitive impls live here, in the trait's own module, which
-// satisfies the orphan rule (an impl is legal in the trait's module or
-// the type's module). The `Display` impls for the numeric types and
-// `string` are empty — those types already carry a `to_string` method
-// (from `std/i32` … and `std/string`), and an empty impl simply records
-// that the type satisfies the trait by adopting its existing method.
-// See docs/TRAITS.md.
+// This module defines comparison and display traits.
 
 import "std/i32";
 import "std/i64";
@@ -34,49 +17,21 @@ pub trait Eq {
   function eq(self: Self, other: Self): boolean;
 }
 
-// `cmp(a, b)` returns -1 when a < b, 0 when equal, 1 when a > b — the
-// same shape `sort_by`'s comparators have, so an `Ord` type drops
-// straight into a sort.
 pub trait Ord {
   function cmp(self: Self, other: Self): i32;
 }
 
-// `hash(v)` returns a 32-bit hash of the value. Pairs with `Eq` under
-// the usual law: `a == b ⇒ a.hash() == b.hash()`. `@derive(Hash)`
-// composes field/variant-wise through `h = h * 31 + f.hash()`, so a
-// type is hashable as soon as its fields are. The foundation for
-// user-type Map keys / `Set[T]`.
 pub trait Hash {
   function hash(self: Self): i32;
 }
 
-// `Default.default()` is an *associated function* (no `self`): it builds a
-// type's zero value, called as `Type.default()`. `@derive(Default)`
-// composes field/variant-wise — scalars use their zero literal, nominal
-// fields delegate to their own `default()`, and an enum defaults to its
-// first variant — so a type has a default as soon as its fields do.
 pub trait Default {
   function default(): Self;
 }
 
-// `Debug.to_debug()` is developer/diagnostic formatting, distinct from
-// `Display` (user-facing). `@derive(Debug)` renders the STRUCTURAL form —
-// `Name { f: <debug f>, … }` for structs, `Variant(<debug payload>)` for
-// enums — composing field/variant-wise through each field's own `Debug`.
-// The one difference from the derived `Display` is that **strings are
-// quoted** (`"hi"` not `hi`), so a debug dump is unambiguous. This is the
-// `{:?}` half of the Display/Debug split (and the clean shape for
-// `assert_eq[T: Eq + Debug]` in the test runner). See docs/TRAITS.md.
 pub trait Debug {
   function to_debug(self: Self): string;
 }
-
-// ---- Display ---------------------------------------------------
-// Numeric + string types already have `to_string`; empty impls adopt
-// it. `boolean` and `u8` do not, so they get real bodies — `u8` is the
-// byte type (`s[i]`, #5629) and has no scalar module of its own, and a
-// boolean's builtin `to_string` is no declaration a `dyn Display` can
-// dispatch to. The body below takes the builtin's place where it is loaded.
 
 impl Display for i32 {}
 
@@ -92,12 +47,8 @@ impl Display for f32 {}
 
 impl Display for string {}
 
-// IoError's `to_string` is std/error's.
 impl Display for IoError {}
 
-// `u8` has no scalar module, so no `to_string` to adopt — it widens to
-// i32 and borrows that one. Without this a byte cannot reach any
-// `[T: Display]` generic, which is what `assert_eq` on two bytes needs.
 impl Display for u8 {
   function to_string(self: u8): string {
     return (self as i32).to_string();
@@ -112,8 +63,6 @@ impl Display for boolean {
     return "false";
   }
 }
-
-// ---- Eq --------------------------------------------------------
 
 impl Eq for i32 {
   function eq(self: i32, other: i32): boolean {
@@ -169,15 +118,6 @@ impl Eq for char {
   }
 }
 
-// Float equality is IEEE `==` with ONE correction: a NaN equals itself.
-//
-// The operator cannot make that concession — `nan == nan` is false and has to
-// stay false — but a trait instance where `x.eq(x)` is false is not an
-// equivalence relation, and generic code written against `Eq` assumes one.
-// `assert_unique([nan, nan])` is what that costs: two NaNs are never duplicates
-// under IEEE, so the assertion passes on an array that has the same value
-// twice (#8588). Every NaN is one value here, payload and sign ignored, which
-// is the same choice `Ord` below makes.
 impl Eq for f64 {
   function eq(self: f64, other: f64): boolean {
     if (self != self) {
@@ -195,8 +135,6 @@ impl Eq for f32 {
     return self == other;
   }
 }
-
-// ---- Ord -------------------------------------------------------
 
 impl Ord for i32 {
   function cmp(self: i32, other: i32): i32 {
@@ -270,7 +208,6 @@ impl Ord for u8 {
   }
 }
 
-// By scalar value, which is also UTF-8 byte order.
 impl Ord for char {
   function cmp(self: char, other: char): i32 {
     let a: i32 = self as i32;
@@ -285,26 +222,6 @@ impl Ord for char {
   }
 }
 
-// Float ordering is IEEE `< / >` extended to a TOTAL order: every NaN sorts
-// after every number, and NaNs are equal to each other.
-//
-// IEEE leaves NaN unordered — `<` and `>` are both false against it — and
-// reading that as "equal" is what a bare `return 0` does. It is not a harmless
-// simplification: `cmp(a, b) <= 0` and `>= 0` are BOTH satisfied by 0, so
-// `assert_le(nan, 1.0)`, `assert_ge(nan, 1.0)` and
-// `assert_sorted_asc([3.0, nan, 1.0])` all passed while asserting nothing
-// (#8588). The generic helpers cannot fix that themselves: they are bounded by
-// `[T: Ord]` and have no predicate to ask whether a `T` is NaN, so the answer
-// has to be correct here.
-//
-// NaN last rather than first is arbitrary between the two ends, and matches
-// what IEEE 754's own totalOrder does with a positive NaN and what
-// `Double.compare` has done for decades. The one thing it must NOT be is
-// inconsistent with `Eq` above: `cmp(a, b) == 0` exactly when `a.eq(b)`, so a
-// sorted array with NaN in it is deterministic and `distinct` sees the NaNs as
-// one value.
-//
-// -0.0 and 0.0 stay equal, as IEEE `==` and the `Eq` instance have them.
 impl Ord for f64 {
   function cmp(self: f64, other: f64): i32 {
     if (self < other) {
@@ -314,7 +231,6 @@ impl Ord for f64 {
       return 1;
     }
     if (self != self) {
-      // self is NaN: after every number, level with another NaN.
       if (other != other) {
         return 0;
       }
@@ -348,10 +264,6 @@ impl Ord for f32 {
   }
 }
 
-// Byte-order comparison for strings — the same total order the `<` /
-// `>` operators implement, so `[T: Ord]` generics (sorted-array
-// asserts, `@derive(Ord)` on a struct/enum with a string field) cover
-// string.
 impl Ord for string {
   function cmp(self: string, other: string): i32 {
     if (self < other) {
@@ -364,22 +276,12 @@ impl Ord for string {
   }
 }
 
-// ---- Hash ------------------------------------------------------
-// Primitive hashes. Integers mix their bits (Wang's 32-bit mix) so
-// low-entropy values (small ints, flags) spread across buckets rather
-// than clustering; wide integers fold both halves first. `string`
-// defers to `std/string`'s FNV-1a. `boolean` is 0 / 1.
-//
-// Not the function core/map hashes string keys with: that one seeds the
-// offset basis per process and finishes with an fmix32 avalanche, because
-// its callers read only the low bits after masking.
-
 function __hash_mix_i32(x: i32): i32 {
   let h: i32 = x ^ 61;
   h = h ^ (h as u32 >> 16 as u32) as i32;
   h = h + (h << 3);
   h = h ^ (h as u32 >> 4 as u32) as i32;
-  h = h * 668265261;  // 0x27d4eb2d
+  h = h * 668265261;
   h = h ^ (h as u32 >> 15 as u32) as i32;
   return h;
 }
@@ -424,7 +326,6 @@ impl Hash for u64 {
   }
 }
 
-// Folded through u64 so a 32-bit usize (wasm) never shifts by its own width.
 impl Hash for usize {
   function hash(self: usize): i32 {
     let w: u64 = self as u64;
@@ -445,21 +346,9 @@ impl Hash for boolean {
 
 impl Hash for string {
   function hash(self: string): i32 {
-    // The u32 result reinterpreted, not re-derived: two's-complement
-    // multiply agrees with the unsigned one on the low 32 bits, so the
-    // cast is a bit reinterpretation and the two spellings of FNV-1a
-    // cannot drift apart.
     return self.hash_fnv32() as i32;
   }
 }
-
-// ---- Default ---------------------------------------------------
-// Primitive zero values: numerics default to 0 (0.0 for floats),
-// `string` to the empty string, `boolean` to false. These let a
-// generic `@derive(Default)` over a primitive type parameter
-// (`@derive(Default) struct Box[T]` instantiated at `Box[i32]`)
-// resolve `T.default()` against the bound, the same way nominal
-// fields delegate to their own derived `default()`.
 
 impl Default for i32 {
   function default(): i32 {
@@ -515,14 +404,6 @@ impl Default for f64 {
   }
 }
 
-// ---- Debug -----------------------------------------------------
-// Numeric types debug as their decimal form (same as `to_string`);
-// `boolean` as `true`/`false`. `string` is QUOTED with `"` — and the
-// quote / backslash / newline / tab inside are escaped — so a debug dump
-// round-trips visibly. These primitive impls let `[T: Debug]` generics
-// (the test runner's `assert_eq`) and nested `@derive(Debug)` fields
-// resolve `(v).to_debug()` for any leaf type.
-
 impl Debug for i32 {
   function to_debug(self: i32): string {
     return self.to_string();
@@ -547,9 +428,6 @@ impl Debug for u64 {
   }
 }
 
-// A byte has neither structure to render nor a `to_string` of its own to
-// call, so it debugs as the decimal form of the i32 it widens to — the same
-// borrow `impl Display for u8` makes.
 impl Debug for u8 {
   function to_debug(self: u8): string {
     return (self as i32).to_string();
@@ -579,25 +457,23 @@ impl Debug for boolean {
 
 impl Debug for string {
   function to_debug(self: string): string {
-    // Byte-level rebuild: the escapes are ASCII and every other
-    // byte (multibyte sequences included) passes through byte-exact.
     let out: u8[] = [];
     let i: i32 = 0;
     let n: i32 = self.len();
     while (i < n) {
       let b: i32 = self[i] as i32;
-      if (b == 34) {  // "
+      if (b == 34) {
         out = out.append(92 as u8);
         out = out.append(34 as u8);
-      } else {  // backslash
+      } else {
         if (b == 92) {
           out = out.append(92 as u8);
           out = out.append(92 as u8);
-        } else {  // \n
+        } else {
           if (b == 10) {
             out = out.append(92 as u8);
             out = out.append(110 as u8);
-          } else {  // \t
+          } else {
             if (b == 9) {
               out = out.append(92 as u8);
               out = out.append(116 as u8);
@@ -613,13 +489,6 @@ impl Debug for string {
   }
 }
 
-// ---- Generic Ord helpers ---------------------------------------
-// Free functions over any `T: Ord`, derived from the single `cmp`
-// primitive — so they work for the integer/string impls above and for
-// any user `Ord` type (incl. `@derive(Ord)`). They call `cmp` rather than
-// using an operator, which on a float would be IEEE (#12697).
-
-// min returns the smaller of `a` and `b` (`a` when equal).
 pub function min[T: Ord](a: T, b: T): T {
   if (b.cmp(a) < 0) {
     return b;
@@ -627,7 +496,6 @@ pub function min[T: Ord](a: T, b: T): T {
   return a;
 }
 
-// max returns the larger of `a` and `b` (`a` when equal).
 pub function max[T: Ord](a: T, b: T): T {
   if (a.cmp(b) < 0) {
     return b;
@@ -635,7 +503,6 @@ pub function max[T: Ord](a: T, b: T): T {
   return a;
 }
 
-// clamp constrains `x` to the inclusive range [lo, hi]. Assumes lo <= hi.
 pub function clamp[T: Ord](x: T, lo: T, hi: T): T {
   if (x.cmp(lo) < 0) {
     return lo;
@@ -646,14 +513,6 @@ pub function clamp[T: Ord](x: T, lo: T, hi: T): T {
   return x;
 }
 
-// max_of / min_of reduce an array to its largest / smallest element under
-// `Ord`, returning `Option[T]` — `None` for an empty array (there is no
-// extremum), `Some(x)` otherwise. The generic, any-`Ord`-type replacement for
-// std/array's per-width `max_i64` / `min_i64` / `max_u32` / … family (#4387
-// item 2): one body dispatching `.cmp`, monomorphised per element type, so it
-// lowers on the self-host IR path like `sort` / `is_sorted`. On ties the first
-// extremal element wins (a strict `> 0` / `< 0` only replaces on a genuine
-// improvement), so the result is stable w.r.t. input order.
 pub function max_of[T: Ord](xs: T[]): Option[T] {
   if (xs.len() == 0) {
     return None;
@@ -669,7 +528,6 @@ pub function max_of[T: Ord](xs: T[]): Option[T] {
   return Some(best);
 }
 
-// min_of is max_of's mirror: the smallest element, or `None` when empty.
 pub function min_of[T: Ord](xs: T[]): Option[T] {
   if (xs.len() == 0) {
     return None;
@@ -685,8 +543,6 @@ pub function min_of[T: Ord](xs: T[]): Option[T] {
   return Some(best);
 }
 
-// lt / lte / gt / gte compare under `cmp`, for a call site that wants an
-// ordering as a value.
 pub function lt[T: Ord](a: T, b: T): boolean {
   return a.cmp(b) < 0;
 }
@@ -703,7 +559,6 @@ pub function gte[T: Ord](a: T, b: T): boolean {
   return a.cmp(b) >= 0;
 }
 
-// is_sorted reports whether `arr` is in non-decreasing `Ord` order.
 pub function is_sorted[T: Ord](arr: T[]): boolean {
   let i = 1;
   let n = arr.len();
@@ -716,31 +571,10 @@ pub function is_sorted[T: Ord](arr: T[]): boolean {
   return true;
 }
 
-// __cmp_insertion sorts `a[lo..hi)` in place by insertion. O(k^2) on k elements
-// but with a tiny constant, no allocation, and a branch-predictable inner loop
-// — which is why every serious sort dispatches to one below a size threshold
-// rather than recursing all the way down.
-//
-// `desc` flips the ordering by negating the three-way result, so ascending and
-// descending share one body. The shift loop stops on a NON-positive compare, so
-// equal elements never move past each other: insertion is stable.
-// __cmp_min_run is the length below which a natural run is padded out and
-// insertion-sorted rather than merged as-is. 32 matches the small-array
-// threshold in __cmp_sort_adaptive, so a span reaching insertion sort costs the
-// same whichever way it got there.
-//
-// Timsort derives a per-call minrun in [32, 64] from n, chosen so that n/minrun
-// is at or just under a power of two and the merge tree stays balanced. A fixed
-// 32 gives up that balancing; it keeps the win that matters here (collapsing
-// the first several near-empty merge rounds on random input) without a
-// divide-and-round per call.
 function __cmp_min_run(): i32 {
   return 32;
 }
 
-// The array is `own` so the writes land in the caller's buffer, which the
-// caller moves in as `a = __cmp_insertion(a, ...)`; a borrowed array would
-// be copied whole on the first `.with`, once per call.
 function __cmp_insertion[T: Ord](own a: T[], lo: i32, hi: i32, desc: boolean): T[] {
   let i: i32 = lo + 1;
   while (i < hi) {
@@ -766,61 +600,12 @@ function __cmp_insertion[T: Ord](own a: T[], lo: i32, hi: i32, desc: boolean): T
   return a;
 }
 
-// __cmp_sort_adaptive is the shared body behind `sort` and `sort_desc`: a
-// natural-run merge sort.
-//
-//   n < 2   -> the input, untouched
-//   n <= 32 -> one insertion sort, no merging and no extra allocation
-//   larger  -> detect natural runs, then merge adjacent runs in balanced rounds
-//
-// The adaptivity is the point. The previous revision was a fixed bottom-up
-// merge sort that materialised a FRESH FULL COPY of the array on every one of
-// its ceil(log2 n) passes, and did so regardless of the input: an
-// already-sorted array cost exactly as much as a random one. Here a sorted (or
-// reverse-sorted) input is a SINGLE run, so the merge loop never executes and
-// the whole call is O(n) with one copy. Partially ordered input — the common
-// case in practice — lands in between.
-//
-// Stability is preserved throughout: a descending run is detected with a
-// STRICT compare (so equal neighbours end the run rather than being swapped
-// past each other) before being reversed, and the merge takes from the right
-// run only when the left is strictly greater.
-//
-// Merging appends into a fresh array rather than writing through `.with`, so no
-// merge ever reads a slot it has already overwritten. That sidesteps the
-// aliasing hazard the old implementation guarded against with its
-// fresh-copy-per-pass rule (a rule written for the self-host AST emitter, which
-// has since been deleted in #3457/#5972) — append-only output cannot alias its
-// input at all, on any backend, with or without Perceus.
-//
-// Runs shorter than __cmp_min_run() are EXTENDED to that length and insertion-
-// sorted (Timsort's MIN_RUN step). Random input produces natural runs averaging
-// ~2 elements, which without this leaves the merge tree needlessly deep — the
-// first several rounds do little but merge pairs into quadruples, at full
-// per-round allocation cost. Extending to 32 collapses those rounds into one
-// linear insertion pass over each span.
-//
-// ONE SELF-HOST CONSTRAINT shapes how this is written; do not "tidy" it away
-// without re-running the self-host leg. Every comparison is an INLINE `.cmp()`
-// (a trait method) rather than a call to a shared `__cmp_after(x, y, desc)`
-// helper: a free-function call whose type parameter is inferable only from bare
-// `T` arguments bails the self-host IR path, and since the AST emitters were
-// deleted a bail is a hard compile error, not a slow fallback. The
-// `if (desc) { o = 0 - o; }` negation is what lets one body serve both
-// directions without such a helper.
-//
-// The MIN_RUN extension was itself omitted for a while under a WRONG version of
-// that constraint — "a call to a free generic function from inside a LOOP
-// bails". The loop was never the trigger; the argument shape was (#6189, since
-// fixed). `__cmp_insertion(a, i, e, desc)` passes the array, so `T` binds from
-// `T[]` and the call monomorphises normally, inside a loop or not.
 function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
   let n: i32 = arr.len();
   if (n < 2) {
     return arr;
   }
 
-  // Own a copy: the descending-run reversal writes in place.
   let a: T[] = [];
   let c: i32 = 0;
   while (c < n) {
@@ -833,7 +618,6 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
     return a;
   }
 
-  // Pass 1 — natural runs. `bounds` holds each run's start, terminated by n.
   let bounds: i32[] = [];
   let i: i32 = 0;
   while (i < n) {
@@ -845,7 +629,6 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
         head = 0 - head;
       }
       if (head > 0) {
-        // Strictly descending: extend, then reverse into order.
         let falling: boolean = true;
         while (falling) {
           e = e + 1;
@@ -886,9 +669,6 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
         }
       }
     }
-    // MIN_RUN: a short natural run is padded out to __cmp_min_run() and
-    // insertion-sorted. On sorted input the run already spans the array, so
-    // this never fires and the O(n) path is untouched.
     if (e - i < __cmp_min_run()) {
       let ext: i32 = i + __cmp_min_run();
       if (ext > n) {
@@ -903,9 +683,6 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
   }
   bounds = bounds.append(n);
 
-  // Pass 2 — merge adjacent runs in rounds until one remains. Each round
-  // rebuilds the array by appending merged segments, so the output never
-  // aliases the input it is reading.
   while (bounds.len() > 2) {
     let out: T[] = [];
     let next: i32[] = [];
@@ -941,7 +718,6 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
         }
         r = r + 2;
       } else {
-        // Odd run out: carry it forward untouched.
         let mend: i32 = bounds[r + 1];
         let mk: i32 = mlo;
         while (mk < mend) {
@@ -958,56 +734,20 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
   return a;
 }
 
-// ---- Sorting ----------------------------------------------------
-// One family: `sort` / `sort_desc` for an `Ord` element, `sort_by` for a
-// comparator, `sort_by_key` for an `Ord` projection. Each returns a new, stably
-// sorted array; each `_in_place` twin sorts an owned array in its own buffer
-// instead, allocating nothing and not stable.
-
-// sort returns a new array with `arr`'s elements in non-decreasing `Ord` order.
-// The `T: Ord` bound monomorphises `.cmp` per element type, so an `i32` sorts
-// with the scalar three-way compare and a `string` with the byte compare, with
-// no comparator call.
-//
-// STABLE: equal elements keep their input order. Adaptive natural-run merge
-// sort — O(n) on sorted or reverse-sorted input, O(n log n) worst case. See
-// __cmp_sort_adaptive for the shape and docs/SOTA-STDLIB-BLUEPRINT.md for where
-// it sits against the state of the art (a radix path for integer keys is still
-// open).
 pub function sort[T: Ord](arr: T[]): T[] {
   return __cmp_sort_adaptive(arr, false);
 }
 
-// sort_desc is `sort` in non-increasing order: stable, the same adaptive merge
-// with the sign of the compare flipped.
 pub function sort_desc[T: Ord](arr: T[]): T[] {
   return __cmp_sort_adaptive(arr, true);
 }
 
-// sort_by returns a new array with `arr`'s elements ordered by `order(a, b)`,
-// which is < 0 when a comes first, > 0 when b does, 0 when they tie — the
-// shape `Ord.cmp` has, so `sort_by(xs, f)` with `f` calling `.cmp` is `sort`.
-// For any element type, without an `Ord` bound: reverse order, a custom
-// relation, a case-insensitive string order.
-//
-// STABLE and ADAPTIVE, the comparator sibling of `sort`: a natural-run merge
-// sort, O(n) on sorted or reverse-sorted input, O(n log n) worst case.
-//
-//   n < 2   -> the input, untouched
-//   n <= 32 -> one insertion sort, no merging and no per-pass copy
-//   larger  -> detect natural runs, then merge adjacent runs in balanced rounds
-//
-// A descending run is detected with a STRICT compare before being reversed,
-// and a merge takes from the right run only when the left compares strictly
-// greater, so equal elements keep their order. Merging appends into a fresh
-// array, so no merge reads a slot it has already overwritten.
 pub function sort_by[T](arr: T[], order: (T, T) => i32): T[] {
   let n: i32 = arr.len();
   if (n < 2) {
     return arr;
   }
 
-  // Own a copy: the descending-run reversal writes in place.
   let a: T[] = [];
   let c: i32 = 0;
   while (c < n) {
@@ -1020,7 +760,6 @@ pub function sort_by[T](arr: T[], order: (T, T) => i32): T[] {
     return a;
   }
 
-  // Pass 1 — natural runs. `bounds` holds each run's start, terminated by n.
   let bounds: i32[] = [];
   let i: i32 = 0;
   while (i < n) {
@@ -1028,7 +767,6 @@ pub function sort_by[T](arr: T[], order: (T, T) => i32): T[] {
     let e: i32 = i + 1;
     if (e < n) {
       if (order(a[i], a[e]) > 0) {
-        // Strictly descending: extend, then reverse into order.
         let falling: boolean = true;
         while (falling) {
           e = e + 1;
@@ -1065,9 +803,6 @@ pub function sort_by[T](arr: T[], order: (T, T) => i32): T[] {
   }
   bounds = bounds.append(n);
 
-  // Pass 2 — merge adjacent runs in rounds until one remains. Each round
-  // rebuilds the array by appending merged segments, so the output never
-  // aliases the input it is reading.
   while (bounds.len() > 2) {
     let out: T[] = [];
     let next: i32[] = [];
@@ -1099,7 +834,6 @@ pub function sort_by[T](arr: T[], order: (T, T) => i32): T[] {
         }
         r = r + 2;
       } else {
-        // Odd run out: carry it forward untouched.
         let mend: i32 = bounds[r + 1];
         let mk: i32 = mlo;
         while (mk < mend) {
@@ -1116,20 +850,6 @@ pub function sort_by[T](arr: T[], order: (T, T) => i32): T[] {
   return a;
 }
 
-// __cmp_insertion_by insertion-sorts `a[lo:hi]` in
-// place under the comparator, returning the array.
-//
-// The base case for `sort_by`. Insertion sort wins decisively on short spans:
-// no allocation, sequential access, and a nearly-sorted span costs close to a
-// single pass — which is why every serious merge sort dispatches to one below a
-// size threshold rather than merging all the way down.
-//
-// The shift loop stops on a NON-positive compare, so equal elements never move
-// past each other: insertion is stable, and therefore so is `sort_by`.
-//
-// The array is `own` so the writes land in the caller's buffer, which the
-// caller moves in as `a = __cmp_insertion_by(a, ...)`; a borrowed array
-// would be copied whole on the first `.with`, once per call.
 function __cmp_insertion_by[T](own a: T[], lo: i32, hi: i32, order: (T, T) => i32): T[] {
   let i: i32 = lo + 1;
   while (i < hi) {
@@ -1151,8 +871,6 @@ function __cmp_insertion_by[T](own a: T[], lo: i32, hi: i32, order: (T, T) => i3
   return a;
 }
 
-// is_sorted_by reports whether `arr` is in non-decreasing order under
-// `order`: no adjacent pair where the later sorts strictly before the earlier.
 pub function is_sorted_by[T](arr: T[], order: (T, T) => i32): boolean {
   let i: i32 = 1;
   let n: i32 = arr.len();
@@ -1165,12 +883,6 @@ pub function is_sorted_by[T](arr: T[], order: (T, T) => i32): boolean {
   return true;
 }
 
-// sort_by_key returns a new array with `arr`'s elements in ascending order of
-// `key(x)`, for any `Ord` key: records by a `string` name, a `u64` id, a
-// `@derive(Ord)` composite. Each key is computed once, into a parallel array
-// that merge-sorts in lockstep with the elements, so a costly projection is not
-// recomputed O(n log n) times. Stable: the merge takes from the right run only
-// when its key compares strictly less.
 pub function sort_by_key[T, K: Ord](arr: T[], key: (T) => K): T[] {
   let srcv: T[] = arr;
   let srck: K[] = [];
@@ -1237,36 +949,22 @@ pub function sort_by_key[T, K: Ord](arr: T[], key: (T) => K): T[] {
   return srcv;
 }
 
-// sort_in_place sorts `arr` ascending in its own buffer and returns it,
-// allocating nothing. A heapsort: O(n log n) on every input, and NOT stable,
-// so equal elements may change places; `sort` keeps them in order but
-// allocates the result.
 pub function sort_in_place[T: Ord](own arr: T[]): T[] {
   return __cmp_heap_sort_ord(arr);
 }
 
-// sort_desc_in_place is `sort_in_place` in descending order.
 pub function sort_desc_in_place[T: Ord](own arr: T[]): T[] {
   return __cmp_reverse_in_place(__cmp_heap_sort_ord(arr));
 }
 
-// sort_by_in_place is `sort_by` in `arr`'s own buffer: a heapsort under
-// `order`, allocating nothing and not stable.
 pub function sort_by_in_place[T](own arr: T[], order: (T, T) => i32): T[] {
   return __cmp_heap_sort(arr, order);
 }
 
-// sort_by_key_in_place is `sort_by_key` in `arr`'s own buffer: a heapsort
-// comparing `key(a)` with `key(b)`, not stable. It allocates no output, only
-// the comparator closure, so each key is recomputed per comparison; when `key`
-// is costly, `sort_by_key` computes each one once.
 pub function sort_by_key_in_place[T, K: Ord](own arr: T[], key: (T) => K): T[] {
   return __cmp_heap_sort(arr, (a: T, b: T): i32 => key(a).cmp(key(b)));
 }
 
-// __cmp_heap_sort_ord is __cmp_heap_sort under `T`'s own order. It calls `cmp`
-// directly because a comparator passed as a function value costs an indirect
-// call per comparison.
 function __cmp_heap_sort_ord[T: Ord](own a: T[]): T[] {
   let n: i32 = a.len();
   let start: i32 = n / 2 - 1;
@@ -1316,8 +1014,6 @@ function __cmp_reverse_in_place[T](own a: T[]): T[] {
   return a;
 }
 
-// __cmp_heap_sort heapsorts `a` under `order`: build a max-heap, then swap the
-// root to the end of the shrinking heap and sift the new root down.
 function __cmp_heap_sort[T](own a: T[], order: (T, T) => i32): T[] {
   let n: i32 = a.len();
   let start: i32 = n / 2 - 1;
@@ -1336,8 +1032,6 @@ function __cmp_heap_sort[T](own a: T[], order: (T, T) => i32): T[] {
   return a;
 }
 
-// __cmp_sift_down moves `a[root]` down the heap `a[0..n)` until neither child
-// orders after it.
 function __cmp_sift_down[T](own a: T[], root: i32, n: i32, order: (T, T) => i32): T[] {
   let r: i32 = root;
   while (2 * r + 1 < n) {
@@ -1356,19 +1050,6 @@ function __cmp_sift_down[T](own a: T[], root: i32, n: i32, order: (T, T) => i32)
   return a;
 }
 
-// ---- Eq-bounded sequence verbs ---------------------------------
-// Free functions over any `T: Eq`, derived from the single `eq`
-// primitive — so they cover the primitive impls above and any user
-// type that impls `Eq`. Like the `Ord` verbs, a bounded generic whose
-// body calls `x.eq(y)` monomorphises to a direct call, so these lower
-// on the self-host IR path too (#2689 / #2691). They live here with
-// the `Eq` trait they depend on — the single home for the generic
-// equality-driven sequence verbs (the std/array duplicates were removed
-// in #5348). They cover any `T: Eq`, including a `@derive(Eq)` struct or
-// enum; std/array's `.contains()` / `.index_of()` receiver methods are the
-// method-form surface over the same bound.
-
-// contains reports whether `xs` holds a value equal to `target`.
 pub function contains[T: Eq](xs: T[], target: T): boolean {
   for x in xs {
     if (x.eq(target)) {
@@ -1378,10 +1059,6 @@ pub function contains[T: Eq](xs: T[], target: T): boolean {
   return false;
 }
 
-// index_of returns `Some(i)` for the 0-based position of the first value
-// equal to `target`, or `None` if no value matches. The `Option` return
-// keeps "not found" out of band rather than leaning on a `-1` sentinel
-// (the modern shape unified from std/array in #5348).
 pub function index_of[T: Eq](xs: T[], target: T): Option[i32] {
   let i = 0;
   for x in xs {
@@ -1393,10 +1070,6 @@ pub function index_of[T: Eq](xs: T[], target: T): Option[i32] {
   return None;
 }
 
-// distinct returns a new array with duplicate values removed, keeping
-// the first occurrence of each in original order. O(n²) via `Eq` alone
-// (no `Hash` needed) — suited to small / convenience inputs; a
-// `Hash`-backed dedup is the larger-n follow-up.
 pub function distinct[T: Eq](xs: T[]): T[] {
   let out: T[] = [];
   for x in xs {
@@ -1406,20 +1079,6 @@ pub function distinct[T: Eq](xs: T[]): T[] {
   }
   return out;
 }
-
-// ---- BigInt ----------------------------------------------------
-// `core/bigint` is arbitrary-precision arithmetic and imports NOTHING, so
-// that `std/string` can use it for parse_float's exact fallback without a
-// cycle (std/string -> core/bigint -> core/cmp -> std/string would be one).
-// That is why these impls live HERE rather than next to the type: the orphan
-// rule accepts the trait's module or the type's module, and only this side of
-// the choice keeps core/bigint free of imports. core/cmp -> core/bigint is
-// safe precisely because core/bigint has no imports to come back through.
-//
-// Display / Eq / Ord / Hash are empty: BigInt already carries `to_string`,
-// `eq`, `cmp` and `hash` with exactly these signatures, and an empty impl
-// adopts the existing method — the same shape as `impl Display for i32`.
-// `cmp` returns -1 / 0 / 1, so a BigInt[] drops straight into `sort`.
 
 impl Display for bigint.BigInt {}
 
@@ -1435,16 +1094,12 @@ impl Default for bigint.BigInt {
   }
 }
 
-// A number has no structure to render and no ambiguity to disambiguate, so
-// debug is the decimal form — the same call the numeric primitives make.
 impl Debug for bigint.BigInt {
   function to_debug(self: bigint.BigInt): string {
     return self.to_string();
   }
 }
 
-// eq_arrays reports whether `a` and `b` have the same length and equal
-// elements pairwise under `Eq`.
 pub function eq_arrays[T: Eq](a: T[], b: T[]): boolean {
   let n = a.len();
   if (n != b.len()) {

@@ -10,47 +10,6 @@ import (
 	"testing"
 )
 
-// The wasm `$__fern_str_split` / `$__fern_str_lines` helpers leaked their OWN
-// scratch, independently of anything the reclaim passes can see.
-//
-// Three separate leaks, all inside the helper bodies:
-//
-//   - split built its result with the plain `$__fern_arr_push`, whose copy path
-//     allocates a new buffer and abandons the old one. Every growth step
-//     orphaned a buffer nothing could ever reach.
-//   - split's initial array came from a bare `$__fern_alloc`, so it had no rc
-//     header. `$__fern_arr_push` reads the rc word at [a-8] to choose in-place
-//     versus copy; garbage there fails the test, so EVERY push copied — and the
-//     header-less block itself was orphaned on the first one.
-//   - lines allocated a "\n" delimiter block per call and never released it, and
-//     dropped the trailing empty segment by DECREMENTING len, which puts that
-//     element past the end where no element walk will ever reach it.
-//
-// Measured, 400 rounds of the harness below, a pair of compilers from the same
-// commit:
-//
-//	shape                                wasm            x86-64 / arm64
-//	18-part split                   67200 -> 0                       0
-//	40-part split                  124800 -> 0                       0
-//	char split (101 chars)         233600 -> 0                       0
-//	lines, 4 lines + trailing \n    16000 -> 0              9600 -> 0
-//	lines, no trailing \n            9600 -> 0                       0
-//
-// The fix is to make the helper own what it allocates: an rc-headered initial
-// array, `$__fern_arr_push_owned` (which frees a superseded buffer at rc == 1)
-// for the appends, and an explicit release of the delimiter and of the trimmed
-// element. Nothing at the call site could have done any of this — the buffers
-// are private to the helper and unreachable from the IR.
-//
-// The register column had one non-zero of its own, `lines` with a trailing
-// newline, and it is fixed here too — same symptom, different mechanism. The
-// register `__fern_str_lines` is Fern source (`asmcore.rt_src_str_lines`) that
-// used to split on '\n' and then trim with `parts[0:keep]`; the element the slice
-// dropped was never reclaimed, and could not be, since the slice shares element
-// pointers with `parts`. It now scans for the newlines itself and appends exactly
-// the lines wanted, so there is no dropped element to begin with. The other
-// register cells were already 0 and are here to keep them that way.
-
 const wasmSplitScratchPrelude = `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 `
 
@@ -80,34 +39,21 @@ var wasmSplitScratchHeapCases = []struct {
 }{
 	{"wasm-split-scratch-18-parts", `    let parts: string[] = base.split("-");
     return parts.len();`, 4096, 4096},
-	// Enough parts to cross several doublings, so the orphaned-buffer total is
-	// dominated by growth rather than by the header-less first block.
 	{"wasm-split-scratch-40-parts", wasmSplitScratch40Body, 4096, 4096},
-	// The empty-separator branch has its own push site.
 	{"wasm-split-scratch-char-split", `    let parts: string[] = base.split("");
     return parts.len() % 251;`, 4096, 4096},
-	// Trailing newline. On wasm this exercises the delimiter release AND the
-	// trimmed element; on the register backends it is the gate on
-	// rt_src_str_lines producing exactly the lines wanted rather than trimming
-	// a split result and stranding the element it dropped.
 	{"wasm-lines-scratch-trailing-newline", `    let doc: string = base + "\n" + base + "\n" + base + "\n";
     let ls: string[] = doc.lines();
     return ls.len();`, 4096, 4096},
-	// No trailing newline: nothing is trimmed, so this isolates the delimiter.
 	{"wasm-lines-scratch-no-trailing-newline", `    let doc: string = base + "\n" + base;
     let ls: string[] = doc.lines();
     return ls.len();`, 4096, 4096},
 }
 
-// wasmSplitScratch40Body is separated out only because a 40-part literal is
-// unreadable inline.
 const wasmSplitScratch40Body = `    let many: string = base + "-1-2-3-4-5-6-7-8-9-10-11-12-13-14-15-16-17-18-19-20-21-22-23-24-25-26-27-28-29-30-31-32-33-34-35-36-37-38-39-40";
     let parts: string[] = many.split("-");
     return parts.len() % 251;`
 
-// wasmSplitScratchSemanticsSrc is the other half: releasing scratch must not
-// change a single answer. Every case is checked against the register backends
-// too, which run the same source through a different helper entirely.
 const wasmSplitScratchSemanticsSrc = `function main(): i32 {
     let a: string[] = "a\nbb\n".lines();
     if (a.len() != 2) { return 1; }
@@ -155,8 +101,6 @@ func wasmSplitScratchSources(wasm bool) []struct{ name, src string } {
 	return out
 }
 
-// TestSelfHostWasmSplitScratchWasmIR is the leg this change is for: every heap
-// case fails with 98 on the parent.
 func TestSelfHostWasmSplitScratchWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping split/lines scratch wasm IR e2e")
@@ -195,9 +139,6 @@ func TestSelfHostWasmSplitScratchWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasmSplitScratchIRX86_64 checks the register path: it runs
-// the same sources through an entirely different set of helpers, so it pins that
-// the wasm-side change moved nothing here and that the answers agree.
 func TestSelfHostWasmSplitScratchIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -225,7 +166,6 @@ func TestSelfHostWasmSplitScratchIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasmSplitScratchIRArm64 is the arm64 twin of the register leg.
 func TestSelfHostWasmSplitScratchIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

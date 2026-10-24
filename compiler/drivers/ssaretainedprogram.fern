@@ -1,4 +1,3 @@
-// The program and emission both retained-body drivers share.
 import "../asmcore";
 import "../asm_ir";
 import "../asm_arm64_ir";
@@ -10,8 +9,6 @@ import "../physicalbody";
 import "../semlower";
 import "../ssaprepare";
 
-// This controlled producer adds a need during the first runtime trial.
-// The final str_cmp record must therefore have heap in its BEFORE context.
 pub function runtime(src: string): physicalbody.Lowered {
   if (src == asmcore.rt_src_str_cmp()) {
     return semlower.runtime_lowering("function __fern_str_cmp(a: string, b: string): i32 { let p = __raw_alloc(1); let text = __raw_string(p, 1); return text.len(); }");

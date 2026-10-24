@@ -1,7 +1,7 @@
-// E089: a const argument is an integer literal or a const parameter in
-// scope. A local value or an expression is refused, because the argument
-// names the instance the call runs. A literal past i32 is refused too.
-// `ok` shows what is accepted.
+
+
+
+
 function filled[const N: i32](x: f64): f64[] {
   let out: f64[] = [];
   while (out.len() < N) {

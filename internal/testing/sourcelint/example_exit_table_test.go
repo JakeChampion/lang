@@ -8,23 +8,6 @@ import (
 	"testing"
 )
 
-// examples.yml and macos.yml ran every example as `"./build/$name" || echo
-// "(exited $?)"`, which discarded the exit status: a SIGSEGV, a fatal abort
-// (134), an arena exhaustion (125) or a sanitizer finding (124) printed one
-// line and left the job green, so the lanes gated compile-and-link only while
-// reading as though they gated execution (#8473). macos.yml is the one that
-// matters most — it is the only lane that executes an arm64-darwin binary.
-//
-// Both lanes now run scripts/ci-run-example, which compares the status
-// against .github/examples-expected-exits.txt. A per-example table rather
-// than "128+ means it crashed": three of the examples legitimately return a
-// computed value in the signal range (factorial is 6! mod 256), so the range
-// rule would fail correct programs — and comparing against the expected value
-// catches a wrong answer as well as a crash.
-
-// TestEveryExampleHasAnExpectedExit keeps the table complete. A new example
-// with no row is one whose exit status nothing checks, which is the state
-// this replaced.
 func TestEveryExampleHasAnExpectedExit(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	b, err := os.ReadFile(filepath.Join(root, ".github", "examples-expected-exits.txt"))
@@ -45,8 +28,6 @@ func TestEveryExampleHasAnExpectedExit(t *testing.T) {
 		listed[f[0]] = true
 	}
 
-	// The lanes compile examples/*.fern and examples/tests/*.fern, the
-	// programs that exercise an example in simulation.
 	srcs, err := filepath.Glob(filepath.Join(root, "examples", "*.fern"))
 	if err != nil {
 		t.Fatalf("glob examples: %v", err)
@@ -74,9 +55,6 @@ func TestEveryExampleHasAnExpectedExit(t *testing.T) {
 	}
 }
 
-// TestExampleLanesUseTheRunner pins the wiring. The check only exists where a
-// workflow calls it, and the shape it replaced (`|| echo "(exited $?)"`) is
-// the one that silently passes.
 func TestExampleLanesUseTheRunner(t *testing.T) {
 	for _, wf := range []string{"examples.yml", "macos.yml"} {
 		path := filepath.Join("..", "..", "..", ".github", "workflows", wf)
@@ -94,9 +72,6 @@ func TestExampleLanesUseTheRunner(t *testing.T) {
 	}
 }
 
-// TestRunnerRejectsACrash exercises the script itself: the mismatch path is
-// the whole point, and a runner that silently passed would reinstate the bug
-// it was written to fix.
 func TestRunnerRejectsACrash(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	runner := filepath.Join(root, "scripts", "ci-run-example")
@@ -109,7 +84,6 @@ func TestRunnerRejectsACrash(t *testing.T) {
 		}
 		return p
 	}
-	// factorial's expected status, from the table.
 	ok := write("ok", "#!/bin/sh\nexit 208\n")
 	segv := write("segv", "#!/bin/sh\nexit 139\n")
 	wrong := write("wrong", "#!/bin/sh\nexit 7\n")

@@ -3,14 +3,6 @@ import "std/http/hpack";
 import "std/hex";
 import "core/int";
 
-// tests/stdlib/http_hpack_test.fern — std/http/hpack against RFC 7541's
-// Appendix C: the literal representations, the three requests without and
-// with Huffman coding, the three responses under a 256-byte table whose
-// evictions the sizes show, and the bounds a decoder holds a block to.
-// The expected bytes are the RFC's; where the RFC leaves the encoder a
-// choice (a size update, Huffman or not) they are python-hpack's, which
-// made the same ones.
-
 function fields_text(fs: hpack.Field[]): string {
   let out: string = "";
   for f in fs {
@@ -23,7 +15,6 @@ function fields_text(fs: hpack.Field[]): string {
   return out;
 }
 
-// decoded is the fields of `block`, decoded by `d`, or the error.
 function decoded(d: hpack.Decoder, block: string): string {
   match (d.decode(hex.hex_decode(block))) {
     Ok(got) => {
@@ -61,8 +52,6 @@ function request_fields(n: i32): hpack.Field[] {
   return [hpack.field(":method", "GET"), hpack.field(":scheme", "https"), hpack.field(":path", "/index.html"), hpack.field(":authority", "www.example.com"), hpack.field("custom-key", "custom-value")];
 }
 
-// three_requests runs C.3 (plain) or C.4 (Huffman) both ways: the
-// encoder's bytes and the decoder's fields, with the table sizes.
 function three_requests(blocks: string[], huffman: boolean): string {
   let e: hpack.Encoder = hpack.encoder(4096);
   if (!huffman) {
@@ -112,9 +101,6 @@ function response_fields(n: i32): hpack.Field[] {
   return [hpack.field(":status", "200"), hpack.field("cache-control", "private"), hpack.field("date", "Mon, 21 Oct 2013 20:13:22 GMT"), hpack.field("location", "https://www.example.com"), hpack.field("content-encoding", "gzip"), hpack.field("set-cookie", "foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU; max-age=3600; version=1")];
 }
 
-// three_responses runs C.5 or C.6 under a 256-byte table: the first block
-// starts with the size update, the second evicts the first status, the
-// third evicts down to the set-cookie.
 function three_responses(blocks: string[], huffman: boolean): string {
   let e: hpack.Encoder = hpack.encoder(4096).with_max_table(256);
   if (!huffman) {
@@ -154,8 +140,6 @@ function test_responses_huffman(): test.TestOutcome {
   return test.assert_eq(three_responses(["3fe101488264025885aec3771a4b6196d07abe941054d444a8200595040b8166e082a62d1bff6e919d29ad171863c78f0b97c8e9ae82ae43d3", "4883640effc1c0bf", "88c16196d07abe941054d444a8200595040b8166e084a62d1bffc05a839bd9ab77ad94e7821dd7f2e6c7b335dfdfcd5b3960d5af27087f3672c1ab270fb5291f9587316065c003ed4ee5b1063d5007"], true), "222 222 215 215");
 }
 
-// A table held to zero bytes announces it and indexes nothing; a decoder
-// refuses an update above what its settings allow, or after a field.
 function test_size_updates(): test.TestOutcome {
   let e: hpack.Encoder = hpack.encoder(4096).with_max_table(0).without_huffman();
   let enc: hpack.Encoded = e.encode([hpack.field(":method", "GET"), hpack.field("x", "y")]);
@@ -167,17 +151,12 @@ function test_size_updates(): test.TestOutcome {
   return test.assert_eq(got, "hpack: dynamic table size update to 256 not allowed here|hpack: dynamic table size update to -1 not allowed here|:method: GET\ntable 0");
 }
 
-// What a decoder refuses: a block cut short, index 0 and one past the
-// tables, an integer past 28 bits, Huffman padding of a whole byte and
-// EOS inside a string.
 function test_malformed(): test.TestOutcome {
   let d: hpack.Decoder = hpack.decoder(4096, 65536);
   let got: string = decoded(d, "400a637573746f6d") + "|" + decoded(d, "80") + "|" + decoded(d, "be") + "|" + decoded(d, "7fffffffff7f") + "|" + decoded(d, "0082ffff") + "|" + decoded(d, "0084fffffffc");
   return test.assert_eq(got, "hpack: header block ends inside a field|hpack: no table entry 0|hpack: no table entry 62|hpack: integer over 28 bits|hpack: bad Huffman string|hpack: bad Huffman string");
 }
 
-// decoded_twice decodes `first` and then `second` with the decoder the
-// first left: what the second gives.
 function decoded_twice(d: hpack.Decoder, first: u8[], second: u8[]): string {
   match (d.decode(first)) {
     Ok(got) => {
@@ -190,8 +169,6 @@ function decoded_twice(d: hpack.Decoder, first: u8[], second: u8[]): string {
   return "";
 }
 
-// The list cap counts each field as 32 plus its bytes, a Huffman string
-// as what it decodes to, and the field cap counts fields.
 function test_bounds(): test.TestOutcome {
   let e: hpack.Encoder = hpack.encoder(4096);
   let two: hpack.Encoded = e.encode([hpack.field(":method", "GET"), hpack.field("custom-key", "custom-value")]);
@@ -203,8 +180,6 @@ function test_bounds(): test.TestOutcome {
   return test.assert_eq(got, ":method: GET\ncustom-key: custom-value\ntable 54|hpack: header list over 100 bytes|hpack: more than 2 header fields");
 }
 
-// Every byte value round-trips through the Huffman coding, and a value the
-// coding would lengthen goes as its bytes.
 function test_round_trip(): test.TestOutcome {
   let all: u8[] = [];
   let i: i32 = 0;
@@ -229,9 +204,6 @@ function test_round_trip(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// test_field_by_field: `begin`, `put` and `finish` write what `encode`
-// writes for the same fields, the size update a smaller table owes
-// included, and leave the encoder's table the same.
 function test_field_by_field(): test.TestOutcome {
   let fields: hpack.Field[] = [hpack.field(":status", "200"), hpack.field("content-type", "text/plain"), hpack.sensitive("set-cookie", "s=1"), hpack.field("content-type", "text/plain")];
   let whole: hpack.Encoded = hpack.encoder(4096).with_max_table(256).encode(fields);
@@ -250,8 +222,6 @@ function test_field_by_field(): test.TestOutcome {
   return test.assert_eq(parts.encoder.table_size(), whole.encoder.table_size());
 }
 
-// read_fields reads `block` one field at a time, as a connection does,
-// and answers the fields as `decoded` writes them with the table size.
 function read_fields(d: hpack.Decoder, block: u8[]): string {
   let st: hpack.Decoder = d.start(block);
   let out: string = "";
@@ -274,8 +244,6 @@ function read_fields(d: hpack.Decoder, block: u8[]): string {
   return out + "table " + int.int_to_string(st.table_size());
 }
 
-// read_fields_in reads the block lying at [from, end) of `bytes` one
-// field at a time, as a connection reads one off its inbox.
 function read_fields_in(d: hpack.Decoder, bytes: u8[], from: i32, end: i32): string {
   let st: hpack.Decoder = d.start_in(from, end);
   let out: string = "";
@@ -294,9 +262,6 @@ function read_fields_in(d: hpack.Decoder, bytes: u8[], from: i32, end: i32): str
   return out + "table " + int.int_to_string(st.table_size());
 }
 
-// A block read where it lies among other bytes reads what the same block
-// reads alone, and stops at its end: C.3.1's request behind three bytes and
-// ahead of two, a literal cut by the end, and an integer cut by it.
 function test_in_place(): test.TestOutcome {
   let d: hpack.Decoder = hpack.decoder(4096, 65536);
   let bytes: u8[] = hex.hex_decode("ffffff" + "828684410f7777772e6578616d706c652e636f6d" + "0000");
@@ -306,9 +271,6 @@ function test_in_place(): test.TestOutcome {
   return test.assert_eq(whole + "|" + cut + "|" + short, read_fields(d, hex.hex_decode("828684410f7777772e6578616d706c652e636f6d")) + "|hpack: header block ends inside a field|hpack: header block ends inside a field");
 }
 
-// A block read one field at a time gives the fields `decode` gives, the
-// table moved the same: C.4's three requests in turn, a size update, a
-// sensitive literal, and the caps.
 function test_field_at_a_time(): test.TestOutcome {
   let e: hpack.Encoder = hpack.encoder(4096);
   let d: hpack.Decoder = hpack.decoder(4096, 65536);
@@ -334,7 +296,6 @@ function test_field_at_a_time(): test.TestOutcome {
   return test.assert_eq(got, "password: secret (sensitive)\ntable 0|hpack: header list over 100 bytes|hpack: more than 2 header fields|:method: GET\ntable 164");
 }
 
-// RFC 7541 Appendix A, entry 1 first.
 const STATIC_TABLE: string[] = [
   ":authority", "", ":method", "GET", ":method", "POST", ":path", "/", ":path", "/index.html",
   ":scheme", "http", ":scheme", "https", ":status", "200", ":status", "204", ":status", "206",
@@ -351,8 +312,6 @@ const STATIC_TABLE: string[] = [
   "www-authenticate", "",
 ];
 
-// test_static_entries: every static entry is written as its index, and its
-// name with another value as a literal naming the name's first entry.
 function test_static_entries(): test.TestOutcome {
   let i: i32 = 0;
   while (i < STATIC_TABLE.len() / 2) {

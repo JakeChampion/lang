@@ -1,13 +1,6 @@
 import "std/test";
 import "std/publicsuffix";
 
-// tests/stdlib/publicsuffix_test.fern — std/publicsuffix: the registrable
-// domain of publicsuffix.org's own checks (tests/test_psl.txt), those of
-// its ICANN section, in their ASCII spelling; the public suffix behind
-// each; case, a trailing dot and an empty label.
-
-// registrable is `registrable_domain` as the checks write it: the name or
-// "null".
 function registrable(host: string): string {
   match (publicsuffix.registrable_domain(host)) {
     Some(d) => {
@@ -20,7 +13,6 @@ function registrable(host: string): string {
   return "";
 }
 
-// mismatches runs every pair and names the hosts whose answer differs.
 function mismatches(cases: (string, string)[]): string {
   let out: string = "";
   for c in cases {

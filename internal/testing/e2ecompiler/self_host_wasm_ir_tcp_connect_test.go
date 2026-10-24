@@ -11,36 +11,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmIRTcpConnect pins the outbound TCP client on the self-host
-// wasm-IR path — slice 1 of #4318: tcp_connect_with + tcp_close.
-//
-// wasm has no file descriptors, so the i32 the language calls a "fd" is a
-// POINTER to a 12-byte heap struct, the same shape native uses
-// (internal/codegen/wasmbin/wasi_tcp.go) so the two stay swappable:
-//
-//	[0..3]  tcp-socket handle
-//	[4..7]  input-stream handle   (0 for listening sockets)
-//	[8..11] output-stream handle  (0 for listening sockets)
-//
-// A negative return is -errno. tcp_close drops the streams BEFORE the socket:
-// they are its children, and the canonical ABI rejects a parent drop while
-// children live.
-//
-// Two things this needed beyond the helper itself:
-//
-//   - `start-connect` / `finish-connect` declared in cmd/fern/wit/deps/sockets/
-//     tcp.wit. It was a server-only subset ("we lower Fern's narrower
-//     listen+accept+stream pattern"), which is fine for native — it composes in
-//     Go and never reads the WIT — but the self-host resolves imports through
-//     `wasm-tools component embed`, so the compose failed without them.
-//   - pollable.block / [resource-drop]pollable, which connect uses internally to
-//     wait for the connection to establish, imported only when the module has
-//     not already imported them for wasm_block / wasm_pollable_drop (a
-//     duplicate import is an invalid module).
-//
-// BOTH directions are asserted. A helper that always returned a struct pointer
-// would pass a connect-only test; the refused case is what proves the errno
-// path, and it runs against a port deliberately left unbound.
 func TestSelfHostWasmIRTcpConnect(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -67,7 +37,6 @@ func TestSelfHostWasmIRTcpConnect(t *testing.T) {
 		t.Fatalf("abs wit dir: %v", err)
 	}
 
-	// A real listener for the success case. Its port is handed to the guest.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -84,8 +53,6 @@ func TestSelfHostWasmIRTcpConnect(t *testing.T) {
 	}()
 	openPort := ln.Addr().(*net.TCPAddr).Port
 
-	// A port deliberately left unbound for the refused case: bind then close,
-	// so nothing else grabs it in the meantime.
 	tmp, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen (for closed port): %v", err)

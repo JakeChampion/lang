@@ -1,9 +1,6 @@
-// Checked unsigned length arithmetic. These public values are mathematical
-// data, never instruction, metadata, allocation or ownership certificates.
 import "./ssacapacityvalue" as small;
 import "./ssalargepushranges" as large;
 
-// W=ceil(L/8), d=8W-L. A rectangle describes correlated L=8W-d values.
 pub struct Interval { low: i64, high: i64, min_residue: i32, max_residue: i32 }
 
 pub struct Value { factor: i32, offset: i64, residue: i32 }
@@ -41,7 +38,6 @@ function normalize(low: i64, high: i64): Parts {
 function endpoint(v: Value, w: i64, d: i32): Parts {
   let extra = v.offset + v.residue as i64 * (d as i64);
   if (v.factor == 8) {
-    // Neither 8*W nor a full unsigned64 value is formed in signed i64.
     return normalize(w % (536870912 as i64) * (8 as i64) + extra, w / (536870912 as i64));
   }
   let n = v.factor as i64 * w + extra;
@@ -52,7 +48,6 @@ pub function valid(r: Interval, v: Value): boolean {
   if (!valid_interval(r) || !shape(v)) {
     return false;
   }
-  // Both factors are monotone nonnegative; the residue coefficient is 0/-1.
   return endpoint(v, r.low, r.max_residue).valid && endpoint(v, r.high, r.min_residue).valid;
 }
 
@@ -86,7 +81,6 @@ pub function times_eight(r: Interval, v: Value): Value {
   return checked(r, Value { factor: v.factor * 8, offset: v.offset * (8 as i64), residue: 0 });
 }
 
-// Exact unsigned SHR3 when the residue contributes one constant quotient.
 pub function shift_three(r: Interval, v: Value): Value {
   if (!valid(r, v) || v.factor != 8) {
     return unknown();
@@ -111,8 +105,6 @@ pub function point(r: Interval, v: Value, w: i64, d: i32): Parts {
   return endpoint(v, w, d);
 }
 
-// A conservative whole-value zero extension. A machine must retain separate
-// projections for other low32 values; it cannot silently restore a lost high.
 pub function zero32(r: Interval, v: Value): Value {
   let hi = upper(r, v);
   return if (hi.valid && hi.high == 0) { v } else { unknown() };
@@ -198,7 +190,6 @@ function class_at(w: i64, fused: boolean, bins: i32[]): i32 {
   return -2;
 }
 
-// -3 small, -2 uniformly oversized, -1 invalid/mixed; otherwise bin index.
 pub function expected_class(r: Interval, fused: boolean): i32 {
   if (!valid_interval(r)) {
     return -1;

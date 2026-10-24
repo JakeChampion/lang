@@ -7,10 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A parameter typed by a trait is an anonymous generic: the project calls
-// through an entry-module trait, an imported module's trait from inside it, and
-// an imported trait by its qualifier, on every native target and the
-// interpreter. The self-host twin is TestSelfHostTraitParams.
 func TestTraitParams(t *testing.T) {
 	main := e2eharness.WriteTraitParamsProject(t)
 	t.Run("interp", func(t *testing.T) {

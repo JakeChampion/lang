@@ -9,12 +9,6 @@ import (
 	"testing"
 )
 
-// A spilled loop-carried value shares its phi's frame slot when the two do not
-// interfere (ssa.assign_spill_slots), as they share a register under the same
-// rule, so the back edge moves nothing between slots. `carry` keeps sixteen
-// values live round the loop, more than x86-64 has registers for; before the
-// slots were paired, each spilled one was copied slot to slot through %rcx on
-// every turn.
 const spillSlotMatesProg = `@noinline function carry(n: i64, x: i64): i64 {
     let a: i64 = 1i64; let b: i64 = 2i64; let c: i64 = 3i64; let d: i64 = 4i64;
     let e: i64 = 5i64; let f: i64 = 6i64; let g: i64 = 7i64; let h: i64 = 8i64;
@@ -31,11 +25,6 @@ const spillSlotMatesProg = `@noinline function carry(n: i64, x: i64): i64 {
 function main(): i32 { return (carry(1000i64, 3i64) % 200i64) as i32; }
 `
 
-// spillSlotNestedProg puts an inner loop that rarely redefines sixteen values
-// inside the loop that carries them. Each inner-header phi's entry operand is
-// an outer-header phi that dies there, so the two share a slot; so do the
-// outer phis and the constants they start from, although the first phi to be
-// placed would otherwise take the slot a later one's operand leaves.
 const spillSlotNestedProg = `@noinline function flush(x: i64): i64 { return x * 3i64 + 1i64; }
 @noinline function carry(n: i64, x: i64): i64 {
     let a: i64 = 1i64; let b: i64 = 2i64; let c: i64 = 3i64; let d: i64 = 4i64;
@@ -58,11 +47,6 @@ const spillSlotNestedProg = `@noinline function flush(x: i64): i64 { return x * 
 function main(): i32 { return (carry(1000i64, 3i64) % 200i64) as i32; }
 `
 
-// spillSlotJoinProg can replace fourteen arrays at two points in a turn, and
-// rarely does: in an inner loop, and after it in an `if` whose merge feeds the
-// loop header. Each merge phi's mate is the header's phi, whose slot the inner
-// header's phi holds by then; the merge takes it too, so a turn that skips
-// both moves nothing, and only an arm that ran pays its moves.
 const spillSlotJoinProg = `struct W { f0: i64[], f1: i64[], f2: i64[], f3: i64[], f4: i64[], f5: i64[], f6: i64[], f7: i64[], f8: i64[], f9: i64[], f10: i64[], f11: i64[], f12: i64[], f13: i64[] }
 @noinline function rare(w: W): W { return w; }
 @noinline function carry(n: i32, xs: i64[]): i32 {
@@ -103,15 +87,10 @@ function main(): i32 { let xs: i64[] = [1i64, 2i64]; return carry(1000, xs) % 20
 func TestSelfHostSpillSlotMates(t *testing.T) {
 	t.Run("carried", func(t *testing.T) { checkSpillSlotMates(t, spillSlotMatesProg, 164) })
 	t.Run("nested", func(t *testing.T) { checkSpillSlotMates(t, spillSlotNestedProg, 88) })
-	// Each arm's value and each merge's phi take the slot of the loop header's
-	// phi they replace, although that phi's interval covers the whole body
-	// (ssa.path_slot).
 	t.Run("merges", func(t *testing.T) { checkSpillSlotMates(t, mergeHintProg, 86) })
 	t.Run("join", func(t *testing.T) { checkSkippedArmMovesNothing(t, spillSlotJoinProg, 128) })
 }
 
-// checkSkippedArmMovesNothing requires the edge that skips spillSlotJoinProg's
-// `if` to reach the loop's increment with no slot copied to another.
 func checkSkippedArmMovesNothing(t *testing.T, prog string, want int) {
 	body := spillSlotListing(t, prog, want)
 	skip := regexp.MustCompile(`cmpq \$2000000, \S+\n\s*jle (\S+)\n`).FindStringSubmatch(body)
@@ -151,8 +130,6 @@ func checkSpillSlotMates(t *testing.T, prog string, want int) {
 	}
 }
 
-// spillSlotListing is `carry`'s x86-64 listing, after running the program on
-// every host target and requiring the interpreter's exit status.
 func spillSlotListing(t *testing.T, prog string, want int) string {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()

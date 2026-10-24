@@ -6,30 +6,11 @@ func init() {
 	registerCorpus("uname", unameCases)
 }
 
-// uname(1) prints the fields of the kernel's utsname record in one
-// order whatever order the options were given in, space separated, with
-// one trailing newline. Both sides read the same kernel, so the VALUES
-// are compared, not just the shape.
-//
-// The two quirks the corpus is built around:
-//
-//   - `-a` is not the same as naming all eight options. GNU's `-a` is a
-//     distinct value, and the omission rule ("drop -p and -i when they
-//     are unknown") tests exactly that value, so `-s -n -r -v -m -p -i
-//     -o` prints `unknown` twice where `-a` drops both. On Linux glibc
-//     can answer neither, so the two lines genuinely differ here.
-//   - `-A` selects the same set as `-a` and labels each field on its own
-//     line. The two overwrite each other rather than accumulating, so
-//     whichever came last decides whether labels appear.
-//   - `--sysname` and `--release` are obsolescent aliases GNU still
-//     declares. They are why `--s` and `--r` resolve while `--k` is
-//     ambiguous between three, listed in declaration order.
 func unameCases(t *testing.T) []invocation {
 	return []invocation{
 		{name: "no arguments is the kernel name"},
 		{name: "dashdash alone", args: []string{"--"}},
 
-		// Every element on its own.
 		{name: "-s", args: []string{"-s"}},
 		{name: "-n", args: []string{"-n"}},
 		{name: "-r", args: []string{"-r"}},
@@ -41,7 +22,6 @@ func unameCases(t *testing.T) []invocation {
 		{name: "-a", args: []string{"-a"}},
 		{name: "-A", args: []string{"-A"}},
 
-		// The long spellings, including the two obsolescent aliases.
 		{name: "--kernel-name", args: []string{"--kernel-name"}},
 		{name: "--sysname", args: []string{"--sysname"}},
 		{name: "--nodename", args: []string{"--nodename"}},
@@ -55,7 +35,6 @@ func unameCases(t *testing.T) []invocation {
 		{name: "--all", args: []string{"--all"}},
 		{name: "--all-labeled", args: []string{"--all-labeled"}},
 
-		// Unique-prefix matching, and the prefixes the aliases save.
 		{name: "--s is sysname", args: []string{"--s"}},
 		{name: "--r is release", args: []string{"--r"}},
 		{name: "--m", args: []string{"--m"}},
@@ -69,7 +48,6 @@ func unameCases(t *testing.T) []invocation {
 		{name: "--all- is all-labeled", args: []string{"--all-"}},
 		{name: "--all-l", args: []string{"--all-l"}},
 
-		// Combinations: the order is the record's, not the argv's.
 		{name: "-sm", args: []string{"-sm"}},
 		{name: "-ms is still kernel name first", args: []string{"-ms"}},
 		{name: "-mnsrv", args: []string{"-mnsrv"}},
@@ -89,7 +67,6 @@ func unameCases(t *testing.T) []invocation {
 		{name: "long and short mixed", args: []string{"--machine", "-s"}},
 		{name: "alias and canonical name for one field", args: []string{"--sysname", "--kernel-name"}},
 
-		// Operands, all of them faults.
 		{name: "an operand", args: []string{"x"}},
 		{name: "two operands report the first", args: []string{"x", "y"}},
 		{name: "lone dash is an operand", args: []string{"-"}},
@@ -100,7 +77,6 @@ func unameCases(t *testing.T) []invocation {
 		{name: "operand before an option is permuted out", args: []string{"x", "-s"}},
 		{name: "option-looking operand after dashdash", args: []string{"--", "-s"}},
 
-		// getopt faults.
 		{name: "invalid short option", args: []string{"-z"}},
 		{name: "invalid byte in a valid cluster", args: []string{"-sz"}},
 		{name: "unrecognized long option", args: []string{"--foo"}},
@@ -114,16 +90,11 @@ func unameCases(t *testing.T) []invocation {
 		{name: "operand before a bad option", args: []string{"x", "--foo"}},
 		{name: "bad option before an operand", args: []string{"--foo", "x"}},
 
-		// The UNAME_* variables are honoured on Darwin only, so on
-		// Linux they must change nothing on either side.
 		{name: "UNAME_MACHINE is not honoured here", args: []string{"-m"}, env: []string{"UNAME_MACHINE=nonesuch"}},
 		{name: "UNAME_SYSNAME is not honoured here", args: []string{"-s"}, env: []string{"UNAME_SYSNAME=nonesuch"}},
 
-		// POSIXLY_CORRECT stops the scan at the first operand, which
-		// turns a permuted fault into an extra-operand one.
 		{name: "posixly correct stops at an operand", args: []string{"x", "-s"}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// The write-failure paths: one write, one strerror.
 		{name: "stdout closed", stdout: stdoutClosed},
 		{name: "stdout full", stdout: stdoutFull},
 		{name: "stdout closed on -a", args: []string{"-a"}, stdout: stdoutClosed},

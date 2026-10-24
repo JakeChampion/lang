@@ -9,24 +9,6 @@ import (
 	"testing"
 )
 
-// TestConformanceCensusHasARowPerFixture keeps conformance/cases and
-// internal/testing/e2e/testdata/conformance-leak-census.txt in step.
-//
-// TestConformanceLeakCensusX86_64 already requires a pinned verdict for every
-// runnable fixture, but it gets there by COMPILING and RUNNING the whole
-// corpus, so it lives in the e2e lane. That makes the omission cheap to
-// commit and expensive to notice: a PR that adds a fixture is green against a
-// base whose census predates it, and the lane only goes red on main
-// afterwards, for everyone. It happened three times on 2026-09-05 —
-// arrow_lambda_block_body, cast_int_arith_to_float, and the two tuple-binder
-// fixtures — and two of those were reported as separate bugs (#8518, #8534)
-// before the shared cause was noticed (#8655).
-//
-// This asks the same question with no compiler in it: milliseconds, in the
-// unit lane, so the PR that adds the fixture is the one that fails.
-//
-// It deliberately does NOT check the verdict — only that a row exists. What
-// the number should be is a measurement, and measuring is the e2e test's job.
 func TestConformanceCensusHasARowPerFixture(t *testing.T) {
 	root, err := repoRoot()
 	if err != nil {
@@ -70,11 +52,6 @@ func TestConformanceCensusHasARowPerFixture(t *testing.T) {
 	}
 }
 
-// runnableFixtureNames mirrors runnableFixtures in
-// internal/testing/e2e/conformance_leak_census_test.go: a directory with a main.fern
-// and no expected*error sidecar. The rule is duplicated rather than shared
-// because that package compiles the corpus and cannot run in the unit lane;
-// if the rule changes there, this fails loudly rather than drifting quietly.
 func runnableFixtureNames(t *testing.T, casesDir string) []string {
 	t.Helper()
 	dirs, err := filepath.Glob(filepath.Join(casesDir, "*"))
@@ -95,8 +72,6 @@ func runnableFixtureNames(t *testing.T, casesDir string) []string {
 	return out
 }
 
-// censusRowNames reads the fixture names out of the pin file. A row is
-// `<name> <count>`; everything else is a `#` comment or blank.
 func censusRowNames(t *testing.T, path string) map[string]bool {
 	t.Helper()
 	f, err := os.Open(path)

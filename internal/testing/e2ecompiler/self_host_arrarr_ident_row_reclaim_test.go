@@ -9,22 +9,12 @@ import (
 	"testing"
 )
 
-// arrarrIdentRowCases pin #6527's self-host half: a `string[][]` whose ROW is a
-// bare local (`let outer: string[][] = [inner, [...]]`) is deep-reclaimed —
-// every element string freed, not just the buffers — exactly as the
-// rows-are-literals spelling is. A row local is admitted when this
-// construction is its last use: declared earlier in the same statement list
-// from an array literal, mentioned nowhere in between, once here, never after.
-//
-// The refusal cases carry the weight. They must keep VALUES correct and the
-// over-release counter at zero; they are deliberately not asserted flat.
 var arrarrIdentRowCases = []struct {
 	name string
 	src  string
 	want int
 	wasm bool
 }{
-	// The filed shape: a local row beside a literal row.
 	{"ident-row-with-literal-row", `function tag(k: i32): string {
     if (k == 0) { return "zero"; }
     if (k == 1) { return "one"; }
@@ -49,7 +39,6 @@ function main(): i32 {
     return 0;
 }`, 0, true},
 
-	// The local row alone — no literal row to carry the credit.
 	{"ident-row-only", `function tag(k: i32): string {
     if (k == 0) { return "zero"; }
     return "many";
@@ -73,10 +62,6 @@ function main(): i32 {
     return 0;
 }`, 0, true},
 
-	// The PRODUCER spelling: the same literal returned rather than bound. It
-	// uses the "AAC:" registry, whose two freshness flags read the identical
-	// pair of gates, so the widening has to reach it or the caller's binding
-	// earns the credit in one spelling and not the other.
 	{"producer-returns-ident-row", `function tag(k: i32): string {
     if (k == 0) { return "zero"; }
     return "many";
@@ -103,8 +88,6 @@ function main(): i32 {
     return 0;
 }`, 0, true},
 
-	// REFUSED: the row local is read after the construction, so it is not this
-	// statement's to consume. Both readings must still see live characters.
 	{"row-read-after-is-refused", `function tag(k: i32): string {
     if (k == 0) { return "zero"; }
     return "many";
@@ -131,9 +114,6 @@ function main(): i32 {
     return 0;
 }`, 0, true},
 
-	// REFUSED: the row's ELEMENT aliases a live string local read afterwards.
-	// A string-kind deep reclaim frees element POINTERS, so crediting this
-	// would dangle `s`.
 	{"row-element-aliases-live-local", `function tag(k: i32): string {
     if (k == 0) { return "zero"; }
     return "many";
@@ -161,8 +141,6 @@ function main(): i32 {
     return 0;
 }`, 0, true},
 
-	// REFUSED: one row local placed into TWO arr-of-arrs. Only one of them
-	// could own it, and neither is the local's last use.
 	{"row-placed-twice", `function tag(k: i32): string {
     if (k == 0) { return "zero"; }
     return "many";
@@ -190,11 +168,6 @@ function main(): i32 {
     return 0;
 }`, 0, true},
 
-	// REFUSED: the local is grown between its declaration and the
-	// construction, so the declaration's initializer no longer describes the
-	// buffer that reaches the row. This is what the "mentioned nowhere in
-	// between" clause is for — the elements proof is read off that
-	// initializer, and here it would be read off the wrong one.
 	{"row-mutated-between-decl-and-use", `function tag(k: i32): string {
     if (k == 0) { return "zero"; }
     return "many";
@@ -220,8 +193,6 @@ function main(): i32 {
 }`, 0, true},
 }
 
-// TestSelfHostArrArrIdentRowReclaimX86_64 drives the cases through the
-// self-hosted x86-64 compiler.
 func TestSelfHostArrArrIdentRowReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -249,9 +220,6 @@ func TestSelfHostArrArrIdentRowReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostArrArrIdentRowReclaimArm64 is the arm64 leg. The divergence this
-// closes was identical on all three targets, which is what placed it in the
-// shared reclaim path rather than in an emitter — so all three have to answer.
 func TestSelfHostArrArrIdentRowReclaimArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -275,7 +243,6 @@ func TestSelfHostArrArrIdentRowReclaimArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostArrArrIdentRowReclaimWasmIR is the wasm leg.
 func TestSelfHostArrArrIdentRowReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping arr-of-arr ident-row reclaim wasm IR e2e")

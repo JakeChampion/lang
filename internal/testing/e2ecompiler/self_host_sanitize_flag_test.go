@@ -11,10 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// -sanitize on the self-host CLI (#7976's driver half): the flag turns the
-// heap detectors on as FERN_SANITIZE=1 does, reaches every backend through
-// the emit state rather than the environment, and names what a target's
-// build carries, in native's words.
 func TestSelfHostSanitizeFlag(t *testing.T) {
 	cli := newStrictCLI(t)
 	dir := t.TempDir()
@@ -23,8 +19,6 @@ func TestSelfHostSanitizeFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// buildEnv compiles with `env` added to a compiler environment that
-	// otherwise carries no FERN_*; build passes none, so the flag decides.
 	buildEnv := func(t *testing.T, name string, env []string, flags ...string) (string, string) {
 		t.Helper()
 		out := filepath.Join(dir, name)
@@ -73,7 +67,6 @@ func TestSelfHostSanitizeFlag(t *testing.T) {
 		}
 	})
 
-	// wasm carries the census alone, and the flag says so.
 	t.Run("wasm_census_and_note", func(t *testing.T) {
 		if _, err := exec.LookPath("wasmtime"); err != nil {
 			t.Skip("wasmtime not on PATH")
@@ -91,10 +84,6 @@ func TestSelfHostSanitizeFlag(t *testing.T) {
 		}
 	})
 
-	// The flag and FERN_SANITIZE=1 are two ways into one mode: the emitted
-	// code is the same bytes on every target. The flag's spellings follow
-	// Go's flag.Bool, as native's do: =true is the flag and =false is its
-	// absence.
 	t.Run("flag_matches_env", func(t *testing.T) {
 		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 			flag, _ := build(t, "flag-"+target+".s", "-sanitize", "-target", target, "-emit", "asm")
@@ -118,8 +107,6 @@ func TestSelfHostSanitizeFlag(t *testing.T) {
 		}
 	})
 
-	// FERN_SANITIZE reads as every boolean FERN_* variable does: an off value
-	// builds without the detectors, any other value with them (#12678).
 	t.Run("env_off_values", func(t *testing.T) {
 		off, _ := build(t, "plain.s", "-target", "x86-64-linux", "-emit", "asm")
 		on, _ := build(t, "flag.s", "-sanitize", "-target", "x86-64-linux", "-emit", "asm")

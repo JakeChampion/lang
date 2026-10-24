@@ -8,34 +8,11 @@ import (
 	"testing"
 )
 
-// --- A SCALAR-FIELD struct array from a producer call (#7445) ----------------
-//
-//	let v: P[] = [P { .. }, P { .. }];   // literal init
-//	let v: P[] = mk();                   // producer call
-//
-// Same elements, same frame, same free. A producer whose every return is a
-// fresh struct-literal array, or a local built by self-append and handed back,
-// gives its caller sole ownership, so the binding must release every element
-// struct — and, for a string-fielded element, its string — not just the outer
-// buffer. Missing it strands 160 B per round, unbounded in any loop that
-// constructs one, which is the shape of an AST walker and so of this compiler.
-//
-// The refusal rows carry the soundness: a producer whose element is a bare
-// IDENT, one that hands back its own parameter, and one whose element field
-// embeds a caller's string do not give the caller sole ownership, and 99 in
-// any of those rows would be a box freed under a live owner. Byte counts
-// cannot see that difference — a double free and a clean run report identical
-// allocs/frees — so every row asserts an exit code, and only the rows that
-// must balance assert bytes.
-//
-// Every want below was confirmed against `bin/fern -interp`; none was read off
-// the self-host run under test.
-
 type structarrProdCase struct {
 	name    string
 	src     string
 	want    int
-	balance bool // assert allocs == frees at live_bytes 0
+	balance bool
 }
 
 const structarrProdDecl = "struct P { s: string, n: i32 }\n" +
@@ -48,44 +25,30 @@ const structarrProdMain = "\nfunction main(): i32 { let t: i32 = 0; let i: i32 =
 func structarrProdCases() []structarrProdCase {
 	return []structarrProdCase{
 		{
-			// The repro: the producer binds the literal to a local and returns it.
 			name: "producer_returns_local",
 			src: structarrProdDecl + `function mk(): P[] { let a: P[] = [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; return a; }
 function round(i: i32): i32 { let v: P[] = mk(); return v.len(); }` + structarrProdMain,
 			want: 68, balance: true,
 		},
 		{
-			// The same producer returning the literal directly. Leaked identically
-			// before the fix — the discriminator here is the CALL, not the form of
-			// the return, which is what separates this from its arrstruct sibling.
 			name: "producer_returns_literal",
 			src: structarrProdDecl + `function mk(): P[] { return [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; }
 function round(i: i32): i32 { let v: P[] = mk(); return v.len(); }` + structarrProdMain,
 			want: 68, balance: true,
 		},
 		{
-			// No producer: the literal bound straight into the local. Credited all
-			// along, and the control that says the elements themselves are fine.
 			name: "literal_init",
 			src: structarrProdDecl + `function round(i: i32): i32 { let v: P[] = [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; return v.len(); }` +
 				structarrProdMain,
 			want: 68, balance: true,
 		},
 		{
-			// The append-built producer, which the shared body proof admits for
-			// free. It is how a producer that computes its elements has to be
-			// written, so a literal-only registry would have left the common form
-			// leaking after the main shape was fixed.
 			name: "producer_append_built",
 			src: structarrProdDecl + `function mk(i: i32): P[] { let a: P[] = []; a = a.append(P { s: w("p"), n: i }); a = a.append(P { s: w("q"), n: i }); return a; }
 function round(i: i32): i32 { let v: P[] = mk(i); return v.len() + v[0].n; }` + structarrProdMain,
 			want: 48, balance: true,
 		},
 		{
-			// The result is read back element-wise, and a second fresh array is
-			// built alongside it in the same frame. A box freed early would be
-			// recycled into the second array, so the answer discriminates where a
-			// byte count would not.
 			name: "readback_beside_fresh",
 			src: structarrProdDecl + `function mk(): P[] { let a: P[] = [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; return a; }
 function round(i: i32): i32 {
@@ -96,10 +59,6 @@ function round(i: i32): i32 {
 			want: 27, balance: true,
 		},
 		{
-			// THE OVER-RELEASE GUARD: two same-named `v`, one from the producer and
-			// one a bare alias of a parameter. The credit is site-keyed, so the
-			// alias cannot inherit it — asserted, not assumed. 99 here would be
-			// main's `b` freed under it, and no byte count would say so.
 			name: "sibling_alias",
 			src: structarrProdDecl + `function mk(i: i32): P[] { let a: P[] = [P { s: w("p"), n: i }]; return a; }
 function round(base: P[], i: i32): i32 {
@@ -118,18 +77,12 @@ function main(): i32 {
 			want: 78, balance: true,
 		},
 		{
-			// REFUSED, deliberately: the appended element is a bare IDENT, so the
-			// returned container's counted co-owner is a local of the frame being
-			// left. Admitting it would free `e`'s box twice. Stays a safe leak.
 			name: "producer_bare_ident_elem",
 			src: structarrProdDecl + `function mk(i: i32): P[] { let e: P = P { s: w("p"), n: i }; let a: P[] = []; a = a.append(e); return a; }
 function round(i: i32): i32 { let v: P[] = mk(i); return v.len() + v[0].n; }` + structarrProdMain,
 			want: 14,
 		},
 		{
-			// REFUSED: the producer hands back its own PARAMETER, so the array the
-			// caller binds is one the caller already owns. Crediting the binding
-			// would release it twice.
 			name: "producer_returns_param",
 			src: structarrProdDecl + `@noinline function passthru(a: P[]): P[] { return a; }
 function round(i: i32): i32 {
@@ -140,10 +93,6 @@ function round(i: i32): i32 {
 			want: 53,
 		},
 		{
-			// ADMITTED, and the element walk still declines: the element's string
-			// field is the CALLER's string, which the deep drop reaches under
-			// __fern_rc_is_unique and so leaves alone. The string is read back after
-			// the array is gone — a freed box would answer with junk or underflow.
 			name: "producer_param_string_field",
 			src: structarrProdDecl + `function mkp(nm: string): P[] { return [P { s: nm, n: 1 }]; }
 function round(i: i32): i32 {
@@ -168,10 +117,6 @@ function main(): i32 {
 			want: 47,
 		},
 		{
-			// The rc-ARRAY-field element struct, which "ARRSTRUCTF:" owns. Here to
-			// pin the two registries disjoint: the new one must not claim it, and
-			// it must stay balanced. ys goes through id so each element is built on
-			// the heap rather than placed as a constant.
 			name: "arrfield_elem_stays_arrstruct",
 			src: `struct Q { ys: i32[], n: i32 }
 @noinline function id(xs: i32[]): i32[] { return xs; }
@@ -182,9 +127,6 @@ function round(i: i32): i32 { let v: Q[] = mkq(); return v.len() + v[0].ys.len()
 	}
 }
 
-// TestSelfHostStructArrProducerX86_64 — a scalar-field struct array bound from a
-// producer call is reclaimed whole, and no refused producer shape starts
-// over-releasing.
 func TestSelfHostStructArrProducerX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -221,8 +163,6 @@ func TestSelfHostStructArrProducerX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStructArrProducerWasmIR — the wasm sibling. Exit codes only: an
-// over-release moves no byte count on any backend.
 func TestSelfHostStructArrProducerWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping structarr producer wasm IR e2e")
@@ -261,8 +201,6 @@ func TestSelfHostStructArrProducerWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostStructArrProducerIRArm64 — the arm64 leg, the only one where the
-// self-host toolchain assembles and links the binary itself.
 func TestSelfHostStructArrProducerIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

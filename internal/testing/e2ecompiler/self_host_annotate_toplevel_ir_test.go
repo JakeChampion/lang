@@ -7,56 +7,28 @@ import (
 	"testing"
 )
 
-// annotateTopLevelCases pin that the typed-IR annotate pass (#5520 / #5531)
-// types the top-level statements of a SCRIPT-shaped module — top-level
-// statements, no `main`, which asmcore.synth_script_main desugars into
-// `function main(): i32` (#5657) — and not only its function bodies:
-// annotate_module walks top_stmts from the bare module scope, as check_module
-// does.
-//
-// Each case makes a top-level call's RESULT TYPE observable in the exit code:
-// f64 arithmetic, an unsigned shift, a string length, a struct field, and a
-// for-loop over a call-returned array (which also exercises the loop-variable
-// binding). Expected values are computed by hand rather than from the `-interp`
-// oracle the sibling annotate tests use: cmd/fern's parser accepts only
-// function-shaped modules, so a script has no native oracle — script support is
-// a self-host driver feature.
-//
-// The route assertion pins that these programs take the IR path, and that
-// `-decide` judges the same module the emit lowers: both normalise the script
-// through ircore.script_normalized first, so `-decide` must answer "ir" rather
-// than refusing a module whose `main` is not synthesised yet.
 var annotateTopLevelCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// f64-returning call at the top level: an integer add on the doubles' bits
-	// would not sum to 3.5.
 	{"top_f64_call", `function half(): f64 { return 0.5; }
 let t: f64 = half() + half() + 2.5;
 return t as i32;
 `, 3},
-	// u64-returning call at the top level: a SIGNED >> on a bit-63-set value
-	// gives a different answer.
 	{"top_u64_call", `function bigu(): u64 { return 18000000000000000000 as u64; }
 let t: u64 = bigu() >> 40;
 return t as i32;
 `, 216},
-	// string-returning call bound to a top-level local, then measured.
 	{"top_str_call", `function label(): string { return "abc"; }
 let s: string = label();
 return s.len();
 `, 3},
-	// struct-returning call at the top level, read by field.
 	{"top_struct_call", `struct Pt { x: i32, y: i32 }
 function origin(): Pt { return Pt { x: 3, y: 4 }; }
 let p: Pt = origin();
 return p.x * p.y;
 `, 12},
-	// A top-level for-loop over a call-returned array, summing an f64 method on
-	// the loop variable — top_stmts annotation and the loop-variable binding in
-	// the same program.
 	{"top_for_f64_method", `struct V { x: f64 }
 function (v: V) scaled(): f64 { return v.x * 2.0; }
 function mk(): V[] { return [V { x: 1.5 }, V { x: 0.375 }]; }
@@ -64,11 +36,9 @@ let vs: V[] = mk();
 let t: f64 = 0.0;
 for v in vs { t = t + v.scaled(); }
 return t as i32;
-`, 3}, // 3.0 + 0.75 = 3.75 -> 3
+`, 3},
 }
 
-// TestSelfHostAnnotateTopLevelIR_X86_64 pins the checker-stamped result type on
-// TOP-LEVEL calls through the self-host x86-64 IR path (#5520 / #5531).
 func TestSelfHostAnnotateTopLevelIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, _ := annotateF64ProjDir(t)
 	for _, tc := range annotateTopLevelCases {
@@ -89,9 +59,6 @@ func TestSelfHostAnnotateTopLevelIR_X86_64(t *testing.T) {
 			if cerr != nil {
 				t.Fatalf("loader compile: %v", cerr)
 			}
-			// The IR path's whole-program emit writes `_start` -> `call __fn_main`;
-			// the AST no-main path inlines the statements into `_start` instead, so
-			// this is what distinguishes a genuinely IR-lowered script.
 			if !strings.Contains(string(asm), "call __fn_main") {
 				t.Fatalf("%s: emitted asm has no `call __fn_main` — the script did not lower through the IR", tc.name)
 			}

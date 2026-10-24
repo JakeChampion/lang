@@ -10,10 +10,6 @@ import (
 	"testing"
 )
 
-// The result outlives the heap-backed source. Churn allocations before reading
-// it, so an uncounted element cannot hide behind unreused memory.
-// Keep expected bytes independent of either compiler and measure the lifetime
-// separately from value correctness.
 func containerAliasStringSource(rebuild string, rounds int, shared bool) string {
 	loadResult := "return rebuild(names);"
 	if shared {
@@ -95,8 +91,6 @@ func TestSelfHostContainerAliasLifetimeWasm(t *testing.T) {
 	for _, tc := range containerAliasLifetimeCases {
 		for _, shared := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/shared=%t", tc.name, shared), func(t *testing.T) {
-				// The second identical exercise must reuse the first one's freed
-				// allocations. Check after both frames have released their arrays.
 				src := containerAliasStringSource(tc.body, 32, shared)
 				src = strings.Replace(src, "let code: i32 = exercise();", `let first: i32 = exercise();
     let before = __heap_bump_bytes();

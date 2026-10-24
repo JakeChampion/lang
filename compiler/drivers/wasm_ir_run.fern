@@ -1,8 +1,3 @@
-// compiler/wasm_ir_run.fern — the stdin driver for the wasm IR
-// backend (the wasm sibling of asm_ir_run): it emits a program read from stdin
-// over the typed lowering, through the routed entry wasm_run takes. A module
-// the gates decline is an ERROR.
-
 import "../parser";
 import "./rundriver";
 import "../util";
@@ -11,9 +6,6 @@ import "../platforms";
 import "../wasm_ir";
 import "../semlower";
 
-// main wraps `run` in the shared rc-over-release guard — see
-// util.rc_underflow_guard. Every self-host driver run self-checks its own
-// heap accounting; a corrupted freelist is otherwise silent (#6021).
 function main(): i32 {
   return util.rc_underflow_guard("wasm_ir_run", run());
 }
@@ -23,25 +15,13 @@ function run(): i32 {
   if (asmcore.refuse_parse_errors([mod])) {
     return 1;
   }
-  // Call-arity gate (#4360): shared with wasm_run — an arg-count mismatch
-  // must reject before the emit runs, not miscompile. Checked on a default-filled COPY (the emit input is
-  // untouched; both emit paths fill defaults themselves).
   let arity_errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(mod));
-  // Bare-map_new chain gate (native E038/E003 parity) — same
-  // reject-don't-miscompile rationale as the arity gate.
   arity_errs = util.append_diags(arity_errs, asmcore.check_map_new_chain(mod));
-  // Undefined-callee gate (native E001, #5644): a callee naming nothing
-  // otherwise reaches the emitter's generic call path, which emits a call
-  // against a symbol nothing defines — an opaque load-time `unknown func`
-  // instead of a diagnostic pointing at the source.
   arity_errs = util.append_diags(arity_errs, asmcore.check_undefined_calls(mod));
   if (arity_errs.len() > 0) {
     eprint(util.format_diags(arity_errs));
     return 1;
   }
-  // The CLI's target gate (E066 — platforms.fern): a builtin with no wasm
-  // meaning is refused by name before the typed lowering, rather than by the
-  // IR op instruction selection would refuse (#6946).
   let denied: util.Diag[] = [];
   for v in platforms.enforce(mod, "wasm32-wasi") {
     denied = denied.append(platforms.violation_diag(v));

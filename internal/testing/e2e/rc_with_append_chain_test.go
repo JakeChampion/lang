@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// `xs.with(i, v).append(w)` with `xs` still live: the `.with` is forced onto
-// its copy path, so the append's receiver is a fresh buffer only the chain
-// holds, and the append releases it like any other owned receiver.
 func TestAppendOntoAWithCopyReleasesTheCopy(t *testing.T) {
 	cases := []struct {
 		name, src string

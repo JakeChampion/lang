@@ -1,5 +1,5 @@
-// A closure may capture a value whose type is a type parameter of the
-// enclosing function: it is concrete once the function is instantiated.
+
+
 import "core/int";
 
 struct Pair { a: i32, b: string }

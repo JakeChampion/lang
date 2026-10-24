@@ -1,6 +1,3 @@
-// Run n rounds shared, with shared either 0 (unique) or 1 (a live alias).
-// Measure only the scale call. Verify every result and live alias outside
-// that timer. Both allocation counters include the handle's metadata.
 import "std/ndarray";
 import "std/string";
 
@@ -49,7 +46,6 @@ function main(): i32 {
   if (argv.len() > 3) {
     shared = argv[3] == "1";
   }
-  // Power-of-two scaling is exact and remains finite throughout this range.
   if (n < 1 || rounds < 1 || rounds > 1000) {
     return 1;
   }

@@ -1,9 +1,5 @@
 import "std/pvec";
 
-// pvec_with — the persistent vector's write path: 4000 appends, then 40
-// rounds of `v = v.with(i, x)` over every index with no snapshot held. Each
-// write descends the 32-way trie and rebuilds its path; array_index is the
-// built-in array's read side of the same shape.
 function main(): i32 {
   let v: pvec.PVec[i32] = pvec.pvec_new();
   let i: i32 = 0;

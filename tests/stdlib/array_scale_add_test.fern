@@ -1,13 +1,6 @@
 import "std/test";
 import "std/array" as array;
 
-// tests/stdlib/array_scale_add_test.fern — pure-Fern coverage of std/array's
-// scale_f64 (scalar multiply) and add_f64 (element-wise sum, to the shorter
-// length on a mismatch) — the element-wise companions to the vector reductions.
-// Both return an f64[] (scalar payload), so this runs on all four native backends
-// and both self-host gates. The Go-side TestArrayScaleAdd pins the native
-// backends; this is the migration-shaped companion.
-
 function near(a: f64, b: f64): boolean {
   let d: f64 = a - b;
   if (d < 0.0) {
@@ -49,7 +42,6 @@ function test_add_mismatch(): test.TestOutcome {
 }
 
 function test_saxpy(): test.TestOutcome {
-  // 2*xs + b, the classic scale-then-add.
   let xs: f64[] = [1.0, 2.0, 3.0];
   let b: f64[] = [10.0, 20.0, 30.0];
   let saxpy: f64[] = array.add_f64(array.scale_f64(xs, 2.0), b);

@@ -9,21 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostTempDirIRWasm pins `temp_dir(prefix)` on the wasm IR path. temp_dir
-// creates a uniquely-named directory and returns Result[string, IoError]. It
-// lowers to op_temp_dir -> $__fern_temp_dir, a runtime that builds
-// `<prefix>-<monotonic_ns>` (ns rendered to decimal inline), creates it under
-// the preopen with path_create_directory, and boxes Ok(name) / Err(IoError).
-// Unlike asm_ir's __fern_temp_dir it drops the absolute "/tmp/" prefix — wasm
-// has no global /tmp, only the preopen, so the returned name is
-// preopen-RELATIVE, the same model every other wasm fs op uses (so the name
-// round-trips through stat / read_dir / remove_dir_all within the sandbox).
-//
-// Value-tested under wasmtime with the temp dir as preopen (`--dir=.::/`, CWD =
-// temp dir): the program creates a temp dir, checks the returned path is non-empty
-// and starts with the requested prefix, and exits 0; the Go side then confirms a
-// matching directory was actually created on disk. The test also pins that the IR
-// path was taken (`call $__fern_temp_dir` in the WAT).
 func TestSelfHostTempDirIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host temp_dir wasm IR e2e")
@@ -33,8 +18,6 @@ func TestSelfHostTempDirIRWasm(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
-	// "fern-td-ir" is 10 bytes; the result is "<prefix>-<ns>", so >= 12 bytes, and
-	// d[0] == 'f' (102). Exit 0 only if the path looks right.
 	const src = `function main(): i32 {
     match (temp_dir("fern-td-ir")) {
         Ok(d) => {
@@ -73,7 +56,6 @@ func TestSelfHostTempDirIRWasm(t *testing.T) {
 	if code := run.ProcessState.ExitCode(); code != 0 {
 		t.Errorf("temp_dir wasm IR program exited %d, want 0 (Ok path non-empty + prefix)\n--- WAT ---\n%s", code, wat)
 	}
-	// A directory named "fern-td-ir-<ns>" must have been created under the preopen.
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("readdir temp dir: %v", err)

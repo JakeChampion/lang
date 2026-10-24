@@ -11,16 +11,8 @@ import (
 	"testing"
 )
 
-// capSysTime is CAP_SYS_TIME's bit in a capability set.
 const capSysTime = 25
 
-// WithoutClockPrivilege makes cmd run unable to set the system clock, so a
-// case that asks to set it reaches the EPERM an ordinary user gets instead of
-// moving the machine's clock. A process already without CAP_SYS_TIME is left
-// alone; one holding it (root in a container) starts the child in a new user
-// namespace mapping it to the same ids, so files read and write as before but
-// the capability, which clock_settime checks in the initial namespace, is
-// gone.
 func WithoutClockPrivilege(t testing.TB, cmd *exec.Cmd) {
 	t.Helper()
 	if !holdsCapSysTime(t) {
@@ -34,7 +26,6 @@ func WithoutClockPrivilege(t testing.TB, cmd *exec.Cmd) {
 	cmd.SysProcAttr.GidMappings = []syscall.SysProcIDMap{{ContainerID: os.Getgid(), HostID: os.Getgid(), Size: 1}}
 }
 
-// holdsCapSysTime reads this process's effective capability set.
 func holdsCapSysTime(t testing.TB) bool {
 	t.Helper()
 	status, err := os.ReadFile("/proc/self/status")

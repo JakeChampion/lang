@@ -5,41 +5,18 @@ import (
 	"testing"
 )
 
-// returnClosureElemIRCases pin RETURNING an element of a LOCAL closure array
-// across a function boundary — `function pick(): () => i32 { let hs = [...];
-// return hs[0]; }` then `let g = pick(); g()`. These lower on the IR path.
-//
-// closure_ret_fns_of (the pre-pass registering functions whose body returns a
-// closure box, so a caller's `let g = pick()` binds g a closure local) scanned
-// only ExprLambda / ExprIdent / ExprCall returns — NOT ExprIndex. So a
-// `return hs[0]` element return went unregistered: the caller bound g a plain
-// scalar and `g()` bare-called the box pointer → SIGSEGV. The scan now also
-// recognises a `return <local-closure-array>[i]` element (issue #5202 case A).
-//
-// The struct-field element return `return r.hs[0]` (#5202 cases B/C) needs
-// `structs` threaded into the detector and is deferred; not covered here.
-//
-// Found via differential probing. Exit codes cross-checked against the
-// interpreter and the native Go backend.
 var returnClosureElemIRCases = []struct {
 	name string
 	src  string
 	exit int
 }{
-	// Bind the returned closure, then call it.
 	{"bind", "function pick(): () => i32 { let n: i32 = 8; let hs: (() => i32)[] = [() => n]; return hs[0]; } function main(): i32 { let g = pick(); return g(); }", 8},
-	// Call the returned closure inline (no intermediate bind).
 	{"inline", "function pick(): () => i32 { let n: i32 = 8; let hs: (() => i32)[] = [() => n]; return hs[0]; } function main(): i32 { return pick()(); }", 8},
-	// Return a non-zero element index.
 	{"elem1", "function pick(): () => i32 { let n: i32 = 8; let hs: (() => i32)[] = [() => n, () => n + 5]; return hs[1]; } function main(): i32 { let g = pick(); return g(); }", 13},
-	// Returned closure takes an argument.
 	{"arg", "function pick(): (i32) => i32 { let n: i32 = 5; let hs: ((i32) => i32)[] = [(x: i32) => x + n]; return hs[0]; } function main(): i32 { let g = pick(); return g(10); }", 15},
-	// Loop-churn: call the returned closure each iteration, mod 256.
 	{"churn", "function pick(k: i32): (i32) => i32 { let hs: ((i32) => i32)[] = [(x: i32) => x + k]; return hs[0]; } function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 300) { let g = pick(i % 7); acc = (acc + g(2)) % 1000; i = i + 1; } return acc % 256; }", 241},
 }
 
-// TestSelfHostReturnClosureElemIRX86_64 — the x86-64 fix, through the
-// production driver (asm_ir_run).
 func TestSelfHostReturnClosureElemIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -67,8 +44,6 @@ func TestSelfHostReturnClosureElemIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostReturnClosureElemIRArm64 — CI-gated arm64 counterpart. The fix is
-// in the shared lowering, so the arm64 IR backend picks it up for free.
 func TestSelfHostReturnClosureElemIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

@@ -10,9 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestSelfHostCheckUnknownDynTraitPosition holds the position `-check` prints
-// for an unknown trait in a `dyn` type to the Go checker's: the function for a
-// parameter or the return type, the `let` for a local annotation.
 func TestSelfHostCheckUnknownDynTraitPosition(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	root := e2eharness.SelfHostStdlibRoot(t)

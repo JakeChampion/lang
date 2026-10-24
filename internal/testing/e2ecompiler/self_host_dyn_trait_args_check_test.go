@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// A method called through a `dyn` value returns what its trait declares, read
-// at the trait arguments and associated-type pins the dyn spelling gives:
-// `T` in `dyn Tc[i32]` is i32, and `Self::Item` in `dyn P[Item = i32]` is
-// i32. The self-host checker left both unknown, so -check refused a program
-// that used the result in arithmetic, and could not see a result used at the
-// wrong type. Found by TestDifferential_CheckerMutants. A call's arguments are
-// read at the same spelling and checked against it (#12639).
 func TestSelfHostDynTraitArgsCheck(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

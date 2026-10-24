@@ -10,14 +10,8 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/manifest"
 )
 
-// LockFileName is the resolved-version lockfile written next to a
-// manifest. Under MVS the versions are fully determined by the manifests
-// + index, so the lock is not a resolution SNAPSHOT that can drift — it
-// records the chosen (name, version, source) so builds are reproducible
-// and offline without re-running resolution.
 const LockFileName = "fern.lock"
 
-// WriteLock writes the selected set to <dir>/fern.lock, sorted by name.
 func WriteLock(dir string, sel []Selected) error {
 	sorted := append([]Selected(nil), sel...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
@@ -37,8 +31,6 @@ func WriteLock(dir string, sel []Selected) error {
 	return os.WriteFile(filepath.Join(dir, LockFileName), []byte(b.String()), 0o644)
 }
 
-// ReadLock reads <dir>/fern.lock, returning name → Selected. Returns
-// (nil, nil) when absent.
 func ReadLock(dir string) (map[string]Selected, error) {
 	b, err := os.ReadFile(filepath.Join(dir, LockFileName))
 	if os.IsNotExist(err) {
@@ -112,14 +104,6 @@ func ReadLock(dir string) (map[string]Selected, error) {
 	return out, nil
 }
 
-// validHashShape reports whether s is `sha256:` + 64 lowercase hex digits.
-//
-// Duplicated rather than shared: the hex half of a hash is joined onto the
-// package-store root to name a directory, so pkgcache.ValidateHash is the
-// authoritative gate (#8464) — but mvs is deliberately free of
-// manifest/pkgcache (see the note at the top of mvs.go), and catching a
-// malformed hash at parse time names the file and the key instead of
-// surfacing it from inside the loader.
 func validHashShape(s string) bool {
 	hex, ok := strings.CutPrefix(s, "sha256:")
 	if !ok || len(hex) != 64 {

@@ -107,7 +107,6 @@ function schemas(rows: ssaprepare.Emitted[], architecture: string): void {
       for r in m.records.list {
         if (semrecords.name_of(r.ty) == "Leaf") {
           duplicate = duplicate.append(r);
-          // Same nominal type and capacity, different ordered scalar schema.
           recs = recs.append(semrecords.Record { ...r, fields: [semrecords.Field { ...r.fields[0], name: "wrong" }] });
         } else {
           recs = recs.append(r);
@@ -136,8 +135,6 @@ function own_stores(rows: ssaprepare.Emitted[], architecture: string): void {
       }
     }
   }
-  // Every row has its own single-entry store at local index zero and only its
-  // own declaration ABI. Neither the wrapper nor consumer can supply the rest.
   check(separate, architecture, true);
   let reversed: ssaprepare.Emitted[] = [];
   for row in separate {
@@ -177,8 +174,6 @@ function independent_producer(rows: ssaprepare.Emitted[], arm: boolean, architec
       if (row.label_name == "parent") {
         hits = hits + 1;
         require(row.body.selected.origin.producer == 0, 68);
-        // Same symbols, field names, capacity and untyped stores. A different
-        // scalar width in an independently lowered child must still refuse.
         check(without(rows, "parent").append(row), architecture, !wide);
       }
     }

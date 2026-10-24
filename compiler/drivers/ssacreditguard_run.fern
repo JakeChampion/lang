@@ -28,7 +28,6 @@ function main(): i32 {
   let diff = must(guard.combine(associated.arena, 1, p.id, q.id));
   let eq = must(guard.combine(diff.arena, 2, p.id, q.id));
   let less = must(guard.combine(eq.arena, 3, p.id, q.id));
-  // Independent complete truth table for three deliberately unordered IDs.
   let mask: i32 = 0;
   while (mask < 8) {
     let pv: i32 = mask & 1;
@@ -45,14 +44,11 @@ function main(): i32 {
     require(lt.ok && lt.value == 1 == pv < qv, 6);
     mask = mask + 1;
   }
-  // Extraction equation from the captured physical graph: uniqueness p
-  // transfers one contained credit; !p acquires one with a retain. Both must
-  // yield exactly one. This tests the algebra, not the containment adapter.
   let shared = must(guard.combine(less.arena, 1, one.id, p.id));
   let acquired = must(guard.combine(shared.arena, 0, p.id, shared.id));
   require(guard.is_constant(acquired.arena, acquired.id, 1), 7);
-  require(!guard.is_constant(acquired.arena, p.id, 1), 8);  // missing shared retain
-  require(!guard.is_constant(acquired.arena, shared.id, 1), 9);  // missing unique transfer
+  require(!guard.is_constant(acquired.arena, p.id, 1), 8);
+  require(!guard.is_constant(acquired.arena, shared.id, 1), 9);
   let wrong = must(guard.combine(acquired.arena, 0, p.id, q.id));
   require(!guard.is_constant(wrong.arena, wrong.id, 1), 10);
   let doubled = must(guard.combine(wrong.arena, 0, acquired.id, shared.id));
@@ -62,8 +58,6 @@ function main(): i32 {
   let extra_drop = must(guard.combine(consumed.arena, 1, consumed.id, p.id));
   let negative = must(guard.combine(extra_drop.arena, 3, extra_drop.id, zero.id));
   require(negative.id == p.id, 13);
-  // Repetition shares canonical nodes and memoized operations. Old immutable
-  // arena snapshots still evaluate their existing handles exactly.
   let repeated = must(guard.combine(negative.arena, 0, p.id, shared.id));
   require(repeated.id == acquired.id && guard.node_count(repeated.arena) == guard.node_count(negative.arena), 14);
   let original = guard.evaluate(p.arena, p.id, [17], [true]);
@@ -78,8 +72,6 @@ function main(): i32 {
   require(guard.combine(max.arena, 0, max.id, one.id).error != "", 22);
   let min = must(guard.constant(max.arena, -2147483648));
   require(guard.combine(min.arena, 1, min.id, one.id).error != "", 23);
-  // Selection is correlated with the same predicate identities across joins.
-  // Extreme alternatives cannot be implemented as false + p*(true-false).
   let extremes = must(guard.select(min.arena, p.id, max.id, min.id));
   let nested = must(guard.select(extremes.arena, q.id, extremes.id, diff.id));
   let feasible = must(guard.combine(nested.arena, 4, p.id, q.id));

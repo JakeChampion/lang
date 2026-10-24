@@ -1,4 +1,4 @@
-// A `type T = A | B` union over struct variants, dispatched by match.
+
 struct Add { l: i32, r: i32 }
 struct Lit { v: i32 }
 type Expr = Add | Lit;

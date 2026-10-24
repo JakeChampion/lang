@@ -13,30 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// proc_exec_as(path, argv, envp) — execve(2) with NEITHER vector derived from
-// the calling process, which is the whole difference from proc_exec: that one
-// prepends `path` as argv[0] and hands the child the __fern_envp snapshot.
-//
-// Two facts carry the feature, and a helper can get either one wrong on its
-// own:
-//
-//   - argv reaches the kernel VERBATIM. `sh -c SCRIPT` with no command_name
-//     operand sets $0 from the shell's own argv[0], so the script below reads
-//     back exactly what the caller put in slot 0. A helper that still prepended
-//     the path would report /bin/sh.
-//   - envp REPLACES the environment rather than adding to it. FERNX is in no
-//     parent environment, so seeing it proves the caller's vector reached
-//     execve; HOME is in every one, so its absence proves the parent's did not.
-//     PATH is deliberately not asserted on: `sh` invents a default for that one
-//     when the environment it is handed has none.
-//
-// The arm64 leg is not redundant with x86-64: arm64 runs the two-word string
-// ABI, where a `string` takes TWO argument slots (so envp arrives in x3, not
-// x2) and a `string[]` element is a 16-byte (data, len) pair. arm64-darwin
-// reaches the same emitter through XNU's execve trap number and its carry-flag
-// error convention.
-
-// argv[0] as typed, and an environment built by the caller.
 const procExecAsArgvEnvpSrc = `
 function main(): i32 {
     let pid: i32 = proc_fork();
@@ -49,8 +25,6 @@ function main(): i32 {
     return proc_waitpid(pid);
 }`
 
-// The failure path RETURNS, as -errno; and an EMPTY envp is a well-formed
-// vector (the NULL terminator alone), not a missing one.
 const procExecAsFailAndEmptySrc = `
 function main(): i32 {
     let rc: i32 = proc_exec_as("/nonexistent/binary", ["x"], ["A=1"]);
@@ -64,10 +38,6 @@ function main(): i32 {
     return proc_waitpid(pid);
 }`
 
-// An argv of exactly one element still has to produce [argv0, NULL]: the
-// element loop runs once and the terminator lands at slot 1, not slot 2. A
-// duplicate name in envp is legal and the kernel keeps both, so the vector is
-// passed through rather than deduplicated.
 const procExecAsSingleArgvSrc = `
 function main(): i32 {
     let pid: i32 = proc_fork();
@@ -79,9 +49,6 @@ function main(): i32 {
     return proc_waitpid(pid);
 }`
 
-// trueBin is where a no-argument, exit-0 program lives on the host the compiled
-// binary will run on: /bin/true everywhere the Linux legs run, /usr/bin/true on
-// macOS, which has no /bin/true at all.
 func trueBin(goos string) string {
 	if goos == "darwin" {
 		return "/usr/bin/true"
@@ -134,11 +101,6 @@ func TestArm64ProcExecAs(t *testing.T) {
 	})
 }
 
-// The Mach-O leg, which runs natively on Apple Silicon rather than under qemu.
-// XNU takes execve as BSD trap 59 and reports failure by setting the carry
-// flag with a POSITIVE errno, so the emitter negates it; a helper that skipped
-// that would return a large positive number and the failure case would see
-// rc >= 0.
 func TestArm64DarwinProcExecAs(t *testing.T) {
 	bin := buildFernCLI(t)
 	runProcExecAsChecks(t, "darwin", func(t *testing.T, src string) int {
@@ -165,9 +127,6 @@ func TestArm64DarwinProcExecAs(t *testing.T) {
 	})
 }
 
-// Under -interp there is no process control — exec'ing would replace the
-// interpreter itself — so proc_exec_as answers -38/ENOSYS exactly as proc_exec
-// and proc_fork do, letting a caller detect the absence and degrade.
 func TestInterpProcExecAsENOSYS(t *testing.T) {
 	src := `
 function main(): i32 {
@@ -180,10 +139,6 @@ function main(): i32 {
 	}
 }
 
-// Neither WASI preview has execve: a component is one instance with no process
-// image to replace. The refusal has to arrive from the capability scan rather
-// than as an `unknown callee` out of the emitter — the difference between
-// "this target cannot exec" and "the backend forgot one".
 func TestWASMProcExecAsRefused(t *testing.T) {
 	src := `
 function main(): i32 {

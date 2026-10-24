@@ -11,8 +11,6 @@ function row(low: i64, high: i64, first: i32, last: i32): value.Interval {
   return value.Interval { low: low, high: high, min_residue: first, max_residue: last };
 }
 
-// Independent scalar oracle: split W at32 bits, multiply its low word with
-// carry, then subtract d with borrow. Production splits W at29 bits instead.
 function bytes(w: i64, d: i32): value.Parts {
   let low_product = w % (4294967296 as i64) * (8 as i64);
   let high = w / (4294967296 as i64) * (8 as i64) + low_product / (4294967296 as i64);
@@ -87,7 +85,6 @@ function interval(r: value.Interval, fused: boolean): void {
   }
 }
 
-// The standalone audit changes only this bound between pilot and full runs.
 pub function run_limit(limit: i32): void {
   let index = 0;
   for fused in [true, false] {

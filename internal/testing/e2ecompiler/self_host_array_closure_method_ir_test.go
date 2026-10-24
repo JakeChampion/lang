@@ -8,41 +8,18 @@ import (
 	"testing"
 )
 
-// Closure-taking generic array methods (`xs.reduce(f)` /
-// `xs.filter(pred)` and `any` / `all` / `find`) lower on the self-host IR path
-// (array-method monomorphisation, slice 3). The slice-1/2 path folded only
-// closure-free array methods (concat); these carry a closure ("fn") parameter,
-// which it excluded. The receiver alone fixes the instantiation `T`, and the
-// closure passes through as a fn value — register_array_method_generics now folds
-// `(xs: T[]) reduce(f)` into a free generic `__arrm_reduce[T](xs, f)` whose body
-// delegates to the free `reduce`, which already lowers closures on the IR path.
-// (Methods carrying their OWN type params — map[U] / flat_map[U] / fold[A] /
-// zip[U] — stay deferred: the result type variable needs closure-return-type
-// inference the receiver does not supply.)
-//
-// Each case uses a single element type, which is what these cases are about;
-// the same verb at several element types in one program is covered by
-// TestSelfHostArrayMethodMultiElemIR. Each case is checked against the
-// interpreter oracle.
 var arrayClosureMethodIRCases = []struct {
 	name string
 	src  string
 }{
-	// reduce: seedless left fold returning Option[T].
 	{"reduce", `import "std/array";
 function main(): i32 { let xs: i32[] = [1, 2, 3, 4]; match (xs.reduce((a: i32, b: i32): i32 => { return a + b; })) { Some(v) => { return v; }, None => { return 0; } } }`},
-	// filter: predicate keep, reduced to a scalar.
 	{"filter", `import "std/array";
 function main(): i32 { let xs: i32[] = [1, 2, 3, 4, 5, 6]; let e: i32[] = xs.filter((n: i32): boolean => { return n % 2 == 0; }); return e.len() * 100 + e[0] * 10 + e[2]; }`},
-	// find: first matching element as Option[T].
 	{"find", `import "std/array";
 function main(): i32 { let xs: i32[] = [5, 8, 3, 9]; match (xs.find((n: i32): boolean => { return n > 7; })) { Some(v) => { return v; }, None => { return 0; } } }`},
-	// find_last: LAST matching element (right-to-left mirror of find). In
-	// [5,8,3,9,2] the elements > 4 are 5,8,9 — the last is 9.
 	{"find_last", `import "std/array";
 function main(): i32 { let xs: i32[] = [5, 8, 3, 9, 2]; match (xs.find_last((n: i32): boolean => { return n > 4; })) { Some(v) => { return v; }, None => { return 0; } } }`},
-	// rposition: index of the LAST matching element. In [1,2,3,2,1] the 2s
-	// are at indices 1 and 3 — rposition returns 3.
 	{"rposition", `import "std/array";
 function main(): i32 { let xs: i32[] = [1, 2, 3, 2, 1]; match (xs.rposition((n: i32): boolean => { return n == 2; })) { Some(i) => { return i; }, None => { return 9; } } }`},
 }

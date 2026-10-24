@@ -1,12 +1,3 @@
-// examples/vcl/report.fern — the request command line and the transaction
-// report, shared by `vclrun` and by every compiled policy.
-//
-// A compiled policy is a program in its own right and needs the same
-// entry point as the interpreter's driver: parse a method, a URL, optional
-// headers, and run. Putting that here means the two cannot drift, and a
-// compiled policy's output can be diffed against the interpreter's
-// directly — which is exactly how the differential test checks that
-// compiling changed nothing.
 import "std/string";
 import "std/i64";
 import "std/f64";
@@ -15,8 +6,6 @@ import "./machine";
 
 pub struct Args { method: string, url: string, client_ip: string, names: string[], values: string[], repeat: i32, ok: boolean }
 
-// parse_args reads `METHOD URL [CLIENT_IP] [Name:Value ...] [-n COUNT]`
-// starting at `first`.
 pub function parse_args(argv: string[], first: i32): Args {
   let n: string[] = [];
   let v: string[] = [];
@@ -75,8 +64,6 @@ function print_headers(h: runtime.Headers, indent: string): void {
   }
 }
 
-// print_outcome reports one transaction. The subroutine path leads,
-// because it is the explanation for everything below it.
 pub function print_outcome(o: machine.Outcome, n: i32): void {
   print("--- request " + n.to_string() + " ---");
   print("  path:        " + join(o.steps, " -> "));
@@ -98,8 +85,6 @@ pub function print_outcome(o: machine.Outcome, n: i32): void {
   }
 }
 
-// run_all drives `repeat` requests against one cache, so a second
-// identical request can hit what the first stored.
 pub function run_all(d: machine.Driver, a: Args): i32 {
   let cache: runtime.Cache = runtime.cache_new();
   let i: i32 = 0;
@@ -117,8 +102,6 @@ pub function run_all(d: machine.Driver, a: Args): i32 {
   return 0;
 }
 
-// drive is the whole command line for a compiled policy: argv[0] is the
-// program name, so the request starts at 1.
 pub function drive(d: machine.Driver, argv: string[]): i32 {
   let a: Args = parse_args(argv, 1);
   if (!a.ok) {

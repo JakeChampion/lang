@@ -9,8 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// laneLateParamSrc passes a lane value as parameter 8, past the register
-// arguments of both natives (six on x86-64, eight on arm64).
 const laneLateParamSrc = `import "std/f64";
 
 @noinline function late(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32, v: f64x2): f64 {
@@ -23,10 +21,6 @@ function main(): i32 {
 }
 `
 
-// A lane value crosses a call only in a vector register of the register ABI
-// (docs/SELFHOST-SSA-BACKEND.md, "Lane values"). A native compile that would
-// pass one on the stack stops with a message naming the call, rather than
-// passing 64 of its 128 bits. wasm types every parameter, so it runs.
 func TestSelfHostLaneParamPastRegisters(t *testing.T) {
 	dir := t.TempDir()
 	entry := filepath.Join(dir, "main.fern")

@@ -1,16 +1,16 @@
-// TWO live owners of one tuple box, and a tuple PARAMETER stored into a struct
-// the callee returns. Both are shapes the struct-with-tuple-field reclaim has
-// to get right, and neither was in the corpus.
-//
-// The two-owner case is the one that pins the construction retain. The struct's
-// deep drop (emit_struct_tuple_field_drops) walks the tuple's children under a
-// __fern_rc_is_unique gate, and that gate is only sound if a SHARED field was
-// retained at construction: without the retain both owners read unique, and the
-// second walk frees children the first already released. The assertion is that
-// every element still reads back after both structs exist.
-//
-// keepit() is the interprocedural half: the tuple arrives as a borrowed param
-// and is stored into the returned struct, so the box outlives the callee frame.
+
+
+
+
+
+
+
+
+
+
+
+
+
 struct Hold { t: (i32, i32[]), n: i32 }
 
 function keepit(t: (i32, i32[]), n: i32): Hold { return Hold { t: t, n: n }; }

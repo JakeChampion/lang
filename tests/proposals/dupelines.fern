@@ -1,51 +1,11 @@
-// tests/proposals/dupelines.fern — proposal turn, line 9:
-// "A tool that finds duplicate lines in a file and reports their line numbers."
-//
-// The output of this tool is a PARTITION, and saying so turns a vague "does it
-// work?" into two properties that between them admit exactly one right answer:
-//
-//   - **Soundness.** Every line number in a group names a line whose text
-//     equals the group's. Nothing is reported that is not a duplicate.
-//   - **Completeness.** Every line number NOT reported names a line whose text
-//     occurs exactly once. Nothing that is a duplicate goes unreported.
-//
-// Either alone is trivially satisfiable — report nothing, or report everything
-// — so a tool that passes both has to be right. They are checked over generated
-// files whose duplicate structure is known by construction, and separately as
-// invariants over the tool's own output, which is what catches a group that
-// double-counts a line.
-//
-// The third property is the one this shape actually breaks on. A duplicate
-// finder is a hash map, and a hash map has no order, so the natural
-// implementation reports groups in whatever sequence the buckets happen to
-// yield — which changes with the seed, the capacity, or the insertion history.
-// That is invisible in a one-file test and noisy in a diff. So the
-// contract is FIRST OCCURRENCE order, with ascending line numbers inside each
-// group, and it is asserted rather than assumed: the map here is used only for
-// lookup, and the ordering is kept in a separate array. Running the same input
-// twice and comparing is the guard that keeps it that way.
-//
-// Two smaller decisions are pinned because they are the ones a user would
-// otherwise have to discover: matching is EXACT (a trailing space makes a
-// different line, and so does a capital letter), and blank lines duplicate one
-// another like any other text.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from std/test.
 import "std/test";
 import "std/i32";
 import "std/string";
-
-// ------------------------------------------------------------------ model ---
 
 struct Group { text: string, lines: i32[] }
 
 struct Report { groups: Group[], dup_lines: i32 }
 
-// ---------------------------------------------------------------- the tool ---
-
-// The map holds text -> index into `all`, and is only ever READ. Order comes
-// from `all`, which is appended to in first-occurrence order — so the report is
-// deterministic without depending on anything about the map's iteration.
 function find_dups(lines: string[]): Report {
   let index: Map[string, i32] = map_new(64);
   let all: Group[] = [];
@@ -79,8 +39,6 @@ function find_dups(lines: string[]): Report {
   return Report { groups: groups, dup_lines: dup_lines };
 }
 
-// ------------------------------------------------------------- generators ---
-
 struct Spec { text: string, times: i32 }
 
 struct Built { lines: string[], want: Group[] }
@@ -94,15 +52,12 @@ function specs_of(kind: i32): Spec[] {
     ];
   }
   if (kind == 1) {
-    // Nothing is duplicated: the report must be empty.
     return [
       Spec { text: "one", times: 1 }, Spec { text: "two", times: 1 },
       Spec { text: "three", times: 1 },
     ];
   }
   if (kind == 2) {
-    // Everything is duplicated, including a blank line and two texts that
-    // differ only in trailing space or case.
     return [
       Spec { text: "", times: 3 }, Spec { text: "x", times: 2 },
       Spec { text: "x ", times: 2 }, Spec { text: "X", times: 2 },
@@ -111,10 +66,6 @@ function specs_of(kind: i32): Spec[] {
   return [Spec { text: "solo", times: 5 }];
 }
 
-// pattern 0 interleaves the copies maximally, 1 blocks them together, and 2
-// separates them with lines that are unique. A finder that only compares
-// ADJACENT lines passes 1 and fails the other two; one that compares against
-// only the previous distinct line fails 0.
 function build(specs: Spec[], pattern: i32): Built {
   let lines: string[] = [];
   let placed: i32[][] = [];
@@ -156,8 +107,6 @@ function build(specs: Spec[], pattern: i32): Built {
     }
   }
 
-  // The oracle: exactly the specs that were emitted more than once, in spec
-  // order, carrying the positions recorded as they were placed.
   let want: Group[] = [];
   let w: i32 = 0;
   while (w < specs.len()) {
@@ -205,10 +154,6 @@ function groups_equal(a: Group[], b: Group[]): boolean {
   return true;
 }
 
-// ------------------------------------------------------------------ tests ---
-
-// The generative core: the report must equal the groups the file was built
-// from, including their order and the line numbers inside them.
 function test_the_report_matches_the_file_it_was_built_from(): test.TestOutcome {
   let kind: i32 = 0;
   while (kind < 4) {
@@ -228,8 +173,6 @@ function test_the_report_matches_the_file_it_was_built_from(): test.TestOutcome 
   return test.pass();
 }
 
-// Soundness, as an invariant over the tool's own output: every line number in a
-// group names a line whose text is the group's.
 function test_every_reported_line_really_has_that_text(): test.TestOutcome {
   let kind: i32 = 0;
   while (kind < 4) {
@@ -266,9 +209,6 @@ function test_every_reported_line_really_has_that_text(): test.TestOutcome {
   return test.pass();
 }
 
-// Completeness, stated the way that makes it checkable: any line NOT reported
-// must occur exactly once in the file. Together with soundness this pins the
-// output to the one correct partition.
 function test_every_unreported_line_is_unique(): test.TestOutcome {
   let kind: i32 = 0;
   while (kind < 4) {
@@ -315,7 +255,6 @@ function test_every_unreported_line_is_unique(): test.TestOutcome {
   return test.pass();
 }
 
-// The contract a hash map does not give you for free.
 function test_groups_are_in_first_occurrence_order(): test.TestOutcome {
   let kind: i32 = 0;
   while (kind < 4) {
@@ -350,9 +289,6 @@ function test_groups_are_in_first_occurrence_order(): test.TestOutcome {
   return test.pass();
 }
 
-// A map-backed finder can report a different order on a different run. Running
-// the same input repeatedly and comparing is what keeps a future rewrite from
-// reintroducing that quietly.
 function test_the_report_is_deterministic(): test.TestOutcome {
   let kind: i32 = 0;
   while (kind < 4) {
@@ -372,8 +308,6 @@ function test_the_report_is_deterministic(): test.TestOutcome {
   return test.pass();
 }
 
-// Matching is exact. These four texts are pairwise distinct, and a finder that
-// trims or case-folds collapses them.
 function test_matching_is_exact(): test.TestOutcome {
   let lines: string[] = ["x", "x ", " x", "X", "x", "X"];
   let r: Report = find_dups(lines);
@@ -392,7 +326,6 @@ function test_matching_is_exact(): test.TestOutcome {
   return test.pass();
 }
 
-// Blank lines are text like any other, and they duplicate.
 function test_blank_lines_duplicate_each_other(): test.TestOutcome {
   let lines: string[] = ["a", "", "b", "", "c", ""];
   let r: Report = find_dups(lines);
@@ -408,7 +341,6 @@ function test_blank_lines_duplicate_each_other(): test.TestOutcome {
   if (r.groups[0].lines[0] != 2 || r.groups[0].lines[1] != 4 || r.groups[0].lines[2] != 6) {
     return test.fail("blank lines should be at 2, 4, 6");
   }
-  // A whitespace-only line is NOT the same as an empty one.
   let mixed: Report = find_dups(["", " ", "", " "]);
   if (mixed.groups.len() != 2) {
     return test.fail("`` and ` ` should be two groups, got " + mixed.groups.len().to_string());

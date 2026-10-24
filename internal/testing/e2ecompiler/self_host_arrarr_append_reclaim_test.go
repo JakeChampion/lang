@@ -5,13 +5,6 @@ import (
 	"testing"
 )
 
-// Append-built nested arrays release their row buffers and outer buffer.
-// The churn cases require zero live bytes; the alias and escape cases check
-// that every surviving reference remains readable.
-
-// arrarrAppendChurnSrc builds and drops an arr-of-arr by append, 200 times. If
-// the rows are not reclaimed the leak scales with the iteration count, so a
-// regression shows up as a large live_bytes rather than a marginal one.
 const arrarrAppendChurnSrc = `function round(): i32 {
     let keep: i32[][] = [];
     let i: i32 = 0;
@@ -26,9 +19,6 @@ function main(): i32 {
     return t / 200;
 }`
 
-// arrarrStrAppendChurnSrc is the string-inner sibling. Its rows hold string
-// LITERALS, so the strict "ARRARRS:" credit applies and the release walks each
-// element box via __fern_str_arr_free before freeing the row.
 const arrarrStrAppendChurnSrc = `function round(): i32 {
     let keep: string[][] = [];
     let i: i32 = 0;
@@ -43,11 +33,6 @@ function main(): i32 {
     return t / 200;
 }`
 
-// arrarrCallRowChurnSrc appends rows produced by a CALL rather than written as
-// literals (#6102). make_buf is itself append-built, which is the shape the
-// "ARC:" fresh-row-producer registry has to see through: its returned buffer is
-// solely owned, so the consuming arr-of-arr may deep-free it. This was the
-// residue #6092 left behind — and the shape that issue's own repro used.
 const arrarrCallRowChurnSrc = `function make_buf(n: i32): i32[] {
     let xs: i32[] = [];
     let i: i32 = 0;
@@ -69,8 +54,6 @@ function main(): i32 {
     return t / 200;
 }`
 
-// TestSelfHostArrArrAppendReclaimX86_64 — an append-built arr-of-arr reclaims
-// its rows, leaving live_bytes at 0.
 func TestSelfHostArrArrAppendReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -119,11 +102,6 @@ func TestSelfHostArrArrAppendReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostArrArrAppendHazardsX86_64 — the shapes the credit must still
-// REFUSE. Each one keeps a live reference the deep free would dangle, so the
-// only safe outcome is the shallow release (rows leak, soundly). Asserted
-// through behaviour rather than through the credit directly: a wrongly-granted
-// credit is a use-after-free, which shows up as a wrong answer or a crash.
 func TestSelfHostArrArrAppendHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -136,7 +114,6 @@ func TestSelfHostArrArrAppendHazardsX86_64(t *testing.T) {
 		want int
 	}{
 		{
-			// A bound ROW aliases an inner buffer the deep free would release.
 			name: "row_alias",
 			src: `function main(): i32 {
     let g: i32[][] = [];
@@ -148,8 +125,6 @@ func TestSelfHostArrArrAppendHazardsX86_64(t *testing.T) {
 			want: 5,
 		},
 		{
-			// The appended row is an IDENT, so the array does not solely own it;
-			// freeing it would dangle `r`.
 			name: "ident_row",
 			src: `function main(): i32 {
     let g: i32[][] = [];
@@ -161,7 +136,6 @@ func TestSelfHostArrArrAppendHazardsX86_64(t *testing.T) {
 			want: 15,
 		},
 		{
-			// The array ESCAPES by return, so the callee must not free it.
 			name: "escaping_return",
 			src: `function build(): i32[][] {
     let g: i32[][] = [];
@@ -173,7 +147,6 @@ function main(): i32 { let q: i32[][] = build(); return q[2][1] + q.len(); }`,
 			want: 5,
 		},
 		{
-			// A non-append reassignment must still sink the credit outright.
 			name: "rebound_to_other",
 			src: `function main(): i32 {
     let g: i32[][] = [];
@@ -186,9 +159,6 @@ function main(): i32 { let q: i32[][] = build(); return q[2][1] + q.len(); }`,
 			want: 10,
 		},
 		{
-			// A producer that RETURNS ITS PARAM hands back a row the caller
-			// already owns. Registering it would let the arr-of-arr deep-free
-			// `shared` out from under the caller (#6102).
 			name: "producer_returns_param",
 			src: `@noinline function passthru(src: i32[]): i32[] { return src; }
 function main(): i32 {
@@ -201,9 +171,6 @@ function main(): i32 {
 			want: 7,
 		},
 		{
-			// The returned local is an ALIAS of another local, so its buffer is
-			// not solely owned by the return. Its init is an ident rather than
-			// an array literal, which is what disqualifies it.
 			name: "producer_returns_alias",
 			src: `function alias_row(): i32[] {
     let a: i32[] = [1, 2];
@@ -232,9 +199,6 @@ function main(): i32 {
 	}
 }
 
-// A parameter named like an "ARC:" producer is not that producer: the call
-// through the parameter is counted by its result, so the value is right,
-// nothing is over-released, and the census balances.
 func TestSelfHostArrArrShadowedProducerX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	dir := t.TempDir()

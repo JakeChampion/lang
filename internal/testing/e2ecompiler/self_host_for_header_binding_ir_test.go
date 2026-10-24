@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// forHeaderBindingSrc reaches a `for` header's bindings from the two places the
-// typed lowering did not bind them (#10759): a nested value pattern in a map
-// loop, and a `defer` in the loop body, whose replay runs after the body has
-// closed. Each defer run reads its own iteration's binding. The counted values
-// (strings, a string-valued map) put the census leg to work.
 const forHeaderBindingSrc = `import "core/map";
 
 function nested_map_value(): i32 {

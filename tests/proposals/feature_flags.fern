@@ -1,32 +1,8 @@
-// tests/proposals/feature_flags.fern — proposal turn, drawn line 254:
-// "A feature-flag evaluator with percentage rollouts and stable bucketing."
-//
-// The whole value of a rollout is that it is STABLE and MONOTONE: a user's
-// bucket does not move when the percentage does, so raising a rollout only
-// ever adds people. An evaluator that re-randomises per evaluation, or seeds
-// the hash with the percentage, passes every "roughly 30% are in" check and
-// silently reshuffles the cohort every time somebody moves a slider. That is
-// the property `test_raising_a_rollout_only_ever_adds_users` exists for, and
-// it is the one nothing else here would catch.
-//
-// Bucketing is FNV-1a over `flag_key + ":" + user_id`, which makes it a good
-// cross-backend probe as well: 32-bit multiply overflow, a sign-agnostic
-// modulo, and byte-level string access are exactly where four backends can
-// disagree while every one of them looks plausible on its own.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from
-// std/test, so the file is its own test suite.
-
 import "std/test";
 import "std/i32";
 
-// ------------------------------------------------------------- bucketing
-
-// FNV-1a, 32-bit. The multiply is expected to overflow — that is the
-// avalanche — so it relies on i32 `*` wrapping, which every backend agrees
-// on (2147483647 * 2 == -2).
 function fnv1a(s: string): i32 {
-  let h: i32 = 0 - 2128831035;  // 2166136261 as i32
+  let h: i32 = 0 - 2128831035;
   for i in 0..s.len() {
     h = h ^ s[i] as i32;
     h = h * 16777619;
@@ -34,9 +10,6 @@ function fnv1a(s: string): i32 {
   return h;
 }
 
-// A bucket in [0, 10000) — basis points, so a rollout can be set to a
-// fraction of a percent. Normalised for sign because the hash is i32 and
-// `%` follows the dividend.
 function bucket_of(flag_key: string, user_id: string): i32 {
   let h: i32 = fnv1a(flag_key + ":" + user_id);
   let b: i32 = h % 10000;
@@ -46,14 +19,12 @@ function bucket_of(flag_key: string, user_id: string): i32 {
   return b;
 }
 
-// ---------------------------------------------------------------- model
-
 struct Rule { attr: string, want: string, variant: string }
 
 struct Flag {
   key: string,
   enabled: boolean,
-  rollout_bp: i32,  // basis points: 3000 == 30%
+  rollout_bp: i32,
   rules: Rule[],
   force_on: string[],
   force_off: string[],
@@ -61,10 +32,6 @@ struct Flag {
 
 struct User { id: string, attr_keys: string[], attr_vals: string[] }
 
-// Option, not a sentinel: an ABSENT attribute and one present-but-empty are
-// different facts, and collapsing them makes a rule wanting "" match every
-// user who has never heard of that attribute. Returning "" for both is the
-// version of this that ships.
 function attr_of(u: User, k: string): Option[string] {
   for i in 0..u.attr_keys.len() {
     if (u.attr_keys[i] == k) {
@@ -74,7 +41,6 @@ function attr_of(u: User, k: string): Option[string] {
   return None;
 }
 
-// A rule matches only when the attribute is PRESENT and equal.
 function rule_matches(u: User, r: Rule): boolean {
   match (attr_of(u, r.attr)) {
     Some(v) => {
@@ -95,14 +61,6 @@ function has_str(xs: string[], s: string): boolean {
   return false;
 }
 
-// The evaluation order, which is the part of a flag system people actually
-// get wrong. Each step is a test below, named for the step.
-//
-//   1. a disabled flag is off for everyone, overrides included
-//   2. force_off beats force_on          (deny wins)
-//   3. force_on beats the rules
-//   4. the FIRST matching rule wins
-//   5. otherwise the rollout decides
 function evaluate(f: Flag, u: User): string {
   if (!f.enabled) {
     return "off";
@@ -127,8 +85,6 @@ function evaluate(f: Flag, u: User): string {
 function is_on(f: Flag, u: User): boolean {
   return evaluate(f, u) == "on";
 }
-
-// ---------------------------------------------------------- populations
 
 function plain(key: string, rollout_bp: i32): Flag {
   return Flag {
@@ -159,11 +115,6 @@ function count_on(f: Flag, us: User[]): i32 {
   return n;
 }
 
-// ---------------------------------------------------------------- tests
-
-// THE property. Raising a rollout must only ever ADD users: everyone in at
-// p% is still in at q% for q > p. A re-randomising evaluator satisfies every
-// distribution check and fails this immediately.
 function test_raising_a_rollout_only_ever_adds_users(): test.TestOutcome {
   let us: User[] = users(500);
   let steps: i32[] = [0, 1, 100, 1000, 2500, 5000, 7500, 9000, 9999, 10000];
@@ -177,8 +128,6 @@ function test_raising_a_rollout_only_ever_adds_users(): test.TestOutcome {
           + steps[s].to_string() + "bp");
       }
     }
-    // …and the count is non-decreasing, which the above implies but
-    // states as the number a reader would check by hand.
     if (count_on(hi, us) < count_on(lo, us)) {
       return test.fail("the cohort shrank between "
         + steps[s - 1].to_string() + "bp and " + steps[s].to_string() + "bp");
@@ -187,9 +136,6 @@ function test_raising_a_rollout_only_ever_adds_users(): test.TestOutcome {
   return test.pass();
 }
 
-// A bucket is a pure function of (flag, user): the same pair always lands in
-// the same place, however many times it is asked, and whatever else changed
-// about the flag.
 function test_bucketing_is_stable(): test.TestOutcome {
   let us: User[] = users(200);
   for i in 0..us.len() {
@@ -202,7 +148,6 @@ function test_bucketing_is_stable(): test.TestOutcome {
       return test.fail(us[i].id + " bucketed to " + a.to_string()
         + ", outside [0, 10000)");
     }
-    // Changing the rollout, the rules or the overrides must not move it.
     let f1: Flag = plain("search-ranking", 1000);
     let f2: Flag = Flag {
       key: "search-ranking", enabled: true, rollout_bp: 9000,
@@ -216,8 +161,6 @@ function test_bucketing_is_stable(): test.TestOutcome {
   return test.pass();
 }
 
-// The extremes are exact, not approximate. 0bp is nobody and 10000bp is
-// everybody — an off-by-one in the comparison shows here and nowhere else.
 function test_the_extremes_are_exact(): test.TestOutcome {
   let us: User[] = users(1000);
   if (count_on(plain("f", 0), us) != 0) {
@@ -231,16 +174,13 @@ function test_the_extremes_are_exact(): test.TestOutcome {
   return test.pass();
 }
 
-// Roughly p% of users are in at p%. A loose band — this is a hash, not a
-// generator — but tight enough that a bucketing function with a stuck bit
-// or a bad modulo fails it.
 function test_the_rollout_is_roughly_uniform(): test.TestOutcome {
   let us: User[] = users(4000);
   let points: i32[] = [1000, 2500, 5000, 7500, 9000];
   for p in 0..points.len() {
     let bp: i32 = points[p];
     let got: i32 = count_on(plain("uniformity", bp), us) * 10000 / us.len();
-    let slack: i32 = 400;  // 4 percentage points
+    let slack: i32 = 400;
     if (got < bp - slack || got > bp + slack) {
       return test.fail("a " + bp.to_string() + "bp rollout let in "
         + got.to_string() + "bp of 4000 users");
@@ -249,9 +189,6 @@ function test_the_rollout_is_roughly_uniform(): test.TestOutcome {
   return test.pass();
 }
 
-// Two flags must bucket independently: a user in one is not thereby in the
-// other. Without the flag key in the hash, every flag has the same cohort
-// and a staged rollout exposes the same unlucky users to everything.
 function test_flags_bucket_independently(): test.TestOutcome {
   let us: User[] = users(1000);
   let a: Flag = plain("alpha", 5000);
@@ -272,8 +209,6 @@ function test_flags_bucket_independently(): test.TestOutcome {
       only_a = only_a + 1;
     }
   }
-  // Independent 50/50 flags put about a quarter of users in each cell. If
-  // the flag key were ignored, `both` would be ~500 and `only_a` 0.
   if (only_a < 150) {
     return test.fail("only " + only_a.to_string()
       + " users are in alpha but not beta — the flag key is not reaching the hash");
@@ -287,13 +222,11 @@ function test_flags_bucket_independently(): test.TestOutcome {
   return test.pass();
 }
 
-// The precedence ladder, step by step, each assertion naming its rule.
 function test_precedence(): test.TestOutcome {
   let u: User = User { id: "user-7", attr_keys: ["plan"], attr_vals: ["pro"] };
   let pro: Rule = Rule { attr: "plan", want: "pro", variant: "on" };
   let free_rule: Rule = Rule { attr: "plan", want: "free", variant: "off" };
 
-  // 1. a disabled flag is off for everyone, overrides included.
   let disabled: Flag = Flag {
     key: "f", enabled: false, rollout_bp: 10000,
     rules: [pro], force_on: ["user-7"], force_off: [],
@@ -302,7 +235,6 @@ function test_precedence(): test.TestOutcome {
     return test.fail("a disabled flag was not off despite an explicit force_on");
   }
 
-  // 2. force_off beats force_on.
   let both: Flag = Flag {
     key: "f", enabled: true, rollout_bp: 10000, rules: [],
     force_on: ["user-7"], force_off: ["user-7"],
@@ -311,7 +243,6 @@ function test_precedence(): test.TestOutcome {
     return test.fail("force_on beat force_off");
   }
 
-  // 3. force_on beats a rule that would say otherwise.
   let forced: Flag = Flag {
     key: "f", enabled: true, rollout_bp: 0,
     rules: [Rule { attr: "plan", want: "pro", variant: "off" }],
@@ -321,7 +252,6 @@ function test_precedence(): test.TestOutcome {
     return test.fail("a rule beat force_on");
   }
 
-  // 4. the FIRST matching rule wins, and a rule beats the rollout.
   let ordered: Flag = Flag {
     key: "f", enabled: true, rollout_bp: 10000,
     rules: [pro, Rule { attr: "plan", want: "pro", variant: "off" }],
@@ -339,7 +269,6 @@ function test_precedence(): test.TestOutcome {
     return test.fail("reversing the rules did not reverse the answer — order is not respected");
   }
 
-  // 5. a non-matching rule falls through to the rollout.
   let falls: Flag = Flag {
     key: "f", enabled: true, rollout_bp: 10000,
     rules: [free_rule], force_on: [], force_off: [],
@@ -347,7 +276,6 @@ function test_precedence(): test.TestOutcome {
   if (evaluate(falls, u) != "on") {
     return test.fail("a non-matching rule did not fall through to the rollout");
   }
-  // A missing attribute matches nothing rather than matching "".
   let bare: User = user("user-7");
   let missing: Flag = Flag {
     key: "f", enabled: true, rollout_bp: 0,
@@ -360,7 +288,6 @@ function test_precedence(): test.TestOutcome {
   return test.pass();
 }
 
-// Overrides are exact, not prefixes: "user-1" must not force "user-10".
 function test_overrides_match_whole_ids(): test.TestOutcome {
   let f: Flag = Flag {
     key: "f", enabled: true, rollout_bp: 0, rules: [],
@@ -378,9 +305,6 @@ function test_overrides_match_whole_ids(): test.TestOutcome {
   return test.pass();
 }
 
-// The hash sees every byte. Two ids differing anywhere — first byte, last
-// byte, length only — must be able to land in different buckets, and a
-// transposition must not be invisible.
 function test_the_hash_sees_the_whole_key(): test.TestOutcome {
   let pairs_a: string[] = ["abc", "abc", "abc", "ab", "xy"];
   let pairs_b: string[] = ["abd", "bbc", "acb", "abc", "yx"];
@@ -394,18 +318,14 @@ function test_the_hash_sees_the_whole_key(): test.TestOutcome {
     return test.fail("only " + differ.to_string() + " of "
       + pairs_a.len().to_string() + " near-identical keys hashed differently");
   }
-  // Same string, same hash — the other half of being a function.
   if (fnv1a("stability") != fnv1a("stability")) {
     return test.fail("the hash is not a function of its input");
   }
-  // The empty key is defined, not a crash or a fixed 0.
   if (fnv1a("") == fnv1a("a")) {
     return test.fail("the empty key collides with \"a\"");
   }
   return test.pass();
 }
-
-// ------------------------------------------------------------------ app
 
 function main(): i32 {
   eprint("feature_flags — stable bucketing with monotone rollouts");

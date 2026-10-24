@@ -1,35 +1,3 @@
-// id.fern — GNU-compatible `id`.
-//
-//   id [OPTION]... [USER]...
-//   -u --user    -g --group   -G --groups   -Z --context
-//   -n --name    -r --real    -z --zero     -a (accepted and ignored)
-//
-// With no "only" option the output is the composite line —
-// `uid=N(name) gid=N(name) groups=N(name),...`, with `euid=` / `egid=`
-// spliced in when the effective ids differ from the real ones — and the
-// option checks read oddly until you see that the composite has nowhere
-// to put a name-only or real-only answer:
-//
-//   -n / -r without one of -ugG  `printing only names or real IDs
-//                                 in default format`
-//   -z  without one of -ugGZ     `option --zero not permitted in
-//                                 default format`
-//   two of -ugGZ                 `cannot print "only" of more than one
-//                                 choice`
-//
-// The -Z check comes before all three: a kernel with no SELinux refuses
-// the option whatever else was asked for.
-//
-// A USER operand is looked up by NAME first and, only if that fails, as
-// a DECIMAL uid — which is why `id 0` is root and `groups 0` is
-// `'0': no such user`. The number is glibc's strtoumax as gnulib admits
-// it: leading blanks and a `+` are accepted, a trailing anything is not,
-// and (uid_t)-1 is rejected as the reserved value it is.
-//
-// An id no database claims is NOT an error in the composite line — it
-// prints as a bare number — while `-n` asks for a name and so reports
-// `cannot find name for user ID N`, prints the number in its place, and
-// turns the exit status 1.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
@@ -89,8 +57,6 @@ function help_text(): string {
   return out;
 }
 
-// The process's own context, or "" when there is none to report — which
-// is what makes the composite line omit its ` context=` suffix.
 function process_context(): string {
   match (selinux.context()) {
     Ok(c) => {
@@ -102,21 +68,10 @@ function process_context(): string {
   }
 }
 
-// ---- the operand ------------------------------------------------------------
 function is_blank_byte(c: i32): boolean {
   return c == 32 || c >= 9 && c <= 13;
 }
 
-// The operand as a uid, read as gnulib's xstrtoul reads it: leading
-// blanks, an optional `+`, then decimal digits and nothing else. (uid_t)-1
-// is refused — it is the "no change" value every setuid-family call
-// reserves — which is why `id 4294967295` is `no such user` even where a
-// passwd entry with that id would be found.
-//
-// A refusal carries the text of the errno the read leaves, "" for none,
-// because GNU's `no such user` prints it: Darwin's strtoul sets EINVAL when
-// it finds no digits, and either libc sets ERANGE past 2^64 - 1. A leading
-// `-` is refused before strtoul runs.
 function operand_uid(spec: string): Result[i64, string] {
   let i: i32 = 0;
   while (i < spec.len() && is_blank_byte(spec[i] as i32)) {
@@ -160,7 +115,6 @@ function operand_uid(spec: string): Result[i64, string] {
   return Ok(v);
 }
 
-// Whether the digits s[from..to], with no leading zero, are past 2^64 - 1.
 function exceeds_ulong(s: string, from: i32, to: i32): boolean {
   let max: string = "18446744073709551615";
   if (to - from != max.len()) {
@@ -176,9 +130,6 @@ function exceeds_ulong(s: string, from: i32, to: i32): boolean {
   return false;
 }
 
-// The account a USER operand names, or the text of the errno GNU's
-// `no such user` carries for it: the uid read's, or the uid lookup's. GNU
-// looks nothing up for an empty operand.
 function lookup_user(spec: string): Result[pwdb.User, string] {
   if (spec.len() == 0) {
     return Err("");
@@ -206,8 +157,6 @@ function lookup_user(spec: string): Result[pwdb.User, string] {
   }
 }
 
-// ---- printing ---------------------------------------------------------------
-// One line's worth of output plus whether every name it wanted existed.
 pub struct Out { w: io_buffered.BufWriter, ok: boolean }
 
 function name_or_number(o: Out, id: i64, name: Option[string], kind: string): Out {
@@ -237,8 +186,6 @@ function print_group(o: Out, gid: i64, use_name: boolean): Out {
   return name_or_number(o, gid, pwdb.group_name(gid), "group");
 }
 
-// The gids `-G` prints, in GNU's order: the real gid, the effective one
-// when it differs, and then everything else in the credential.
 function group_list_ids(rgid: i64, egid: i64, all: i64[]): i64[] {
   let out: i64[] = [rgid];
   if (egid != rgid) {
@@ -267,8 +214,6 @@ function print_group_list(o: Out, ids: i64[], use_name: boolean, delim: string):
   return acc;
 }
 
-// `N(name)`, or a bare `N` for an id no database claims. The composite
-// line never diagnoses a missing name and never fails because of one.
 function id_with_name(id: i64, name: Option[string]): string {
   match (name) {
     Some(n) => {
@@ -310,16 +255,8 @@ function print_full_info(o: Out, ruid: i64, rgid: i64, euid: i64, egid: i64, all
   return Out { w: gnu.put(o.w, line), ok: o.ok };
 }
 
-// ---- the run ----------------------------------------------------------------
 pub struct Mode { user: boolean, group: boolean, groups: boolean, context: boolean, name: boolean, real: boolean, zero: boolean }
 
-// One operand's (or the process's) output, terminator included.
-//
-// The second terminator is measured, not derived, and wants all three
-// of its conditions: `id -Gz a b` writes an extra NUL after each
-// operand's list, while `id -Gz a` (one operand), `id -G a b` (no -z)
-// and `id -zu a b` (not -G) each write none. It is the only place the
-// operand COUNT changes the bytes.
 function print_one(o: Out, m: Mode, ruid: i64, rgid: i64, euid: i64, egid: i64, all: i64[], context: string, term: string, extra: boolean): Out {
   let acc: Out = o;
   if (m.user) {
@@ -421,11 +358,6 @@ function check_mode(m: Mode): string {
       exit(1);
     }
   }
-  // The context is read only where it can be printed — the composite
-  // line carries it, and -Z is nothing else — and only on a kernel that
-  // HAS SELinux. /proc/self/attr/current is the whole LSM's interface,
-  // not SELinux's, so an AppArmor box answers it with something like
-  // `kernel`, which is not a context to print.
   if ((only == 0 || m.context) && selinux.enabled()) {
     return process_context();
   }
@@ -454,8 +386,6 @@ pub function main(): i32 {
     while (i < operands.len()) {
       match (lookup_user(operands[i])) {
         Ok(u) => {
-          // A named user's ids are all four the same, and the group
-          // list is the database's rather than the kernel's.
           o = print_one(o, m, u.uid, u.gid, u.uid, u.gid, pwdb.group_list(u.name, u.gid), "", term, extra);
         },
         Err(why) => {

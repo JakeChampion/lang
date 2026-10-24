@@ -3,10 +3,6 @@ import "std/ordset" as ordset;
 import "std/option";
 import "std/i32";
 
-// tests/stdlib/ordset_test.fern — pure-Fern coverage of std/ordset, the
-// persistent ordered set over std/ordmap's tree: membership, add /
-// remove with structural sharing, sorted iteration and rank access, and
-// the set algebra.
 function test_of_dedup(): test.TestOutcome {
   let s: ordset.OrdSet[i32] = ordset.ordset_of([3, 1, 2, 3, 1]);
   if (s.len() != 3 || !s.is_valid()) {

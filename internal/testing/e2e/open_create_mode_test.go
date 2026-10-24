@@ -8,20 +8,6 @@ import (
 	"testing"
 )
 
-// `open_writer` and `open_appender` create a file the way `open(2)` is
-// conventionally called — mode 0666, filtered by the process umask, which is
-// what Go's `os.Create`, Rust's `File::create` and C's `fopen` all ask for. A
-// fixed 0644 would ignore the mask's group and other write policy with no way
-// to ask for it back, which is exactly what `truncate -s 5 new` under `umask
-// 002` shows: GNU leaves 0664 and a 0644 creation leaves 0644.
-//
-// `open_exclusive` is deliberately NOT 0666 — its callers are creating a file
-// only they should hold — so it is pinned here too, at 0600, to keep the two
-// rules from drifting into each other.
-//
-// The mask is per-PROCESS state a child inherits, so each case sets it in a
-// shell it then exec's THROUGH rather than in this process: a `syscall.Umask`
-// here would be global to the whole suite.
 const openCreateModeSrc = `function main(): i32 {
     match (open_writer("w.out")) {
         Ok(w) => { w.close(); },
@@ -70,10 +56,6 @@ func TestOpenHelpersCreateThroughTheUmask(t *testing.T) {
 				t.Fatalf("compile: %v\n%s", err, o)
 			}
 
-			// 002 and 111 are the masks a 0644 creation gets wrong: the
-			// first because it leaves the group write bit alone, the
-			// second because it takes away a class of BIT rather than a
-			// class of user.
 			for _, m := range []struct {
 				umask int
 				write os.FileMode

@@ -12,28 +12,6 @@ import (
 	"testing"
 )
 
-// `statfs(path)` (#9062) through the SELF-HOST IR path — the filesystem a path
-// resolves on, where `stat` describes one entry on it.
-//
-// The self-host emits it as a generated Fern runtime body
-// (`asmcore.rt_src_statfs`), with `statfsoff` carrying the per-target record
-// layout and the body itself forking on Darwin, whose `struct statfs` has no
-// name-length member and needs two real `pathconf(2)` calls for the limits.
-//
-// Every way this can be wrong produces a plausible record rather than a fault,
-// because every offset it could read is inside a buffer the kernel filled:
-// one word early puts `f_type` in `block_size`, one word late puts `f_frsize`
-// in `name_max`, and taking `f_bfree` for `f_bavail` hides exactly the
-// superuser reserve `df` exists to show. So the probe compares against the
-// numbers the HOST reports for the same path rather than checking that the
-// call returned.
-//
-// `internal/testing/e2ecompiler` is PRIMARY for a self-host lowering change
-// (docs/TEST-GATES.md): the fixpoint is self-referential and cannot see a
-// stable miscompile of a construct the compiler does not itself use, and
-// nothing in the compiler calls statfs.
-
-// hostFs is one `statfs(2)` answer in the shape `FsStat` exposes.
 type hostFs struct {
 	blockSize, blocks, blocksFree, blocksAvail int64
 	files, filesFree                           int64
@@ -41,16 +19,6 @@ type hostFs struct {
 	fsType, fsid, fragSize                     int64
 }
 
-// selfHostStatfsSource is the probe. Each failing step returns its own code.
-//
-// The three limits, the two TOTALS and the type, ID and fundamental block
-// size are compared exactly: all are fixed for a mounted filesystem, and they
-// are what a shifted offset lands on. The three FREE
-// counts move while the test runs, so each is compared against the host's
-// reading with a slack window — wide enough for concurrent writes, and far
-// narrower than the gap between `f_bfree` and `f_bavail` on any filesystem
-// that reserves blocks for root, which is what makes swapping those two
-// visible.
 func selfHostStatfsSource(dir string, h hostFs, missing string) string {
 	slackBlocks := h.blocks/64 + 4096
 	slackFiles := h.files/64 + 4096
@@ -91,8 +59,6 @@ func selfHostStatfsSource(dir string, h hostFs, missing string) string {
 		missing, h.fsType, h.fsid, h.fragSize)
 }
 
-// statfsProbeSource builds the probe against a directory the host and the
-// compiled program both see.
 func statfsProbeSource(t *testing.T, dir string) string {
 	t.Helper()
 	return selfHostStatfsSource(dir, selfHostFsFacts(t, dir), filepath.Join(dir, "no-such-dir", "x"))
@@ -125,11 +91,6 @@ func TestSelfHostStatfsIR(t *testing.T) {
 	}
 }
 
-// The arm64 leg: the same generated body through the other register emitter,
-// assembled with the cross-gcc and run under qemu-aarch64, which passes
-// filesystem syscalls through to the host — so the same host numbers apply.
-// arm64-linux takes the asm-generic `struct statfs` unchanged, so this proves
-// the ONE table serves both ISAs rather than taking that on trust.
 func TestSelfHostStatfsArm64IR(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -156,13 +117,6 @@ func TestSelfHostStatfsArm64IR(t *testing.T) {
 	}
 }
 
-// wasm refuses it, and the refusal is the thing under test. Neither preview
-// has a volume to measure — preview 1's path_filestat_get is per-file, the
-// component model has no volume interface, and a preopen is a capability
-// handle rather than a mount, so it has no length limit to report either. A
-// zero-filled record would be a measurement nobody took, so the driver stops
-// at a diagnostic that NAMES the builtin (#9070 is the separate matter of the
-// coreutils not running there at all; this must not pretend otherwise).
 func TestSelfHostStatfsWasmIRRefused(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -195,16 +149,6 @@ func TestSelfHostStatfsWasmIRRefused(t *testing.T) {
 	}
 }
 
-// TestSelfHostStatfsLayoutMatchesTheHost checks the offsets the self-host
-// emits against the host's OWN kernel headers, the way
-// internal/testing/coreutils/utmp_test.go checks `struct utmp`.
-//
-// The numbers in `statfsoff_linux` are not copied from glibc or from memory:
-// this compiles a probe against <asm-generic/statfs.h> — the definition arm64
-// takes unchanged, and the one x86-64 takes with only compat_statfs64's
-// packing overridden — and compares member by member. It also pins the LOAD
-// WIDTH, because every Linux member is a 64-bit word and reading one 32 bits
-// wide is invisible on a host whose counts all fit in 31 bits.
 func TestSelfHostStatfsLayoutMatchesTheHost(t *testing.T) {
 	cc, err := exec.LookPath("cc")
 	if err != nil {
@@ -273,10 +217,6 @@ int main(void){
 		t.Errorf("the host's struct statfs is %d bytes; the Linux helper hands the kernel a %d-byte buffer",
 			n, statfsBufSize(t))
 	}
-	// Every Linux member is one `__statfs_word`, so the projection must load
-	// 64 bits. `statfs_field_i64` narrows only on Darwin; a 32-bit load here
-	// would read correctly on any host whose counts fit in 31 bits and
-	// silently truncate on one whose do not.
 	if w := host["word"]; w != 8 {
 		t.Fatalf("the host's __statfs_word is %d bytes, not 8 — the projection assumes a 64-bit word", w)
 	}
@@ -284,17 +224,11 @@ int main(void){
 	if strings.Contains(linuxArm, "__load_i32") || strings.Contains(linuxArm, "statfs_u32(") {
 		t.Error("statfs_field_i64 loads a Linux field 32 bits wide; every member of that record is a 64-bit word")
 	}
-	// The inverse, for the record this host cannot measure: Darwin's f_bsize
-	// is a u32 with f_iosize sharing its word, so a 64-bit load there answers
-	// (f_iosize << 32 | f_bsize). Asserting the SHAPE is all a Linux host can
-	// do; the macOS runner measures it, via the block-size ceiling in the
-	// Mach-O suite's statfs case.
 	if !strings.Contains(darwinArm, "statfs_u32(") || !strings.Contains(fernFunctionBody(t, "statfs_u32"), "__load_i32") {
 		t.Error("statfs_field_i64 loads Darwin's u32 f_bsize 64 bits wide; f_iosize shares that word")
 	}
 }
 
-// parseStatfsOffsets reads one `statfsoff_*` table out of asmcore.fern.
 func parseStatfsOffsets(t *testing.T, fn string) map[string]int64 {
 	t.Helper()
 	body := fernFunctionBody(t, fn)
@@ -313,8 +247,6 @@ func parseStatfsOffsets(t *testing.T, fn string) map[string]int64 {
 	return out
 }
 
-// fernFunctionBody returns the source of `fn` in asmcore.fern, up to the
-// closing brace in column 1.
 func fernFunctionBody(t *testing.T, fn string) string {
 	t.Helper()
 	src, err := os.ReadFile(filepath.Join("..", "..", "..", "compiler", "asmcore.fern"))
@@ -334,8 +266,6 @@ func fernFunctionBody(t *testing.T, fn string) string {
 	return ""
 }
 
-// splitDarwinFork separates a body's `arm64-darwin` arm from the rest, so the
-// two records' load widths can be asserted independently.
 func splitDarwinFork(body string) (darwin, rest string) {
 	i := strings.Index(body, `arm64-darwin`)
 	if i < 0 {
@@ -348,8 +278,6 @@ func splitDarwinFork(body string) (darwin, rest string) {
 	return body[i : i+j], body[:i] + body[i+j:]
 }
 
-// statfsBufSize is the Linux buffer size asmcore hands the kernel — the
-// fallthrough of statfs_bufsize_n, whose only other arm is Darwin's.
 func statfsBufSize(t *testing.T) int {
 	t.Helper()
 	body := fernFunctionBody(t, "statfs_bufsize_n")

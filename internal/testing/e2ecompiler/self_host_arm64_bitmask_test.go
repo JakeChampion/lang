@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64Bitmask byte-checks the AArch64 logical (bitmask)
-// immediate encoder in arm64_encode.fern (arm64_encode_bitmask, used by
-// `and Xd, Xn, #imm`) against llvm-mc-pinned encodings across a spread of
-// masks — the alloc alignment mask, byte/nibble masks, single bits, and a
-// negative (high-ones) mask — plus the not-encodable cases. Run through the
-// self-host wasm pipeline; exit 0 = all pass, else the failing check id.
 func TestSelfHostArm64Bitmask(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64 bitmask e2e")
@@ -40,9 +34,6 @@ func TestSelfHostArm64Bitmask(t *testing.T) {
 	}
 }
 
-// arm64BitmaskSelfTestMain encodes `and x0, x0, #imm` for several masks and
-// asserts the bytes against llvm-mc. Each `return N` is a distinct
-// failing-check id (0 = all pass).
 const arm64BitmaskSelfTestMain = `
 function main(): i32 {
     // and x0, x0, #-16 -> 0x927CEC00 -> 00 EC 7C 92

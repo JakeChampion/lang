@@ -9,11 +9,6 @@ import (
 	"testing"
 )
 
-// A library module calls runtime helpers written in Fern that the entry
-// alone defines. Each must be exported from the entry's unit, or the
-// per-module link leaves the library's call undefined: std/cli's colour gate
-// calling isatty from a library unit of the compiler failed the emit-all
-// fixpoint that way, and getcwd, geteuid and cpu_count were unexported too.
 func TestSelfHostRuntimeExportsPerModule(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)

@@ -9,16 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostContractsEveryBuiltin is the typed path's half of
-// TestSelfHostBuiltinSigsMatch. A builtin the self-host checker types but the
-// semantic boundary has no contract for refuses every function calling it,
-// which fails the compile; a contract with no op in ssarc lowers the call as a
-// direct call to a symbol nothing defines, and is refused the same way.
-// wasm_block and wasm_poll were both.
-//
-// A name counts as handled when semsource.fern names it (a contract row or an
-// arm of its own) or constfold.fern folds it before the boundary sees it. The
-// `__` intrinsics are TestSelfHostTypesEveryIntrinsicFamily's.
 func TestSelfHostContractsEveryBuiltin(t *testing.T) {
 	read := func(name string) string {
 		b, err := os.ReadFile(filepath.Join("..", "..", "..", "compiler", name))

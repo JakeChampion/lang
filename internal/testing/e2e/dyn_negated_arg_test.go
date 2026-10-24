@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// A negated literal handed to a `dyn` parameter is negated as the number it
-// is and then boxed: the parameter's type is the coercion's destination, not
-// the negation's. The typed lowering read `-5` at `dyn Tr` and refused main
-// (`operator contract: - dyn Tr`), which fernsmith's differential seeds 386
-// and 464 reached.
 const dynNegatedArgSrc = `trait Tr {
   function m(self: Self, x: i32): i32;
 }

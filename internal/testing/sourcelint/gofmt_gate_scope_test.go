@@ -8,20 +8,6 @@ import (
 	"testing"
 )
 
-// The gofmt gate reads its file set from git rather than walking the
-// directory. `gofmt -l .` descends into everything .gitignore covers, and
-// this repository keeps agent worktrees under .claude/ — separate checkouts
-// carrying their own in-progress edits. That made `make gofmt-check` fail in
-// the main checkout over files the pusher does not own, which blocks a push
-// for someone else's half-finished work. A fresh clone has no such paths, so
-// CI could never see it.
-//
-// The rows have to hold together: ignoring ignored paths is only correct if
-// everything else is still gated, and the two ways the file set can be wrong
-// pull in opposite directions. Too wide takes in ignored paths; too narrow
-// stops gating a file that counts. The last row covers neither — it is the
-// list containing a path that is no longer on disk, where gofmt exits 2 and
-// the gate fails over an in-flight edit state rather than a formatting fault.
 func TestGofmtGateReadsGitsFileSetNotTheDirectory(t *testing.T) {
 	gate, err := filepath.Abs(filepath.Join("..", "..", "..", "scripts", "gofmt_gate.sh"))
 	if err != nil {
@@ -34,13 +20,9 @@ func TestGofmtGateReadsGitsFileSetNotTheDirectory(t *testing.T) {
 	const misformatted = "package p\n\nfunc  Bad( ) int {\nreturn 1\n}\n"
 
 	for _, tc := range []struct {
-		name string
-		rel  string
-		// track stages and commits the file, so git reports it under
-		// --cached rather than --others.
-		track bool
-		// removeFromDisk deletes it again after the commit, leaving an
-		// index entry with no file — an uncommitted deletion.
+		name           string
+		rel            string
+		track          bool
 		removeFromDisk bool
 		wantFail       bool
 	}{
@@ -62,8 +44,6 @@ func TestGofmtGateReadsGitsFileSetNotTheDirectory(t *testing.T) {
 			run("git", "init", "-q")
 			run("git", "config", "user.email", "gate@example.invalid")
 			run("git", "config", "user.name", "gate")
-			// A detached auto-gc or maintenance run still writing objects/pack
-			// makes TempDir's cleanup fail with "directory not empty".
 			run("git", "config", "gc.auto", "0")
 			run("git", "config", "maintenance.auto", "false")
 

@@ -1,32 +1,9 @@
-// cat.fern — concatenate files (or stdin) to stdout, like `cat(1)`.
-//
-// Reads each path in argv (or stdin when none are given, or for the
-// "-" pseudo-path) and writes its bytes straight through. Supports a
-// useful slice of the GNU cat flags:
-//
-//   -n / --number            number every output line
-//   -b / --number-nonblank   number only non-blank lines (overrides -n)
-//   -s / --squeeze-blank     collapse runs of blank lines into one
-//   -E / --show-ends         print a `$` at the end of each line
-//   -T / --show-tabs         display tab characters as `^I`
-//
-//   $ fern -target x86-64-linux -o cat cat.fern
-//   $ ./cat -n file.txt
-//   $ printf 'a\n\n\nb\n' | ./cat -s
-//
-// Showcases: argv flag parsing, `io.read_input` (file-or-stdin),
-// per-line transformation, and building output incrementally.
 import "std/string";
 import "std/i32";
 import "std/io";
 
 struct Opts { number: boolean, number_nonblank: boolean, squeeze: boolean, show_ends: boolean, show_tabs: boolean }
 
-// Read an input named by `path`: "-" (or empty) means stdin, anything
-// else is a file. Returns None when the file can't be opened (the
-// caller reports the error and keeps going).
-// Expand a single line under the active display flags (tabs → ^I,
-// trailing `$`). The line text never includes its own newline.
 function render_line(line: string, o: Opts): string {
   let body: string = line;
   if (o.show_tabs) {
@@ -38,9 +15,6 @@ function render_line(line: string, o: Opts): string {
   return body;
 }
 
-// Emit `text` under the active flags, threading the running line
-// counter (for -n / -b) and the "previous line was blank" flag (for
-// -s) through and back out so they persist across multiple inputs.
 function emit(text: string, o: Opts, counter: i32, prev_blank: boolean): (i32, boolean) {
   let lines: string[] = text.lines();
   let n: i32 = lines.len();
@@ -54,7 +28,6 @@ function emit(text: string, o: Opts, counter: i32, prev_blank: boolean): (i32, b
     }
     prev_blank = is_blank;
     let rendered: string = render_line(line, o);
-    // -b (number-nonblank) wins over -n and skips blank lines.
     let want_number: boolean = false;
     if (o.number_nonblank) {
       want_number = !is_blank;
@@ -63,8 +36,6 @@ function emit(text: string, o: Opts, counter: i32, prev_blank: boolean): (i32, b
     }
     if (want_number) {
       counter = counter + 1;
-      // GNU cat right-aligns the line number in a 6-wide field
-      // followed by a tab.
       let num: string = counter.to_string().pad_start(6, " ");
       print(num + "\t" + rendered);
     } else {
@@ -100,7 +71,6 @@ function main(): i32 {
     i = i + 1;
   }
 
-  // No file operands → act as a stdin filter.
   if (inputs.len() == 0) {
     inputs = inputs.append("-");
   }

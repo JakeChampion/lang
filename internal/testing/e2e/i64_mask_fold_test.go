@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// Regression: the AST identity fold `x & -1 → x` (maybeFoldArithIdentity)
-// keyed on constNumber, which truncates to int32 — so a 64-bit mask literal
-// 4294967295 (0xFFFFFFFF) also read as -1 and the AND was silently dropped.
-// That is wrong for an i64 operand: `lo as i64` sign-extends a negative i32,
-// so `& 0xFFFFFFFF` must CLEAR the high 32 bits, not be a no-op. Here lo =
-// -589934592 sign-extends to 0xFFFFFFFF_DCD65000; masking yields 0xDCD65000
-// (3705032704), and /1e9 == 3. Without the mask the value stays negative and
-// /1e9 == 0. The fold is now restricted to non-64-bit widths.
 const i64MaskFoldSrc = `function main(): i32 {
     let lo: i32 = 0 - 589934592;
     let r: i64 = (lo as i64) & 4294967295;
@@ -23,8 +15,6 @@ const i64MaskFoldSrc = `function main(): i32 {
 }
 `
 
-// A genuine i64 `x & -1` (all 64 bits set) must still be identity — the fix
-// keeps the (harmless) AND rather than folding, and the result is unchanged.
 const i64AndNegOneSrc = `function main(): i32 {
     let x: i64 = 5000000000;
     let r: i64 = x & (0 - 1);
@@ -83,14 +73,6 @@ func TestArm64I64AndNegOne(t *testing.T) {
 	}
 }
 
-// Regression (#5567): the other AST identity folds in maybeFoldArithIdentity
-// (`x | 0`, `x ^ 0`, `x + 0`, `x - 0`, `x * 2^k`) also keyed on constNumber,
-// which truncated the literal to int32. So any i64 literal whose low 32 bits
-// are zero — 2^32, 2^40, 2^52, … — read as 0 (or a truncated power of two)
-// and the operation was silently dropped or mis-shifted. `7 | 2^52` folded to
-// `7` on every native backend while the interp (which reads the full Value)
-// stayed correct. The fix makes constNumber return the full int64. Each arm
-// returns a distinct nonzero code so a failure names the broken fold.
 const i64LowZeroFoldSrc = `function main(): i32 {
     let f: i64 = 7;
     if ((f | 4503599627370496) / 1000000000000000 != 4) { return 1; }   // 7 | 2^52

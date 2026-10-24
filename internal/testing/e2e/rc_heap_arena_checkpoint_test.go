@@ -4,46 +4,6 @@ import (
 	"testing"
 )
 
-// One-level bump-arena checkpoint — `__heap_mark()` / `__heap_release_to(m)`.
-//
-// The pair exists for the self-host per-module emit: each unit leaves ~0.4 GB
-// that nothing reclaims, so emitting ~35 units in one process walks off the end
-// of the 16 GiB arena (__fern_alloc's bounds check, exit 137). Marking before a
-// unit and releasing after it is written out bounds the peak at one unit, which
-// is what lets the batched per-module path run from the ordinary compile path
-// instead of only from the test harness (#3457 slice 3).
-//
-// WHY THESE ASSERTIONS AND NOT A LEAK TEST. The obvious shape — "run the loop
-// 20x and 400x, assert the working set matches" — is what the other
-// reclamation tests here do, and it has NO power for this feature: the natural
-// probe shapes (`a = a.append(..)` over string[] / struct[], nested arrays)
-// already reclaim through RC, so the assertion passes identically with the
-// release calls deleted. Measured: the leak-shaped version of this test returns
-// the same verdict either way. Mark/release only shows up where RC does not
-// reclaim, which is diffuse compiler code, not a fixture.
-//
-// So this asserts the MECHANISM directly against the bump cursor:
-//
-//	b0 = bump; m = mark(); <allocate>; b1 = bump; release(m); b2 = bump
-//	b1 > b0   the window really allocated (else the test is vacuous)
-//	b2 == b0  the release rewound exactly
-//
-// Both halves discriminate: with `release_to` deleted the program returns 83
-// (verified), and with a window that allocates nothing it returns 82.
-//
-// THE RELEASE POINT IS A REAL CONSTRAINT, not a style choice. RC drops for a
-// scope's locals are emitted at scope END — i.e. AFTER a release call written
-// in that same scope. Marking and releasing around locals in one scope
-// therefore rewinds the arena and then walks the just-unallocated buffers,
-// which SEGFAULTS (observed on the struct-array shape below when `a` was a
-// sibling local of the release). Hence `window()`: confining the window's
-// allocation to a call means its locals are dropped before it returns, so
-// nothing above the mark is reachable at the caller's release. That is the
-// pattern the driver uses, and the reason the intrinsic is not a general-
-// purpose scoped-arena API.
-
-// A shape whose allocation is unambiguously non-trivial (struct boxes, an
-// inner array per element, a string field) and entirely confined to the call.
 const arenaCheckpointSrc = `
 struct Node { name: string, kids: string[] }
 function mk(k: i32): Node[] {
@@ -80,14 +40,6 @@ function main(): i32 {
     return 0;
 }`
 
-// Repeated cycles: 300 mark/allocate/release rounds, each validating the
-// window's computed value, then a fresh allocation AFTER the releases. This is
-// what exercises the freelist-head snapshot. Restoring the pre-mark heads is
-// required for CORRECTNESS, not just to avoid a leak: a block allocated AND
-// freed inside a window leaves a head pointing above the mark, so once the
-// cursor rewinds, a later freelist pop and a later bump would both hand out
-// that same address. A cleared or unrestored table shows up here as a wrong
-// value (aliased live objects) or a crash.
 const arenaCheckpointCyclesSrc = `
 struct Node { name: string, kids: string[] }
 function mk(k: i32): Node[] {

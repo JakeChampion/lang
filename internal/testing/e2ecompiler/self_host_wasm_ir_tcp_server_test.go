@@ -12,26 +12,6 @@ import (
 	"time"
 )
 
-// TestSelfHostWasmIRTcpServer pins the TCP server half on the self-host wasm-IR
-// path — slice 3 of #4318, completing the set: tcp_listen, tcp_accept,
-// tcp_pollable.
-//
-// The guest is the SERVER here and a host client connects INTO it, which is the
-// only way to exercise accept for real. Both subtests therefore run the
-// component in the background and drive it from Go.
-//
-// Three things worth knowing about these helpers:
-//
-//   - accept is non-blocking on wasi:sockets, so tcp_accept subscribes and
-//     blocks on the socket's pollable first; calling accept straight away just
-//     yields would-block.
-//   - accept's result is the widest in the file —
-//     result<tuple<tcp-socket, input-stream, output-stream>, error-code> — laid
-//     out disc@+0, 3 pad, then the three handles at +4/+8/+12, hence a 16-byte
-//     retptr where connect's tuple of two needed only 12.
-//   - a listener owns no streams. Its separate presence word tells tcp_close
-//     to skip the stream drops. Accepted connections set that word, including
-//     when their valid stream handles are zero.
 func TestSelfHostWasmIRTcpServer(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -58,7 +38,6 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
 		t.Fatalf("abs wit dir: %v", err)
 	}
 
-	// freePort reserves a port and releases it, so the guest can bind it.
 	freePort := func(t *testing.T) int {
 		t.Helper()
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -70,7 +49,6 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
 		return p
 	}
 
-	// compile emits the WAT, embeds the world, composes and validates.
 	compile := func(t *testing.T, name, src string, wantSyms []string) string {
 		t.Helper()
 		var cmd *exec.Cmd
@@ -113,8 +91,6 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
 		return compPath
 	}
 
-	// serveAndDial runs the guest server, dials it once from the host with
-	// `send`, and returns (guest stdout, what the host read back).
 	serveAndDial := func(t *testing.T, compPath, send string) (string, string) {
 		t.Helper()
 		cmd := exec.Command(wasmtime, "run", "-S", "inherit-network", compPath)
@@ -165,8 +141,6 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
 		return strings.TrimSpace(stdout.String()), reply
 	}
 
-	// The guest binds a port chosen here, so the port has to be baked into the
-	// source; portsByComp carries it from compile time to dial time.
 	t.Run("listen_accept_echo", func(t *testing.T) {
 		port := freePort(t)
 		src := fmt.Sprintf(wasmRecvHelper+`function main(): i32 {
@@ -195,11 +169,6 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
 		}
 	})
 
-	// tcp_local_port on wasm is a different mechanism from the native one: no
-	// getsockname, but `[method]tcp-socket.local-address` answering a
-	// `result<ip-socket-address, error-code>` whose port the helper reads out
-	// of the retptr. No client is needed to check it — a listener on 0 reports
-	// the port the host picked, or it does not.
 	t.Run("local_port_of_ephemeral_listener", func(t *testing.T) {
 		src := `function main(): i32 {
     let l: i32 = tcp_listen(0);
@@ -222,9 +191,6 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
 		}
 	})
 
-	// tcp_pollable feeds the wasm_poll multiplexer from #4316 — the composition
-	// std/async relies on. Polling a connection with data pending must report
-	// index 0 ready, and the subsequent recv must still see the bytes.
 	t.Run("pollable_feeds_wasm_poll", func(t *testing.T) {
 		port := freePort(t)
 		src := fmt.Sprintf(`function main(): i32 {
@@ -255,9 +221,6 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
 	})
 }
 
-// compPorts maps a compiled component path to the port its guest binds, so the
-// host client knows where to dial. The port is baked into the guest source at
-// compile time, so it cannot be discovered from the running process.
 var compPorts = map[string]int{}
 
 func rememberPort(compPath string, port int) { compPorts[compPath] = port }

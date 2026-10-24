@@ -1,30 +1,3 @@
-// echo.fern — GNU-compatible `echo`.
-//
-//   -n              do not write the trailing newline
-//   -e              interpret the backslash escapes below
-//   -E              do not interpret them (the default)
-//   --help/--version  answered only as the SOLE argument
-//
-// echo(1) does not use getopt, and the difference is observable: the
-// option scan takes leading tokens for as long as EVERY byte after the
-// `-` is one of `e`, `E`, `n`, and treats the first token that fails
-// that test as an operand. So `-ne` is two options, `-nex` is the
-// string `-nex`, and a lone `-` is an operand. Last flag wins: `-e -E`
-// leaves escapes off.
-//
-// POSIXLY_CORRECT reshapes both halves, and this is faithful to the
-// quirk rather than to the intent:
-//
-//   - escapes are ALWAYS interpreted, so `-E` cannot turn them off;
-//   - options are not recognised at all unless the first argument is
-//     exactly `-n`, so `echo -e 'a\tb'` writes `-e a<TAB>b` and
-//     `echo --help` writes `--help`.
-//
-// Escapes: \a \b \c \e \f \n \r \t \v \\, octal as \NNN (one to
-// three digits) or \0NNN (\0 plus up to three), and hex as \xHH (up
-// to two digits). `\c` ends the output there and then — no trailing
-// newline, remaining operands dropped. Anything else keeps its
-// backslash: `\z` is two bytes, and so is a trailing lone `\`.
 import "std/string";
 import "std/array";
 import "./lib/gnu";
@@ -33,7 +6,6 @@ function is_octal_digit(b: i32): boolean {
   return b >= 48 && b <= 55;
 }
 
-// The value of one hex digit, or -1 for a byte that is not one.
 function hex_digit(b: i32): i32 {
   if (b >= 48 && b <= 57) {
     return b - 48;
@@ -63,8 +35,6 @@ function help_text(): string {
   return out;
 }
 
-// Append the bytes of `s` to `out` with escapes expanded. The boolean
-// is true when `\c` was reached, which ends the program's output.
 function expand_into(out: u8[], s: string): (u8[], boolean) {
   let bs: u8[] = out;
   let n: i32 = s.len();
@@ -99,9 +69,6 @@ function expand_into(out: u8[], s: string): (u8[], boolean) {
     } else if (c == 92) {
       bs = bs.append(92 as u8);
     } else if (c >= 48 && c <= 55) {
-      // Octal: `\0` takes up to three more digits, `\1`..`\7` is
-      // itself the first of at most three. Both wrap at a byte, so
-      // `\0777` is 255 and `\400` is 0.
       let oct: i32 = c - 48;
       let more: i32 = 2;
       if (c == 48) {
@@ -123,7 +90,6 @@ function expand_into(out: u8[], s: string): (u8[], boolean) {
         digits = digits + 1;
       }
       if (digits == 0) {
-        // `\x` with no digit after it is not an escape at all.
         bs = bs.append(92 as u8);
         bs = bs.append(120 as u8);
       } else {
@@ -147,8 +113,6 @@ function append_raw(out: u8[], s: string): u8[] {
   return bs;
 }
 
-// Whether the token is a run of `e` / `E` / `n` after a leading `-`,
-// which is what makes it an option rather than an operand.
 function is_flag_token(a: string): boolean {
   if (a.len() < 2 || a[0] as i32 != 45) {
     return false;

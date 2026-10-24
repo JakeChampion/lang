@@ -8,38 +8,20 @@ import (
 	"testing"
 )
 
-// core/bigint is differential-tested against Go's math/big rather than against
-// hand-written expected values. Arbitrary-precision arithmetic fails on carry
-// and borrow propagation at limb boundaries — 2^32, 2^64, and the points where
-// a carry ripples through several limbs — and those are exactly the cases a
-// human picking examples does not think to write down. An oracle that is
-// already correct for every input is the right shape here, the same argument
-// that made the Two-Way search suite an enumeration against a naive reference
-// rather than a list of strings.
-//
-// One program per run, not one per case: a native compile is ~18 ms but a
-// process per case would still dominate, and the whole corpus fits in one
-// program that prints a line per case.
-
-// bigintOperands are the values every pair-wise operation is run over. The
-// list is chosen for limb-boundary structure, not for size: the interesting
-// inputs are the ones straddling 2^32 and 2^64, where a carry has to cross a
-// limb, plus the signed edges where negation overflows.
 func bigintOperands() []*big.Int {
 	lit := []string{
 		"0", "1", "-1", "2", "-2",
-		"4294967295", "4294967296", "4294967297", // 2^32 - 1, 2^32, 2^32 + 1
+		"4294967295", "4294967296", "4294967297",
 		"-4294967295", "-4294967296", "-4294967297",
-		"18446744073709551615", "18446744073709551616", // 2^64 - 1, 2^64
-		"9223372036854775807",                      // i64 MAX
-		"-9223372036854775808",                     // i64 MIN — negation overflows in two's complement
-		"79228162514264337593543950336",            // 2^96
-		"340282366920938463463374607431768211456",  // 2^128
-		"-340282366920938463463374607431768211455", // -(2^128 - 1)
+		"18446744073709551615", "18446744073709551616",
+		"9223372036854775807",
+		"-9223372036854775808",
+		"79228162514264337593543950336",
+		"340282366920938463463374607431768211456",
+		"-340282366920938463463374607431768211455",
 		"123456789012345678901234567890",
 		"-987654321098765432109876543210",
-		// A carry that ripples the whole way: all-ones magnitude + 1.
-		"1461501637330902918203684832716283019655932542975", // 2^160 - 1
+		"1461501637330902918203684832716283019655932542975",
 	}
 	out := make([]*big.Int, 0, len(lit)+8)
 	for _, s := range lit {
@@ -49,8 +31,6 @@ func bigintOperands() []*big.Int {
 		}
 		out = append(out, v)
 	}
-	// A few deterministic randoms well past any threshold the schoolbook
-	// multiply has, so the accumulate-and-carry inner loop runs many limbs.
 	rng := rand.New(rand.NewSource(20260806))
 	for i := 0; i < 8; i++ {
 		v := new(big.Int).Rand(rng, new(big.Int).Lsh(big.NewInt(1), 300))
@@ -62,22 +42,15 @@ func bigintOperands() []*big.Int {
 	return out
 }
 
-// bigintFernLit renders a Go big.Int as a Fern expression building that value.
-// Values go through `bigint.parse` of a decimal string, which is the only
-// constructor that can express something wider than i64 — so the parse path is
-// exercised by every single case rather than needing its own suite.
 func bigintFernLit(v *big.Int) string {
 	return fmt.Sprintf("bigint_or_die(%q)", v.String())
 }
 
-// bigintCase is one expression and the value math/big says it must produce.
 type bigintCase struct {
 	expr string
 	want string
 }
 
-// bigintCases builds the shared corpus. Both backend legs run exactly these,
-// so a wasm-only divergence cannot hide behind a different case list.
 func bigintCases() []bigintCase {
 	ops := bigintOperands()
 	var cases []bigintCase
@@ -87,12 +60,8 @@ func bigintCases() []bigintCase {
 	}
 
 	for i, a := range ops {
-		// Round-trip: parse(to_string(v)) == v, and to_string is canonical
-		// (no leading zeros, no "-0").
 		emit(bigintFernLit(a)+".to_string()", a.String())
 
-		// bit_length is checked against math/big's, which counts magnitude
-		// bits and reports 0 for zero — the same contract core/bigint states.
 		emit(fmt.Sprintf("(%s.bit_length()).to_string()", bigintFernLit(a)),
 			fmt.Sprint(a.BitLen()))
 
@@ -100,10 +69,6 @@ func bigintCases() []bigintCase {
 		emit(bigintFernLit(a)+".abs().to_string()", new(big.Int).Abs(a).String())
 
 		for j, b := range ops {
-			// Full cross product on the literal set; the randoms only pair
-			// with a small rotating slice, which keeps the program from
-			// growing quadratically in the expensive multiplies while still
-			// covering wide x wide.
 			if i >= 22 && j >= 22 && (i+j)%3 != 0 {
 				continue
 			}
@@ -115,9 +80,6 @@ func bigintCases() []bigintCase {
 		}
 	}
 
-	// mul_pow10, shl and shr get their own sweep — all hand-rolled scaling
-	// paths that the pair-wise ops never reach. shr truncates toward zero, so
-	// it is checked against the shifted magnitude with the sign put back.
 	for _, a := range ops[:22] {
 		for _, k := range []int{0, 1, 9, 10, 17, 40} {
 			emit(fmt.Sprintf("%s.mul_pow10(%d).to_string()", bigintFernLit(a), k),
@@ -132,9 +94,6 @@ func bigintCases() []bigintCase {
 		}
 	}
 
-	// divmod is truncated division (Go's QuoRem), over every pair with a
-	// non-zero divisor: the trial-digit corrections in Algorithm D only fire
-	// on particular limb patterns, and the wide randoms are where they show.
 	for i, a := range ops {
 		for j, b := range ops {
 			if b.Sign() == 0 || (i >= 22 && j >= 22 && (i+j)%3 != 0) {
@@ -147,17 +106,12 @@ func bigintCases() []bigintCase {
 		}
 	}
 
-	// A zero divisor takes the machine contract (docs/INTEGER-SEMANTICS.md):
-	// `x / 0 == 0`, `x % 0 == x`. math/big traps on it, so the expectation is
-	// written out rather than derived.
 	for _, a := range ops[:12] {
 		la := bigintFernLit(a)
 		emit("(("+la+").divmod(bigint.zero())).0.to_string()", "0")
 		emit("(("+la+").divmod(bigint.zero())).1.to_string()", a.String())
 	}
 
-	// The bit-level accessors and the u64 constructor, which printf's
-	// exact float conversion is built on.
 	for _, a := range ops[:22] {
 		la := bigintFernLit(a)
 		low := new(big.Int).And(new(big.Int).Abs(a), new(big.Int).SetUint64(^uint64(0)))
@@ -176,10 +130,6 @@ func bigintCases() []bigintCase {
 	return cases
 }
 
-// bigintPrelude is shared by both legs.
-//
-// bigint_or_die makes a parse failure loud instead of silently substituting a
-// value the differential would then compare against the wrong expectation.
 const bigintPrelude = `import "core/bigint";
 import "std/i32";
 import "std/u64";
@@ -235,17 +185,6 @@ function main(): i32 {
 	t.Logf("%d cases checked against math/big", len(want))
 }
 
-// BigInt's trait impls live in core/cmp rather than next to the type, because
-// the orphan rule accepts either the trait's module or the type's, and only
-// that side keeps core/bigint free of imports (std/string needs to import it
-// for parse_float's exact fallback, and core/cmp imports std/string).
-//
-// The impls being EMPTY — adopting BigInt's existing to_string / eq / cmp /
-// hash — is what makes this test necessary rather than obvious: an empty impl
-// silently records that a type satisfies a trait, so a signature that drifted
-// out of line with the trait would fail here and nowhere else. `cmp.sort` over
-// a BigInt[] is the essential case; it only works if `cmp` really returns
-// the -1/0/1 that `cmp.sort` expects.
 func TestX86_64BigIntTraits(t *testing.T) {
 	src := `import "core/bigint";
 import "core/cmp";
@@ -318,47 +257,15 @@ function main(): i32 {
 	}
 }
 
-// The wasm leg runs the SAME corpus, self-checking, because the wasm harness
-// reports an exit code rather than stdout. It exists because wasm32 is where
-// this module's arithmetic is most likely to diverge: every limb operation is
-// u64, and wasm32 is the one target where a 64-bit value is not a machine
-// word. A carry or shift lowered differently there would be invisible to the
-// x86-64 leg.
-//
-// The exit code is 0 for all-pass and the 1-based index of the first
-// mismatching case otherwise, capped at 250 so it cannot collide with the
-// runtime's own status codes (125 arena-exhausted, 128+signal). The x86-64 leg
-// is where a failure gets diagnosed; this one only has to catch it.
 func TestWasmBigIntDifferential(t *testing.T) {
 	all := bigintCases()
 
-	// The wasm leg runs a STRIDED SUBSET, not the whole corpus, and the count
-	// is logged rather than left implicit — a leg that silently covers an
-	// eighth of what it appears to is worse than one that says so.
-	//
-	// The limit is allocation, not program size: wasm's linear memory is a
-	// different order of magnitude from the 16 GiB native arena, and every
-	// case here parses two decimal strings into fresh limb arrays and then
-	// allocates through an arithmetic op. The whole corpus in one process
-	// traps with "out of bounds memory access" at instantiation. Verified it
-	// is not the generated program's shape: 3612 distinct 39-char string
-	// literals, and 1600 inlined checks, both compile and run clean on wasm.
-	//
-	// A stride rather than a prefix so the subset keeps the corpus's
-	// structure — the operand list is ordered small-to-large and a prefix
-	// would test only the narrow values, which are exactly the ones least
-	// likely to expose a limb-arithmetic divergence.
 	const stride = 8
 	cases := make([]bigintCase, 0, len(all)/stride+1)
 	for i := 0; i < len(all); i += stride {
 		cases = append(cases, all[i])
 	}
 
-	// Checks are split across helper functions rather than inlined into main.
-	// Each `expr` needs temporaries, and 3600 of them in one body exceeds
-	// wasm's per-function locals cap ("too many locals") before any of this
-	// module's code runs — a property of the generated harness, not of
-	// core/bigint.
 	const perGroup = 200
 	var groups strings.Builder
 	var calls strings.Builder

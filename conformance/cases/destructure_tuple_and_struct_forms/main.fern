@@ -1,6 +1,6 @@
-// A `let` destructure reads the shared pattern grammar (#5356); `_` is renamed
-// per occurrence, so a pattern can discard more than one slot.
-// exit: 1+2+3+4+5+6+7
+
+
+
 struct P { x: i32, y: i32 }
 function main(): i32 {
   let (a, b) = (1, 2);

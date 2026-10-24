@@ -14,9 +14,6 @@ import (
 	"testing"
 )
 
-// tarGz builds an in-memory .tar.gz of name→content entries (dirs are
-// created implicitly; entries under a shared top-level dir exercise the
-// root-stripping convention).
 func tarGz(t *testing.T, files map[string]string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -61,12 +58,10 @@ func TestFetchVerifiesUnpacksAndCaches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Single top-level dir is stripped: lib.fern sits at the package root.
 	b, err := os.ReadFile(filepath.Join(dir, "lib.fern"))
 	if err != nil || !strings.Contains(string(b), "three") {
 		t.Fatalf("unpacked tree wrong: %v / %q", err, b)
 	}
-	// Content-addressed: the second fetch never contacts the server.
 	srv.Close()
 	if _, err := Fetch(srv.URL+"/helper.tar.gz", hashOf(archive)); err != nil {
 		t.Fatalf("cache hit should not need the server: %v", err)
@@ -88,7 +83,6 @@ func TestFetchRejectsHashMismatch(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "hash mismatch") {
 		t.Fatalf("want hash-mismatch rejection, got %v", err)
 	}
-	// Nothing may have entered the store.
 	if _, present, _ := Dir(declared); present {
 		t.Error("mismatching archive must not be unpacked into the store")
 	}
@@ -131,16 +125,6 @@ func TestDirBadHashScheme(t *testing.T) {
 	}
 }
 
-// The hex half of a hash is joined onto the store root to name a
-// directory, so an unvalidated value is a PATH, not just a label. A
-// lockfile carrying `sha256:../../../elsewhere` made the loader compile
-// and run code from an arbitrary directory — and because Fetch treats
-// "the directory is present" as "the content is verified", nothing was
-// downloaded or checked on the way (#8464).
-//
-// TestFetchRejectsEscapingEntries above covers the archive's own paths;
-// this is the same escape one level up, through the name of the store
-// entry itself.
 func TestDirRejectsTraversalAndMalformedHex(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("FERN_CACHE_DIR", root)
@@ -163,7 +147,6 @@ func TestDirRejectsTraversalAndMalformedHex(t *testing.T) {
 			}
 		})
 	}
-	// A well-formed hash still resolves, inside the root.
 	good := "sha256:" + strings.Repeat("a", 64)
 	dir, _, err := Dir(good)
 	if err != nil {
@@ -174,10 +157,6 @@ func TestDirRejectsTraversalAndMalformedHex(t *testing.T) {
 	}
 }
 
-// FetchUnverified downloads, computes the hash, and stores under it —
-// the `fern -add --url` flow. The returned hash matches HashBytes of the
-// served archive, and a later verified Fetch against that hash hits the
-// cache without contacting the server.
 func TestFetchUnverifiedComputesHash(t *testing.T) {
 	t.Setenv("FERN_CACHE_DIR", t.TempDir())
 	archive := tarGz(t, map[string]string{"lib.fern": "pub function f(): i32 { return 1; }"})
@@ -195,7 +174,6 @@ func TestFetchUnverifiedComputesHash(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "lib.fern")); err != nil {
 		t.Fatalf("not unpacked: %v", err)
 	}
-	// The recorded hash now verifies against a normal Fetch, server down.
 	srv.Close()
 	if _, err := Fetch(srv.URL+"/pkg.tar.gz", hash); err != nil {
 		t.Fatalf("verified fetch of the just-added hash should hit cache: %v", err)

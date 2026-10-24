@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the std/url single-key query accessors
-// across backends: query_get (first value / None / bare-flag),
-// query_has, query_get_all (ordered multi-values / empty), form-decoding
-// of both key and value (%20 and +), the empty query, and skipped empty
-// pairs. Returns 42 iff every check holds. Each leg skips itself when
-// its toolchain is absent.
 const queryGetProg = `
 import "std/url" as url;
 function opt(o: Option[string], fb: string): string {

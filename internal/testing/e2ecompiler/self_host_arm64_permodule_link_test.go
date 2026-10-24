@@ -9,18 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostPerModuleArm64LeafOnlyLinkRun is the regression guard for #4305:
-// in an arm64 per-module build, a runtime helper's string-literal references
-// must use the same per-module-namespaced label as their definitions
-// (str_lit_label → .S<ns>_<idx>; byte-identical .S<idx> on the merged path,
-// where str_ns==""). A mismatch fails a leaf-only program — whose library
-// modules emit no bare .S<idx> to satisfy the reference by accident — at link
-// time with "undefined reference to .S0".
-//
-// This drives that shape: a main → mid → leaf tree with NO library string
-// literals, whose entry emits the whole runtime (arr_str_join / str_lines pull
-// in the .S0/.S1 constants). It must link with the aarch64 cross gcc and run to
-// exit 42, natively or under qemu-aarch64.
 func TestSelfHostPerModuleArm64LeafOnlyLinkRun(t *testing.T) {
 	armgcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -69,13 +57,11 @@ func TestSelfHostPerModuleArm64LeafOnlyLinkRun(t *testing.T) {
 		if len(unit) == 0 {
 			t.Fatalf("module %d emitted 0 bytes", i)
 		}
-		// No bare `.S<idx>` reference may survive — every string reference must be
-		// namespaced (this is the #4305 fix; a bare ref is what failed to link).
 		for _, ln := range strings.Split(unit, "\n") {
 			ln = strings.TrimSpace(ln)
 			if strings.HasPrefix(ln, "adrp ") && strings.Contains(ln, ", .S") {
 				lbl := ln[strings.Index(ln, ", .S")+2:]
-				if !strings.Contains(lbl, "_") { // ".S<ns>_<idx>" has an underscore; bare ".S<idx>" does not
+				if !strings.Contains(lbl, "_") {
 					t.Errorf("module %d: bare string-literal reference %q survived (#4305)", i, lbl)
 				}
 			}

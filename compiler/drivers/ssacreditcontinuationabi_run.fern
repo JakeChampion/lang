@@ -166,7 +166,6 @@ function bad_return(sub: ircore.Sub, local: i32): ircore.Sub {
 function continuation_controls(sub: ircore.Sub): void {
   for local in [0, 1, 2, 3] {
     let wrong = bad_return(sub, local);
-    // Invocation success deliberately leaves the wrapper return unproved.
     let invocation = abi.check_storage(wrong, "handoff", "replace", "__sem_drop_Parent", "__sem_release_Parent", ["require"]);
     require(invocation.ok && invocation.function_name == "replace", 94);
     check(wrong, "handoff", "continuation must return owned consumer result");
@@ -187,7 +186,6 @@ function target_checks(target: string): void {
   for generic in [false, true] {
     let original = semlower.driven(parser.parse_module(lexer.tokenize(source(generic, true))), target).sub;
     check(original, "replace", "scalar call may exit with unproved caller obligations");
-    // A separate coherent source graph supplies the non-exiting positive case.
     let sub = semlower.driven(parser.parse_module(lexer.tokenize(source(generic, false))), target).sub;
     check(sub, "handoff", "proved checked storage wrapper continuation");
     final_binding.run(source(generic, false), target, false);

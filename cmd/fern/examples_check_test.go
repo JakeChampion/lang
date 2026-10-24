@@ -7,11 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/corpus"
 )
 
-// Every example, Fern-side test and benchmark checks clean. The Examples lane
-// compiles only the top-level `examples/*.fern`, and the printer corpus only
-// parses, so a program under a subdirectory could stop type-checking with
-// nothing noticing — two probes did. The compiler's sources have gates of
-// their own.
 func TestEveryExampleChecks(t *testing.T) {
 	root := repoRoot(t)
 	files, err := corpus.Files(root, corpus.Programs)

@@ -9,10 +9,6 @@ import (
 	"testing"
 )
 
-// Named-field enum variants: declared `Rect { w: i32, h: i32 }`, matched
-// `Rect { h, w }` (any field order, bound by name), and rendered by a
-// derived Display as `Rect { w: 3, h: 4 }`. Construction is positional in
-// v1 (`Rect(3, 4)`). See docs/NAMED-FIELD-VARIANTS.md.
 const namedFieldVariantSrc = `import "std/i32";
 import "core/cmp";
 
@@ -90,8 +86,6 @@ func TestWASMNamedFieldVariant(t *testing.T) {
 	}
 }
 
-// The @derive(Json) object shape for a named-field variant on the
-// interpreter: `{"Rect":{"w":3,"h":4}}`.
 func TestInterpNamedFieldVariantJson(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()

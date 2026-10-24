@@ -6,9 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The self-host twin of TestDnsExchangeX86_64: std/dns's exchange against
-// a nameserver on the loopback interface, over UDP, through the TCP retry
-// a truncated reply forces, and against a server that stays silent.
 func TestSelfHostDnsExchange(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 	for _, c := range []struct {
@@ -30,7 +27,6 @@ func TestSelfHostDnsExchange(t *testing.T) {
 	}
 }
 
-// TestSelfHostDnsPair is the self-host twin of TestDnsPairX86_64.
 func TestSelfHostDnsPair(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 	ns := e2eharness.StartFakeNameserver(t, e2eharness.FakeNameserverPair)
@@ -41,7 +37,6 @@ func TestSelfHostDnsPair(t *testing.T) {
 	e2eharness.CheckDnsPair(t, ns, string(out), cmd.ProcessState.ExitCode())
 }
 
-// TestSelfHostDnsNat64 is the self-host twin of TestDnsNat64X86_64.
 func TestSelfHostDnsNat64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 	ns := e2eharness.StartFakeNameserver(t, e2eharness.FakeNameserverNat64)
@@ -52,7 +47,6 @@ func TestSelfHostDnsNat64(t *testing.T) {
 	e2eharness.CheckDnsNat64(t, string(out), cmd.ProcessState.ExitCode())
 }
 
-// TestSelfHostDnsDial is the self-host twin of TestDnsDialX86_64.
 func TestSelfHostDnsDial(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 	for _, c := range []struct{ name, first string }{

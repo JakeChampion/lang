@@ -1,5 +1,5 @@
-// std/net declares NetError.Other beside IoError's Other. An arm matching an
-// IoError names IoError's, at the top level and nested under Err (#10922).
+
+
 import "std/net";
 
 function classify(e: IoError): i32 {

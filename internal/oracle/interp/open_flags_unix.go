@@ -4,9 +4,6 @@ package interp
 
 import "syscall"
 
-// The kernel words the open_*_with builtins' flags word becomes, in the
-// host's spelling. A zero means the host has no such flag and the bit is
-// refused (openWithHelper).
 const (
 	oNonblock  = syscall.O_NONBLOCK
 	oDirectory = syscall.O_DIRECTORY

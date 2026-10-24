@@ -7,8 +7,6 @@ import (
 	"strings"
 )
 
-// The op kind ids the model gives a meaning to (ir.fern's K_* constants,
-// pinned by internal/testing/e2ecompiler/testdata/ir-kind-ids.txt).
 const (
 	kConstI32     = 1
 	kConstI32Text = 2
@@ -47,9 +45,6 @@ const (
 	kDrop         = 159
 )
 
-// Modelled reports whether the encoder gives op a meaning: the integer
-// fragment of docs/INTEGER-SEMANTICS.md at 32 and 64 bits, plus the local and
-// stack shuffles. Every other op is a barrier Split requires both sides to keep.
 func Modelled(op Op) bool {
 	switch op.Kind {
 	case kConstI32:
@@ -76,20 +71,10 @@ func Modelled(op Op) bool {
 	return false
 }
 
-// Pair is one straight-line run of modelled ops as a pass read it and as it
-// wrote it.
 type Pair struct {
 	Before, After []Op
 }
 
-// Split cuts both sides of rw at their unmodelled ops and returns the runs
-// between them that differ. The unmodelled ops must match one for one: the
-// model cannot say what a changed one means, so a pass that changes one is
-// outside what this package validates, and Split says so.
-//
-// Proving each pair equivalent proves the whole rewrite: every pair is checked
-// over any stack beneath it and any value in every local, and the barriers
-// between pairs are the same ops run on the same state.
 func Split(rw Rewrite) ([]Pair, error) {
 	bRuns, bBars := runs(rw.Before)
 	aRuns, aBars := runs(rw.After)
@@ -110,7 +95,6 @@ func Split(rw Rewrite) ([]Pair, error) {
 	return out, nil
 }
 
-// runs splits ops at its unmodelled ops: len(runs) == len(barriers)+1.
 func runs(ops []Op) (runs [][]Op, barriers []Op) {
 	cur := []Op{}
 	for _, op := range ops {
@@ -137,23 +121,15 @@ func sameOps(a, b []Op) bool {
 	return true
 }
 
-// Mismatch is a pair whose sides cannot be equivalent whatever the solver
-// says: they leave stacks of different depths, or a value at different widths.
 type Mismatch struct{ Reason string }
 
 func (m *Mismatch) Error() string { return m.Reason }
 
-// value is a symbolic stack or local value: an SMT term and its width in bits.
-// Width 0 marks an input no op has used yet; its width is in encoder.inputs
-// once one does.
 type value struct {
 	term  string
 	width int
 }
 
-// encoder holds what both sides of a pair share: the inputs (the entry stack
-// s0, s1, ... from the top down, and each local l<n> as it was on entry) and
-// the definitions the two sides' terms name.
 type encoder struct {
 	inputs map[string]int
 	order  []string
@@ -175,7 +151,6 @@ func (e *encoder) fail(format string, args ...any) {
 	}
 }
 
-// widthOf is v's width, 0 for an input nothing has decided yet.
 func (e *encoder) widthOf(v value) int {
 	if v.width != 0 {
 		return v.width
@@ -183,7 +158,6 @@ func (e *encoder) widthOf(v value) int {
 	return e.inputs[v.term]
 }
 
-// use reads v as a w-bit operand, deciding an input's width on its first use.
 func (e *encoder) use(v value, w int) string {
 	got := e.widthOf(v)
 	if got == 0 {
@@ -194,7 +168,6 @@ func (e *encoder) use(v value, w int) string {
 	return v.term
 }
 
-// side is one side's machine state.
 type side struct {
 	e      *encoder
 	tag    string
@@ -206,8 +179,6 @@ type side struct {
 
 func (s *side) push(v value) { s.stack = append(s.stack, v) }
 
-// pop takes the top of the stack, reading the next entry-stack input once
-// the side has consumed everything it pushed.
 func (s *side) pop() value {
 	if n := len(s.stack); n > 0 {
 		v := s.stack[n-1]
@@ -226,8 +197,6 @@ func (s *side) local(n int) value {
 	return s.e.input("l" + strconv.Itoa(n))
 }
 
-// define names expr as a fresh w-bit term, so a value used many times is
-// spelled once.
 func (s *side) define(w int, expr string) value {
 	name := s.tag + strconv.Itoa(s.temps)
 	s.temps++
@@ -277,7 +246,6 @@ func (s *side) step(op Op) {
 	}
 }
 
-// convert covers the one-operand ops; binary everything else.
 func (s *side) convert(op Op) {
 	switch op.Kind {
 	case kNot:
@@ -308,11 +276,6 @@ func (s *side) convert(op Op) {
 	}
 }
 
-// binary is a two-operand op's term and result width, per
-// docs/INTEGER-SEMANTICS.md: arithmetic wraps, a shift count is masked to the
-// width, `x / 0` is 0, `x % 0` is x, and a compare yields an i32 0 or 1. The
-// SMT-LIB signed quotient and remainder already wrap MIN / -1 to MIN and give
-// MIN % -1 = 0.
 func binary(kind int, a, b string, w int) (string, int) {
 	zero := lit(0, w)
 	switch kind {
@@ -337,10 +300,6 @@ func binary(kind int, a, b string, w int) (string, int) {
 	return fmt.Sprintf("(ite "+pred+" %s %s)", a, b, lit(1, 32), lit(0, 32)), 32
 }
 
-// Encode states p's equivalence as an SMT-LIB query that is unsat exactly when
-// the two sides leave the same stack and the same locals for every entry stack
-// and every entry value of every local. Signedness lives in the op kind
-// (div_u, lt_u, ...), so an op's unsigned flag carries no meaning here.
 func Encode(p Pair) (string, error) {
 	for _, op := range append(append([]Op{}, p.Before...), p.After...) {
 		if !Modelled(op) {
@@ -377,8 +336,6 @@ func Encode(p Pair) (string, error) {
 	return q.String(), nil
 }
 
-// compare lines the two sides' final states up: the whole stack down to the
-// deepest input either side read, and every local either side wrote.
 func (e *encoder) compare(b, a *side) []string {
 	depth := max(b.pulled, a.pulled)
 	full := func(s *side) []value {
@@ -415,8 +372,6 @@ func (e *encoder) compare(b, a *side) []string {
 	return eqs
 }
 
-// equal adds the claim x == y, unifying the widths of inputs neither side
-// used.
 func (e *encoder) equal(eqs []string, x, y value, where string) []string {
 	if x.term == y.term {
 		return eqs

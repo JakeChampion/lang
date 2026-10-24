@@ -2,10 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// patternHeadCases are two pattern heads native parses: an `if let` whose body
-// is a statement rather than a block, as a plain `if`'s may be, and a
-// `let … else` whose pattern names its variant through its enum. Every answer
-// comes from the interpreter.
 var patternHeadCases = []struct {
 	name string
 	src  string

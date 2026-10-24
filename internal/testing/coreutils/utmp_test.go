@@ -11,39 +11,6 @@ import (
 	"testing"
 )
 
-// The login-accounting database the three utmp utilities read, built as
-// a fixture so the corpus has something to compare over.
-//
-// It has to be a fixture. /var/run/utmp is the machine's live login
-// state: a container has none at all, a developer's laptop has one that
-// changes while the suite runs, and nothing a test may do can put a
-// chosen record in it. What makes the family testable anyway is that
-// `users` and `who` take the database as an OPERAND — GNU documents it
-// as "/var/log/wtmp as FILE is common" — so a file this package writes
-// is a database both sides read, and every record shape below becomes a
-// byte-exact case rather than a hope about the host.
-//
-// `pinky` has no such operand and is the exception; pinky_test.go
-// records what that costs.
-
-// utmpRecordSize is the width of one entry on the HOST, which is what
-// both sides of the oracle read. Everything up to ut_exit is the same
-// everywhere; glibc sizes ut_session and ut_tv by
-// __WORDSIZE_TIME64_COMPAT32, so that a 32-bit and a 64-bit process on one
-// machine share a file format. That macro is 1 on an architecture with a
-// 32-bit predecessor — x86-64 keeps the 32-bit widths, for 384 bytes — and
-// 0 on one without, where ut_session is a `long` and ut_tv a real
-// `struct timeval`, for 400.
-//
-// Writing 384 everywhere made GNU on the aarch64 runner read this corpus
-// at the wrong stride: it found one record where eight were written and
-// dated it from bytes that are ut_addr_v6 there.
-// A map lookup would answer 0 for an architecture nobody listed, and a
-// zero-width record is a corpus that writes nothing and compares empty
-// against empty — so an unknown host is a panic at init, not a default.
-//
-// Darwin is neither: its database is utmpx, written as Libc's 628-byte
-// `struct utmpx32` on every architecture.
 var utmpRecordSize = utmpRecordSizeFor(runtime.GOOS, runtime.GOARCH)
 
 func utmpRecordSizeFor(goos, goarch string) int {
@@ -60,16 +27,10 @@ func utmpRecordSizeFor(goos, goarch string) int {
 		" — read __WORDSIZE_TIME64_COMPAT32 for it and add the row, rather than letting the corpus run at the wrong stride")
 }
 
-// utmpTimeCompat32 is that macro: it decides both the width of ut_tv's
-// seconds field and where it sits.
 var utmpTimeCompat32 = utmpRecordSize == 384
 
 var utmpDarwin = runtime.GOOS == "darwin"
 
-// The ut_type values. USER_PROCESS is the only one that names a logged
-// -in user; the rest describe the run level, the boot time, an init or
-// login process not yet claimed, the remains of one that was, and a
-// clock change.
 const (
 	utEmpty        = 0
 	utRunLvl       = 1
@@ -81,7 +42,6 @@ const (
 	utSignature    = 10
 )
 
-// Darwin numbers the two halves of a clock change the other way round.
 var utNewTime, utOldTime = utClockChangeTypes(utmpDarwin)
 
 func utClockChangeTypes(darwin bool) (int, int) {
@@ -91,10 +51,6 @@ func utClockChangeTypes(darwin bool) (int, int) {
 	return 3, 4
 }
 
-// utmpRec is one entry, in the fields a utility prints or matches on.
-// Everything else in the record — the session id, the address, the
-// reserved tail — is written as zero, which is what the fields no
-// utility reads are on a real database too.
 type utmpRec struct {
 	typ  int
 	pid  int32
@@ -103,22 +59,13 @@ type utmpRec struct {
 	user string
 	host string
 	sec  int32
-	// exit is ut_exit: the termination signal and the exit status of a
-	// dead process, which `who -d` prints as `term=N exit=N`.
 	exit [2]int16
 }
 
-// bytes lays the record out at the offsets the kernel writes: a 2-byte
-// type in a 4-byte slot, the pid, then four NUL-padded char arrays, the
-// exit pair, the session, and the timeval, whose seconds field is a
-// SIGNED count — 32-bit where the compat layout applies, which is why a
-// record from before 1970 prints a 1969 date there rather than one in
-// 2106, and 64-bit where it does not.
 func (r utmpRec) bytes() []byte {
 	b := make([]byte, utmpRecordSize)
 	le := binary.LittleEndian
 	if utmpDarwin {
-		// struct utmpx32, which has no ut_exit.
 		copy(b[0:256], r.user)
 		copy(b[256:256+4], r.id)
 		copy(b[260:260+32], r.line)
@@ -144,8 +91,6 @@ func (r utmpRec) bytes() []byte {
 	return b
 }
 
-// utmpDB is the bytes of a database holding `recs`: on Darwin, behind
-// the signature record getutxent(3) requires before it reads anything.
 func utmpDB(recs ...utmpRec) []byte {
 	var buf bytes.Buffer
 	if utmpDarwin {
@@ -157,17 +102,11 @@ func utmpDB(recs ...utmpRec) []byte {
 	return buf.Bytes()
 }
 
-// utmpFile writes a database of `recs` and answers its path.
 func utmpFile(t *testing.T, dir, name string, recs ...utmpRec) string {
 	t.Helper()
 	return utmpRaw(t, dir, name, utmpDB(recs...))
 }
 
-// utmpRaw writes bytes that need not be whole records — a truncated
-// database, or one that is not a database at all.
-//
-// On Darwin the name gains an `x`: utmpxname(3) refuses any other, and
-// GNU would read the live database instead of the fixture.
 func utmpRaw(t *testing.T, dir, name string, data []byte) string {
 	t.Helper()
 	if utmpDarwin {
@@ -180,22 +119,13 @@ func utmpRaw(t *testing.T, dir, name string, data []byte) string {
 	return p
 }
 
-// utmpWhen is the login time every fixture record carries unless it
-// wants another: 2021-03-04 05:06:07 UTC, which renders as `Mar  4
-// 05:06` and pins the month name, the space-padded day and the
-// hour:minute the corpus compares.
 const utmpWhen = 1614834367
 
-// utmpMixed is the database most cases read: every record type, two
-// users with three sessions between them, a host that is an address and
-// one that is a name, and one session with no host at all.
 func utmpMixed() []utmpRec {
 	return []utmpRec{
 		{typ: utBootTime, line: "~", id: "~~", user: "reboot", sec: utmpWhen - 10000},
 		{typ: utRunLvl, pid: 0x3553, line: "~", id: "~~", user: "runlevel", sec: utmpWhen - 9999},
 		{typ: utUserProcess, pid: 1001, line: "pts/0", id: "ts/0", user: "alice", host: "10.0.0.5", sec: utmpWhen},
-		// No host has /dev/ttyQ: who stats the line, and a real tty1's idle
-		// time can cross a minute between the two sides' runs.
 		{typ: utUserProcess, pid: 1002, line: "ttyQ", id: "ttyQ", user: "bob", sec: utmpWhen + 60},
 		{typ: utUserProcess, pid: 1003, line: "pts/1", id: "ts/1", user: "alice", host: "example.com", sec: utmpWhen + 120},
 		{typ: utLoginProcess, pid: 900, line: "tty2", id: "tty2", user: "LOGIN", sec: utmpWhen - 5000},
@@ -207,20 +137,9 @@ func utmpMixed() []utmpRec {
 	}
 }
 
-// TestUtmpRecordLayoutMatchesTheHost checks the layout above against the
-// host's own C library, which is what GNU was compiled against and
-// therefore the only authority. Writing the x86-64 layout on aarch64 made
-// GNU read the corpus at the wrong stride and cost 131 parity failures that
-// named everything except the cause; this says it in one line instead.
-//
-// Linux is asked for <utmp.h>'s size and ut_tv offset. Darwin's on-disk
-// record is a private Libc type, so there a fixture is read back through
-// getutxent(3) instead.
 func TestUtmpRecordLayoutMatchesTheHost(t *testing.T) {
 	cc, err := exec.LookPath("cc")
 	if err != nil {
-		// Not a silent pass: the corpus itself still fails loudly on a
-		// wrong stride, and this probe only makes that legible.
 		t.Skipf("no C compiler, so the host's C library cannot be consulted: %v", err)
 	}
 	if utmpDarwin {
@@ -250,9 +169,6 @@ int main(void){printf("%zu %zu\n", sizeof(struct utmp), offsetof(struct utmp, ut
 	}
 }
 
-// checkUtmpxRoundTrip writes a two-record fixture and has getutxent(3)
-// read it back, so every field the corpus writes is checked at the offset
-// Libc reads it from, along with the signature that gates the whole file.
 func checkUtmpxRoundTrip(t *testing.T, cc string) {
 	const probe = `#include <utmpx.h>
 #include <stdio.h>
@@ -280,7 +196,6 @@ int main(int argc, char **argv){
 	}
 }
 
-// runUtmpProbe compiles a C probe and answers what it prints.
 func runUtmpProbe(t *testing.T, cc, src string, args ...string) string {
 	t.Helper()
 	dir := t.TempDir()

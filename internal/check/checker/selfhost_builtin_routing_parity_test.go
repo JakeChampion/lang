@@ -11,26 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// TestSelfHostRoutesEveryNativeBuiltin asks the question the name gate
-// (TestSelfHostKnowsEveryNativeBuiltin) cannot: can the self-hosted compiler
-// LOWER each builtin native offers? A builtin whose name every list carries
-// but no lowering routes compiles through the checker and stops at the
-// self-host's bail site. `__sum_bytes` (#9127), `buf_new` and `window_size`
-// (#9124) each reached main that way, and the name gate passed on all three
-// (#9158, #9156).
-//
-// A builtin is routed when a self-host lowering source names it: semlower,
-// semsource and ssarc, the typed lowering, or constfold, which folds a call
-// (target_os, target_arch) to its value before lowering. ir.fern's op table
-// does not count, since an op nothing emits is the window_size shape. The
-// check is string lookups over committed sources, so it runs on every host,
-// including the ones where the e2e self-host legs skip.
-//
-// Comments are stripped first, so a note naming a builtin routes nothing. A
-// mention in code still counts even when it only guards an arity or fills a
-// shape table: deleting a builtin's emit arm while such a mention survives
-// passes this gate. It catches a builtin accounted for nowhere, and the e2e
-// self-host legs catch the rest.
 func TestSelfHostRoutesEveryNativeBuiltin(t *testing.T) {
 	prog, err := parser.Parse(`function main(): i32 { return 0; }`)
 	if err != nil {
@@ -76,16 +56,11 @@ func TestSelfHostRoutesEveryNativeBuiltin(t *testing.T) {
 	}
 }
 
-// nativeOnlyBuiltins is the builtins the self-host deliberately does not
-// lower, each with its reason. The test fails when a listed name becomes
-// routed, so the list only shrinks.
 var nativeOnlyBuiltins = map[string]string{
 	"__alloc_reuse": "native's Perceus reuse token, which only native's own reuse lowering emits",
 	"__rc_get":      "an rc inspection intrinsic native's rc tests call; no self-host lowering handles it",
 }
 
-// stripLineComments drops each `//` comment from Fern source, leaving string
-// and character literals, which may contain `//` or a quote, intact.
 func stripLineComments(src string) string {
 	var out strings.Builder
 	for _, line := range strings.Split(src, "\n") {
@@ -96,7 +71,6 @@ func stripLineComments(src string) string {
 			case inStr && line[i] == '\\':
 				i++
 			case !inStr && line[i] == '\'':
-				// A character literal, which may itself be `'"'`.
 				for i++; i < len(line) && line[i] != '\''; i++ {
 					if line[i] == '\\' {
 						i++

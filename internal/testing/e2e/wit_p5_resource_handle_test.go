@@ -12,25 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternResourceHandle is the P5 baseline gate (docs/WIT-BRING-YOUR-OWN.md):
-// a Fern program drives a WIT *resource* across the `@import` boundary with no
-// new compiler work — a resource handle is an opaque i32 at the canonical ABI,
-// so `subscribe-duration(d) -> own<pollable>` is `(i64)->i32` and
-// `[method]pollable.ready(borrow<pollable>) -> bool` is `(i32)->i32`, both
-// scalar shapes P4b already lowers and the composer already wires.
-//
-// It runs against REAL WASI — wasmtime is the host, so there's no
-// cross-component resource-handle bridging (which deprecated `wasm-tools
-// compose` doesn't do) and no composite result. A 0ns monotonic timer is
-// immediately ready, so `ready()` on its pollable returns true. The world is a
-// user-supplied one (P3, DecodeWorldBytes); since the vendored deps under
-// cmd/fern/wit are stripped to fern's own subset (poll has only `block`,
-// monotonic-clock only the type aliases), the test supplies the FULL standard
-// interfaces — what any WASI 0.2 host already implements.
-//
-// Handle ownership/borrow type-safety and automatic drop are the *language*
-// layer of P5; this establishes the runtime baseline. (The composer doesn't
-// wire [resource-drop] yet, so the pollable is intentionally leaked.)
 func TestExternResourceHandle(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -48,8 +29,6 @@ func TestExternResourceHandle(t *testing.T) {
 		}
 	}
 
-	// WIT dir: copy the vendored deps, then overwrite io/poll + monotonic-clock
-	// with their FULL standard interfaces (the vendored ones are stripped).
 	witDir := filepath.Join(dir, "wit")
 	if err := os.MkdirAll(witDir, 0o755); err != nil {
 		t.Fatalf("mkdir wit: %v", err)
@@ -78,12 +57,6 @@ func TestExternResourceHandle(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// A 0-nanosecond timer becomes ready essentially immediately: subscribe →
-	// own<pollable> (a handle), block(handle) to wait for the deadline, then
-	// ready(handle) → true. (wasmtime v46 no longer reports a 0ns-duration
-	// pollable as ready on the first ready() check without a preceding
-	// block()/poll, so block first for a version-robust check — this still
-	// exercises the resource-handle bridging, which is the point.)
 	const want = "poll-ok"
 	src := `@import("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration")
 function subscribe(ns: u64): i32;
@@ -128,15 +101,6 @@ function main(): i32 {
 	}
 }
 
-// TestExternResourceHandleTypes is the P5 *language-layer* gate
-// (docs/WIT-BRING-YOUR-OWN.md): the same 0ns-timer-pollable program as
-// TestExternResourceHandle, but written with the P5 handle vocabulary — a
-// `resource Pollable;` declaration and `own Pollable` / `borrow Pollable`
-// types instead of raw `i32`. It proves the new types are real (the checker
-// enforces own-vs-borrow + "no plain i32 where a handle is required") yet
-// erase to the i32 handle scalar before codegen, so the component still
-// validates and runs identically under real WASI. Handles are still leaked
-// (automatic drop is a later P5 slice).
 func TestExternResourceHandleTypes(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -154,8 +118,6 @@ func TestExternResourceHandleTypes(t *testing.T) {
 		}
 	}
 
-	// Same FULL standard WIT setup as TestExternResourceHandle (vendored deps
-	// are stripped to fern's subset, so supply the complete interfaces).
 	witDir := filepath.Join(dir, "wit")
 	if err := os.MkdirAll(witDir, 0o755); err != nil {
 		t.Fatalf("mkdir wit: %v", err)
@@ -184,9 +146,6 @@ func TestExternResourceHandleTypes(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// The P5 vocabulary: a `resource` declaration, `own Pollable` result, and
-	// `borrow Pollable` parameter. `p` is an owned handle lent (own → borrow)
-	// to ready().
 	const want = "poll-ok"
 	src := `@import("wasi:io/poll@0.2.0", "pollable")
 resource Pollable;
@@ -234,16 +193,6 @@ function main(): i32 {
 	}
 }
 
-// TestExternResourceHandleDrop is the P5 slice-2 gate (docs/WIT-BRING-YOUR-OWN.md):
-// the world-driven composer wires a WIT `[resource-drop]` import. The program
-// drops its pollable via an `@import("…","[resource-drop]pollable")` extern;
-// the composer surfaces `pollable` as a component-level type (an alias from the
-// poll instance) and emits a canon `resource.drop` referencing it — the
-// ComposeFromWorldAuto path gated by hasResourceDropPrefix. The resource is
-// released rather than leaked, validated + run under real WASI.
-//
-// The drop extern is the test vehicle for the composer change; automatic
-// compiler-inserted drop is slice 3.
 func TestExternResourceHandleDrop(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -340,12 +289,6 @@ function main(): i32 {
 	}
 }
 
-// TestExternResourceHandleAutoDrop is the P5 slice-3 main gate
-// (docs/WIT-BRING-YOUR-OWN.md): AUTOMATIC drop. The program declares NO drop
-// function — it just lets an owned `own Pollable` go out of scope. The compiler
-// inserts `defer <drop>(p);`, synthesizes the `[resource-drop]pollable` import,
-// and the world-driven composer (slice 2) wires the canon resource.drop, so the
-// pollable is released. The borrowed handle passed to ready() is not dropped.
 func TestExternResourceHandleAutoDrop(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -392,7 +335,6 @@ func TestExternResourceHandleAutoDrop(t *testing.T) {
 	}
 
 	const want = "poll-ok"
-	// No drop function — the handle is just declared and goes out of scope.
 	src := `@import("wasi:io/poll@0.2.0", "pollable")
 resource Pollable;
 
@@ -416,8 +358,6 @@ function main(): i32 {
 		t.Fatalf("write prog: %v", err)
 	}
 	core := e2eharness.SelfHostComponentCore(t, mainPath)
-	// The compiler must have synthesized the resource-drop import even though
-	// the program never names it.
 	if !bytes.Contains(core, []byte("[resource-drop]pollable")) {
 		t.Fatalf("core is missing the auto-inserted resource-drop import")
 	}

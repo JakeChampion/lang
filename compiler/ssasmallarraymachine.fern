@@ -1,11 +1,7 @@
-// Supplied-text small-array count-one effects under explicit memory permissions.
-// No public decoded/arithmetic record is accepted as an effect certificate.
 import "./ssacapacityisa" as isa;
 import "./ssacapacityvalue" as value;
 import "./ssacapacitymachine" as capacity;
 
-// Half kinds: invalid, numeric, original GPR, S+offset, outer return,
-// arbitrary original cell, P+offset, freelist base, old head, inner return.
 struct Half { kind: i32, identity: i32, part: i32, number: value.Value }
 
 struct Word { low: Half, high: Half }
@@ -93,7 +89,6 @@ function initial(r: value.Interval, register_entry: boolean): State {
   if (register_entry) {
     regs = regs.with(0, identity(6, 0));
   }
-  // Heap: low32 C=N-3, arbitrary capacity high32, RC=1, arbitrary metadata.
   cells = cells.append(numeric_half(value.add(r, value.original(r), -(3 as i64))));
   cells = cells.append(token(5, 1, 0)).append(numeric_half(value.number(r, 1 as i64))).append(token(5, 3, 0));
   i = 4;
@@ -145,8 +140,6 @@ function address(s: State, r: value.Interval, op: isa.Op): i32 {
   if (!same_word(w, identity(7, 0)) || op.scale != 8 || !extent(op.offset as i64, 0, 8, op.width)) {
     return -1;
   }
-  // Grant only this derived slot, after comparing the actual index with an
-  // independent rounded-N specification. All other freelist bytes stay opaque.
   let index = s.regs[op.index];
   return if (same_word(index, numeric(r, value.expected(r)))) { 18 + op.offset / 4 } else { -1 };
 }
@@ -242,7 +235,6 @@ function lea(s: State, r: value.Interval, op: isa.Op): State {
   }
   let w = s.regs[op.base];
   let at = w.low.identity as i64 + op.offset as i64;
-  // Only the admitted object's prefix or the admitted stack extent is used.
   if (pointer(w, 6) && at >= -(16 as i64) && at <= 0 as i64) {
     return write(s, op.destination, identity(6, at as i32));
   }
@@ -274,14 +266,10 @@ function test(s: State, r: value.Interval, op: isa.Op): State {
     return State { ...s, flags: unknown_flags() };
   }
   let cmp = value.compare(r, v, 0 as i64);
-  // TEST clears CF/OF. On this bounded nonnegative domain SF is zero.
   return State { ...s, flags: Flags { order: value.Comparison { less: 0, equal: cmp.equal, less_equal: cmp.equal }, signed: cmp, sign: 0 } };
 }
 
 function dependency_call(s: State, r: value.Interval, pc: i32, op: isa.Op): State {
-  // check() already proved this exact output's callee for arbitrary incoming
-  // GPR/return/scratch identities. Instantiate only after deriving the actual
-  // SP and argument. CALL pushes this instruction's real successor token.
   if (op.symbol != "__fern_capw" || s.call_return >= 0 || !same_word(s.regs[4], identity(3, -8)) || !same_word(read(s, r, 12, 64), numeric(r, value.original(r)))) {
     return State { ...s, ok: false };
   }
@@ -291,8 +279,6 @@ function dependency_call(s: State, r: value.Interval, pc: i32, op: isa.Op): Stat
   called = put(called, 6, 64, s.regs[1]);
   called = put(called, 4, 64, s.regs[2]);
   called = put(called, 12, 64, numeric(r, value.expected(r)));
-  // The established callee restores every incoming GPR and returns through
-  // this exact token. Its flags are not certified, so they become unknown.
   return State { ...called, call_return: next, flags: unknown_flags() };
 }
 
@@ -458,7 +444,6 @@ function finished(s: State, r: value.Interval, register_entry: boolean): boolean
     }
     i = i + 1;
   }
-  // Plain RET consumes the preserved original word at proven S, ending S+8.
   return true;
 }
 
@@ -466,12 +451,6 @@ function in_program(p: isa.ArrayProgram, pc: i32): boolean {
   return pc >= 0 && pc < p.ops.len();
 }
 
-// The `.u` entry is reached on the register path with the entry state, apart
-// from the flags of the floor test it skips and the scratch registers the
-// body may clobber, the argument excepted. Those go back to their entry
-// values and the flags are forgotten, so the rest of the walk is the walk
-// from `.u`, which the caller enters having tested the floor, and proves the
-// body for every value a prefix could leave in a scratch register.
 function unguarded(s: State, original: State, r: value.Interval): State {
   let regs = s.regs;
   let i = 0;
@@ -531,12 +510,6 @@ function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolean): 
   return false;
 }
 
-// Preconditions: canonical aligned disjoint P-16..P-1, S-40..S+15 and the
-// small freelist; P>=65536, RC=1, low32 capacity C in 0..65532. Outer return
-// and stack argument are readable; prefix, scratch and selected slot writable.
-// The .r argument is unconstrained. All unspecified bytes/registers remain
-// original. These permissions, metadata validity, freelist integrity, caller
-// credits and linked code identity are NOT established by this scoped API.
 pub function check(output: string): boolean {
   let p = isa.array_program(output);
   if (p.error != "" || p.register_entry < 0 || p.unguarded_entry < 0 || !capacity.check(output)) {
@@ -551,10 +524,6 @@ pub function check(output: string): boolean {
   return true;
 }
 
-// Same conditional permissions and exact effects, restricted to C=2/3 in a
-// complete native constructor output. N=C+3 is5/6, so these paths must return
-// without calling capw; finished independently enforces zero dependency calls.
-// No public decoded program or dependency-success flag is accepted.
 pub function check_native_record(output: string): boolean {
   let p = isa.native_array_program(output);
   if (p.error != "" || p.register_entry < 0 || p.unguarded_entry < 0) {

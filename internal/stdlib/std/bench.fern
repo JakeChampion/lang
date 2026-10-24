@@ -1,75 +1,16 @@
-// std/bench — the measurement harness: what a run cost in time, and what it
-// cost the allocator.
-//
-// `std/test`'s `bench` helpers answer "roughly how long, and did it regress" —
-// microsecond resolution, min/median/mean/max, one line of TAP. This answers
-// the questions an allocation-discipline experiment asks instead:
-//
-//   * TAIL latency, not just the middle. A steady state's p99.9 is the number
-//     that decides whether it is predictable; a mean hides exactly the pauses
-//     the discipline exists to remove.
-//   * ALLOCATION, per operation. `__heap_alloc_count()` counts the blocks the
-//     allocator handed out, recycled ones included, so "this steady state
-//     allocates nothing" is a measurement rather than a belief.
-//   * A "steady state starts now" MARK, so a test can assert that the count
-//     did not move after initialization — the property a `fip` data plane
-//     claims, stated as an assertion instead of a hope.
-//   * Machine-readable output, so a run's numbers can be diffed against
-//     another run's rather than read out of a terminal.
-//
-// The two allocation observables answer different questions and the report
-// carries both: `allocs` is how many times the allocator ran, and
-// `fresh_bytes` is how much memory it had to buy (docs/ALLOCATION-OBSERVABLE.md).
-// A loop that recycles is busy in the first and flat in the second; a loop
-// that leaks grows both. Neither is portable as an absolute number — how many
-// allocator calls a construct costs differs legitimately between backends —
-// so compare a run against another run of the same program on the same
-// target, or compare shapes.
-//
-// Usage:
-//
-//     import "std/bench";
-//
-//     let r: bench.Report = bench.run("parse", 3, 100, () => { parse(input); });
-//     print(r.to_json());
-//
-// and for the assertion half:
-//
-//     let a: i64 = bench.alloc_count();   // steady state starts now
-//     let b: i64 = bench.bump_bytes();
-//     drive(state, 1000000);
-//     if (!bench.no_allocs_after(a)) { return test.fail(bench.since(a, b).describe()); }
+// This module measures execution time and memory allocations.
+
 import "std/i32";
 import "std/i64";
 import "core/cmp";
 import "std/json";
 import "std/string";
 
-// ===================== THE ALLOCATION MARK =====================
-
-// A mark is "steady state starts now": everything the program did to set
-// itself up is behind it, and what follows is the part a zero-allocation
-// claim is about. It is a pair of SCALARS and never a struct.
-//
-// The reason is the one `since` states below, one level up: a struct literal
-// is a box, and a box is an allocation the reading would then report. Which
-// side of the reading that box lands on was unspecified until #9614 (AL-06,
-// docs/ALLOCATION-OBSERVABLE.md: the box comes after its operands), and
-// while it was, a snapshot taken THROUGH a struct reported its own box as
-// the body's under one compiler and not under the other: an empty body
-// under `run` reported 0 allocations built by one and 1 built by the other,
-// from a `Mark { allocs: __heap_alloc_count(), … }` and nothing else (#9611).
-//
-// A scalar has no such box, so the snapshot is exact everywhere.
-
-// A `Delta` is what the allocator did between a mark and now.
 pub struct Delta {
   allocs: i64,
   fresh_bytes: i64,
 }
 
-// `alloc_count()` / `bump_bytes()` — the two observables, snapshotted. Call
-// them at the boundary between initialization and steady state.
 pub function alloc_count(): i64 {
   return __heap_alloc_count();
 }
@@ -78,8 +19,6 @@ pub function bump_bytes(): i64 {
   return __heap_bump_bytes();
 }
 
-// `allocs_after(a)` / `fresh_bytes_after(b)` — what the allocator has done
-// since a snapshot, as scalars.
 pub function allocs_after(a: i64): i64 {
   return __heap_alloc_count() - a;
 }
@@ -88,33 +27,18 @@ pub function fresh_bytes_after(b: i64): i64 {
   return __heap_bump_bytes() - b;
 }
 
-// `no_allocs_after(a)` — the strict-mode assertion: the allocator has not run
-// once since the mark. This is the claim a `fip` steady state makes, and the
-// one `__heap_bump_bytes()` alone cannot check: a loop that allocates and
-// recycles buys no fresh bytes and still calls the allocator every round.
 pub function no_allocs_after(a: i64): boolean {
   return allocs_after(a) == 0 as i64;
 }
 
-// `since(a, b)` — both halves together, for a REPORT rather than an assertion.
-// It allocates its own result box, so a caller measuring a strict steady state
-// asks through the scalars above and reaches for this once the region is over.
 pub function since(a: i64, b: i64): Delta {
   return Delta { allocs: allocs_after(a), fresh_bytes: fresh_bytes_after(b) };
 }
 
-// `(d) describe()` — a one-line rendering for a failure message, naming both
-// halves because they fail differently: calls without bytes is recycling,
-// bytes without calls cannot happen, and both growing is a leak.
 pub function (d: Delta) describe(): string {
   return "allocs=" + d.allocs.to_string() + " fresh_bytes=" + d.fresh_bytes.to_string();
 }
 
-// ===================== THE REPORT =====================
-
-// A `Report` is one benchmark's result. `samples_ns` is kept sorted so the
-// percentile readers are an index rather than a scan, and kept at all so a
-// caller can compute a statistic this module does not offer.
 pub struct Report {
   name: string,
   iterations: i32,
@@ -124,28 +48,12 @@ pub struct Report {
   fresh_bytes: i64,
 }
 
-// `run(name, warmup, iterations, body)` — time `body` over `iterations` runs
-// after `warmup` untimed ones, and account for what the allocator did across
-// the measured region.
-//
-// The warm-up is not politeness: the first run of a body populates the
-// freelist, faults in the pages it touches and fills the branch predictors, so
-// including it puts a first-iteration outlier in the tail statistics that has
-// nothing to do with the steady state being measured. The allocation count is
-// taken AFTER the warm-up for the same reason — one-time setup an experiment
-// has deliberately hoisted out of its hot path should not be charged to it.
 pub function run(name: string, warmup: i32, iterations: i32, body: () => void): Report {
   let w: i32 = 0;
   while (w < warmup) {
     body();
     w = w + 1;
   }
-  // The sample buffer is built to its full length BEFORE the mark and
-  // written through `.with` inside the loop, which mutates in place while
-  // the array is uniquely owned. Appending instead would GROW it during the
-  // measured region, and the harness's own reallocation would be reported as
-  // the body's: the first run of this module measured 57 allocations for 50
-  // iterations of a body that makes one each.
   let samples: i64[] = [];
   let p: i32 = 0;
   while (p < iterations) {
@@ -175,11 +83,6 @@ pub function run(name: string, warmup: i32, iterations: i32, body: () => void): 
   };
 }
 
-// `percentile_ns(p_thousandths)` — the sample at the given percentile,
-// expressed in THOUSANDTHS of a percent so p99.9 is sayable: 500 = p50,
-// 999 = p99.9 of a per-mille scale. Nearest-rank, which is the definition
-// that always names a sample the run actually produced rather than
-// interpolating one it did not.
 pub function (r: Report) percentile_ns(per_mille: i32): i64 {
   let n: i32 = r.samples_ns.len();
   if (n == 0) {
@@ -219,9 +122,6 @@ pub function (r: Report) max_ns(): i64 {
   return r.percentile_ns(1000);
 }
 
-// `mean_ns()` — the arithmetic mean of the samples. Reported beside the
-// percentiles rather than instead of them: a mean and a p50 that disagree is
-// itself the finding, because it says the distribution has a tail.
 pub function (r: Report) mean_ns(): i64 {
   let n: i32 = r.samples_ns.len();
   if (n == 0) {
@@ -236,10 +136,6 @@ pub function (r: Report) mean_ns(): i64 {
   return sum / (n as i64);
 }
 
-// `ops_per_sec()` — throughput over the whole measured region, so the
-// per-iteration clock reads are counted against it rather than hidden.
-// Integer, because Fern's f64 formatting would put noise digits on a figure
-// whose input is a nanosecond counter.
 pub function (r: Report) ops_per_sec(): i64 {
   if (r.wall_ns <= 0 as i64) {
     return 0 as i64;
@@ -247,7 +143,6 @@ pub function (r: Report) ops_per_sec(): i64 {
   return r.iterations as i64 * 1000000000i64 / r.wall_ns;
 }
 
-// `ns_per_op()` — the mean cost of one iteration, wall time over iterations.
 pub function (r: Report) ns_per_op(): i64 {
   if (r.iterations <= 0) {
     return 0 as i64;
@@ -255,9 +150,6 @@ pub function (r: Report) ns_per_op(): i64 {
   return r.wall_ns / (r.iterations as i64);
 }
 
-// `allocs_per_op_milli()` — allocator calls per iteration in THOUSANDTHS, so
-// "one allocation every eight iterations" reads as 125 rather than rounding to
-// zero. A steady state that allocates nothing reports 0 exactly.
 pub function (r: Report) allocs_per_op_milli(): i64 {
   if (r.iterations <= 0) {
     return 0 as i64;
@@ -265,9 +157,6 @@ pub function (r: Report) allocs_per_op_milli(): i64 {
   return r.allocs * 1000i64 / (r.iterations as i64);
 }
 
-// `bytes_per_op_milli()` — the same scale for fresh bytes. Fresh, not live:
-// this is what the allocator had to buy, so a body that recycles perfectly
-// reports 0 however much memory it moves through.
 pub function (r: Report) bytes_per_op_milli(): i64 {
   if (r.iterations <= 0) {
     return 0 as i64;
@@ -275,12 +164,6 @@ pub function (r: Report) bytes_per_op_milli(): i64 {
   return r.fresh_bytes * 1000i64 / (r.iterations as i64);
 }
 
-// ===================== MACHINE-READABLE OUTPUT =====================
-
-// `to_json()` — one flat object per report, so a run's output is a stream of
-// them and a consumer needs no schema beyond the key names. Integers
-// throughout: every figure here is a count or a nanosecond, and a float would
-// only add a decimal point to defend.
 pub function (r: Report) to_json(): string {
   return "{\"name\":\"" + json.json_escape(r.name) + "\""
     + ",\"iterations\":" + r.iterations.to_string()
@@ -301,18 +184,12 @@ pub function (r: Report) to_json(): string {
     + "}";
 }
 
-// `csv_header()` — the column names `to_csv_row()` fills, in order. A free
-// function rather than a method so a caller can print the header before it has
-// a report to print.
 pub function csv_header(): string {
   return "name,iterations,wall_ns,ops_per_sec,ns_per_op,min_ns,p50_ns,p95_ns,"
     + "p99_ns,p999_ns,max_ns,mean_ns,allocs,allocs_per_op_milli,fresh_bytes,"
     + "bytes_per_op_milli";
 }
 
-// `to_csv_row()` — the same figures as `to_json()`, in `csv_header()`'s order.
-// The name is quoted and its quotes doubled, the CSV escape, so a benchmark
-// named with a comma cannot shift every later column.
 pub function (r: Report) to_csv_row(): string {
   return "\"" + r.name.replace("\"", "\"\"") + "\""
     + "," + r.iterations.to_string()
@@ -332,8 +209,6 @@ pub function (r: Report) to_csv_row(): string {
     + "," + r.bytes_per_op_milli().to_string();
 }
 
-// `(r) describe()` — the human line, for a run someone is watching. The
-// machine forms above are what a comparison should read.
 pub function (r: Report) describe(): string {
   return r.name + ": " + r.iterations.to_string() + " iters"
     + " " + r.ops_per_sec().to_string() + " ops/s"
@@ -344,17 +219,6 @@ pub function (r: Report) describe(): string {
     + " fresh_bytes=" + r.fresh_bytes.to_string();
 }
 
-// ===================== REPEATED RUNS =====================
-
-// One run of a benchmark is a sample of the machine, not of the program: a
-// shared box, a migrated thread or a neighbour's build moves a p50 by more
-// than most changes worth measuring do. `run_repeated` takes the whole
-// benchmark N times so the spread across runs is visible, and `summarize`
-// reduces them to the three figures that say whether a single run can be
-// trusted — best, median and worst.
-//
-// Each run warms up again, because a run that inherits the previous one's warm
-// caches is measuring a state a first run never sees.
 pub function run_repeated(name: string, warmup: i32, iterations: i32, runs: i32, body: () => void): Report[] {
   let out: Report[] = [];
   let r: i32 = 0;
@@ -365,10 +229,6 @@ pub function run_repeated(name: string, warmup: i32, iterations: i32, runs: i32,
   return out;
 }
 
-// A `Summary` is the spread across repeated runs of one benchmark. The
-// allocation figures are the per-run counts' extremes rather than their sum:
-// what matters is whether every run allocated the same amount, and a total
-// would hide one run that allocated when the others did not.
 pub struct Summary {
   name: string,
   runs: i32,
@@ -382,9 +242,6 @@ pub struct Summary {
   max_allocs: i64,
 }
 
-// `median_of(xs)` — the middle of a sorted copy, the upper of the two middles
-// on an even count. A helper rather than a method because the summary reduces
-// several different per-run figures the same way.
 function median_of(xs: i64[]): i64 {
   if (xs.len() == 0) {
     return 0 as i64;
@@ -393,10 +250,6 @@ function median_of(xs: i64[]): i64 {
   return sorted[sorted.len() / 2];
 }
 
-// `summarize(name, reports)` — reduce repeated runs to their spread. A best
-// and a worst that differ by a factor say the machine is noisy and the median
-// is the only figure worth quoting; a tight spread says a single run would
-// have done.
 pub function summarize(name: string, reports: Report[]): Summary {
   let throughputs: i64[] = [];
   let p50s: i64[] = [];
@@ -445,8 +298,6 @@ pub function summarize(name: string, reports: Report[]): Summary {
   };
 }
 
-// `(s) to_json()` — the summary as one flat object, same shape rule as
-// `Report.to_json()`.
 pub function (s: Summary) to_json(): string {
   return "{\"name\":\"" + json.json_escape(s.name) + "\""
     + ",\"runs\":" + s.runs.to_string()
@@ -461,10 +312,6 @@ pub function (s: Summary) to_json(): string {
     + "}";
 }
 
-// `(s) allocation_is_stable()` — every run allocated the same amount. An
-// experiment asserting a bounded steady state wants this true: a spread here
-// means the amount allocated depends on something the benchmark does not
-// control, which is the finding rather than the noise.
 pub function (s: Summary) allocation_is_stable(): boolean {
   return s.min_allocs == s.max_allocs;
 }

@@ -56,8 +56,6 @@ function boundaries(s: string, entry: string, lines: string[]): void {
   }
   let unknown = text.dependency(change(s, lines[0], "unknown_instruction"), entry);
   require(unknown.error == "" && unknown.lines[0] == "unknown_instruction");
-  // Selection must not certify an empty or truncated instruction stream.
-  // It preserves that stream for the subsequent semantic checker to refuse.
   let empty = text.dependency(".text\n" + entry + ":\n__next:\nret\n", entry);
   require(empty.error == "" && empty.lines.len() == 0);
 }

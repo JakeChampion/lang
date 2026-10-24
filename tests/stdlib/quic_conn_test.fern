@@ -13,12 +13,6 @@ import "std/i64";
 import "std/option";
 import "core/int";
 
-// tests/stdlib/quic_conn_test.fern — std/quic/conn: a client and a server
-// connection handshaking in memory on a virtual clock, then the ways that
-// goes wrong — a lost first flight, an untrusted certificate, no protocol
-// in common, a close, a Retry, an idle peer — and the anti-amplification
-// limit a server keeps before it knows the client's address.
-
 const ROOT: string = "3082011c3081cfa00302010202020201300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30243122302006035504030c194665726e20544c5320536572766572205465737420526f6f74302a300506032b6570032100d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300506032b65700341007353a91b5ad2e713d51d2fa08f3e800b99afa9e5725cfd746269d03210b1faadccfc942258bb8151da41be07943a4e8a14bd615e96692c8b896872460e827c0a";
 
 const ED_LEAF: string = "3082013e3081f1a00302010202020204300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b746c732e6578616d706c65302a300506032b6570032100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0a3533051300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301c0603551d1104153013820b746c732e6578616d706c658704c0000207300506032b6570034100bdd423797a497344c22bf704b418f31b7b6d0d884b517a57d1421c064fa68de8266518e0ddedfbdf189a71a2bb5bd2ffb7ca885f2a7f9ac0e96cb6d07d83e802";
@@ -29,8 +23,6 @@ const ED_PKCS8: string = "-----BEGIN PRIVATE KEY-----\n"
 
 const MS: i64 = 1000000;
 
-// The wall clock the client is started at, in Unix milliseconds: inside the
-// test chain's validity (2020-01-01 to 2100-01-01), and the bounds of it.
 const WALL_MS: i64 = 1700000000000;
 
 const NOT_BEFORE_MS: i64 = 1577836800000;
@@ -56,7 +48,6 @@ function client_config(name: string, alpn: string[]): conn.Config {
   return conn.config(alpn).client_side(name, verify.roots([hex.hex_decode(ROOT)]));
 }
 
-// entropy is `n` bytes counting up from `seed`.
 function entropy(seed: i32, n: i32): u8[] {
   let out: u8[] = [];
   let i: i32 = 0;
@@ -67,10 +58,6 @@ function entropy(seed: i32, n: i32): u8[] {
   return out;
 }
 
-// Pair — the two ends and the virtual clock, what happened to each as
-// text, and how many of the server's datagrams to lose before delivering.
-// Once `lose_every` is set, every that-many-th datagram either way is lost
-// too, and with `reorder` each end's datagrams arrive in reverse order.
 struct Pair { client: conn.Conn, server: Option[conn.Conn], now: i64, log: string, drop_server: i32, server_cfg: conn.Config, client_sent: i32, server_sent: i32, lose_every: i32, carried: i32, reorder: boolean }
 
 function start(cc: conn.Config, sc: conn.Config): Result[Pair, string] {
@@ -111,8 +98,6 @@ function noted(who: string, evs: conn.Event[]): string {
   return out;
 }
 
-// to_server delivers one datagram, making the server's connection from
-// the first.
 function to_server(p: Pair, d: u8[]): Pair {
   match (p.server) {
     Some(s) => {
@@ -144,8 +129,6 @@ function to_client(p: Pair, d: u8[]): Pair {
   return Pair { ...p, client: step.events_taken(), log: p.log + noted("client", step.events) };
 }
 
-// exchange sends what each end has, client first; answers the pair and
-// whether anything moved.
 function exchange(p: Pair): (Pair, boolean) {
   let c: conn.Conn = p.client.transmit(p.now);
   let out: u8[][] = c.datagrams();
@@ -181,7 +164,6 @@ function exchange(p: Pair): (Pair, boolean) {
   return (cur, moved);
 }
 
-// carried counts a datagram onto the wire and answers whether it is lost.
 function carried(p: Pair): (Pair, boolean) {
   let n: i32 = p.carried + 1;
   return (Pair { ...p, carried: n }, p.lose_every > 0 && n % p.lose_every == 0);
@@ -200,9 +182,6 @@ function in_order(p: Pair, out: u8[][]): u8[][] {
   return back;
 }
 
-// settle exchanges until neither end has anything to send, then moves the
-// clock to the earlier deadline, if it falls before `until`, and ticks
-// both; `rounds` times at most.
 function settle(p: Pair, rounds: i32, until: i64): Pair {
   let cur: Pair = p;
   let i: i32 = 0;
@@ -276,8 +255,6 @@ function test_handshake(): test.TestOutcome {
   }
 }
 
-// The client's first Initial is all the server has heard: it sends at most
-// three times its 1200 bytes until the client's address is validated.
 function test_amplification(): test.TestOutcome {
   match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
     Ok(p0) => {
@@ -301,9 +278,6 @@ function test_amplification(): test.TestOutcome {
   }
 }
 
-// The server's first datagram is lost. The client acknowledges the second,
-// and the server, finding the first unacknowledged after 9/8 of an RTT
-// (at least 1 ms), declares it lost by time threshold and resends it.
 function test_lost_datagram(): test.TestOutcome {
   match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
     Ok(p0) => {
@@ -316,9 +290,6 @@ function test_lost_datagram(): test.TestOutcome {
   }
 }
 
-// The server's whole first flight is lost. Nothing is acknowledged, so the
-// probe timeouts fire: three initial RTTs of 333 ms in, the client resends
-// its Initial and the server its flight.
 function test_lost_flight(): test.TestOutcome {
   match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
     Ok(p0) => {
@@ -343,9 +314,6 @@ function test_untrusted(): test.TestOutcome {
   }
 }
 
-// The server's chain is judged at the wall-clock time the client was given,
-// not the machine's: a second outside either bound it is refused, and a
-// second inside either bound it is accepted.
 function verdict_at(unix_ms: i64): string {
   match (start_at(client_config("tls.example", ["h3"]), server_config(["h3"]), unix_ms)) {
     Ok(p0) => {
@@ -363,7 +331,6 @@ function test_validity_window(): test.TestOutcome {
   return test.assert_eq(got, "false true true false");
 }
 
-// An expired chain closes the handshake the way an untrusted one does.
 function test_expired(): test.TestOutcome {
   match (start_at(client_config("tls.example", ["h3"]), server_config(["h3"]), NOT_AFTER_MS + 1000)) {
     Ok(p0) => {
@@ -388,8 +355,6 @@ function test_no_protocol(): test.TestOutcome {
   }
 }
 
-// A close reaches the peer, which drains; both are done three probe
-// timeouts later.
 function test_close(): test.TestOutcome {
   match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
     Ok(p0) => {
@@ -404,10 +369,6 @@ function test_close(): test.TestOutcome {
   }
 }
 
-// A Retry sends the client's next Initial to the new connection ID with the
-// token, under keys from that ID, and its packet numbers carry on: the
-// ClientHello took packets 0 and 1, so the next is 2 (RFC 9000 §17.2.5.3).
-// A Retry with a bad tag is ignored.
 function test_retry(): test.TestOutcome {
   let cc: conn.Config = client_config("tls.example", ["h3"]);
   match (start(cc, server_config(["h3"]))) {
@@ -451,7 +412,6 @@ function header_of(d: u8[]): packet.Header {
   }
 }
 
-// An idle connection closes itself once the idle timeout passes.
 function test_idle(): test.TestOutcome {
   match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
     Ok(p0) => {
@@ -466,12 +426,8 @@ function test_idle(): test.TestOutcome {
   }
 }
 
-// Echo — a client sending `size` bytes on its first stream, which the
-// server sends back as they arrive, and what the client has had back.
 struct Echo { p: Pair, size: i32, got: u8[], fin: boolean, server_done: boolean }
 
-// echo_round moves both ends once: the client writes, the server echoes
-// what it has read, the client reads, then the datagrams go.
 function echo_round(e: Echo, until: i64): Echo {
   let cur: Echo = e;
   if let Ok(c) = cur.p.client.read(0 as i64) {
@@ -504,8 +460,6 @@ function echoed(e: Echo, s: conn.Conn): Echo {
   return Echo { ...e, p: Pair { ...e.p, server: Some(w) }, server_done: fin };
 }
 
-// streamed opens the client's stream, writes `size` bytes and its end, and
-// runs rounds until the echo's end is back or `rounds` pass.
 function streamed(p0: Pair, size: i32, rounds: i32): Result[Echo, string] {
   let p: Pair = settle(p0, 12, 10000 * MS);
   let (c, id) = p.client.open_stream(false)?;
@@ -543,8 +497,6 @@ function stream_configs(): (conn.Config, conn.Config) {
   return (cc, sc);
 }
 
-// 20000 bytes each way through windows of 4000 per stream and 6000 for the
-// connection, so the windows open again many times over.
 function test_stream_echo(): test.TestOutcome {
   let (cc, sc) = stream_configs();
   match (start(cc, sc)) {
@@ -557,8 +509,6 @@ function test_stream_echo(): test.TestOutcome {
   }
 }
 
-// The same with every seventh datagram lost and each end's datagrams
-// arriving in reverse order: retransmission and reassembly put it right.
 function test_stream_echo_lossy(): test.TestOutcome {
   let (cc, sc) = stream_configs();
   match (start(cc, sc)) {
@@ -572,8 +522,6 @@ function test_stream_echo_lossy(): test.TestOutcome {
   }
 }
 
-// The bare stream steps say in `refused` why one did nothing, and clear it
-// when the next does what was asked; the Result forms report the same.
 function test_bare_refusals(): test.TestOutcome {
   let (cc, sc) = stream_configs();
   match (start(cc, sc)) {
@@ -613,8 +561,6 @@ function test_bare_refusals(): test.TestOutcome {
   }
 }
 
-// Without `with_streams` a server allows no streams: the client may not
-// open one.
 function test_no_streams(): test.TestOutcome {
   match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
     Ok(p0) => {
@@ -634,8 +580,6 @@ function test_no_streams(): test.TestOutcome {
   }
 }
 
-// An independent peer can rotate without calling any local API: the
-// next traffic secret and changed Key Phase bit are enough (§6.2).
 function peer_update(p: Pair, payload: u8[]): u8[] {
   let Some(k) = p.client.spaces[2].send else {
     return [];
@@ -698,7 +642,6 @@ function test_peer_key_update_stream(): test.TestOutcome {
   return test.assert_eq(hex.hex_encode(r.1) + " " + r.2.to_string(), "050c13 true");
 }
 
-// Build authenticated wire packets independently of Conn's update API.
 function phase_packet(p: Pair, pn: i64, generations: i32): u8[] {
   let Some(k) = p.client.spaces[2].send else {
     return [];
@@ -883,8 +826,6 @@ function test_key_encryption_limit(): test.TestOutcome {
   return test.assert_eq(close_code(closed).to_string() + " " + closed.key_sent.to_string() + " " + (last.len() > 0).to_string() + " " + extra.len().to_string() + " " + exhausted.key_sent.to_string() + " " + near.key_sent.to_string(), "15 8388608 true 0 8388608 8388607");
 }
 
-// A synthetic near-limit cache exercises the ChaCha failure counter, not
-// cipher negotiation. Independent peers separately negotiate every suite.
 function test_chacha_authentication_limit(): test.TestOutcome {
   let Ok(p) = key_pair() else {
     return test.fail("pair");

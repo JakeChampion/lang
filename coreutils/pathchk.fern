@@ -1,50 +1,3 @@
-// pathchk.fern — GNU-compatible `pathchk`.
-//
-//   NAME...           diagnose invalid or non-portable file names
-//   -p                check for most POSIX systems
-//   -P                check for empty names and leading "-"
-//   --portability     -p and -P together
-//
-// Three different checks wear one name, and which of them runs is the
-// whole utility:
-//
-//   - The DEFAULT asks the filesystem. `lstat(NAME)` is the entire
-//     test when it succeeds — a path that exists is by construction a
-//     path this system accepts — and its errno is the diagnostic when
-//     it fails with anything but ENOENT (`Not a directory`,
-//     `File name too long`). ENOENT is not a fault: pathchk asks
-//     whether a name COULD be created. Only then does the component
-//     walk below run, because only then has nothing answered.
-//   - `-p` never touches the filesystem at all. POSIX's minimums
-//     (_POSIX_NAME_MAX 14, _POSIX_PATH_MAX 256) and the portable
-//     filename character set, so that a name that passes is a name
-//     every conforming system accepts.
-//   - `-P` is the default's checks PLUS two rules about the SHAPE of
-//     the name — it must not be empty and no component may start with
-//     `-` — which are about the programs that will be handed it rather
-//     than about any filesystem.
-//
-// `-p -P` (`--portability`) is neither of the last two: `-p`'s refusal
-// to look at the filesystem wins, and `-P`'s two shape rules are added
-// to it.
-//
-// The precedence between the checks is measured, not derived, because
-// a name can fail several at once. In order: the empty name, then a
-// leading `-`, then a non-portable character ANYWHERE in the name,
-// then the whole name's length, then a component's. So `-p -P a%b/-c`
-// reports the `-c` its second component starts with rather than the
-// `%` that comes first in the string.
-//
-// The component walk is lazy in the same way GNU's is. Nothing shorter
-// than _POSIX_NAME_MAX can be refused by a conforming filesystem, so a
-// name whose components are all that short is accepted without a single
-// `statfs`; past that, each component is held to the `name_max` of the
-// directory that would contain it, queried per directory as the walk
-// descends and carried forward once the walk leaves the part of the
-// path that exists.
-//
-// Nothing was copied from GNU sources; every rule above was measured
-// against the reference binary.
 import "std/string";
 import "std/array";
 import "std/errno";
@@ -63,9 +16,6 @@ function help_text(): string {
   return out;
 }
 
-// _POSIX_NAME_MAX / _POSIX_PATH_MAX: the shortest limits a conforming
-// system may impose. A name is held to the second MINUS ONE, since the
-// limit counts the terminating NUL that a length does not.
 function posix_name_max(): i32 {
   return 14;
 }
@@ -74,8 +24,6 @@ function posix_path_max(): i32 {
   return 256;
 }
 
-// The POSIX portable filename character set, plus the separator: a
-// name built from these is one every conforming system can hold.
 function is_portable(b: i32): boolean {
   if (b >= 97 && b <= 122) {
     return true;
@@ -93,8 +41,6 @@ function is_slash(s: string, i: i32): boolean {
   return s[i] as i32 == 47;
 }
 
-// The start of the component after `i`, skipping the separator run, or
-// the length of `s` when nothing is left.
 function component_start(s: string, i: i32): i32 {
   let j: i32 = i;
   while (j < s.len() && is_slash(s, j)) {
@@ -103,7 +49,6 @@ function component_start(s: string, i: i32): i32 {
   return j;
 }
 
-// The end of the component beginning at `start`.
 function component_end(s: string, start: i32): i32 {
   let j: i32 = start;
   while (j < s.len() && !is_slash(s, j)) {
@@ -112,9 +57,6 @@ function component_end(s: string, start: i32): i32 {
   return j;
 }
 
-// `-P`: no component may begin with `-`, because a program handed the
-// name would read it as an option. The diagnostic names the whole file
-// name rather than the component that broke the rule.
 function check_leading_dash(name: string): boolean {
   let i: i32 = 0;
   while (i < name.len()) {
@@ -131,10 +73,6 @@ function check_leading_dash(name: string): boolean {
   return true;
 }
 
-// `-p`: the portable character set over the whole name, then POSIX's
-// two minimum lengths. The character scan runs first and over the
-// whole string, so the earliest offending BYTE is reported even when
-// an earlier component is the one that is too long.
 function check_posix_minimums(name: string): boolean {
   let i: i32 = 0;
   while (i < name.len()) {
@@ -166,9 +104,6 @@ function check_posix_minimums(name: string): boolean {
   return true;
 }
 
-// Whether any component is longer than the POSIX minimum. Nothing
-// shorter can be refused by a conforming filesystem, so a name that
-// answers false here needs no query at all.
 function has_long_component(name: string): boolean {
   let i: i32 = 0;
   while (i < name.len()) {
@@ -185,14 +120,6 @@ function has_long_component(name: string): boolean {
   return false;
 }
 
-// The component walk of the default and `-P` modes, reached only for a
-// name that does not exist: each component is held to the `name_max`
-// of the directory that would contain it. The directory is the text of
-// the name up to that component — `.` for the first component of a
-// relative name, the leading slashes for an absolute one. The first
-// query that fails ends the queries — that is where the path stops
-// existing — and the limit it last answered is carried the rest of the
-// way.
 function check_filesystem_lengths(name: string): boolean {
   if (!has_long_component(name)) {
     return true;
@@ -229,11 +156,6 @@ function check_filesystem_lengths(name: string): boolean {
   return true;
 }
 
-// The default and `-P` modes: the filesystem answers. An existing path
-// is valid by construction, ENOENT leaves the question to the walk
-// above, and every other errno is the diagnostic. The empty name is
-// the one path whose ENOENT IS reported, since there is no component
-// for the walk to hold to anything.
 function check_filesystem(name: string): boolean {
   match (lstat(name)) {
     Ok(_) => {
@@ -272,8 +194,6 @@ pub function main(): i32 {
   let argv: string[] = args();
   let opts: gnu.Opt[] = [gnu.flag("p", "", 1), gnu.flag("P", "", 2), gnu.flag("", "portability", 3)];
   let g: gnu.Getopt = gnu.getopt_new(argv, opts, "pathchk", help_text(), 1);
-  // The scan does not permute: `pathchk NAME -p` checks NAME in the
-  // default mode and then checks a file called `-p`.
   g = g.in_order();
   let posix: boolean = false;
   let shape: boolean = false;

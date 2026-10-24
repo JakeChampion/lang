@@ -10,8 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Exercise the imported DNS module through the actual UDP-to-TCP retry,
-// complementing the send-loop fault oracle that substitutes network calls.
 func TestSelfHostDnsTCPBytesExchange(t *testing.T) {
 	primary, stdlib := witSelfHostCLI(t)
 	bootstrap := buildLangBinForInterp(t)

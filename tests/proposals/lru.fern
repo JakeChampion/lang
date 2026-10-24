@@ -1,36 +1,7 @@
-// tests/proposals/lru.fern — proposal turn, drawn line 57:
-// "An LRU cache with a capacity bound and a hit/miss report."
-//
-// The cache is a recency-ordered array, most-recently-used first. A hit moves
-// its entry to the front; a put inserts at the front and drops the tail when
-// that would exceed the capacity. Arrays are immutable, so every operation
-// returns a new cache rather than mutating one — which makes the "same
-// sequence gives the same state" property below trivially checkable, since
-// there is no hidden state to diverge.
-//
-// The thing worth being careful about is that **most tests of an LRU cache
-// pass against a FIFO cache**. Capacity is respected by both. Hit and miss
-// counts agree on any sequence with no repeated reads. Eviction happens at the
-// right time in both. The single behaviour that separates them is that a READ
-// must promote — get the least-recently-used entry and it should survive the
-// next insertion, where a FIFO evicts it anyway because insertion order never
-// changed. So that gets its own test, written to fail against a FIFO, and the
-// randomised comparison below is run against an oracle that models recency
-// explicitly with timestamps rather than by reusing this file's ordering.
-//
-// The oracle is deliberately the slow, obvious implementation: it stamps every
-// touch with a clock and evicts the minimum by linear scan. It shares no code
-// with the cache, so agreement over a swept operation sequence is evidence
-// rather than a tautology.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from std/test.
-
 import "std/test";
 import "std/i32";
 import "std/string";
 
-// Byte-wise lexicographic compare. `>` is not defined on strings, and the
-// sorted key set below needs an order that does not depend on the cache's.
 function str_gt(a: string, b: string): boolean {
   let n: i32 = a.len();
   if (b.len() < n) {
@@ -50,9 +21,6 @@ function str_gt(a: string, b: string): boolean {
 
 struct Entry { key: string, val: i32 }
 
-// entries[0] is the most recently used. hits/misses count only get() calls —
-// a put is neither, which is the convention that makes hits + misses equal the
-// number of reads and so makes a hit RATE meaningful.
 struct Cache { entries: Entry[], cap: i32, hits: i32, misses: i32 }
 
 function cache_new(cap: i32): Cache {
@@ -70,7 +38,6 @@ function index_of_key(c: Cache, k: string): i32 {
   return -1;
 }
 
-// Rebuild with the entry at `at` moved to the front, order otherwise intact.
 function promote(es: Entry[], at: i32): Entry[] {
   let out: Entry[] = [es[at]];
   let i: i32 = 0;
@@ -83,8 +50,6 @@ function promote(es: Entry[], at: i32): Entry[] {
   return out;
 }
 
-// A hit promotes. That single line is the whole difference from a FIFO, and
-// the reason test_a_read_promotes exists.
 function get(c: Cache, k: string): (Cache, Option[i32]) {
   let at: i32 = index_of_key(c, k);
   if (at < 0) {
@@ -100,13 +65,6 @@ function get(c: Cache, k: string): (Cache, Option[i32]) {
   }, Some(v));
 }
 
-// Put of an existing key updates in place and promotes — it does not evict,
-// and it does not grow the cache. Put of a new key inserts at the front and
-// evicts the tail if that overflows.
-//
-// A non-positive capacity stores nothing at all rather than being treated as
-// unbounded: "cap 0" meaning "infinite" is the kind of default that turns a
-// bounded cache into a memory leak in production.
 function put(c: Cache, k: string, v: i32): Cache {
   if (c.cap <= 0) {
     return c;
@@ -122,7 +80,6 @@ function put(c: Cache, k: string, v: i32): Cache {
       i = i + 1;
     }
   } else {
-    // Trim from the tail until there is room for one more.
     let n: i32 = c.entries.len();
     let drop_from: i32 = c.cap - 1;
     let j: i32 = 0;
@@ -144,7 +101,6 @@ function contains(c: Cache, k: string): boolean {
   return index_of_key(c, k) >= 0;
 }
 
-// The recency order, front first — the state the oracle is compared against.
 function order(c: Cache): string {
   let out: string = "";
   let i: i32 = 0;
@@ -158,8 +114,6 @@ function order(c: Cache): string {
   return out;
 }
 
-// Hit rate in tenths of a percent, so the report carries a real number without
-// needing floats (which would drag in the wasm libm gap, #6404).
 function hit_rate_milli(c: Cache): i32 {
   let total: i32 = c.hits + c.misses;
   if (total == 0) {
@@ -168,10 +122,6 @@ function hit_rate_milli(c: Cache): i32 {
   return c.hits * 1000 / total;
 }
 
-// -------------------------------------------------------------- oracle
-
-// The slow, obvious model: a flat list plus a last-touched stamp per key.
-// Eviction scans for the minimum stamp. No shared code with the cache above.
 struct Model {
   keys: string[],
   vals: i32[],
@@ -226,8 +176,6 @@ function model_put(m: Model, k: string, v: i32): Model {
   let vals: i32[] = m.vals;
   let used: i32[] = m.used;
   if (keys.len() >= m.cap) {
-    // Evict the minimum stamp — the least recently used, by definition
-    // rather than by position.
     let lo: i32 = 0;
     let i: i32 = 1;
     while (i < used.len()) {
@@ -258,9 +206,6 @@ function model_put(m: Model, k: string, v: i32): Model {
   };
 }
 
-// The model's key set, sorted, so it can be compared against the cache's
-// without the two agreeing on order (they deliberately do not — the model
-// keeps insertion order and stamps recency separately).
 function model_keys_sorted(m: Model): string {
   let ks: string[] = [];
   let i: i32 = 0;
@@ -308,11 +253,6 @@ function cache_keys_sorted(c: Cache): string {
   return model_keys_sorted(m);
 }
 
-// --------------------------------------------------------------- tests
-
-// The essential one. A FIFO cache passes every other test in this file;
-// it fails this. Reading "a" makes it the most recent, so inserting "d" must
-// evict "b" — the oldest READ — not "a", the oldest INSERT.
 function test_a_read_promotes(): test.TestOutcome {
   let c: Cache = cache_new(3);
   c = put(c, "a", 1);
@@ -343,10 +283,6 @@ function test_a_read_promotes(): test.TestOutcome {
   return test.pass();
 }
 
-// A randomised sequence compared against the timestamp model. The generator is
-// a fixed LCG so a failure is reproducible, and the key space is small
-// relative to the capacity so evictions actually happen — a sweep over unique
-// keys would never exercise the interesting path.
 function test_matches_the_timestamp_model(): test.TestOutcome {
   let caps: i32[] = [1, 2, 3, 5, 8];
   let ci: i32 = 0;
@@ -397,8 +333,6 @@ function test_matches_the_timestamp_model(): test.TestOutcome {
   return test.pass();
 }
 
-// Every get is exactly one hit or one miss, and a put is neither. Without
-// that, a hit rate is not a rate of anything.
 function test_counters_account_for_every_read(): test.TestOutcome {
   let c: Cache = cache_new(2);
   let reads: i32 = 0;
@@ -422,7 +356,6 @@ function test_counters_account_for_every_read(): test.TestOutcome {
   if (c.hits < 0 || c.misses < 0) {
     return test.fail("a counter went negative");
   }
-  // Hit rate is derived from those counters, so it cannot exceed 1000.
   if (hit_rate_milli(c) > 1000) {
     return test.fail("hit rate " + hit_rate_milli(c).to_string() + " exceeds 1000");
   }
@@ -432,7 +365,6 @@ function test_counters_account_for_every_read(): test.TestOutcome {
   return test.pass();
 }
 
-// Re-putting a key updates it and promotes it, without changing the size.
 function test_put_of_an_existing_key_updates_and_promotes(): test.TestOutcome {
   let c: Cache = cache_new(3);
   c = put(c, "a", 1);
@@ -445,7 +377,6 @@ function test_put_of_an_existing_key_updates_and_promotes(): test.TestOutcome {
   if (order(c) != "a=99,c=3,b=2") {
     return test.fail("order after re-put is \"" + order(c) + "\", want \"a=99,c=3,b=2\"");
   }
-  // The update must be visible, and must not have counted as a read.
   let before: i32 = c.hits + c.misses;
   let (c2, got) = get(c, "a");
   match (got) {
@@ -468,14 +399,12 @@ function test_put_of_an_existing_key_updates_and_promotes(): test.TestOutcome {
 }
 
 function test_capacity_edges(): test.TestOutcome {
-  // cap 1: every new key evicts the previous one.
   let one: Cache = cache_new(1);
   one = put(one, "a", 1);
   one = put(one, "b", 2);
   if (one.entries.len() != 1 || !contains(one, "b") || contains(one, "a")) {
     return test.fail("cap 1 holds \"" + order(one) + "\"");
   }
-  // cap 0 stores nothing — and is NOT treated as unbounded.
   let zero: Cache = cache_new(0);
   zero = put(zero, "a", 1);
   zero = put(zero, "b", 2);
@@ -492,7 +421,6 @@ function test_capacity_edges(): test.TestOutcome {
   if (z2.misses != 1) {
     return test.fail("cap 0 did not count the read as a miss");
   }
-  // A negative capacity behaves as 0 rather than wrapping into something huge.
   let neg: Cache = put(cache_new(-3), "a", 1);
   if (neg.entries.len() != 0) {
     return test.fail("negative cap stored entries");
@@ -500,8 +428,6 @@ function test_capacity_edges(): test.TestOutcome {
   return test.pass();
 }
 
-// Same sequence, same state — there is no hidden mutable state to diverge,
-// and this is what says so.
 function test_the_same_sequence_gives_the_same_state(): test.TestOutcome {
   let a: Cache = cache_new(4);
   let b: Cache = cache_new(4);

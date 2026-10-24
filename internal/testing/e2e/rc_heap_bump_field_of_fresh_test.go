@@ -4,22 +4,6 @@ import (
 	"testing"
 )
 
-// Field-of-fresh reclamation (the FieldAccess sibling of index-of-fresh /
-// `.len()`). A scalar field access on a fresh struct/tuple result —
-// `mk(i).x` — loaded the field and left the box unreclaimed, leaking it
-// every iteration (struct 240000 -> 2400000 in a loop). The FieldAccess
-// lowering only saw declared-var targets; a fresh call / literal container
-// was orphaned.
-//
-// Fix: stash a fresh owned struct/tuple container (freshOwnedRcTempType — a
-// struct/tuple literal — or ownedCallResultType — a fresh-returning call),
-// load the field off the reload, then deep-drop the container via the
-// is_unique-gated emitOwnedSlotDrop (which also reclaims the container's OTHER
-// rc fields — we only extracted a scalar). Gated to a NON-POINTER field: the
-// loaded scalar can't alias the box; a pointer field (`mk().data` -> array)
-// WOULD alias and is left alone (safe leak). The is_unique gate protects an
-// aliased container (a callee returning its param, rc>=2 — only dec'd).
-
 func fieldOfFreshStructBump(n string) string {
 	return `struct P { x: i32, data: i32[] }
 function mk(v: i32): P { return P { x: v, data: [v, v + 1, v + 2] }; }
@@ -43,10 +27,6 @@ function main(): i32 {
 }`
 }
 
-// CRITICAL soundness: pass(s) returns its param (aliased; rc>=2 via the
-// return-transfer inc). Field-accessing it must only DEC (is_unique false),
-// never free, so `s` stays valid. pass(s).x==10, +s.y==20, ==30 per iter,
-// x200 == 6000.
 const fieldOfFreshAliasedSafe = `struct P { x: i32, y: i32 }
 @noinline function pass(p: P): P { return p; }
 function main(): i32 {
@@ -57,9 +37,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// Pointer-field container must NOT be reclaimed (the loaded array aliases the
-// box's field). Verifies value-correctness + 0-over-release on the safe-leak
-// path. mk(i).data[0]==i, sum i=0..199 == 19900.
 const fieldOfFreshPtrField = `struct P { x: i32, data: i32[] }
 function mk(v: i32): P { return P { x: v, data: [v, v + 1, v + 2] }; }
 function main(): i32 {

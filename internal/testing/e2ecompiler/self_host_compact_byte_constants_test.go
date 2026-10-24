@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// Asset size must affect payload bytes, not the number of AST/SSA/IR values.
-// The same driver checks the semantic boundary and the FIP allocation marker.
 func TestSelfHostPackedBytesGraph(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)

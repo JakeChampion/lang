@@ -2,11 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/time.Duration.to_string across backends:
-// the zero case, single and multi-unit durations, zero-unit skipping
-// (1h5s), millisecond rendering, negatives, and sub-millisecond rounding
-// to "0s". Returns 42 iff every check holds. Each leg skips itself when
-// its toolchain is absent.
 const durationToStringProg = `
 import "std/time" as time;
 function main(): i32 {

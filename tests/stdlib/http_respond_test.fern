@@ -9,10 +9,6 @@ import "std/platform";
 import "std/headers";
 import "std/time";
 
-// tests/stdlib/http_respond_test.fern — a handler that fails with `?`
-// (#9854): its helpers answer `Result[HttpResponse, http.HttpError]`, and
-// `http.respond` turns the failure into the RFC 9457 problem reply.
-
 function lookup(path: string): Result[string, http.HttpError] {
   if (path == "/items/1") {
     return Ok("first");
@@ -225,8 +221,6 @@ function test_respond_error_with_keeps_the_state(): test.TestOutcome {
   return test.assert_eq(m.call_count(), 1);
 }
 
-// A handler that fetches upstream, standing in for `plat.http` with the
-// failure it is handed.
 function proxied(failure: fetch.FetchError): Result[HttpResponse, fetch.FetchError] {
   let upstream: Result[string, fetch.FetchError] = Err(failure);
   let body: string = upstream?;
@@ -256,8 +250,6 @@ function test_fetch_bad_url_answers_502(): test.TestOutcome {
   return test.assert_status(http.respond(proxied(fetch.InvalidUrl("no scheme"))), 502);
 }
 
-// Background work rides on the response untouched until whoever sends it
-// runs it, each piece after the ones added before it.
 function test_produced_body_trailers(): test.TestOutcome {
   let parts: Cell[i32] = cell_new(0);
   let resp: HttpResponse = http.chunks_with_trailers(

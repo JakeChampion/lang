@@ -1,37 +1,3 @@
-// cksum.fern — GNU-compatible `cksum`: checksum and count bytes.
-//
-//   cksum [-a ALGORITHM] [--tag|--untagged] [--base64|--raw] [-z] [FILE]...
-//   cksum -c [-a ALGORITHM] [--ignore-missing] [--quiet|--status|-w]
-//            [--strict] [FILE]...
-//
-// Eleven algorithms behind one `-a`, and they fall into two groups that
-// share nothing but the option table:
-//
-//   - `crc` (the default, the POSIX cksum polynomial), `sysv` and `bsd`
-//     print a checksum, a count and the name, and that is the whole of
-//     them: there is no tag, no base64, no `-c`, and the NAME IS NOT
-//     ESCAPED — a newline in it reaches the output as a newline. They
-//     are `std/hash`.
-//   - the eight digests are `coreutils/lib/digest.fern`, the same
-//     program the seven `*sum` utilities are, so the tagged line, the
-//     name escaping, the check-line grammar, `-l` and every
-//     `--quiet` / `--status` / `--strict` rule come from there. What
-//     this file turns on in that module is the half of the grammar that
-//     is cksum's: a base64 digest read wherever a hex one is, the
-//     `-NNN` length taken on every algorithm rather than only on
-//     BLAKE2b, a three-byte minimum line, and — with no `-a` — each
-//     check line's TAG choosing the algorithm to verify it with.
-//
-// The tagged line is the default here and `--untagged` is the reversed
-// form the `*sum` utilities write, which is the opposite way round from
-// the seven — and `--tag` still implies binary mode, so `--tag
-// --untagged` writes the `*` that plain `--untagged` does not.
-//
-// `--debug` names GNU's chosen CRC implementation on stderr. A Fern
-// binary has one implementation and no runtime dispatch, so there is
-// nothing to name and it prints nothing; see docs/COREUTILS.md.
-//
-// Nothing here was copied from GNU sources.
 import "std/string";
 import "std/array";
 import "std/hash";
@@ -41,9 +7,6 @@ import "std/io_buffered";
 import "./lib/gnu";
 import "./lib/digest";
 
-// ---- the algorithm table --------------------------------------------------
-// `-a`'s names, in the order the `Valid arguments are:` list prints them.
-// The first three are not digests; `is_digest` is that split.
 function algo_names(): string[] {
   return ["bsd", "sysv", "crc", "crc32b", "md5", "sha1", "sha224", "sha256", "sha384", "sha512", "sha2", "sha3", "blake2b", "sm3"];
 }
@@ -64,9 +27,6 @@ function sel_crc32b(): i32 {
   return 3;
 }
 
-// `sha2` and `sha3` are FAMILIES rather than one digest each: neither
-// runs without `-l` naming 224, 256, 384 or 512, and `-l` is refused
-// for everything but these two and blake2b.
 function sel_sha2(): i32 {
   return 10;
 }
@@ -83,8 +43,6 @@ function is_digest(sel: i32): boolean {
   return sel > sel_crc32b();
 }
 
-// Whether `-l` names this algorithm's digest length rather than being a
-// fault.
 function takes_length(sel: i32): boolean {
   return sel == sel_blake2b() || sel == sel_sha2() || sel == sel_sha3();
 }
@@ -109,8 +67,6 @@ function digest_algo(sel: i32, bits: i32): digest.Algo {
     return digest.algo_sha512();
   }
   if (sel == sel_sha2()) {
-    // The tag `sha2` prints is the plain one for the length it was
-    // given, so `-a sha2 -l 256` is indistinguishable from `-a sha256`.
     if (bits == 224) {
       return digest.algo_sha224();
     }
@@ -131,8 +87,6 @@ function digest_algo(sel: i32, bits: i32): digest.Algo {
   return digest.algo_sm3();
 }
 
-// ---- the three that are not digests ---------------------------------------
-// `Plain` — the running state of `crc`, `sysv` and `bsd`.
 enum Plain { PCrc(hash.Cksum), PCrc32(hash.Crc32), PBsd(hash.BsdSum), PSysv(hash.SysvSum) }
 
 function plain_new(sel: i32): Plain {
@@ -165,8 +119,6 @@ function plain_update(p: Plain, chunk: u8[]): Plain {
   }
 }
 
-// The two numbers each of the three prints: the checksum, and the count
-// beside it — cksum's is the byte length, sum's are block counts.
 function plain_value(p: Plain): u32 {
   match (p) {
     PCrc(c) => {
@@ -201,8 +153,6 @@ function plain_count(p: Plain): u64 {
   }
 }
 
-// `plain_fields(sel, p)` — the part of the line before the name. bsd's
-// two fields are `%05u %5u`, which is what `sum -r` prints.
 function plain_fields(sel: i32, p: Plain): string {
   let v: u32 = plain_value(p);
   let n: u64 = plain_count(p);
@@ -222,8 +172,6 @@ function pad_left(s: string, width: i32, fill: string): string {
   return out + s;
 }
 
-// `plain_raw(sel, p)` — `--raw`: the checksum big-endian, four bytes for
-// the CRC and two for the two 16-bit sums.
 function plain_raw(sel: i32, p: Plain): u8[] {
   let v: u32 = plain_value(p);
   let out: u8[] = [];
@@ -236,10 +184,6 @@ function plain_raw(sel: i32, p: Plain): u8[] {
   return out;
 }
 
-// ---- one input ------------------------------------------------------------
-// `PlainSum` — one operand's answer from one of the three: the fields a
-// line carries, the raw bytes `--raw` writes, or the error that stopped
-// it. The digests have `digest.Sum` for the same job.
 struct PlainSum { fields: string, raw: u8[], err: Option[IoError], failed: boolean }
 
 function plain_reader(r: Reader, sel: i32, owned: boolean): PlainSum {
@@ -291,11 +235,6 @@ function plain_error_text(c: PlainSum): string {
   }
 }
 
-// ---- settings -------------------------------------------------------------
-// `Conf` — cksum's own state around the settings `lib/digest.fern`
-// shares. `specified` is whether `-a` was named at all, which is the
-// whole of check mode's algorithm rule; `named_bits` is whether `-l`
-// named a non-zero length, because `-l 0` is `-l` unset.
 struct Conf { s: digest.Settings, sel: i32, specified: boolean, bits: i32, named_bits: boolean, bits_text: string, raw: boolean, b64: boolean, tag_given: boolean }
 
 function opt_length(): i32 {
@@ -362,10 +301,6 @@ function opt_text(): i32 {
   return 16;
 }
 
-// The option table in GNU's declaration order, which the ambiguity list
-// prints candidates in: `--t` names `'--tag'` before `'--text'`, and
-// `--=x` names all sixteen in the order below. `--binary` and `--text`
-// are not in the help text and are options all the same.
 function options(): gnu.Opt[] {
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("l", "length", opt_length()));
@@ -437,8 +372,6 @@ function apply(c: Conf, m: gnu.OptMatch): Conf {
   return Conf { ...c, s: digest.Settings { ...c.s, strict: true } };
 }
 
-// The tag the two FAMILIES carry in a length complaint, which is the
-// selector's own name upper-cased rather than the digest's.
 function family_tag(sel: i32): string {
   if (sel == sel_sha2()) {
     return "SHA2";
@@ -446,18 +379,12 @@ function family_tag(sel: i32): string {
   return "SHA3";
 }
 
-// The combinations GNU refuses, in the order it tests them — `--raw
-// --base64 -t` reports the mutual exclusion and `--raw -t` the text one,
-// so the sequence is observable rather than a choice. The first two and
-// the last carry no `Try …` line; the rest do.
 function validate(c: Conf, operands: i32): void {
   if (c.named_bits && !takes_length(c.sel)) {
     gnu.error("--length is only supported with --algorithm blake2b, sha2, or sha3");
     exit(1);
   }
   if (c.sel == sel_sha2() || c.sel == sel_sha3()) {
-    // Neither family has a default length, so one has to be named —
-    // except under `--check`, where each line's tag carries it.
     if (c.bits == 0 && c.bits_text.len() == 0 && !c.s.check) {
       gnu.error("--algorithm=" + algo_names()[c.sel] + " requires specifying --length 224, 256, 384, or 512");
       exit(1);
@@ -481,8 +408,6 @@ function validate(c: Conf, operands: i32): void {
     gnu.die_usage("the --zero option is not supported when verifying checksums", 1);
   }
   if (c.tag_given && c.s.check) {
-    // `--untagged` is allowed with `--check`, so this asks whether the
-    // option was TYPED rather than what the default left behind.
     gnu.die_usage("the --tag option is meaningless when verifying checksums", 1);
   }
   if (c.s.binary >= 0 && c.s.check) {
@@ -505,9 +430,6 @@ function validate(c: Conf, operands: i32): void {
       gnu.die_usage("the --strict option is meaningful only when verifying checksums", 1);
     }
   }
-  // Last, so `--tag -t -c` reports the check conflicts first. A tagged
-  // line has nowhere to put the mode character, which is why the pair
-  // is refused rather than one of them ignored.
   if (c.s.tag && c.s.binary == 0) {
     gnu.die_usage("--text mode is only supported with --untagged", 1);
   }
@@ -565,8 +487,6 @@ function help_text(): string {
   return out;
 }
 
-// ---- writing --------------------------------------------------------------
-// `digest_text(c, bin)` — the digest as the line carries it.
 function digest_text(c: Conf, bin: u8[]): string {
   if (c.b64) {
     return base64.base64_encode(bin);
@@ -581,9 +501,6 @@ function delim(c: Conf): string {
   return "\n";
 }
 
-// `plain_line(c, sel, fields, name, named)` — the line the three
-// non-digest algorithms write. The name is appended verbatim: only the
-// digests escape one.
 function plain_line(c: Conf, fields: string, name: string, named: boolean): string {
   if (!named) {
     return fields + delim(c);
@@ -591,7 +508,6 @@ function plain_line(c: Conf, fields: string, name: string, named: boolean): stri
   return fields + " " + name + delim(c);
 }
 
-// One operand summed and printed.
 function compute_one(c: Conf, name: string, named: boolean, o: io_buffered.BufWriter): (boolean, io_buffered.BufWriter) {
   let out: io_buffered.BufWriter = o;
   if (is_digest(c.sel)) {
@@ -621,8 +537,6 @@ function compute(c: Conf, names: string[], named: boolean, o: io_buffered.BufWri
   let i: i32 = 0;
   while (i < names.len()) {
     let r: (boolean, io_buffered.BufWriter) = compute_one(c, names[i], named, out);
-    // Line buffering, as GNU sets stdout to be: a failure is named on
-    // the line that met it rather than at the close.
     out = gnu.flush(r.1);
     if (!r.0) {
       ok = false;
@@ -635,9 +549,6 @@ function compute(c: Conf, names: string[], named: boolean, o: io_buffered.BufWri
 function verify(c: Conf, names: string[], o: io_buffered.BufWriter): (boolean, io_buffered.BufWriter) {
   let a: digest.Algo = digest.algo_crc();
   if (c.specified) {
-    // `-a sha2` stays the family name when checking: each line's own tag
-    // picks the member, whatever `-l` said. Computing has no line to
-    // read, so there `-l` is the only thing that can pick one.
     if (c.sel == sel_sha2()) {
       a = digest.algo_sha2();
     } else {
@@ -679,18 +590,12 @@ pub function main(): i32 {
   let names: string[] = g.operands();
   let named: boolean = names.len() > 0;
   validate(c, names.len());
-  // Neither `-b` nor `-t` given is TEXT mode, which is the separator an
-  // untagged line carries; `--tag` no longer decides it, so
-  // `--tag --untagged` prints the two-space form.
   if (c.s.binary < 0) {
     c = Conf { ...c, s: digest.Settings { ...c.s, binary: 0 } };
   }
   if (!named) {
     names = ["-"];
   }
-  // The digest length the output carries: `-l` when it named one, and
-  // the algorithm's own otherwise. `detect` is check mode with no `-a`,
-  // where each line's tag chooses.
   let bits: i32 = 0;
   if (is_digest(c.sel)) {
     bits = digest_algo(c.sel, c.bits).bits;

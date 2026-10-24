@@ -9,8 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// runShake parses, type-checks, then runs the treeshaker.
-// Returns the surviving function names in declaration order.
 func runShake(t *testing.T, src string, extras ...string) []string {
 	t.Helper()
 	prog, err := parser.Parse(src)
@@ -29,7 +27,6 @@ func runShake(t *testing.T, src string, extras ...string) []string {
 	return names
 }
 
-// hasName reports whether names contains s.
 func hasName(names []string, s string) bool {
 	for _, n := range names {
 		if n == s {
@@ -39,8 +36,6 @@ func hasName(names []string, s string) bool {
 	return false
 }
 
-// TestShakeDropsUnreferencedFunction — a function not reached
-// from main (or any other entry point) goes away.
 func TestShakeDropsUnreferencedFunction(t *testing.T) {
 	src := `function unused(): i32 { return 1; }
 function main(): i32 { return 0; }`
@@ -53,8 +48,6 @@ function main(): i32 { return 0; }`
 	}
 }
 
-// TestShakeKeepsCalledFunctions — chained calls keep every
-// transitive callee alive.
 func TestShakeKeepsCalledFunctions(t *testing.T) {
 	src := `function leaf(): i32 { return 7; }
 function middle(): i32 { return leaf(); }
@@ -67,10 +60,6 @@ function main(): i32 { return middle(); }`
 	}
 }
 
-// TestShakeKeepsFunctionAddressed — when a function is taken
-// by value (assigned to a var, passed as an arg) rather than
-// directly called, the Ident reference in the body keeps it
-// alive.
 func TestShakeKeepsFunctionAddressed(t *testing.T) {
 	src := `function helper(x: i32): i32 { return x + 1; }
 function main(): i32 {
@@ -83,9 +72,6 @@ function main(): i32 {
 	}
 }
 
-// TestShakeHonoursExtras — names passed in `extras` are kept
-// alive even with no AST reference. Used by codegen wrappers
-// that emit calls outside the AST.
 func TestShakeHonoursExtras(t *testing.T) {
 	src := `function survives(): i32 { return 1; }
 function main(): i32 { return 0; }`
@@ -95,8 +81,6 @@ function main(): i32 { return 0; }`
 	}
 }
 
-// TestShakeIsIdempotent — running twice produces the same
-// result as running once.
 func TestShakeIsIdempotent(t *testing.T) {
 	src := `function unused(): i32 { return 1; }
 function used(): i32 { return 7; }
@@ -129,10 +113,6 @@ function main(): i32 { return used(); }`
 	}
 }
 
-// TestShakeNoOpOnEmptyProgram — guard against an obvious
-// panic shape; treeshake should accept a program with no
-// funcs (paranoid; the rest of the pipeline rejects it
-// upstream, but tree-shake is the last fail-safe).
 func TestShakeNoOpOnEmptyProgram(t *testing.T) {
 	prog := &ast.Program{}
 	treeshake.Run(prog, nil)
@@ -141,13 +121,6 @@ func TestShakeNoOpOnEmptyProgram(t *testing.T) {
 	}
 }
 
-// TestShakeWalksLambdaBody — anonymous `(...) => { ... }`
-// expressions live inline at treeshake time (closureconv hoists
-// them later, after treeshake runs). Without a Lambda case in
-// walkExpr, any top-level function referenced only from inside
-// a lambda body — most commonly a mangled method name like
-// `__method_string_trim` — got pruned, and link fired
-// "undefined reference to __method_string_trim".
 func TestShakeWalksLambdaBody(t *testing.T) {
 	src := `function helper(): i32 { return 7; }
 function main(): i32 {
@@ -160,11 +133,6 @@ function main(): i32 {
 	}
 }
 
-// TestShakeKeepsStructUpdateBaseCall — a call reachable ONLY through the spread
-// source of a struct-update literal (`S { ...mk(), … }`) is a real reference.
-// The walk used to descend into the field values but not the base, so `mk` was
-// pruned while the emitted literal still called it — the native assembler then
-// failed with an undefined label.
 func TestShakeKeepsStructUpdateBaseCall(t *testing.T) {
 	src := `struct S { a: i32, b: i32 }
 function mk(): S { return S { a: 1, b: 2 }; }
@@ -175,11 +143,6 @@ function main(): i32 { let s: S = S { ...mk(), b: 40 }; return s.a + s.b; }`
 	}
 }
 
-// A `dyn Trait` coercion roots the impl methods its vtable points at, so
-// they survive even though no call site names them. The root has to be
-// gated on the COERCION SITE being reachable: rooting every coercion the
-// checker recorded — dead ones included — drags the impl method, and
-// everything it calls, into a program that can never run it (#4114).
 func TestShakeDropsImplMethodBehindDeadCoercion(t *testing.T) {
 	src := `trait Greet { function hello(self: Self): i32; }
 struct Loud { n: i32 }
@@ -201,9 +164,6 @@ function main(): i32 { return 0; }`
 	}
 }
 
-// The gating must not cull a LIVE coercion's impl method: nothing in the
-// AST calls `__method_Loud_hello`, only the vtable cell names it, so
-// culling it leaves the cell pointing at a dropped symbol (link failure).
 func TestShakeKeepsImplMethodBehindLiveCoercion(t *testing.T) {
 	src := `trait Greet { function hello(self: Self): i32; }
 struct Loud { n: i32 }
@@ -221,9 +181,6 @@ function main(): i32 {
 	}
 }
 
-// Same gating for the `e as? T` downcast vtable: a downcast-only target
-// (never coerced) is rooted by the downcast site, and only when that site
-// is reachable.
 func TestShakeDowncastRootsFollowReachability(t *testing.T) {
 	tail := `
 struct Quiet { n: i32 }

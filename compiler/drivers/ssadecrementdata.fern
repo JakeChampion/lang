@@ -45,14 +45,10 @@ function aliases(s: string): void {
 }
 
 function static_aggregates(s: string): void {
-  // emit_const_agg_blocks places the immortal header before a bare data
-  // label. Both its signed header and its bare label are outside scope, even
-  // though the separately declared underflow counter is unchanged.
   let bare = ".data\n.quad 2\n.quad -1\n.Kscope:\n.quad 1\n.quad 0\n";
   let combined = bare + s;
   require(text.select(combined, "__fn___fern_arr_dec").error != "");
   check(combined, false);
-  // Isolate the independent bare-label restriction with unsigned data.
   let unsigned = change(combined, ".quad -1", ".quad 1");
   require(text.select(unsigned, "__fn___fern_arr_dec").error == "");
   check(unsigned, false);

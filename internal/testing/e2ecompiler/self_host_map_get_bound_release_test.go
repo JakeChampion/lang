@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// An Option bound from a builtin `m.get(k)` and consumed by one match gives
-// its box back after that match, as the direct `match (m.get(k))` form does
-// (#10195, and the hoisted half of #10083 on wasm), whatever the map's value
-// type (#10306).
 var mapGetBoundCases = []struct {
 	name string
 	src  string
@@ -71,9 +67,6 @@ function main(): i32 {
     return n;
 }
 `, 60},
-	// An array-valued map's `get` hands back an Option box of its own; the
-	// binding used to be retained as if it were the array, so the box-only
-	// release left it at rc 1 (#10306).
 	{"array_value", `import "core/map";
 function main(): i32 {
     let m: Map[string, i32[]] = map_new(8);

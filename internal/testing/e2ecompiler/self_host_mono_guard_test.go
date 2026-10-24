@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// A match arm's guard is walked by the monomorphisers like its body. Two of
-// them skipped it, so a bounded generic call in a guard kept the generic's
-// name ("call target has no semantic contract") and a generic struct literal
-// kept its unmangled type. Found by fernsmith's trait productions (printable
-// seed 386).
 var monoGuardCases = []struct {
 	name, src, want string
 }{

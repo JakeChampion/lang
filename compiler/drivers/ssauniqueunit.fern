@@ -18,8 +18,6 @@ pub function run(out: ssaprepare.Output, aligned: boolean): void {
     return;
   }
   check("\n" + out.text + "\n", row, true);
-  // Retained assembly stays correct in every negative control: the proof
-  // must inspect the supplied final output instead of rescuing it from row.
   check(row.assembly, row, false);
   check(".data\n" + out.text, row, false);
   check(".intel_syntax noprefix\n" + out.text, row, false);
@@ -28,7 +26,6 @@ pub function run(out: ssaprepare.Output, aligned: boolean): void {
   check(out.text + row.assembly, row, false);
   check(out.text + ".Lunreachable:\ncall opaque\n", row, false);
   check(out.text + ".section .data\n.byte 0\n", row, false);
-  // x86 has no relocation anchor: a fresh inert label is valid there.
   check(out.text + ".Lfern_relanchor:\n", row, row.context.architecture == "x86-64");
   check(out.text + ".Lssa_" + row.body.formed.f.name + "_" + row.body.formed.f.entry.to_string() + ":\n", row, false);
   let parts = out.text.split("    ret\n");

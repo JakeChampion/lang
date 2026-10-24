@@ -2,18 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// `a = Acc { ...a, buf: a.buf + piece }` grows the field's buffer in place
-// when the record and the buffer are each sole-held, so 2000 two-byte appends
-// allocate at size-class steps rather than once per append (#8785's shape).
-// The gate is the RECORD's count: `shared` gets its record back from a
-// counted-return call, so the box reads rc 2 while only that box holds the
-// buffer, and growing on the buffer's count alone would rewrite the string the
-// caller still reads. `held` is the converse, a unique box over a shared
-// buffer, where the runtime's own test on the buffer declines. `al` is a
-// second name the plan sees and refuses statically, `d` reads the field again
-// on the right, and `lent` appends through a record it was lent, which no
-// caller brackets, so its caller's string must stay whole. The 19-byte
-// strings grow by one inside their size class on every target.
 const stringFieldAppendSrc = `struct B { buf: string, n: i32 }
 
 function heap(s: string): string { return s + ""; }
@@ -85,9 +73,6 @@ func TestSelfHostStringFieldAppendInPlace(t *testing.T) {
 	}
 }
 
-// The same program under the leak census: the grows must not cost a block
-// per append, and nulling the grown field must leave nothing released twice
-// or kept.
 func TestSelfHostStringFieldAppendCensus(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {

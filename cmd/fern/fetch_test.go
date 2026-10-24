@@ -16,9 +16,6 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/modload"
 )
 
-// `fern -fetch` end-to-end: an app declares a url+hash dependency, fetch
-// downloads + verifies + unpacks it into the store, and a subsequent
-// LOAD (which itself never fetches) resolves the import from the store.
 func TestRunFetchThenLoad(t *testing.T) {
 	t.Setenv("FERN_CACHE_DIR", t.TempDir())
 
@@ -59,7 +56,6 @@ func TestRunFetchThenLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Load before fetch: must error pointing at -fetch, not download.
 	if _, _, err := modload.Load(filepath.Join(app, "main.fern")); err == nil || !strings.Contains(err.Error(), "-fetch") {
 		t.Fatalf("pre-fetch load should point at `fern -fetch`, got %v", err)
 	}

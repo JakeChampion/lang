@@ -7,21 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostAsyncCombinatorsModloadIRX86_64 is slice 6b of
-// docs/ASYNC-SELFHOST-IR.md: race and with_deadline join gather (slice 6) on the
-// self-host MODLOAD IR path. The blocker was monomorphization type-inference:
-// with_deadline(ms: i32, fs: Future[T][]) -> Option[T][] has NO bare-T param, so
-// T is recoverable ONLY from the generic-enum argument fs. flatten left a
-// same-module bare enum-type reference UNMANGLED (`Future[T][]`) while a
-// cross-module qualified use mangled (`async__Future[i32][]`), so bind_unify
-// compared mismatched bases and never bound T — the call stayed generic and the
-// program bailed to AST. (gather/race escaped because their on_incomplete /
-// none_val params are a bare T that binds from a scalar arg.) Slice 6b adds enum
-// names to flatten's collect_decl_names so the enum type mangles consistently.
-//
-// Each combinator program compiles via the asm_load_run modload driver, must
-// route the IR path (-decide == "ir"), and must match the interpreter oracle.
-// The configured runner executes the file-loading driver and output binary.
 func TestSelfHostAsyncCombinatorsModloadIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -37,7 +22,6 @@ func TestSelfHostAsyncCombinatorsModloadIRX86_64(t *testing.T) {
 		name string
 		prog string
 	}{
-		// race: first ready wins (index 0, value 40) -> (0, 40) -> 0 + 40 = 40.
 		{"race", `import "std/async";
 function main(): i32 {
     let fs: async.Future[i32][] = [Ready(40), Ready(2)];
@@ -45,7 +29,6 @@ function main(): i32 {
     return r.0 + r.1;
 }
 `},
-		// with_deadline: a ready future returns Some(7) within the deadline -> 7.
 		{"with_deadline", `import "std/async";
 import "std/time";
 function main(): i32 {

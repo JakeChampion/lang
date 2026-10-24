@@ -9,19 +9,10 @@ func init() {
 	registerCorpus("base32", base32Cases)
 }
 
-// base32Cases is base32(1)'s corpus.
-//
-// The half worth having beside base64's is the padding arithmetic, which
-// is where the two differ: a base32 group carries 2, 4, 5, 7 or 8 data
-// characters and nothing else, so `AAAAAA==` is six of them and fails
-// after writing three bytes. Its SHORT final group also writes nothing,
-// where base64's writes the bytes it holds — `MZXW6` is silent and
-// `aGVsbG8` is not.
 func base32Cases(t *testing.T) []invocation {
 	f := baseFixtureFor(t)
 
 	cases := []invocation{
-		// Encoding, one case per residue.
 		{name: "empty", stdin: ""},
 		{name: "one byte", stdin: "f"},
 		{name: "two bytes", stdin: "fo"},
@@ -37,8 +28,6 @@ func base32Cases(t *testing.T) []invocation {
 		{name: "one byte past a block", args: []string{f.over}},
 		{name: "empty file", args: []string{f.empty}},
 
-		// Decoding: the five data-character counts a group may carry,
-		// and the three it may not.
 		{name: "decode", args: []string{"-d"}, stdin: "MZXW6YTB"},
 		{name: "decode empty", args: []string{"-d"}, stdin: ""},
 		{name: "decode two data characters", args: []string{"-d"}, stdin: "MZ======"},
@@ -55,7 +44,6 @@ func base32Cases(t *testing.T) []invocation {
 		{name: "decode pad then data", args: []string{"-d"}, stdin: "AA=A===="},
 		{name: "decode two groups", args: []string{"-d"}, stdin: "AA======AA======"},
 		{name: "decode unpadded", args: []string{"-d"}, stdin: "MZXW6"},
-		// A short final group writes nothing here, unlike base64's.
 		{name: "decode one character", args: []string{"-d"}, stdin: "A"},
 		{name: "decode two characters", args: []string{"-d"}, stdin: "AA"},
 		{name: "decode four characters", args: []string{"-d"}, stdin: "AAAA"},
@@ -65,7 +53,6 @@ func base32Cases(t *testing.T) []invocation {
 		{name: "decode is uppercase only", args: []string{"-d"}, stdin: "mzxw6ytb"},
 		{name: "decode is uppercase only with ignore", args: []string{"-d", "-i"}, stdin: "mzxw6ytb"},
 
-		// The filter.
 		{name: "decode with a newline", args: []string{"-d"}, stdin: "MZXW\n6YTB"},
 		{name: "decode with a trailing newline", args: []string{"-d"}, stdin: "MZXW6YTB\n"},
 		{name: "decode with a space", args: []string{"-d"}, stdin: "MZXW 6YTB"},
@@ -76,13 +63,10 @@ func base32Cases(t *testing.T) []invocation {
 		{name: "clustered short options", args: []string{"-di"}, stdin: "MZXW 6YTB"},
 		{name: "wrap is ignored on decode", args: []string{"-d", "-w2"}, stdin: "MZXW6YTB"},
 
-		// Across the read block.
 		{name: "decode a block", args: []string{"-d", f.b32Exact}},
 		{name: "decode a block with a bad tail", args: []string{"-d", f.b32Bad}},
 		{name: "decode from a file", args: []string{"-d", f.b32Hello}},
 
-		// Operands and option faults, the two that differ from base64's
-		// only by the utility's name in the message.
 		{name: "dash is stdin", args: []string{"-"}, stdin: "hi"},
 		{name: "terminator", args: []string{"--", f.hello}},
 		{name: "terminator makes a dash an operand", args: []string{"--", "-"}, stdin: "hi"},
@@ -100,7 +84,6 @@ func base32Cases(t *testing.T) []invocation {
 		{name: "exactly one line", stdin: strings.Repeat("x", 95)},
 		{name: "one byte past a line", stdin: strings.Repeat("x", 96)},
 
-		// Write failures.
 		{name: "stdout closed", stdin: "hello", stdout: stdoutClosed},
 		{name: "stdout full", stdin: "hello", stdout: stdoutFull},
 		{name: "stdout closed with nothing to write", stdin: "", stdout: stdoutClosed},

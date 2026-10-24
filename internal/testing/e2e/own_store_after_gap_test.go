@@ -2,11 +2,6 @@ package e2e
 
 import "testing"
 
-// A local handed to an `own` parameter is moved there when it is stored to
-// again after straight-line statements that do not name it (#11093). threaded
-// hands two buffers through a helper in a loop: xs is stored back on the next
-// line, ys only after xs's store. gap reads an unrelated local between the
-// move and the store. Every move must free each value exactly once.
 const ownStoreAfterGapSrc = `
 struct Pair { a: i64[], b: i64[] }
 @noinline function step(own xs: i64[], own ys: i64[], k: i64): Pair {

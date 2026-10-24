@@ -8,50 +8,33 @@ import (
 	"testing"
 )
 
-// Regression for #3213: dispatching a `dyn Trait` method on a value that
-// is NOT a simple local/param — bound from a Result/enum match arm, read
-// from a struct field, or read from an array element — used to segfault on
-// the compiled backends because the trait's vtable was emitted empty
-// (`dynTraitNamesUsed` under-scanned, missing `dyn` that appears only
-// nested in a composite type). Each case calls `.message()` (→ "ab", len 2).
 const dynDispatchHdr = `trait Error { function message(self: Self): string; }
 struct NotFound { what: string }
 impl Error for NotFound { function message(self: Self): string { return self.what; } }
 `
 
-// (a) receiver bound from a Result Err match arm
 const dynDispatchMatchArm = dynDispatchHdr + `function main(): i32 {
     let r: Result[i32, dyn Error] = Err(NotFound { what: "ab" } as dyn Error);
     return match (r) { Ok(v) => v, Err(e) => e.message().len() };
 }`
 
-// (b) receiver read from a struct field
 const dynDispatchField = dynDispatchHdr + `struct Box { e: dyn Error }
 function main(): i32 {
     let b: Box = Box { e: NotFound { what: "ab" } as dyn Error };
     return b.e.message().len();
 }`
 
-// (b') same as (b) but the field value coerces IMPLICITLY (no `as dyn Error`):
-// the struct-field position was missing from assignable()'s dyn boxing-site
-// list, so this reported a spurious E043. Now the concrete boxes into the dyn
-// field like every other position; dispatch still reads "ab" (len 2).
 const dynDispatchFieldImplicit = dynDispatchHdr + `struct Box { e: dyn Error }
 function main(): i32 {
     let b: Box = Box { e: NotFound { what: "ab" } };
     return b.e.message().len();
 }`
 
-// (c) receiver read from an array element
 const dynDispatchArrayElem = dynDispatchHdr + `function main(): i32 {
     let xs: dyn Error[] = [NotFound { what: "ab" } as dyn Error];
     return xs[0].message().len();
 }`
 
-// (d) receiver bound from a USER-enum variant payload whose value coerces
-// IMPLICITLY (no `as dyn Error`): the variant-payload position was also
-// missing from the dyn boxing-site list, so this reported a spurious E036.
-// Now the concrete boxes into the payload; dispatch still reads "ab" (len 2).
 const dynDispatchEnumPayloadImplicit = dynDispatchHdr + `enum Wrapped { Wrap(dyn Error), Bare }
 function main(): i32 {
     let w: Wrapped = Wrap(NotFound { what: "ab" });

@@ -7,18 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostEnumStructPayloadDropIRX86_64 covers the Perceus enum-payload slice:
-// a variant carrying a deep-drop-ok nested STRUCT payload (`Full(Inner)` where Inner
-// holds an rc-array field) is RECURSIVELY reclaimed when the enum local is
-// consumed by its match: the payload's array buffers are released, then the
-// payload box is freed.
-//
-// The leak/reclaim signal is heap exhaustion: a long fall-through churn that leaks
-// the payload's array buffer (and box) each iteration exhausts the bump heap and is
-// SIGKILLed (137); with the deep-drop reclaiming them the churn stays bounded (0).
-// The variant is built and consumed behind @noinline calls, so the optimiser
-// cannot fold the construction away and leave nothing to reclaim. Variant constructors are UNQUALIFIED (`Full(..)`, not
-// `Box.Full(..)`).
 func TestSelfHostEnumStructPayloadDropIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -50,10 +38,6 @@ func TestSelfHostEnumStructPayloadDropIRX86_64(t *testing.T) {
 		}
 	}
 
-	// CHURN: 40M consume-by-match cycles over `Full(Inner{items:[..]})`. The payload
-	// is a fresh literal, so Inner.items, the Inner box and the enum box are all
-	// released each iteration and the churn stays bounded (exit 0); a leak
-	// exhausts the heap and is SIGKILLed (137).
 	run(t, `struct Inner { items: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 enum Box { Full(Inner), Empty }
@@ -72,9 +56,6 @@ function main(): i32 {
     return s - 5;
 }`, "enum_struct_payload_churn", 0)
 
-	// VALUE: bound-borrow-only payload — the arm reads inner.items before the match's
-	// post-arm reclaim deep-drops it. A wrong free of a live buffer (or a double-free)
-	// would corrupt the read. items[0]+items[15] = 1 + 16 = 17.
 	run(t, `struct Inner { items: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 enum Box { Full(Inner), Empty }

@@ -14,10 +14,6 @@ import (
 	"testing"
 )
 
-// fixpointCompiler is a stand-in compiler whose output IS itself, so every
-// generation it builds is byte-identical to the one before: the shape a real
-// stage chain must have. It emits a tr stand-in for the multi-module smoke
-// source; other output is itself, exiting 42 when run without -o.
 const fixpointCompiler = `#!/bin/sh
 out=""
 tr_source=""
@@ -40,8 +36,6 @@ fi
 cp "$0" "$out"
 `
 
-// brokenOutputCompiler compiles, but everything it produces exits 1 — a
-// compiler whose output links and does not work.
 const brokenOutputCompiler = `#!/bin/sh
 out=""
 while [ $# -gt 0 ]; do
@@ -51,9 +45,6 @@ done
 cp "$0" "$out"
 `
 
-// oneLinerCompiler's output runs the one-line smoke program and nothing else:
-// run as coreutils/tr it exits 42 too, like a stage1 that aborts on any
-// real program.
 const oneLinerCompiler = `#!/bin/sh
 out=""
 while [ $# -gt 0 ]; do
@@ -63,15 +54,9 @@ done
 cp "$0" "$out"
 `
 
-// driftingCompiler appends a line to itself on every generation, so each
-// stage differs from the one before by exactly one line.
 const driftingCompiler = fixpointCompiler + `echo "# one more generation" >> "$out"
 `
 
-// sourceCompiler compiles the entry source literally: handed a fern.fern, its
-// output is that file, so what a generation does is decided by the SOURCE it
-// was built from, as with the real compiler, and not inherited from the
-// compiler that built it. Any other program compiles to a copy of itself.
 const sourceCompiler = `#!/bin/sh
 out=""
 src=""
@@ -96,21 +81,14 @@ fi
 if [ -n "$src" ]; then cp "$src" "$out"; else cp "$0" "$out"; fi
 `
 
-// olderPinCompiler is sourceCompiler with an older code generator: it emits
-// the same program with one extra trailing line, as a pin built before a
-// codegen change does.
 const olderPinCompiler = sourceCompiler + `echo "# an older code generator emitted this" >> "$out"
 `
 
-// failingCompiler stands in for an old stage0 meeting a construct it does not
-// know: it refuses to compile at all.
 const failingCompiler = `#!/bin/sh
 echo "fake compiler: parse error" >&2
 exit 1
 `
 
-// hostName mirrors the script's own host detection, so the tests can pin the
-// lock line the script will read on whichever supported host runs them.
 func hostName(t *testing.T) string {
 	t.Helper()
 	switch runtime.GOOS + "/" + runtime.GOARCH {
@@ -125,13 +103,8 @@ func hostName(t *testing.T) string {
 	return ""
 }
 
-// checkout lays out the slice of a repository the script touches — its own
-// copy under bootstrap/, the entry file and the stdlib root — in a temp dir,
-// so a run cannot write into the real build/ or bin/.
 func checkout(t *testing.T) string {
 	t.Helper()
-	// Each fixture chooses its own pin or explicit seed. An ambient seed
-	// would bypass the mocked download and missing-pin paths.
 	t.Setenv("STAGE0", "")
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not on PATH")
@@ -165,8 +138,6 @@ func sum(b []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-// run executes the script's mode in root with extra environment and PATH
-// prefix, returning combined output and the exit error (nil on success).
 func run(t *testing.T, root, mode string, env []string, pathPrefix string) (string, error) {
 	t.Helper()
 	cmd := exec.Command("bash", filepath.Join(root, "bootstrap", "bootstrap.sh"), mode)
@@ -184,8 +155,6 @@ func TestBuildInstallsSmokeTestedStage1(t *testing.T) {
 	root := checkout(t)
 	stage0 := filepath.Join(root, "candidate")
 	write(t, stage0, []byte(fixpointCompiler), 0o755)
-	// A key from an earlier install: this checkout has no cmd/fern to compute
-	// the new one, so the build must not leave the old one claiming it.
 	if err := os.MkdirAll(filepath.Join(root, "bin"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -236,9 +205,6 @@ func TestBuildRejectsBrokenMultiModuleSmoke(t *testing.T) {
 	}{
 		{"compile", `[ -f "$tr_source" ] || exit 1`, `exit 1`, "could not compile coreutils/tr.fern"},
 		{"run", `exec tr "$@"`, `exit 1`, "tr compiled by"},
-		// The wrong tr drains its input first: the smoke pipes into it under
-		// pipefail, so one that exits unread can fail the pipeline with SIGPIPE
-		// before the output is ever compared.
 		{"output", `exec tr "$@"`, `cat >/dev/null; printf abc`, "printed 'abc', want 'xyz'"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -279,7 +245,6 @@ func TestDistcheckReachesFixedPoint(t *testing.T) {
 	stage0 := filepath.Join(root, "candidate")
 	write(t, stage0, []byte(fixpointCompiler), 0o755)
 
-	// No prior build: distcheck runs it first.
 	out, err := run(t, root, "distcheck", []string{"STAGE0=" + stage0}, "")
 	if err != nil {
 		t.Fatalf("expected success: %v", err)
@@ -294,10 +259,6 @@ func TestDistcheckReachesFixedPoint(t *testing.T) {
 	}
 }
 
-// distcheck reuses the stage1 a build left only while it was built from the
-// same sources by the same stage0. Compiling the source literally, stage1 is
-// the source it was built from, plus the older pin's extra line when that pin
-// built it, so its bytes show which build made it.
 func TestDistcheckRebuildsAStaleStage1(t *testing.T) {
 	root := checkout(t)
 	source := filepath.Join(root, "compiler", "fern.fern")
@@ -344,9 +305,6 @@ func TestDistcheckRebuildsAStaleStage1(t *testing.T) {
 	distcheck(t, older, edited+"# an older code generator emitted this\n", false)
 }
 
-// A pin built before a code generator change emits a stage1 that differs from
-// stage2, and that is not a failure: stage1 carries the pin's code generation,
-// stage2 and stage3 the current source's. The fixed point is stage2 == stage3.
 func TestDistcheckPassesWhenThePinPredatesACodegenChange(t *testing.T) {
 	root := checkout(t)
 	write(t, filepath.Join(root, "compiler", "fern.fern"), []byte(sourceCompiler), 0o644)
@@ -385,7 +343,6 @@ func TestDistcheckDivergentStagesFail(t *testing.T) {
 	if !strings.Contains(out, "stage2 != stage3") {
 		t.Errorf("failure does not name the divergence")
 	}
-	// Both generations stay on disk for the bisection recipe.
 	s2, err2 := os.ReadFile(filepath.Join(root, "build", "bootstrap", "stage2"))
 	s3, err3 := os.ReadFile(filepath.Join(root, "build", "bootstrap", "stage3"))
 	if err2 != nil || err3 != nil {
@@ -421,19 +378,11 @@ func TestUnknownModeFails(t *testing.T) {
 	}
 }
 
-// fakeCurl writes a PATH directory whose `curl` serves one gzip-compressed
-// payload for any URL ending in the asset name, recording the URL it was
-// asked for. With payload empty every call fails, which is how a test asserts
-// that no download happened.
 func fakeCurl(t *testing.T, payload []byte) (dir, urlLog string) {
 	t.Helper()
 	return curlServing(t, payload, "gzip -c", "")
 }
 
-// gatedCurl is fakeCurl whose every call waits until n calls have arrived
-// before any of them serves, so n concurrent callers are all inside the
-// download branch at once. A call that waits ten seconds serves anyway, so a
-// caller that never arrives fails the test instead of hanging it.
 func gatedCurl(t *testing.T, payload []byte, n int) (dir, urlLog string) {
 	t.Helper()
 	gate := filepath.Join(t.TempDir(), "arrived")
@@ -444,15 +393,11 @@ func gatedCurl(t *testing.T, payload []byte, n int) (dir, urlLog string) {
 	return curlServing(t, payload, "gzip -c", wait)
 }
 
-// rawCurl is fakeCurl serving the payload as it is, not gzip-compressed: a
-// proxy's error page or a truncated transfer where the release asset should be.
 func rawCurl(t *testing.T, payload []byte) (dir, urlLog string) {
 	t.Helper()
 	return curlServing(t, payload, "cat", "")
 }
 
-// curlServing writes the fake curl: it logs the URL, runs prelude, then
-// serves the payload through filter into the -o file.
 func curlServing(t *testing.T, payload []byte, filter, prelude string) (dir, urlLog string) {
 	t.Helper()
 	dir = t.TempDir()
@@ -499,7 +444,6 @@ func TestPinnedStage0IsDownloadedVerifiedAndCached(t *testing.T) {
 		t.Fatalf("stage0 not cached decompressed at %s: %v", cached, err)
 	}
 
-	// Second run: the cache is verified and reused, curl is never called.
 	bin, urls = fakeCurl(t, nil)
 	if _, err := run(t, root, "build", nil, bin); err != nil {
 		t.Fatalf("second run must reuse the cache: %v", err)
@@ -552,11 +496,6 @@ func TestPinnedStage0ThatIsNotGzipIsRejectedAndCleanedUp(t *testing.T) {
 	}
 }
 
-// The two worker processes of a CI shard resolve the pin at the same moment,
-// so the download has to survive a concurrent copy of itself: every caller
-// prints the same path and finds the same verified binary there. The gated
-// curl holds every caller inside the download branch until all have arrived,
-// so the overlap is certain rather than a matter of scheduling.
 func TestPinnedStage0ResolvesConcurrently(t *testing.T) {
 	const callers = 6
 	root := checkout(t)

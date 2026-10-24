@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-// Lazy iterator adapters built as generic structs over a bounded iterator
-// (#12110, #12111): a filter feeding a map, a map to another element type,
-// and a filter that keeps nothing, each consumed through a bounded generic.
-// The literals that rebuild an adapter take their instantiation from the
-// inner iterator's `next()` and from a function-typed field, and the impls'
-// bounds carry the trait's argument (`I: Iter[T]`).
 const iterAdapterStructsSrc = `import "std/i64";
 
 pub trait Iter[T] {

@@ -7,21 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructDeepDropIRX86_64 covers the DEEP-DROP of a direct
-// nested-struct field (`Outer { inner: Inner }`) whose inner carries its own
-// rc-array field: when the inner box is uniquely owned, the inner's array
-// buffers are released before the inner box is freed, at any acyclic depth
-// (the depth-2+ cases below).
-//
-// CYCLE SAFETY: a self-referential / tree struct (`Node { kids: Node[] }`) must
-// not make the drop recurse forever.
-//
-// The leak/reclaim signal is heap exhaustion: a long churn that leaks the inner's
-// array buffer each iteration exhausts the bump heap and is SIGKILLed (exit 137);
-// with the deep-drop reclaiming it the freed blocks recycle and the churn stays
-// bounded (exit 0) — the same differential the field-reclaim IR test uses. Each
-// items array goes through id so the chain is built on the heap rather than placed
-// as a constant.
 func TestSelfHostStructDeepDropIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -53,11 +38,6 @@ func TestSelfHostStructDeepDropIRX86_64(t *testing.T) {
 		}
 	}
 
-	// DEEP-DROP + CHURN: `o.inner` is a fresh struct LITERAL (sole-owned, rc 1), so
-	// the is_unique gate passes and the deep drop releases `inner.items` before
-	// the inner box is freed. Asserts that 150M alloc→drop cycles stay bounded
-	// (exit 0); a shallow drop leaks `inner.items` every call → heap exhausted →
-	// SIGKILL (137).
 	run(t, `struct Inner { items: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 struct Outer { inner: Inner, tag: i32 }
@@ -71,8 +51,6 @@ function main(): i32 {
     return s - 24;
 }`, "struct_deep_drop_churn", 0)
 
-	// VALUE-CORRECTNESS: the inner is read back before the drop; a wrong free of a
-	// live buffer would corrupt it. o.inner.items[0..15] sum to 136, + tag 7 = 143.
 	run(t, `struct Inner { items: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 struct Outer { inner: Inner, tag: i32 }
@@ -83,10 +61,6 @@ function main(): i32 {
     return sum + o.tag;
 }`, "struct_deep_drop_value", 143)
 
-	// CYCLE SAFETY: a tree (`Node { kids: Node[] }`) must NOT infinitely recurse.
-	// A churn building a 2-node tree each iteration stays correct + terminating. The
-	// leaf reads v off the heap so the tree is built on the heap rather than placed as
-	// a constant.
 	run(t, `struct Node { kids: Node[], v: i32 }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 function mk(): i32 {
@@ -100,12 +74,6 @@ function main(): i32 {
     return s - 8;
 }`, "struct_deep_drop_cyclic_safe", 0)
 
-	// DEPTH-2 DEEP-DROP + CHURN (#5336): `Outer { mid: Mid }`, `Mid { inner: Inner }`,
-	// `Inner { items: i32[] }`. Outer's drop must reach Mid's and then Inner's,
-	// releasing the depth-2 `inner.items` buffer. Asserts that 150M alloc→drop
-	// cycles stay bounded (exit 0); a depth-1-only deep-drop
-	// leaks `inner.items` every call → heap exhausted → SIGKILL (137). items[0]+
-	// items[15]=17, +mid.m 2 +tag 7 = 26, so s-26==0.
 	run(t, `struct Inner { items: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 struct Mid { inner: Inner, m: i32 }
@@ -120,12 +88,6 @@ function main(): i32 {
     return s - 26;
 }`, "struct_deep_drop_depth2_churn", 0)
 
-	// DEPTH-3 with a STRING leaf field (#4297): `A { b: B }`, `B { c: C }`,
-	// `C { name: string, xs: i32[] }`. The drop reaches A → B → C; the depth-3
-	// `name` string + `xs` buffer are reclaimed each iteration. Bounded (exit 0);
-	// unbounded (137) if any level short-circuits. xs[0]+xs[1]=1, +name.len() 3 = 4.
-	// name and xs go through ids and id so the chain is built on the heap rather than
-	// placed as a constant.
 	run(t, `struct C { name: string, xs: i32[] }
 @noinline function ids(s: string): string { return s; }
 @noinline function id(xs: i32[]): i32[] { return xs; }
@@ -141,9 +103,6 @@ function main(): i32 {
     return s - 4;
 }`, "struct_deep_drop_depth3_str_churn", 0)
 
-	// DEPTH-2 VALUE-CORRECTNESS: read the whole depth-2 chain back before the drop; a
-	// wrong free of a live buffer would corrupt the sum. items[0..15] sum 136 + mid.m
-	// 2 + tag 7 = 145.
 	run(t, `struct Inner { items: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 struct Mid { inner: Inner, m: i32 }

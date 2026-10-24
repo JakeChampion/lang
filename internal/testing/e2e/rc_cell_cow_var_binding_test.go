@@ -5,18 +5,6 @@ import (
 	"testing"
 )
 
-// #8853 — `let t = m.insert(k, v); m = t` on a CAPTURED map. The map lives in
-// a boxcapture cell, and a cow-in-place insert hands the cell's own element
-// back borrowed, so the binding used to share the cell's one count and the
-// store's release of the superseded element spent it: a correct 11 on both
-// natives with `-sanitize` reporting an over-release. The binding now takes a
-// count of its own exactly when the call returns the element it was given.
-//
-// Three shapes: the issue's, the binding read after the store (so its own
-// release is exercised too), and a fifty-round rebinding loop, where the
-// binding's previous value must be released on re-declaration or every
-// round strands a map. The natives' exit code is checked against the
-// interpreter's, the sanitizer must stay silent, and the census balanced.
 var cellCowVarBindingCases = []struct {
 	name string
 	src  string

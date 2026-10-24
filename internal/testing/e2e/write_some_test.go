@@ -9,19 +9,6 @@ import (
 	"testing"
 )
 
-// `w.write_some(s)` is one write(2) and the COUNT it returned, where
-// `w.write(s)` is the same call in a loop and can only report whether the
-// whole string landed (#9231).
-//
-// What the count is FOR is a diagnostic nobody can reach from a test: GNU
-// shred names the byte a failing write stopped at, and reaching that needs
-// a full filesystem or a device at its end. What this source pins is the
-// count on the paths that succeed — a regular file, an empty string, and
-// stdout — and the bytes arriving in order, so a second write lands after
-// the first rather than over it. Every write here is a WHOLE write, so
-// none of it separates a count read out of the kernel's answer from one
-// echoed back from the length asked for; writeSomePartialSource below is
-// the case that does.
 func writeSomeSource(path string) string {
 	return fmt.Sprintf(`import "std/i64";
 
@@ -62,22 +49,11 @@ function main(): i32 {
 `, path)
 }
 
-// writeSomeTarget is the name the source writes, in a directory of its own
-// so the wasm runner can mount it.
 func writeSomeTarget(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(t.TempDir(), "out.txt")
 }
 
-// writeSomePartialSource asks for the one answer a helper echoing back the
-// length it was handed cannot give: a count SMALLER than the string. A pipe
-// whose reader never drains takes what fits in the kernel's buffer and
-// reports that, and the non-blocking open is what makes the write answer
-// rather than wait for room.
-//
-// Not a wasm case. Preview 2 has no spelling for the non-blocking bit at
-// all (docs/FREESTANDING-CORE.md) and neither preview can make a FIFO, so
-// the partial answer is a native and interpreter fact.
 func writeSomePartialSource(fifo string) string {
 	return fmt.Sprintf(`import "std/i64";
 
@@ -112,9 +88,6 @@ function main(): i32 {
 `, fifo)
 }
 
-// writeSomeFifo makes a FIFO and holds a READER open for the test's
-// lifetime. Without one the writer's non-blocking open is ENXIO; with one
-// that never reads, the buffer fills and the write can only be partial.
 func writeSomeFifo(t *testing.T) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "pipe")
@@ -185,10 +158,6 @@ func TestInterpWriteSome(t *testing.T) {
 	}
 }
 
-// Preview 1 writes with fd_write, preview 2 through the Writer's output
-// STREAM rather than a descriptor: `blocking-write-and-flush` takes the
-// whole chunk it is handed, so the count is the chunk's length and the file
-// still ends up with both writes in order.
 func TestWASMPreview1WriteSome(t *testing.T) {
 	stdout, stderr, ec, _ := runWasmInDirOpts(t, writeSomeSource("out.txt"), nil, runOpts{})
 	if ec != 0 {

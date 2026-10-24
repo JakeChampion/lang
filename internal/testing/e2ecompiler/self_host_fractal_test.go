@@ -77,7 +77,6 @@ func TestSelfHostFractalFipKernels(t *testing.T) {
 			t.Fatal(err)
 		}
 		if name == "fractal.fern" {
-			// Test the private kernels in their module without public test APIs.
 			source = append(source, []byte(fractalKernelMain)...)
 		}
 		if err := os.WriteFile(filepath.Join(dir, name), source, 0600); err != nil {
@@ -95,8 +94,6 @@ func testFractalTargets(t *testing.T, path string, network ...bool) {
 			var stderr string
 			var code int
 			if target == "wasm32-wasi" && len(network) > 0 && network[0] {
-				// The yielding HTTP handler imports WASI socket polling even when
-				// this route test runs without a listening socket.
 				cmd := exec.Command(e2eharness.Wasmtime(t), "run", "-S", "inherit-network", cli.wasmComponent(t, path, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1"))
 				var errors bytes.Buffer
 				cmd.Stderr = &errors

@@ -7,9 +7,6 @@ import (
 	"time"
 )
 
-// hostClockResolution on a host with no clock_getres Fern reaches measures
-// the clock instead, the way gnulib's gettime_res does without one: the
-// greatest common divisor of the subsecond parts of a few readings.
 func hostClockResolution() int64 {
 	r := int64(1_000_000_000)
 	for i := 0; i < 32 && r > 1; i++ {
@@ -22,6 +19,4 @@ func hostClockResolution() int64 {
 	return r
 }
 
-// hostClockSet on the same host: there is no clock Fern can set there, and
-// reporting success would claim a change that did not happen.
 func hostClockSet(int64, int64) error { return syscall.ENOSYS }

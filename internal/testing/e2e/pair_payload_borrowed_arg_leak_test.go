@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// A pair-form match payload handed to a callee that only BORROWS it (#10669):
-// the callee retains what it keeps, so the payload's own count stays the
-// caller's, and the arm has to release it. std/http's header parser is the
-// shape — `Some(v) => { h = h.append(name, v); }` over the field value's
-// Option, with `HeaderMap.append` pushing a retained `value` into the map —
-// and it leaked one value string per header line. Binding the payload to a
-// var first balanced, which is what hid it.
 const pairPayloadBorrowedArgSrc = `import "std/headers";
 import "std/string";
 function bytes_string(buf: u8[], from: i32, end: i32): string {
@@ -73,11 +66,6 @@ func TestLeakCheckPairPayloadBorrowedArgArm64(t *testing.T) {
 	}
 }
 
-// The same payload handed to a container sink (#10696): `Array.append` and
-// `Map.insert` retain an aliased element, key or value, so the container holds
-// a count of its own and the arm releases the payload's. The program's exit
-// carries `__rc_underflow_count()`, since admitting a sink that does not
-// retain would be a double free.
 func pairPayloadSinkSrc(decl, body, tail string) string {
 	return `import "core/map";
 function mk(i: i32): Option[string] {

@@ -1,11 +1,3 @@
-// #8194: a boolean that is not a comparison's result reaches an `if` or a
-// loop guard through OpNot, which the #4378 compare-and-branch fusion does
-// not cover — the run of OpNots has no comparison in front of it. Both
-// native backends now fold that run into the branch's own zero test, which
-// means the polarity is computed by parity of the run rather than emitted.
-// A parity slip is a silent miscompile that inverts one branch, so this runs
-// the matrix — boolean source x negation depth x consumer — through both
-// backends and pins each answer against the interpreter.
 package e2e
 
 import (
@@ -17,11 +9,6 @@ import (
 	"testing"
 )
 
-// notBranchMatrix builds a program whose main returns 0 only if every
-// combination agrees with the answer written beside it. Each `f<N>` takes
-// its boolean from a call — opaque to the folder that would otherwise
-// constant-fold the whole thing away — and consumes it after 0 to 3
-// negations, through an `if`, an `if/else` and a `while` guard.
 func notBranchMatrix() string {
 	var b strings.Builder
 	b.WriteString(`@noinline function src(x: i32): boolean { return x > 2; }
@@ -30,16 +17,10 @@ func notBranchMatrix() string {
 	id := 0
 	for _, nots := range []int{1, 2, 3} {
 		neg := strings.Repeat("!", nots)
-		// `if (NOT b)`: the then-arm runs when the negated value holds.
 		fmt.Fprintf(&b, "@noinline function fi%d(x: i32): i32 { let b: boolean = src(x); if (%sb) { return 1; } return 0; }\n", id, neg)
-		// `if (NOT b) else`: both arms present, so the else-label is real.
 		fmt.Fprintf(&b, "@noinline function fe%d(x: i32): i32 { let b: boolean = src(x); if (%sb) { return 1; } else { return 0; } }\n", id, neg)
-		// `while (NOT b)`: the guard is the OpBrIf-shaped consumer; the
-		// body clears the condition so the loop runs at most once.
 		fmt.Fprintf(&b, "@noinline function fw%d(x: i32): i32 { let b: boolean = src(x); let n: i32 = 0; while (%sb) { n = n + 1; b = %s; } return n; }\n",
 			id, neg, map[bool]string{true: "true", false: "false"}[nots%2 == 1])
-		// src(1) is false, src(5) is true; an odd run of negations makes
-		// the effective condition the opposite of the source.
 		for _, in := range []struct {
 			arg  int
 			srcT bool
@@ -71,8 +52,6 @@ func TestNotBranchFusionMatrix(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 
-	// The interpreter is the oracle: it never sees the fusion, so a
-	// non-zero exit here means the matrix itself is wrong, not the fold.
 	interp := exec.Command(bin, "-interp", p)
 	_ = interp.Run()
 	if code := interp.ProcessState.ExitCode(); code != 0 {

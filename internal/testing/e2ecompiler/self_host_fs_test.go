@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// fsBuiltinsProgram is the shared end-to-end exercise for the fs
-// builtins: make a temp dir, write a file, stat it, list the dir,
-// remove the tree, and confirm it's gone. Returns 42 on full success.
 const fsBuiltinsProgram = `function main(): i32 {
     let dir: string = "";
     match (temp_dir("fernfs")) {
@@ -49,13 +46,6 @@ const fsBuiltinsProgram = `function main(): i32 {
 
 const fsBuiltinsWant = "fs builtins program exited %d, want 42 (1=temp_dir,2=write,3=!is_file,4=is_dir,5=size,6=stat,7=count,8=name,9=read_dir,10=rm,11=still-exists)"
 
-// TestSelfHostFsBuiltinsX86_64 exercises the self-hosted x86-64
-// emitter's filesystem builtins end-to-end: temp_dir, write_file, stat,
-// read_dir, and remove_dir_all. The compiled program makes a temp dir,
-// writes a file into it, stats the file (is_file / is_dir / size),
-// lists the directory, removes the tree, and confirms the directory is
-// gone — returning 42 only if every step matches. Any mismatch returns
-// a distinct small code to localise the failure.
 func TestSelfHostFsBuiltinsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -85,11 +75,6 @@ func TestSelfHostFsBuiltinsX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFsBuiltinsArm64 is the ARM64 counterpart: the same
-// temp_dir / write_file / stat / read_dir / remove_dir_all exercise,
-// compiled to aarch64 by the self-hosted ARM64 emitter and run under
-// qemu-aarch64 (which passes the filesystem syscalls through to the
-// host). CI-gated; skips cleanly without the cross toolchain.
 func TestSelfHostFsBuiltinsArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

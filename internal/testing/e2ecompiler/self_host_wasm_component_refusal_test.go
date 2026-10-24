@@ -7,11 +7,6 @@ import (
 	"testing"
 )
 
-// A handle-carrying tuple literal, `(stdout(), true)`, lowers wherever the same
-// tuple built from a named handle does (#9238). And a sleeping program is a
-// component too: the framing used to refuse it by naming the op (#11411), and
-// before that with the generic "not IR-eligible", FERN_STRICT_IR=1 naming
-// nothing.
 const handleTupleSrc = `function handle_lit(): (Writer, boolean) {
     return (stdout(), true);
 }
@@ -66,8 +61,6 @@ func TestSelfHostHandleTupleLiteralWasm(t *testing.T) {
 	src := writeHandleTupleSrc(t)
 	dir := t.TempDir()
 
-	// A component's run export reports any non-zero main as an error, so the
-	// host exits 1, as native's component does.
 	t.Run("component-runs", func(t *testing.T) {
 		comp := filepath.Join(dir, "comp.wasm")
 		cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "wasm32-wasi", "-o", comp, src, cli.stdlib)

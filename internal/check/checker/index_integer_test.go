@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// An index of any integer type checks, on an array and on a string; any other
-// type is E034 (#12707).
 func TestIndexTakesAnyIntegerType(t *testing.T) {
 	for _, ty := range []string{"i32", "i64", "u8", "u32", "u64", "usize"} {
 		src := `function f(xs: i32[], s: string, i: ` + ty + `): i32 { let b: u8 = s[i]; return xs[i] + b as i32; }

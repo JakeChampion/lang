@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-// unionMemberLiteralSrc builds members of a union of structs by calling the
-// member's name, `Add(Add { ... })`, beside the implicit wrap and a member
-// holding a string, at every destination shape: an annotated binding, a
-// return, an argument and an array element. The typed lowering read the call
-// as one to a function named `Add` and refused it (`call target has no
-// semantic contract: Add`, #10764).
 const unionMemberLiteralSrc = `import "std/i32";
 struct Add { l: i32, r: i32 }
 struct Mul { l: i32, r: i32 }

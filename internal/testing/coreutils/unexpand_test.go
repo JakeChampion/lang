@@ -11,14 +11,6 @@ func init() {
 	registerCorpus("unexpand", unexpandCases)
 }
 
-// unexpandCases is unexpand(1)'s corpus.
-//
-// The rule for when a run of blanks becomes a tab is the interesting
-// half: a SINGLE blank landing on a stop is held rather than converted,
-// but only held — another blank behind it turns it into a tab after all,
-// and reaching the last stop dumps whatever is held as the blanks it
-// was. `-t` turns on `-a` where the obsolete `-NUM` does not, and
-// `--first-only` overrides `-a` whichever order they are written in.
 func unexpandCases(t *testing.T) []invocation {
 	dir := t.TempDir()
 	lead := tabFile(t, dir, "lead", "        a       b\n")
@@ -39,16 +31,12 @@ func unexpandCases(t *testing.T) []invocation {
 	plain := tabFile(t, dir, "plain", strings.Repeat("noblanks\n", 20000))
 
 	cases := []invocation{
-		// Leading blanks only, by default.
 		{name: "leading blanks", args: []string{lead}},
 		{name: "blanks after a word are left alone", args: []string{mid}},
 		{name: "too few blanks to reach a stop", args: []string{short}},
 		{name: "a tab among the leading blanks", args: []string{mixed}},
 		{name: "conversion stops at the first non-blank", args: []string{}, stdin: "  \ta  \tb\n"},
 		{name: "a line that is only blanks", args: []string{}, stdin: "        \n"},
-		// wcwidth answers 0 for a NUL, so it takes no column: the blanks
-		// after it reach a tab stop one earlier than their byte count
-		// says. Every other byte, printable or not, is one column.
 		{name: "NUL takes no column", args: []string{"-a"}, stdin: "a\x00      b\n"},
 		{name: "NUL takes no column at four", args: []string{"-a", "-t4"}, stdin: "a\x00      b\n"},
 		{name: "a control byte takes one column", args: []string{"-a"}, stdin: "a\x01      b\n"},
@@ -58,7 +46,6 @@ func unexpandCases(t *testing.T) []invocation {
 		{name: "empty file", args: []string{empty}},
 		{name: "no final newline", args: []string{nonl}},
 
-		// -a.
 		{name: "all blanks", args: []string{"-a", mid}},
 		{name: "long all option", args: []string{"--all", mid}},
 		{name: "a single blank on a stop is kept", args: []string{"-a"}, stdin: "1234567 x\n"},
@@ -76,14 +63,12 @@ func unexpandCases(t *testing.T) []invocation {
 		{name: "carriage return is one column", args: []string{"-a"}, stdin: "\r        x\n"},
 		{name: "tabs already in place", args: []string{"-a"}, stdin: "x\t\ty\n"},
 
-		// --first-only overrides -a in either order.
 		{name: "first only", args: []string{"--first-only", lead}},
 		{name: "all then first only", args: []string{"-a", "--first-only", mid}},
 		{name: "first only then all", args: []string{"--first-only", "-a", mid}},
 		{name: "tabs then first only", args: []string{"-t8", "--first-only", mid}},
 		{name: "first only then tabs", args: []string{"--first-only", "-t8", mid}},
 
-		// -t turns on -a; the obsolete form does not.
 		{name: "tabs turn on all", args: []string{"-t8", mid}},
 		{name: "tabs with a space turn on all", args: []string{"-t", "8", mid}},
 		{name: "long tabs turn on all", args: []string{"--tabs=8", mid}},
@@ -106,7 +91,6 @@ func unexpandCases(t *testing.T) []invocation {
 		{name: "obsolete zero", args: []string{"-0", lead}},
 		{name: "obsolete clashes with an explicit list", args: []string{"-t4", "-4", lead}},
 
-		// Stop lists.
 		{name: "width four", args: []string{"-t4", lead}},
 		{name: "two stops", args: []string{"-t", "4,8", lead}},
 		{name: "stops then nothing", args: []string{"-a", "-t", "2,4"}, stdin: "x      y\n"},
@@ -114,7 +98,6 @@ func unexpandCases(t *testing.T) []invocation {
 		{name: "extend after the last stop", args: []string{"-a", "-t", "2,/4"}, stdin: "x       y\n"},
 		{name: "increment after the last stop", args: []string{"-a", "-t", "2,+4"}, stdin: "x       y\n"},
 
-		// Operands. unexpand joins files into one stream.
 		{name: "no operand reads stdin", stdin: "        a\n"},
 		{name: "lone dash", args: []string{"-"}, stdin: "        a\n"},
 		{name: "two files join", args: []string{"-a", nonl, rest}},
@@ -127,7 +110,6 @@ func unexpandCases(t *testing.T) []invocation {
 		{name: "directory", args: []string{d}},
 		{name: "directory then a file", args: []string{d, lead}},
 
-		// getopt.
 		{name: "invalid short option", args: []string{"-i"}},
 		{name: "unrecognized long option", args: []string{"--foo"}},
 		{name: "flag rejects a glued value", args: []string{"--all=x", lead}},
@@ -138,7 +120,6 @@ func unexpandCases(t *testing.T) []invocation {
 		{name: "version rejects a glued value", args: []string{"--version=x"}},
 		{name: "posix operand then option", args: []string{lead, "-a"}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// Write failures.
 		{name: "stdout closed", args: []string{lead}, stdout: stdoutClosed},
 		{name: "stdout full", args: []string{lead}, stdout: stdoutFull},
 		{name: "stdout closed with a large output", args: []string{"-a", big}, stdout: stdoutClosed},
@@ -146,7 +127,6 @@ func unexpandCases(t *testing.T) []invocation {
 		{name: "stdout closed with nothing to write", args: []string{empty}, stdout: stdoutClosed},
 		{name: "stdout closed with a missing file", args: []string{missing}, stdout: stdoutClosed},
 
-		// Bulk and block boundaries.
 		{name: "large file", args: []string{"-a", big}},
 		{name: "large file with no blanks", args: []string{"-a", plain}},
 		{name: "line longer than one read block", args: []string{"-a"}, stdin: strings.Repeat("z", 70000) + "        x\n"},

@@ -1,13 +1,6 @@
-// tests/stdlib/regex_test.fern — exercise std/regex through the
-// pure-Fern test runner: the matcher (match / search / find), the bulk
-// operations (find_all / count / replace / split), and the capture engine
-// (regex_captures, named groups, $-template replacement). The regex module
-// had only Go-side coverage; this is the shape its unit tests take once the
-// Fern runner replaces the *_test.go harness. Passing suite → exit 0.
 import "std/test";
 import "std/regex" as regex;
 
-// --- matcher ---------------------------------------------------------------
 function test_match_anywhere(): test.TestOutcome {
   return test.assert_true(regex.regex_match("b", "abc") && !regex.regex_match("z", "abc"));
 }
@@ -39,7 +32,6 @@ function test_case_insensitive_flag(): test.TestOutcome {
   return test.assert_true(regex.regex_match("(?i)hel+o", "say HELLO"));
 }
 
-// --- bulk operations -------------------------------------------------------
 function test_count(): test.TestOutcome {
   return test.assert_eq(regex.regex_count("\\d+", "a1 b22 c333"), 3);
 }
@@ -66,7 +58,6 @@ function test_full_match(): test.TestOutcome {
   return test.assert_true(regex.regex_full_match("a|aa", "aa") && !regex.regex_full_match("a", "aa"));
 }
 
-// --- captures --------------------------------------------------------------
 function test_captures_positional(): test.TestOutcome {
   let Some(m) = regex.regex_captures("(\\d+)-(\\d+)", "id 12-34 x") else {
     return test.fail("no match");
@@ -90,14 +81,12 @@ function test_captures_all(): test.TestOutcome {
 }
 
 function test_captures_quantified_last_iteration(): test.TestOutcome {
-  // a group under `+` reports its LAST iteration's span
   let Some(m) = regex.regex_captures("(a|b)+", "ab") else {
     return test.fail("no match");
   };
   return test.assert_eq(require_regex_text(m.group(1)), "b");
 }
 
-// --- named groups ----------------------------------------------------------
 function test_named_groups(): test.TestOutcome {
   let Some(m) = regex.regex_captures("(?<year>\\d{4})-(?<mon>\\d{2})", "date 2026-07") else {
     return test.fail("no match");
@@ -115,7 +104,6 @@ function test_named_group_unknown(): test.TestOutcome {
   return test.assert_is_none_i32(m.group_index("nope"));
 }
 
-// --- $-template replacement ------------------------------------------------
 function test_replace_groups_numeric(): test.TestOutcome {
   return test.assert_eq(require_regex_text(regex.regex_replace_all_groups("(\\w+)@(\\w+)", "a@b c@d", "$2@$1")), "b@a d@c");
 }
@@ -125,7 +113,6 @@ function test_replace_groups_named(): test.TestOutcome {
 }
 
 function test_replace_groups_escape(): test.TestOutcome {
-  // $$ → literal $, $0 → whole match, first-match-only
   return test.assert_true(require_regex_text(regex.regex_replace_all_groups("(\\d+)", "x5", "$$$1")) == "x$5" && require_regex_text(regex.regex_replace_groups("(\\d)", "1 2", "[$0]")) == "[1] 2");
 }
 

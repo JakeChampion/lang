@@ -1,18 +1,18 @@
 // spec: AL-01
-//
-// A `string[][]` whose last reference dies must reclaim the element
-// strings, not just the two levels of buffer. The outer drop
-// (`__drop_arr_arr_str`) reclaimed each inner `string[]` through
-// `__fern_drop_arr_ptr` on the single-word string ABI, which dec's an
-// element with `__fern_rc_dec` and so never returns a heap string's
-// buffer to the freelist. Every round stranded one buffer per element.
-//
-// The single-level `string[]` next to it is the control: it selected the
-// string-aware helper already, so the two shapes disagreeing is what
-// isolated the nested drop rather than the string ABI.
-//
-// The case prints the SHAPE, never a byte count — see
-// docs/ALLOCATION-OBSERVABLE.md.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/i32";
 import "std/i64";
@@ -45,7 +45,7 @@ function main(): i32 {
 
     print(x.to_string());
     print(y.to_string());
-    // Twice the work must not cost more fresh memory.
+
     if ((b2 - b1) > (b1 - b0)) { print("grows"); } else { print("flat"); }
     return 0;
 }

@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// tcp_send_buf sends a builder's bytes from an offset to its end, one send
-// per call, and buf_clear empties the builder while keeping its storage: the
-// pushes that refill it allocate nothing (exit 3 if they do).
 const tcpSendBufProgram = `import "std/bench";
 function send_from(fd: i32, b: usize, from: i32): void {
     let at: i32 = from;

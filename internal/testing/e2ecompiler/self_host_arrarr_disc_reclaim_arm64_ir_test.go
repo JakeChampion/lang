@@ -4,8 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrArrDiscReclaimIRArm64 runs the shared discarded nested-array reclaim
-// cases on ARM64, exercising the typed release pipeline.
 func TestSelfHostArrArrDiscReclaimIRArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range arrArrDiscReclaimCases {

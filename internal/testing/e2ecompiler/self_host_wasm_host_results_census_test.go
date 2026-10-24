@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmHostResultsBalanceTheCensus runs the wasm runtime bodies
-// that take a result from the host, as a core module and as a component, and
-// requires every allocation to be freed. A component's host writes each list
-// and string it returns into a cabi_realloc block, and the body writes the
-// result's header into a return area of its own; both are the body's to give
-// back once the value is copied out. The directory holds a name of every
-// length from 1 to 33, so a name freed at the wrong size shows at each
-// multiple of 8.
 func TestSelfHostWasmHostResultsBalanceTheCensus(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	wasmtime, err := exec.LookPath("wasmtime")
@@ -46,9 +38,6 @@ func TestSelfHostWasmHostResultsBalanceTheCensus(t *testing.T) {
 		{"env", "function main(): i32 {\n" + loop(`    match (env("FERN_CENSUS_VALUE")) { Some(v) => { if (v != "a value longer than a word") { return 1; } }, None => { return 2; } }
     match (env("FERN_CENSUS_ABSENT")) { Some(_) => { return 3; }, None => {} }
     if (now_ns() <= 0 as i64 || now_unix_ms() <= 0 as i64) { return 4; }`), true},
-		// A component keeps its Readers in a handle table that lives as long
-		// as the program does: it is the runtime's own, and is given back
-		// before the census counts.
 		{"reader", "function main(): i32 {\n" + loop(`    match (open_reader("d/fff")) { Ok(r) => { match (r.read_chunk(8)) { Ok(_) => {}, Err(_) => { return 1; } } match (r.close()) { Ok(_) => {}, Err(_) => { return 2; } } }, Err(_) => { return 3; } }`), true},
 		{"args", "function main(): i32 {\n" + loop(`    if (args().len() < 1) { return 1; }`), true},
 		{"environ", "function main(): i32 {\n" + loop(`    if (environ().len() < 1) { return 1; }`), true},

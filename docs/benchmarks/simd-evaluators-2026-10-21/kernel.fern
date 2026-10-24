@@ -1,10 +1,3 @@
-// One kernel, three evaluators: the same generic body over an f64[] as a
-// plain f64, as Dual[f64] (value and derivative) and as DoubleDouble[f64],
-// timed with std/bench so the allocation count per evaluation is visible
-// beside the time. A Dual or DoubleDouble operation builds a record; the
-// question the benchmark answers is whether those records are spliced away
-// (allocs stays at the f64 run's) or materialised (allocs grows with the
-// element count).
 import "std/bench" as bench;
 import "std/simd" as simd;
 import "std/f64";

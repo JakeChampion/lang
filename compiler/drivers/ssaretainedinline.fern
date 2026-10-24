@@ -10,8 +10,6 @@ function require(ok: boolean, code: i32): void {
   }
 }
 
-// These are explicit test boundary assumptions, not a proof of allocation or
-// of the preceding caller instructions. The checker never reads UniqueSite.
 function home(row: ssaprepare.Emitted, h: i32): string {
   let arm = row.context.architecture == "arm64";
   if (h >= 0) {
@@ -60,8 +58,6 @@ function indexed_paths(site: ssaprepare.UniqueSite, arch: string, input: string,
   let jump = if (arch == "arm64") { "    b " } else { "    jmp " };
   let prefix = jump + ".Lindexed0\n";
   let i = 65;
-  // Execution order opposes physical order, with instruction placeholders
-  // between labels and prefix-related decimal names.
   while (i > 0) {
     i = i - 1;
     let target = if (i == 64) { ".Lindexed_end" } else { ".Lindexed" + (i + 1).to_string() };
@@ -123,8 +119,6 @@ function semantic_changes(site: ssaprepare.UniqueSite, arch: string, input: stri
   check(text, arch, other, result, site.flags, false);
   check(text + (if (arm) { "    mov x28, #0\n" } else { "    movq $0, %r15\n" }), arch, input, result, site.flags, false);
   if (!arm) {
-    // A 32-bit write destroys the upper pointer bits, even for the same
-    // physical register. It cannot establish the normalized pointer fact.
     check(change(text, "andq $-3, %rdx", "movl %edx, %edx"), arch, input, result, site.flags, false);
     check("    xorl %ecx, %ecx\n    jne \n" + text, arch, input, result, site.flags, false);
     check("    jmp .Lstart\n    movq bogus, %rax\n.Lstart:\n" + text, arch, input, result, site.flags, false);
@@ -140,7 +134,6 @@ function slot_controls(site: ssaprepare.UniqueSite, arch: string, input: string,
   check(site.text, arch, if (arm) { "[sp, #1]" } else { "-1(%rbp)" }, result, false, false);
   check(site.text, arch, if (arm) { "[sp, #32768]" } else { "-2147483648(%rbp)" }, result, false, false);
   let load = if (arm) { "    ldr x4, " + input + "\n" } else { "    movq " + input + ", %r11\n" };
-  // Omitted loads cannot be rescued by a caller's unverified cache annotation.
   check(change(site.text, load, ""), arch, input, result, false, false);
 }
 

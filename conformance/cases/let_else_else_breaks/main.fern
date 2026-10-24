@@ -1,9 +1,9 @@
-// `let PAT = E else { … }` reads the shared pattern grammar (#5356); the else
-// must diverge, so the bindings are live for the rest of the block.
-//
-// A `break` also satisfies the divergence rule, and the success
-// arm is the rest of the loop body.
-// exit: 1 + 2, then Nil breaks
+
+
+
+
+
+
 enum O { Has(i32), Nil }
 function main(): i32 {
   let xs: O[] = [Has(1), Has(2), Nil, Has(4)];

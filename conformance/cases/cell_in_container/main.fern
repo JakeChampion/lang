@@ -1,50 +1,50 @@
 import "std/i32";
 
-// A `Cell[T]` reached as a TUPLE ELEMENT and as an ENUM PAYLOAD — the two
-// container shapes whose exit sweep inlines its own drop instead of calling
-// the generated `__drop_tuple_*` / `__drop_enum_*`, and hands each rc-tracked
-// child to `dropStructField`. A cell there used to take a bare
-// `__fern_rc_dec`, which decrements without freeing the one-element array box
-// a cell is, so every one stranded an allocation. Nothing about that shows in
-// the output — the census row is the assertion, and it pins this at 0.
-//
-// Both element kinds are here because they pick different helpers: a string
-// element walks the slot with __fern_drop_arr_str, a scalar one frees the box
-// with __fern_arr_dec.
-//
-// The row pins 0. Getting there took a second fix at a third site: with three
-// containers in one function, Perceus reuse hands each dead box to the next,
-// and the reuse branch released the previous occupant's cell field through a
-// bare `__fern_rc_dec` — so N containers stranded N - 1 boxes. That is why
-// this fixture keeps all three blocks in one `main` rather than splitting
-// them: each block alone was already clean before that fix.
-// docs/rc-log/2026-09-02-cell-reuse-field-drop.md.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 enum Holder { Has(Cell[string]), Nothing }
 
 function main(): i32 {
-    // Tuple element, scalar cell.
+
     let ti: (i32, Cell[i32]) = (7, cell_new(0));
     ti.1.set(ti.1.get() + ti.0);
-    print(ti.1.get().to_string());          // 7
+    print(ti.1.get().to_string());
 
-    // Enum payload, string cell, reached through a match binding.
+
     let h: Holder = Has(cell_new("x"));
     match (h) {
         Has(c) => {
             c.set(c.get() + "y");
-            print(c.get());                 // xy
+            print(c.get());
         },
         Nothing => { print("none"); }
     }
 
-    // One cell, two tuples: each holder decrements and the last one frees,
-    // which is what makes freeing here safe without borrow tracking — both
-    // array helpers walk only at the cell's own rc == 1.
+
+
+
     let shared: Cell[string] = cell_new("s");
     let t1: (i32, Cell[string]) = (1, shared);
     let t2: (i32, Cell[string]) = (2, shared);
     t1.1.set("s!");
-    print(t2.1.get());                      // s!
+    print(t2.1.get());
     return 0;
 }

@@ -6,14 +6,6 @@ import "std/zstd";
 import "std/headers";
 import "std/utf8";
 
-// tests/stdlib/http_compress_test.fern — std/http/compress: the coding
-// `Accept-Encoding` ranks highest among those offered (zstd on a tie), the identity
-// body when none is acceptable, `Vary` on every response whose coding
-// depends on the field, the ETag made weak and `Accept-Ranges` dropped
-// on a coded one, and each response left alone: a small body, a type
-// compression does not shrink, one already coded, `no-transform`, a 206,
-// a bodiless status, a file body, and a body coding would not shrink.
-
 function req(fields: string[]): HttpRequest {
   let r: HttpRequest = http.request("GET", "/doc");
   let i: i32 = 0;
@@ -44,8 +36,6 @@ function field(r: HttpResponse, name: string): string {
   return "-";
 }
 
-// `summary(r)` — the fields the module sets, and the body as it reads
-// once decoded: "same" when it is the page, its length otherwise.
 function summary(r: HttpResponse): string {
   let body: u8[] = r.body_bytes();
   if (field(r, "Content-Encoding") == "gzip") {
@@ -81,8 +71,6 @@ function test_gzip_chosen(): test.TestOutcome {
   return test.assert_eq(summary(r) + " " + (r.body_len() < page().len()).to_string(), "gzip Accept-Encoding same true");
 }
 
-// zstd where the client takes it, ahead of gzip when it ranks them alike,
-// behind gzip when it ranks gzip higher.
 function test_zstd(): test.TestOutcome {
   let o: compress.Options = compress.options();
   let both: string = summary(compress.response(req(["Accept-Encoding", "gzip, deflate, br, zstd"]), html(), o));
@@ -99,8 +87,6 @@ function test_identity(): test.TestOutcome {
   return test.assert_eq(none + " | " + refused + " | " + ranked + " | " + alias, "- Accept-Encoding same | - Accept-Encoding same | - Accept-Encoding same | gzip Accept-Encoding same");
 }
 
-// A coding the module does not write is passed over for one it does,
-// however the options rank them.
 function test_unwritten_coding(): test.TestOutcome {
   let o: compress.Options = compress.Options { ...compress.options(), codings: ["br", "gzip"] };
   return test.assert_eq(summary(compress.response(req(["Accept-Encoding", "br, gzip"]), html(), o)), "gzip Accept-Encoding same");
@@ -119,7 +105,6 @@ function test_validators(): test.TestOutcome {
   return test.assert_eq(field(strong, "ETag") + " " + field(strong, "Accept-Ranges") + " " + field(weak, "ETag"), "W/\"v1\" - W/\"v1\"");
 }
 
-// Each response the module leaves as it is, field for field.
 function test_left_alone(): test.TestOutcome {
   let o: compress.Options = compress.options();
   let a: HttpRequest = req(["Accept-Encoding", "gzip"]);
@@ -141,8 +126,6 @@ function test_left_alone(): test.TestOutcome {
   return test.assert_eq(out, "-- -- -- br- -- -- -- -- ");
 }
 
-// A body coding would not shrink keeps the identity coding, under `Vary`
-// all the same.
 function test_incompressible(): test.TestOutcome {
   let noise: u8[] = [];
   let x: i32 = 7;

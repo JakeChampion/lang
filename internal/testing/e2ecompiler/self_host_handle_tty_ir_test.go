@@ -8,15 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/tools/tty"
 )
 
-// selfHostHandleTtySource drives the four terminal questions asked of a
-// HANDLE through the self-host's lowering (#9363). A handle IS its fd in this
-// compiler, so each method lowers to the same op the free builtin does with
-// the receiver as its first operand — which is `isatty`'s arrangement, and
-// what this leg pins: that the receiver reaches the op as an operand and the
-// method's own arguments follow it in order.
-//
-// The terminal is reached BY PATH, with fds 0-2 left as the driver's own, so
-// nothing here could be answered by a standard descriptor instead.
 const selfHostHandleTtySource = `function main(): i32 {
     let a: string[] = args();
     if (a.len() < 2) { return 9; }
@@ -52,9 +43,6 @@ const selfHostHandleTtySource = `function main(): i32 {
 }
 `
 
-// handleTtyOnPath allocates a pseudo-terminal, plants 24x80 with a pixel pair,
-// runs the program with the pty's NAME as its argument, and requires the
-// resize to have landed with the pixel pair intact.
 func handleTtyOnPath(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
 	master, slave, err := tty.OpenPTY()
@@ -67,7 +55,6 @@ func handleTtyOnPath(t *testing.T, cmd *exec.Cmd) {
 		t.Fatalf("plant the size: %v", err)
 	}
 	cmd.Args = append(cmd.Args, slave.Name())
-	// The child opens the pty by name, so no descriptor on it is passed.
 	slave.Close()
 	out, err := cmd.CombinedOutput()
 	code := 0
@@ -93,7 +80,6 @@ func handleTtyOnPath(t *testing.T, cmd *exec.Cmd) {
 	}
 }
 
-// TestSelfHostHandleTtyIR is the x86-64 IR leg.
 func TestSelfHostHandleTtyIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -121,8 +107,6 @@ func TestSelfHostHandleTtyIR(t *testing.T) {
 	handleTtyOnPath(t, exec.Command(progBin))
 }
 
-// TestSelfHostHandleTtyArm64IR is the arm64 leg of the same programme, through
-// asm_ir_run -target arm64-linux under qemu.
 func TestSelfHostHandleTtyArm64IR(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

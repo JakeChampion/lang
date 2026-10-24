@@ -1,27 +1,9 @@
-// cp.fern — GNU-compatible `cp`.
-//
-//   cp [-T] SOURCE DEST          one copy, named
-//   cp SOURCE... DIRECTORY       one copy per SOURCE inside DIRECTORY
-//   cp -t DIRECTORY SOURCE...    the same with the directory named first
-//
-// The copying itself is `coreutils/lib/copy.fern`, which `mv`'s
-// cross-device fallback and `install` will share; this file is the operand
-// layer — which shape was typed, which name each source lands under, and
-// the option table that fills the engine's configuration in.
-//
-// Behaviours were measured from GNU coreutils 9.4; no GNU source was read.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
 import "./lib/gnu";
 import "./lib/copy";
 
-// ---- options ---------------------------------------------------------------
-//
-// Declared in GNU's order, which is visible: the ambiguity list prints
-// candidates in it, so `cp --p` names '--parents' before '--preserve' and
-// `cp --r` names '--recursive', '--remove-destination', '--reflink' in
-// that order. Every constraint here was read off a `cp --PREFIX` probe.
 function opt_archive(): i32 {
   return 1;
 }
@@ -130,11 +112,6 @@ function opt_verbose(): i32 {
   return 27;
 }
 
-// The short-only spellings. Each is its own entry because glibc keeps two
-// tables and these appear in only one of them: `-b` takes no argument
-// where `--backup` takes an optional one, `-p` is a fixed attribute list
-// where `--preserve` names its own, `-u` is `--update=older` spelled
-// without a value, and `-d`, `-H` and `-R` have no long form at all.
 function opt_backup_short(): i32 {
   return 28;
 }
@@ -242,8 +219,6 @@ function option_table(): gnu.Opt[] {
   opts = opts.append(gnu.valued("t", "target-directory", opt_target_directory()));
   opts = opts.append(gnu.optional_long("", "update", opt_update()));
   opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
-  // The short-only entries, after every long name so the ambiguity lists
-  // above keep the order the probes measured.
   opts = opts.append(gnu.flag("b", "", opt_backup_short()));
   opts = opts.append(gnu.flag("p", "", opt_preserve_short()));
   opts = opts.append(gnu.flag("u", "", opt_update_short()));
@@ -253,8 +228,6 @@ function option_table(): gnu.Opt[] {
   return opts;
 }
 
-// `Scan` — what the option scan decided, before the environment fills in
-// what no option said.
 struct Scan { cfg: copy.Cfg, target_dir: string, have_target_dir: boolean, no_target_dir: boolean, parents: boolean, strip: boolean, deref_given: boolean, backup_given: boolean, control_given: boolean, control_text: string, suffix_given: boolean, warn_context: boolean }
 
 function scan_new(): Scan {
@@ -282,8 +255,6 @@ function scan_options(argv: string[]): (Scan, string[]) {
 function apply_option(s: Scan, m: gnu.OptMatch): Scan {
   let c: copy.Cfg = s.cfg;
   if (m.id == opt_archive()) {
-    // `-a` is `-dR --preserve=all`, so it carries the link-preserving
-    // no-dereference of `-d` along with the recursion.
     return Scan { ...s, cfg: copy.Cfg { ...c, recursive: true, deref: copy.deref_never(), attrs: copy.attrs_all() }, deref_given: true };
   }
   if (m.id == opt_attributes_only()) {
@@ -302,10 +273,6 @@ function apply_option(s: Scan, m: gnu.OptMatch): Scan {
     return Scan { ...s, cfg: copy.Cfg { ...c, copy_contents: true } };
   }
   if (m.id == opt_context()) {
-    // A NAMED context cannot be honoured without SELinux, and GNU says
-    // so rather than ignoring it silently. Bare `-Z` / `--context` asks
-    // only for the default and is measured silent, so the warning hangs
-    // off the VALUE and not the option. An empty value still counts.
     if (m.has_value) {
       return Scan { ...s, warn_context: true };
     }
@@ -318,22 +285,15 @@ function apply_option(s: Scan, m: gnu.OptMatch): Scan {
     return Scan { ...s, cfg: copy.Cfg { ...c, deref: copy.deref_always() }, deref_given: true };
   }
   if (m.id == opt_force()) {
-    // `-f` is only "remove an unopenable destination and retry"; it does
-    // NOT cancel an earlier `-i`. Measured — `cp -i -f old dest` still
-    // asks, and declining it still exits 1.
     return Scan { ...s, cfg: copy.Cfg { ...c, force: true } };
   }
   if (m.id == opt_interactive()) {
-    // `-i` overrides an earlier `-n`, which is the whole of why the three
-    // of `-i` / `-f` / `-n` are one field rather than three flags.
     return Scan { ...s, cfg: copy.Cfg { ...c, ask: copy.ask_prompt(), update: copy.update_all() } };
   }
   if (m.id == opt_link()) {
     return Scan { ...s, cfg: copy.Cfg { ...c, hard_link: true } };
   }
   if (m.id == opt_no_clobber()) {
-    // The short and long spellings of the same thing, and the warning is
-    // attached to the spelling rather than the behaviour.
     return Scan { ...s, cfg: copy.Cfg { ...c, ask: copy.ask_never() } };
   }
   if (m.id == opt_no_dereference()) {
@@ -373,8 +333,6 @@ function apply_option(s: Scan, m: gnu.OptMatch): Scan {
     return Scan { ...s, cfg: copy.Cfg { ...c, remove_destination: true } };
   }
   if (m.id == opt_reflink()) {
-    // `--reflink` with no WHEN is `--reflink=always`, measured: the bare
-    // form reports the clone failure rather than falling back.
     if (m.has_value) {
       return Scan { ...s, cfg: copy.Cfg { ...c, reflink: gnu.argmatch_valued(m.value, copy.reflink_names(), copy.reflink_values(), "--reflink") } };
     }
@@ -415,9 +373,6 @@ function apply_option(s: Scan, m: gnu.OptMatch): Scan {
   return Scan { ...s, cfg: copy.Cfg { ...c, verbose: true } };
 }
 
-// One `--preserve` / `--no-preserve` list: comma-separated, each element
-// prefix-matched against the attribute names, and an unmatched one fatal
-// with the whole list printed in declaration order.
 function apply_attr_list(a: copy.Attrs, list: string, on: boolean, option: string): copy.Attrs {
   let out: copy.Attrs = a;
   let start: i32 = 0;
@@ -433,8 +388,6 @@ function apply_attr_list(a: copy.Attrs, list: string, on: boolean, option: strin
   return out;
 }
 
-// The suffix and the control no option supplied. Both environment
-// variables are read only when backups are ON.
 function from_environment(s: Scan): copy.Cfg {
   let c: copy.Cfg = s.cfg;
   if (!c.backups) {
@@ -471,12 +424,6 @@ function from_environment(s: Scan): copy.Cfg {
   return copy.Cfg { ...c, control: control };
 }
 
-// ---- the target directory ---------------------------------------------------
-//
-// The check a DIRECTORY operand meets before anything is copied into it:
-// the last of three or more operands, and `-t`'s argument. It follows
-// symbolic links, and a name that exists but is not a directory is ENOTDIR
-// worded as the errno. `what` is the noun the two callers differ by.
 function require_directory(what: string, dir: string): void {
   match (stat(dir)) {
     Err(e) => {
@@ -492,11 +439,6 @@ function require_directory(what: string, dir: string): void {
   }
 }
 
-// A SOURCE operand as the into-a-directory forms see it: as typed, unless
-// `--strip-trailing-slashes` says otherwise. The direct two-operand form
-// never asks — measured, `cp --strip-trailing-slashes ff/ o` still reports
-// `cannot stat 'ff/'`, so the stripping reaches only the paths that derive
-// a destination name from the source's last component.
 function stripped(s: Scan, operand: string): string {
   if (s.strip) {
     return gnu.strip_slashes(operand);
@@ -504,7 +446,6 @@ function stripped(s: Scan, operand: string): string {
   return operand;
 }
 
-// ---- main -------------------------------------------------------------------
 pub function main(): i32 {
   let scanned: (Scan, string[]) = scan_options(args());
   let s: Scan = scanned.0;
@@ -521,7 +462,6 @@ pub function main(): i32 {
     gnu.die_usage("missing destination file operand after " + gnu.quotea(operands[0]), 1);
   }
   if (s.have_target_dir && s.no_target_dir) {
-    // No `Try …` line on this one, unlike every other usage error here.
     gnu.error("cannot combine --target-directory (-t) and --no-target-directory (-T)");
     return 1;
   }
@@ -529,23 +469,15 @@ pub function main(): i32 {
     gnu.error("warning: ignoring --context; it requires an SELinux-enabled kernel");
   }
   let cfg: copy.Cfg = from_environment(s);
-  // A clone keeps the source's holes, so `--sparse=never` turns the
-  // default clone off; an explicit `--reflink=always` stays.
   if (cfg.reflink == copy.reflink_auto() && cfg.sparse == copy.sparse_never()) {
     cfg = copy.Cfg { ...cfg, reflink: copy.reflink_never() };
   }
-  // `-n` is `--update=none` decided once the whole command line has
-  // been read, so it beats an `--update` on either side of it. 9.5
-  // dropped the warning that used to come with it.
   if (cfg.ask == copy.ask_never()) {
     cfg = copy.Cfg { ...cfg, update: copy.update_none() };
   }
   if (s.backup_given && copy.update_skips(cfg.update)) {
     gnu.die_usage("--backup is mutually exclusive with -n or --update=none-fail", 1);
   }
-  // The dereference DEFAULT is decided by -r, not fixed: measured,
-  // `cp sl out` follows a command-line symlink and `cp -r sl out` does
-  // not. `-H` is how the command-line-only reading is asked for outright.
   if (!s.deref_given) {
     if (cfg.recursive) {
       cfg = copy.Cfg { ...cfg, deref: copy.deref_never() };
@@ -565,8 +497,6 @@ pub function main(): i32 {
       gnu.die_usage("extra operand " + gnu.quotea(operands[2]), 1);
     }
     if (s.parents && !is_directory(operands[1])) {
-      // `--parents` with `-T` is not a conflict of its own: measured, it
-      // reaches this same refusal.
       gnu.die_usage("with --parents, the destination must be a directory", 1);
     }
     st = copy.copy_one(cfg, st, operands[0], operands[1], true);
@@ -598,14 +528,9 @@ function is_directory(path: string): boolean {
   }
 }
 
-// `operands[0 .. count)` copied inside `dir`, each under its own last
-// component — or, under `--parents`, under its whole path. A failed
-// operand costs the exit status and not the run.
 function copy_into(cfg: copy.Cfg, s: Scan, st0: copy.State, operands: string[], count: i32, dir: string): copy.State {
   let st: copy.State = st0;
   if (s.parents && !is_directory(dir)) {
-    // `--parents` has its own wording for this, with the `Try …` line
-    // every other usage error here carries and the ENOTDIR one does not.
     gnu.die_usage("with --parents, the destination must be a directory", 1);
   }
   let i: i32 = 0;
@@ -621,9 +546,6 @@ function copy_into(cfg: copy.Cfg, s: Scan, st0: copy.State, operands: string[], 
   return st;
 }
 
-// `--parents`: the destination is `dir` plus the WHOLE source path, and
-// each directory the path passes through is created under `dir` carrying
-// the mode of the source directory it mirrors.
 function copy_with_parents(cfg: copy.Cfg, st0: copy.State, src: string, dir: string): copy.State {
   let st: copy.State = st0;
   let i: i32 = 0;
@@ -639,8 +561,6 @@ function copy_with_parents(cfg: copy.Cfg, st0: copy.State, src: string, dir: str
   return copy.copy_one(cfg, st, src, gnu.join_path(dir, src), true);
 }
 
-// One intermediate directory of a `--parents` destination. Already there
-// is not a failure — two operands under one path share every prefix.
 function make_parent(cfg: copy.Cfg, st0: copy.State, src: string, dest: string): copy.State {
   let st: copy.State = st0;
   if (is_directory(dest)) {
@@ -655,10 +575,6 @@ function make_parent(cfg: copy.Cfg, st0: copy.State, src: string, dest: string):
   }
   match (create_dir(dest, perm)) {
     Ok(_) => {
-      // `-v` announces a created parent, and UNQUOTED — measured,
-      // `cp --parents -v d1/a dst` prints `d1 -> dst/d1` before the
-      // quoted `'d1/a' -> 'dst/d1/a'`. It is the one verbose line here
-      // that does not quote its names.
       if (cfg.verbose) {
         return copy.State { ...st, out: gnu.put(st.out, src + " -> " + dest + "\n") };
       }

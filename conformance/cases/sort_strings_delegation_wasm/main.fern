@@ -1,12 +1,12 @@
-// Regression for #4829: a comparator that is BOTH a direct-call target AND a
-// closure value passed to `cmp.sort_by`. The closure-target ABI appends an
-// env_ptr param to such a function's wasm signature, but the direct-call sites
-// supplied only the natural args — a stack underflow that failed
-// `-target wasm32-wasi` validation ("expected i32 but nothing on stack") while
-// interp / x86-64 / arm64 all passed. The fix pushes a dummy env_ptr at direct
-// calls to env-appended closure targets (see calleeEnvAppended in wasmbin).
-// prop_sort_strings is the exhaustive property companion; this one pins the
-// exact direct-call + delegation shape on every backend.
+
+
+
+
+
+
+
+
+
 import "core/cmp";
 import "std/string";
 
@@ -19,8 +19,8 @@ function main(): i32 {
         print("direct cmp FAILED");
         return 1;
     }
-    // Direct call to `fold_order` — the env-appended closure target must
-    // still accept a bare (no-env) direct call.
+
+
     if (fold_order("ABC", "abc") != 0) {
         print("direct fold_order FAILED");
         return 1;
@@ -41,7 +41,7 @@ function main(): i32 {
     }
 
     let ci: string[] = cmp.sort_by(arr, fold_order);
-    // ci-stable: "Apple" and "apple" compare equal, keep input order.
+
     if (ci[0] != "") {
         print("ci FAILED");
         return 1;

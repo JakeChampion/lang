@@ -1,14 +1,8 @@
-// Lexically scoped storage rewrite for mutable captured locals.
-// Shared by the production closure lowerer and executable AST contract tests.
 import "./ast";
 import "./astwalk";
 import "./util";
 import "./typeinfo";
 
-// cell_name is the storage a mutated capture is rewritten to: a `Cell[T]`
-// the closure and the frame that built it share, so a write on either side
-// is an in-place `set` the other reads. The `$` prefix cannot collide with a
-// user ident.
 pub function cell_name(name: string): string {
   return "$cell$" + name;
 }
@@ -18,7 +12,6 @@ function cell_read(name: string, line: i32, col: i32): ast.Expr {
   return ast.ExprCall { callee: ast.ExprFieldAccess { obj: cell, field: "get", line: line, col: col, ty: "", const_read: false }, args: [], line: line, col: col, type_args: [], ty: "" };
 }
 
-// cell_decl builds `let $cell$name: Cell[ty] = cell_new(init);`.
 pub function cell_decl(name: string, ty: string, init: ast.Expr, line: i32, col: i32): ast.Stmt {
   let cell: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "cell_new", line: line, col: col, ty: "" }, args: [init], line: line, col: col, type_args: [], ty: "" };
   return ast.StmtVar { name: cell_name(name), type_name: "Cell[" + ty + "]", init: cell, line: line, col: col, fn_ret: "", fn_param_types: "" };
@@ -32,9 +25,6 @@ pub function site_key(name: string, line: i32, col: i32): string {
   return name + "@" + util.i32_to_string(line) + ":" + util.i32_to_string(col);
 }
 
-// box_rewrite_expr rewrites every READ of a boxed var `x` to `$cell$x.get()`,
-// recursing all expression forms (including into lambda bodies). The decl name
-// and assign target are handled by box_rewrite_stmt, not here.
 pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bsites: string[], bound: string[]): ast.Expr {
   match (e) {
     ast.ExprIdent(id) => {
@@ -93,17 +83,12 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
       return ast.ExprFieldAccess { ...fa, obj: box_rewrite_expr(fa.obj, boxed, btypes, bsites, bound) };
     },
     ast.ExprLambda(lm) => {
-      // A lambda PARAMETER of a boxed name is a different variable: inside
-      // this body the spelling means the argument, not the enclosing cell.
       let lb: string[] = bound;
       let lp: i32 = 0;
       while (lp < lm.params.len()) {
         lb = lb.append(lm.params[lp].name);
         lp = lp + 1;
       }
-      // The captured storage changes with the identifier, not later at
-      // code generation. Keep the exact semantic element type, including
-      // unknowns, function signatures, widths and borrowed views.
       let caps: ast.TypedBinding[] = lm.captures;
       if (lm.captures_known) {
         caps = [];
@@ -160,17 +145,10 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
   return e;
 }
 
-// box_rewrite_stmt rewrites one statement: a boxed var's decl wraps its init in
-// a cell, a boxed assign becomes the cell's `set`, everything else recurses.
 function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsites: string[], bound: string[]): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
       let bxi: i32 = util.index_of_str(boxed, v.name);
-      // Only the declaration the cell was built from becomes the cell.
-      // A re-declaration of the spelling is a different variable, and
-      // rewriting it produced a SECOND `$cell$n` - typed from the first
-      // one's entry - that shadowed the real cell for the rest of the
-      // block. Matched on the site because the name cannot tell them apart.
       if (bxi >= 0 && site_key(v.name, v.line, v.col) != bsites[bxi]) {
         bxi = 0 - 1;
       }
@@ -184,7 +162,6 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
     },
     ast.StmtAssign(a) => {
       if (util.index_of_str(boxed, a.target) >= 0 && util.index_of_str(bound, a.target) < 0) {
-        // x = v  ->  $cell$x.set(v)
         let recv: ast.Expr = ast.ExprIdent { name: cell_name(a.target), line: a.target_line, col: a.target_col, ty: "" };
         let scall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "set", line: a.line, col: a.col, ty: "", const_read: false }, args: [box_rewrite_expr(a.value, boxed, btypes, bsites, bound)], line: a.line, col: a.col, type_args: [], ty: "" };
         return ast.StmtExpr { value: scall, line: a.line };
@@ -204,9 +181,6 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
       return ast.StmtWhile { cond: box_rewrite_expr(w.cond, boxed, btypes, bsites, bound), body: box_rewrite_stmts(w.body, boxed, btypes, bsites, bound), label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo };
     },
     ast.StmtFor(fr) => {
-      // The loop BINDER shadows: `for n in xs` inside a function with a
-      // boxed `n` means the element, not the cell. The iterable is still
-      // in the enclosing scope, so only the body takes the extra binding.
       let fb: string[] = bound;
       fb = astwalk.append_bound_name(fb, fr.var_name);
       return ast.StmtFor { var_name: fr.var_name, iter: box_rewrite_expr(fr.iter, boxed, btypes, bsites, bound), body: box_rewrite_stmts(fr.body, boxed, btypes, bsites, fb), label: fr.label, line: fr.line, col: fr.col };
@@ -214,10 +188,6 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
     ast.StmtMatch(m) => {
       let na: ast.MatchArm[] = [];
       for arm in m.arms {
-        // Rewrite a boxed var read in the guard too - else the guard read
-        // the raw slot instead of the box (stale value). No-op when the
-        // guard references no boxed let (box_rewrite_expr returns it as-is).
-        // A payload binder shadows inside its own arm (body AND guard).
         let ab: string[] = bound;
         let bxj: i32 = 0;
         while (bxj < boxed.len()) {
@@ -244,11 +214,6 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
   return st;
 }
 
-// box_rewrite_stmts walks a statement LIST, so it is where a `let` shadow takes
-// effect: a re-declaration of a boxed name binds it for every LATER statement of
-// that list, and only the declaration the cell was built from is rewritten into
-// the cell (matched on its line:col, since the name alone cannot tell the two
-// apart).
 pub function box_rewrite_stmts(stmts: ast.Stmt[], boxed: string[], btypes: string[], bsites: string[], bound: string[]): ast.Stmt[] {
   let out: ast.Stmt[] = [];
   let bnd: string[] = bound;
@@ -259,8 +224,6 @@ pub function box_rewrite_stmts(stmts: ast.Stmt[], boxed: string[], btypes: strin
   return out;
 }
 
-// Only later statements and the arm yield see a declaration. Its initializer
-// still sees the enclosing binding. Tuple declarations shadow each component.
 function shadow_after(stmt: ast.Stmt, boxed: string[], bsites: string[], bound: string[]): string[] {
   let out: string[] = bound;
   if let ast.StmtVar(v) = stmt {

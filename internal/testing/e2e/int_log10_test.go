@@ -2,17 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the integer log10_floor helpers — std/i32,
-// std/i64, std/u32, std/u64 — the base-10 sibling of log2_floor and the
-// digit-count primitive (a positive n has n.log10_floor()+1 decimal digits).
-// Each returns floor(log10 n) for n >= 1 and the -1 "no real log" sentinel for
-// n <= 0 (n == 0 for the unsigned types). Counting divisions by ten stays exact
-// where a float log10 would round near a power of ten, and — like log2_floor —
-// needs no leading-zeros primitive. The unsigned cases cross 2^31 / the i64
-// range so a signed divide/compare would give the wrong answer, mirroring the
-// unsigned guards in u32_roots / u64_roots. Returns 42 iff every check holds
-// across interp / x86-64 / wasm / arm64; each leg skips itself when its
-// toolchain is absent.
 const intLog10Prog = `
 import "std/i32";
 import "std/i64" as i64m;

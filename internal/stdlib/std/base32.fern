@@ -1,43 +1,22 @@
-// std/base32 — RFC 4648 base32 encode / decode (standard alphabet
-// `A–Z 2–7`, `=` padding).
-//
-// `base32_encode(b)` groups the input into 5-bit chunks, each mapped to
-// one of 32 characters, padding to 8-character groups with `=`.
-// `base32_decode(s)` is the inverse; like base64_decode it is lenient —
-// decoding stops at the first character that is neither a base32 digit
-// nor `=`, returning the bytes decoded so far. Round-trips
-// `base32_encode` on any byte content. Base32's case-insensitive,
-// digit-safe alphabet suits TOTP secrets, filenames, and DNS labels.
-//
-// Bytes are `u8[]` on both sides (#5730, decision D9): arbitrary input
-// decodes to arbitrary bytes, which are not UTF-8 and so must not be
-// typed as a `string`, and encoding is the inverse — its job is
-// rendering bytes as text. Read a decode result back with
-// `std/utf8.from_bytes` when the bytes are supposed to be text; encode
-// a string's bytes with `std/string`'s `s.bytes()`.
+// This module encodes and decodes Base32 data under RFC 4648.
 
-// __b32_alphabet maps a 5-bit value (0..31) to its character byte:
-// 0..25 → 'A'..'Z', 26..31 → '2'..'7'.
 function __b32_alphabet(v: i32): i32 {
-  if (v < 26) {  // 'A' + v
+  if (v < 26) {
     return v + 65;
   }
-  return v + 24;  // 26 → '2' (50)
+  return v + 24;
 }
 
-// __b32_decode_char maps a character byte back to its 5-bit value, or
-// -1 if it is not a base32 digit.
 function __b32_decode_char(c: i32): i32 {
-  if (c >= 65 && c < 91) {  // A-Z
+  if (c >= 65 && c < 91) {
     return c - 65;
   }
-  if (c >= 50 && c < 56) {  // 2-7 → 26..31
+  if (c >= 50 && c < 56) {
     return c - 24;
   }
   return 0 - 1;
 }
 
-// `base32_encode(b)` — RFC 4648 base32, `=`-padded to 8-char groups.
 pub function base32_encode(bs: u8[]): string {
   let out: u8[] = [];
   let acc: i32 = 0;
@@ -54,21 +33,15 @@ pub function base32_encode(bs: u8[]): string {
     i = i + 1;
   }
   if (bits > 0) {
-    // Flush the final partial group, zero-padding the low bits.
     out = out.append(__b32_alphabet(acc << 5 - bits & 31) as u8);
   }
-  // Pad with '=' to a multiple of 8 characters.
   while (out.len() % 8 != 0) {
-    out = out.append(61 as u8);  // '='
+    out = out.append(61 as u8);
   }
   return string_from_bytes_unchecked(out);
 }
 
-// `base32_decode(s)` — inverse of base32_encode. Lenient: stops at the
-// first non-base32 / non-`=` character (so trailing `=` padding needs no
-// special handling), returning the bytes decoded up to that point.
 pub function base32_decode(s: string): u8[] {
-  // Count the leading run of valid base32 digits (stop at '=' / junk).
   let n: i32 = 0;
   let sLen: i32 = s.len();
   while (n < sLen) {
@@ -93,20 +66,6 @@ pub function base32_decode(s: string): u8[] {
   return out;
 }
 
-// `base32_decode_strict(s)` — like `base32_decode` but returns `None` on
-// malformed input instead of silently stopping at the first bad
-// character. The strict counterpart of `base64_decode_strict` /
-// `hex_decode_strict`, and the one to reach for when decoding a
-// security-sensitive secret (a TOTP key, a signed token): the lenient
-// variant hides tampering by just truncating, while this makes a bad
-// byte observable (#4384).
-//
-// Rules (RFC 4648): every character before the padding must be a base32
-// digit; `=` padding may appear only at the end; the padded total must
-// fill an 8-character group (max 6 `=`); and a final data group of 1, 3,
-// or 6 characters can't form whole bytes, so it rejects. Unpadded input
-// with an otherwise-valid data length is accepted (padding-optional,
-// matching `base64_decode_strict`). `""` decodes to `Some("")`.
 pub function base32_decode_strict(s: string): Option[u8[]] {
   let sLen: i32 = s.len();
   let n: i32 = 0;
@@ -116,12 +75,10 @@ pub function base32_decode_strict(s: string): Option[u8[]] {
     }
     n = n + 1;
   }
-  // Everything after the data run must be `=` padding — a non-`=` char
-  // (including a valid base32 char after a `=`) means it's malformed.
   let p: i32 = n;
   let pad: i32 = 0;
   while (p < sLen) {
-    if (s[p] != 61) {  // 61 = '='
+    if (s[p] != 61) {
       return None;
     }
     pad = pad + 1;
@@ -136,12 +93,10 @@ pub function base32_decode_strict(s: string): Option[u8[]] {
     }
     return Some([]);
   }
-  // A final data group of 1, 3, or 6 chars can't form whole bytes.
   let rem: i32 = n % 8;
   if (rem == 1 || rem == 3 || rem == 6) {
     return None;
   }
-  // When padded, the total must fill an 8-char group.
   if (pad > 0 && (n + pad) % 8 != 0) {
     return None;
   }

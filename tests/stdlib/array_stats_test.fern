@@ -1,16 +1,6 @@
 import "std/test";
 import "std/array" as array;
 
-// tests/stdlib/array_stats_test.fern — pure-Fern coverage of
-// std/array.variance_f64 / stddev_f64: population variance (mean of squared
-// deviations, /n) and its square root, both Option[f64] (None for empty). Uses
-// the textbook {2,4,4,4,5,5,7,9} set (mean 5, variance 4, stddev 2) plus the
-// single-element / constant / empty edge cases. The Go-side TestArrayStats pins
-// these across interp / x86-64 / arm64 (the wasmbin leg skips Option over a
-// 64-bit payload, the enum-i64/f64 gap avg_f64 / variance_f64 share); this is the
-// migration-shaped companion. Option[f64] lowers on the self-host asm_ir path,
-// so this runs in both self-host gates too.
-
 function unwrap(o: Option[f64]): f64 {
   match (o) {
     Some(v) => {

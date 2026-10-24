@@ -1,15 +1,15 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// string[] grown through repeated `.append` inside a struct functional
-// update (`S{f: s.f.append(v)}` — the EmitState.needed threading shape,
-// #3425). Each append's grow COPY duplicates the element pointers; the
-// old struct's drop then walk-frees its buffer at rc==1
-// (__fern_drop_arr_str), so without the __fern_arr_push_grow_ptr/_str
-// element retain the copied elements were freed under the live grown
-// buffer — the self-host-driver SIGSEGV / poison-mode UAF. 40 elements
-// force multiple grows; every element's length + prefix is verified
-// after all the intermediate structs have been dropped. 0 when correct.
+
+
+
+
+
+
+
+
+
+
+
+
 struct St {
     needed: string[],
     n: i32

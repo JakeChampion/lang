@@ -18,13 +18,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// std/http/static under std/serve's loop, over a real directory: a file
-// whole and as ranges the loop seeks to and sends (one large enough to take
-// several pieces), the 416, a 304 from its own ETag, HEAD, a precompressed
-// sibling, the directory redirect, and paths that would leave the
-// directory; and `http.file`'s whole-file body, and its 404 for a file that
-// is not there. The interpreter and the x86-64 backend; serve_h2_test.go
-// runs the same over HTTP/2.
 func TestStaticServeInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src, big := writeStaticServeSource(t, "serve.config()")
@@ -46,9 +39,6 @@ func TestStaticServeX86_64(t *testing.T) {
 	checkStaticPaths(t, addr, &http.Transport{}, 1)
 }
 
-// writeStaticServeSource writes the served directory and the program
-// serving it under the serve.Config `config`, and returns the program's
-// path and big.bin's bytes.
 func writeStaticServeSource(t *testing.T, config string) (string, []byte) {
 	t.Helper()
 	dir := t.TempDir()
@@ -102,8 +92,6 @@ function main(): i32 {
 }
 `
 
-// checkStaticServe makes its requests through `tr`, and every response
-// must come under HTTP major version `major`.
 func checkStaticServe(t *testing.T, addr string, big []byte, tr http.RoundTripper, major int) {
 	t.Helper()
 	client := &http.Client{Transport: tr, Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
@@ -221,9 +209,6 @@ func checkStaticServe(t *testing.T, addr string, big []byte, tr http.RoundTrippe
 	}
 }
 
-// checkStaticPaths checks the paths the loop decodes before the handler
-// sees them: an escape decoded once, and a path climbing above the root and
-// an escaped slash refused, on both HTTP/1.1 and HTTP/2.
 func checkStaticPaths(t *testing.T, addr string, tr *http.Transport, major int) {
 	t.Helper()
 	defer tr.CloseIdleConnections()
@@ -254,14 +239,11 @@ func checkStaticPaths(t *testing.T, addr string, tr *http.Transport, major int) 
 	}
 }
 
-// byterangePart is one part of a multipart/byteranges body.
 type byterangePart struct {
 	contentType, contentRange string
 	body                      []byte
 }
 
-// byteranges reads a multipart/byteranges body into its parts, nil when
-// the response is not one.
 func byteranges(t *testing.T, h http.Header, body []byte) []byterangePart {
 	t.Helper()
 	mt, params, err := mime.ParseMediaType(h.Get("Content-Type"))
@@ -287,8 +269,6 @@ func byteranges(t *testing.T, h http.Header, body []byte) []byterangePart {
 	}
 }
 
-// contentShape is a 2xx response's media type and content, a
-// multipart/byteranges body as its parts so two boundaries compare equal.
 func contentShape(t *testing.T, h http.Header, body []byte) string {
 	t.Helper()
 	parts := byteranges(t, h, body)
@@ -302,19 +282,6 @@ func contentShape(t *testing.T, h http.Header, body []byte) string {
 	return out
 }
 
-// The preconditions and the range, in RFC 9110 §13.2.2's order, against
-// Go's http.ServeContent as the oracle: every combination of If-Match,
-// If-Unmodified-Since, If-None-Match, If-Modified-Since, Range and If-Range
-// (each absent, holding, failing, and in the forms that matter) on GET,
-// and the preconditions on HEAD, sent to both over the same file. Go's
-// server is handed std/http/static's spelling of the ETag, so the tags
-// compare as they stand, and a multipart/byteranges body compares by its
-// parts. Left out where RFC 9110 lets the two differ, or where Go does not
-// follow it: a malformed Range (Go 416, std/http/static the whole file, both
-// allowed), a zero suffix-range (Go a zero-length range, std/http/static
-// unsatisfiable), Range on HEAD (Go 206; §14.2 has a server ignore it), and
-// methods other than GET and HEAD (ServeContent does not check them;
-// std/http/static answers 405).
 func TestStaticPreconditionsMatchGo(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src, _ := writeStaticServeSource(t, "serve.config()")

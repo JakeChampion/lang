@@ -8,18 +8,6 @@ import (
 	"testing"
 )
 
-// lstat is the answer to "is this entry a symlink" that Fern had no way to ask
-// (#7982). `stat` follows links and FileStat carries no link bit, so
-// `internal/pkg/embed`'s `!d.Type().IsRegular()` skip — what keeps an asset tree
-// from reaching outside its root or wedging a walk on a cycle — had no spelling
-// in the language, and so none in the self-host compiler's own `-embed` either.
-//
-// Every backend implements it as its stat helper with one constant changed:
-// fstatat's flags word gains AT_SYMLINK_NOFOLLOW, preview-1's
-// path_filestat_get loses its symlink_follow lookupflag. Sharing the body is
-// what makes these tests compare lstat AGAINST stat rather than checking lstat
-// alone: a copy that quietly still followed links would agree with stat
-// everywhere, and a link to a regular file is a regular file.
 func lstatDifferentialSource(file, linkToFile, linkToDir, dir string) string {
 	return fmt.Sprintf(`function kind(p: string): i32 {
     match (lstat(p)) {
@@ -51,8 +39,6 @@ function main(): i32 {
 `, file, linkToFile, linkToDir, dir)
 }
 
-// lstatTree writes the four paths and returns them. Absolute, because the
-// self-host driver and the native CLI are run from different directories.
 func lstatTree(t *testing.T, root string) (file, linkToFile, linkToDir, dir string) {
 	t.Helper()
 	dir = filepath.Join(root, "realdir")
@@ -74,12 +60,6 @@ func lstatTree(t *testing.T, root string) (file, linkToFile, linkToDir, dir stri
 	return file, linkToFile, linkToDir, dir
 }
 
-// TestSelfHostLstatMatchesNative runs the same program through both compilers,
-// for each of the self-host's three targets.
-//
-// Compared on the compiled program's exit code, which names the pair that
-// disagreed rather than reporting a bare mismatch — the source above returns a
-// distinct code per assertion.
 func TestSelfHostLstatMatchesNative(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -115,12 +95,6 @@ func TestSelfHostLstatMatchesNative(t *testing.T) {
 			if o, err := exec.Command(driverBin, append(shArgs, src, stdlib)...).CombinedOutput(); err != nil {
 				t.Fatalf("self-host compile for %s failed: %v\n%s", target, err, o)
 			}
-			// Only the host target is executed here. arm64 needs qemu and wasm
-			// needs wasmtime with a preopen covering absolute host paths; both
-			// have their own lanes, and what this row adds over them is that
-			// the two compilers ACCEPT the same program for the same target —
-			// which is where a missing lowering shows up, since the emitters
-			// are the half that differs.
 			if target != "x86-64-linux" {
 				return
 			}

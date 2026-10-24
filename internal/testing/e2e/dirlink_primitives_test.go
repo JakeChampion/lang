@@ -1,18 +1,3 @@
-// The single-step directory and link primitives (#8883) end to end on every
-// backend that provides them: create_dir / remove_dir / create_link /
-// create_symlink / read_link, plus `umask` on the natives.
-//
-// What these assert that no unit test can: each backend builds the syscall
-// arguments by hand — the two arm64 emitters and x86-64 from hand-written
-// assembly, wasmbin from two WASI previews, the self-host from generated Fern
-// — and every one of them is a place to pass AT_REMOVEDIR where AT_FDCWD
-// belongs, or to swap `target` and `path`. Both mistakes produce a plausible
-// syscall that fails, or worse succeeds against the wrong name, so the probe
-// checks the RESULTING TREE and not only the return value.
-//
-// `umask` is native-only: WASI has no file-mode creation mask, so E066 refuses
-// it there (capability `fsmode`) and the wasm probe is the same program with
-// that block removed.
 package e2e
 
 import (
@@ -22,11 +7,6 @@ import (
 	"testing"
 )
 
-// dirLinkSource is the probe, parameterised by the directory its relative
-// paths resolve against — "" for the backends that run with their cwd already
-// there (wasm under its preopen), an absolute prefix for the rest.
-//
-// Every failure returns its own exit code, so the number names the step.
 func dirLinkSource(prefix string, withUmask bool) string {
 	p := func(name string) string {
 		if prefix == "" {
@@ -78,9 +58,6 @@ func dirLinkSource(prefix string, withUmask bool) string {
     match (remove_dir(%[3]q)) { Ok(_) => { return 20; }, Err(_) => {} }
 `, p("d"), p("d/nope/deep"), p("f.txt"), p("hard.txt"), p("missing.txt"), p("from-missing.txt"), p("link"), p("d/inner.txt"))
 	if withUmask {
-		// umask(2) sets and reads in one step, so reading it is
-		// umask(umask(0)) — and the mask it reports is the one that was
-		// installed a moment earlier, not whatever the shell had.
 		src += `    let prev: i32 = umask(18);
     if (umask(prev) != 18) { return 21; }
 `
@@ -91,10 +68,6 @@ func dirLinkSource(prefix string, withUmask bool) string {
 	return src
 }
 
-// dirLinkCheckTree asserts the filesystem the probe left behind, which is the
-// half a return value cannot prove: the hard link is gone with its original,
-// the dangling symlink is still a symlink pointing where it was told, and the
-// directory the probe emptied is not there.
 func dirLinkCheckTree(t *testing.T, dir string) {
 	t.Helper()
 	if _, err := os.Lstat(filepath.Join(dir, "d")); !os.IsNotExist(err) {
@@ -114,8 +87,6 @@ func dirLinkCheckTree(t *testing.T, dir string) {
 	if target != "dangling-target" {
 		t.Errorf("link -> %q, want %q", target, "dangling-target")
 	}
-	// The hard link and its original share an inode, so the second name must
-	// still read the content the first was written with.
 	got, err := os.ReadFile(filepath.Join(dir, "hard.txt"))
 	if err != nil {
 		t.Fatalf("read hard.txt: %v", err)
@@ -146,8 +117,6 @@ func TestArm64DirLinkPrimitives(t *testing.T) {
 	dirLinkCheckTree(t, dir)
 }
 
-// The interpreter answers these from Go's syscall package, so it is a fifth
-// implementation and the one an in-language test suite runs under.
 func TestInterpDirLinkPrimitives(t *testing.T) {
 	dir := t.TempDir()
 	if code := runInterpExit(t, dirLinkSource(dir, true)); code != 0 {
@@ -156,15 +125,6 @@ func TestInterpDirLinkPrimitives(t *testing.T) {
 	dirLinkCheckTree(t, dir)
 }
 
-// The wasm legs run under a preopen, so their paths are relative and `umask`
-// is absent: WASI has no file-mode creation mask and E066 refuses the builtin
-// on that target, which is the correct answer rather than a mask that
-// describes nothing.
-//
-// Preview 1 answers with path_create_directory, path_link, path_symlink,
-// path_readlink and path_remove_directory over an errno return; the component
-// goes through the descriptor's create-directory-at, link-at, symlink-at,
-// readlink-at and remove-directory-at. Two sets of bodies, so two runs.
 func TestWASMPreview1DirLinkPrimitives(t *testing.T) {
 	mod := buildWasmCore(t, dirLinkSource("", false))
 	dir := t.TempDir()

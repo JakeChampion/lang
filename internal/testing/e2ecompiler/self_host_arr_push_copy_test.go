@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// __fern_arr_push copies a full or shared array into its new box eight
-// elements to the round through ymm moves, then four, then one at a time. The
-// program grows arrays to every length from 1 to 70, so each doubling copies
-// 4, 8, 16, 32 and 64 elements, and pushes onto a shared copy at every length,
-// which copies every remainder of eight; every element is read back.
 const arrPushCopyProg = `function check(xs: i32[], n: i32): boolean {
     if (xs.len() != n) { return false; }
     let i: i32 = 0;

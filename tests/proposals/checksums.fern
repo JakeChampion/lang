@@ -1,55 +1,6 @@
-// tests/proposals/checksums.fern — proposal turn, drawn line 200:
-// "An ISBN/IBAN/credit-card checksum validator."
-//
-// A validator that returns `true` for everything passes every test made of
-// known-good numbers, and there are a lot of validators shaped like that. So
-// the essential test here is not a table of valid inputs — it is the
-// property a checksum EXISTS for:
-//
-//   **every single-digit substitution of a valid number must be rejected.**
-//
-// That is swept over every position of every valid number in the corpus,
-// against every other digit, for all four schemes. It is what a check digit
-// promises, and nothing else in the file would notice its absence.
-//
-// The second property is transpositions, and it is where the four schemes
-// genuinely differ — so it is stated exactly rather than approximated:
-//
-//   - ISBN-10 is mod 11 with distinct positional weights, so it detects EVERY
-//     adjacent transposition.
-//   - Luhn detects every adjacent transposition EXCEPT `09` <-> `90`. That
-//     exception is real and is asserted as an exact set rather than skipped —
-//     the test computes which pairs go undetected and requires that set to be
-//     precisely {09, 90}, so a Luhn that missed more would fail even though
-//     "it detects most transpositions" stayed true.
-//   - ISBN-13 and IBAN are mod 10 and mod 97 over a rearranged string; their
-//     transposition behaviour is not asserted beyond what the substitution
-//     sweep already covers.
-//
-// The third is that computing a check digit and validating one agree: for a
-// swept set of bodies, appending the computed digit must produce something the
-// validator accepts. A validator and a generator that disagree is the bug that
-// ships a batch of unusable numbers.
-//
-// Two implementation notes worth stating, because both are where these get
-// written wrong:
-//
-//   - **Luhn doubles every second digit FROM THE RIGHT.** Taken from the left
-//     it is correct for even-length inputs and wrong for odd ones, which is
-//     why the corpus carries both lengths.
-//   - **IBAN's mod 97 is over a number far too large for any integer type**,
-//     so it is folded digit by digit (`rem = (rem * 10 + d) % 97`). The
-//     rearrangement — first four characters moved to the end — happens before
-//     the letter-to-digit expansion, and a validator that does it the other
-//     way round still accepts many valid IBANs.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from std/test.
-
 import "std/test";
 import "std/i32";
 import "std/string";
-
-// ------------------------------------------------------------- utilities
 
 function is_digit(c: u8): boolean {
   return c >= 48 && c <= 57;
@@ -73,10 +24,6 @@ function all_digits(s: string): boolean {
   return true;
 }
 
-// ------------------------------------------------------------------ Luhn
-
-// Doubles every second digit counting FROM THE RIGHT, which is what makes the
-// parity depend on the length rather than on the position index.
 function luhn_valid(s: string): boolean {
   if (!all_digits(s) || s.len() < 2) {
     return false;
@@ -99,10 +46,9 @@ function luhn_valid(s: string): boolean {
   return sum % 10 == 0;
 }
 
-// The check digit that makes `body` valid when appended.
 function luhn_check_digit(body: string): i32 {
   let sum: i32 = 0;
-  let dbl: boolean = true;  // the appended digit will sit at the un-doubled end
+  let dbl: boolean = true;
   let i: i32 = body.len() - 1;
   while (i >= 0) {
     let d: i32 = digit_of(body[i]);
@@ -119,10 +65,6 @@ function luhn_check_digit(body: string): i32 {
   return (10 - sum % 10) % 10;
 }
 
-// -------------------------------------------------------------- ISBN-10
-
-// Weights 10 down to 1, mod 11. The last position may be 'X' for 10 — and
-// only the last.
 function isbn10_valid(s: string): boolean {
   if (s.len() != 10) {
     return false;
@@ -133,7 +75,7 @@ function isbn10_valid(s: string): boolean {
     let v: i32 = 0;
     if (is_digit(s[i])) {
       v = digit_of(s[i]);
-    } else if (i == 9 && s[i] == 88) {  // 'X', last position only
+    } else if (i == 9 && s[i] == 88) {
       v = 10;
     } else {
       return false;
@@ -144,7 +86,6 @@ function isbn10_valid(s: string): boolean {
   return sum % 11 == 0;
 }
 
-// The check character for a 9-digit body: a digit, or "X" for 10.
 function isbn10_check_char(body: string): string {
   let sum: i32 = 0;
   let i: i32 = 0;
@@ -159,9 +100,6 @@ function isbn10_check_char(body: string): string {
   return c.to_string();
 }
 
-// -------------------------------------------------------------- ISBN-13
-
-// Alternating weights 1 and 3, mod 10.
 function isbn13_valid(s: string): boolean {
   if (s.len() != 13 || !all_digits(s)) {
     return false;
@@ -193,16 +131,10 @@ function isbn13_check_digit(body: string): i32 {
   return (10 - sum % 10) % 10;
 }
 
-// ----------------------------------------------------------------- IBAN
-
 function is_upper(c: u8): boolean {
   return c >= 65 && c <= 90;
 }
 
-// The number an IBAN reduces to is far larger than any integer type here, so
-// the remainder is folded a digit at a time. Letters expand to two digits
-// (A=10 .. Z=35), and the expansion happens AFTER the first four characters
-// are moved to the end.
 function iban_valid(s: string): boolean {
   if (s.len() < 15 || s.len() > 34) {
     return false;
@@ -223,7 +155,6 @@ function iban_valid(s: string): boolean {
   let rem: i32 = 0;
   let k: i32 = 0;
   while (k < s.len()) {
-    // The rearranged order: positions 4.. first, then 0..3.
     let at: i32 = k + 4;
     if (at >= s.len()) {
       at = at - s.len();
@@ -232,7 +163,7 @@ function iban_valid(s: string): boolean {
     if (is_digit(c)) {
       rem = (rem * 10 + digit_of(c)) % 97;
     } else {
-      let v: i32 = c as i32 - 55;  // 'A' -> 10
+      let v: i32 = c as i32 - 55;
       rem = (rem * 10 + v / 10) % 97;
       rem = (rem * 10 + v % 10) % 97;
     }
@@ -240,8 +171,6 @@ function iban_valid(s: string): boolean {
   }
   return rem == 1;
 }
-
-// ---------------------------------------------------------------- corpus
 
 function valid_luhn(): string[] {
   return [
@@ -267,8 +196,6 @@ function valid_iban(): string[] {
   ];
 }
 
-// Which validator a string belongs to, so the sweeps can run over all four
-// without four copies of every loop.
 function check(kind: string, s: string): boolean {
   if (kind == "luhn") {
     return luhn_valid(s);
@@ -329,9 +256,6 @@ function swap_at(s: string, at: i32): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// ----------------------------------------------------------------- tests
-
-// The corpus is genuinely valid — otherwise every sweep below is vacuous.
 function test_the_known_good_numbers_are_accepted(): test.TestOutcome {
   let ks: string[] = kinds();
   let i: i32 = 0;
@@ -352,8 +276,6 @@ function test_the_known_good_numbers_are_accepted(): test.TestOutcome {
   return test.pass();
 }
 
-// The property a check digit exists for: change any one digit and it must be
-// caught. Swept over every position, every replacement, every scheme.
 function test_every_single_digit_substitution_is_rejected(): test.TestOutcome {
   let ks: string[] = kinds();
   let checked: i32 = 0;
@@ -392,8 +314,6 @@ function test_every_single_digit_substitution_is_rejected(): test.TestOutcome {
   return test.pass();
 }
 
-// ISBN-10 is mod 11 with distinct weights, so it catches EVERY adjacent
-// transposition of differing digits.
 function test_isbn10_detects_every_transposition(): test.TestOutcome {
   let cs: string[] = valid_isbn10();
   let checked: i32 = 0;
@@ -420,9 +340,6 @@ function test_isbn10_detects_every_transposition(): test.TestOutcome {
   return test.pass();
 }
 
-// Luhn's exception, asserted as an EXACT set. Over every adjacent pair of
-// differing digits in the corpus, the transpositions that go undetected must
-// be exactly the 0/9 pairs — not "mostly", and not more.
 function test_luhn_misses_exactly_the_zero_nine_transposition(): test.TestOutcome {
   let cs: string[] = valid_luhn();
   let missed: i32 = 0;
@@ -464,10 +381,7 @@ function test_luhn_misses_exactly_the_zero_nine_transposition(): test.TestOutcom
   return test.pass();
 }
 
-// The generator and the validator agree: appending the computed check digit
-// must produce something the validator accepts.
 function test_computing_a_check_digit_produces_a_valid_number(): test.TestOutcome {
-  // Luhn and ISBN-13 bodies, and ISBN-10 nine-digit bodies.
   let luhn_bodies: string[] = [
     "7992739871", "453957876362148", "1", "00000000",
     "123456789012345",
@@ -501,8 +415,6 @@ function test_computing_a_check_digit_produces_a_valid_number(): test.TestOutcom
   return test.pass();
 }
 
-// The 'X' check character belongs only in the last position, and stands for
-// ten rather than being skipped.
 function test_isbn10_handles_the_x_check_character(): test.TestOutcome {
   if (!isbn10_valid("080442957X")) {
     return test.fail("a valid X-checked ISBN was rejected");
@@ -513,15 +425,12 @@ function test_isbn10_handles_the_x_check_character(): test.TestOutcome {
   if (isbn10_valid("08X4429570")) {
     return test.fail("X was accepted mid-number");
   }
-  // If X were treated as anything but ten, this number would not validate,
-  // so the acceptance above is not an accident of skipping it.
   if (isbn10_valid("0804429570")) {
     return test.fail("replacing the X with 0 still validated");
   }
   return test.pass();
 }
 
-// Malformed input is rejected rather than crashing or being coerced.
 function test_malformed_input_is_rejected(): test.TestOutcome {
   let bad_luhn: string[] = ["", "1", "12a4", "  12", "4539578763621487"];
   let i: i32 = 0;
@@ -554,8 +463,6 @@ function test_malformed_input_is_rejected(): test.TestOutcome {
   return test.pass();
 }
 
-// Luhn's parity is counted from the right, so it must behave correctly at both
-// parities of length. Taken from the left, odd-length numbers break.
 function test_luhn_works_at_both_length_parities(): test.TestOutcome {
   let odd: string[] = ["79927398713", "371449635398431"];
   let even: string[] = ["4539578763621486", "38520000023237"];
@@ -582,15 +489,11 @@ function test_luhn_works_at_both_length_parities(): test.TestOutcome {
   return test.pass();
 }
 
-// The IBAN check digits are the thing being verified, so corrupting them must
-// be caught — and a validator that expanded letters before rearranging would
-// still accept many of these.
 function test_iban_check_digits_are_load_bearing(): test.TestOutcome {
   let cs: string[] = valid_iban();
   let i: i32 = 0;
   while (i < cs.len()) {
     let s: string = cs[i];
-    // Every other value of the two check digits must be rejected.
     let d: i32 = 0;
     while (d < 10) {
       let c: u8 = (48 + d) as u8;

@@ -1,24 +1,3 @@
-// wc.fern — count lines, words, and bytes, like `wc(1)`.
-//
-//   -l   print the line count
-//   -w   print the word count
-//   -c   print the byte count
-//   -m   print the character count (same as bytes for ASCII; counts
-//        UTF-8 code points for multi-byte input)
-//
-// With no count flags it prints lines, words, and bytes (the wc
-// default). Multiple files each get a row plus a `total` row.
-//
-//   $ ./wc file.txt
-//        3      12      57 file.txt
-//   $ printf 'a b c\n' | ./wc -w     ->  3
-//
-// A more flag-complete companion to examples/wasm/wc.fern (which
-// reads line-by-line via the Reader API); this version slurps each
-// input and counts in one pass.
-//
-// Showcases: a counts struct, UTF-8 code-point counting, selectable
-// output columns, multi-file totals.
 import "std/string";
 import "std/i32";
 import "std/io";
@@ -29,11 +8,7 @@ struct Show { lines: boolean, words: boolean, bytes: boolean, chars: boolean }
 
 function count(text: string): Counts {
   let bytes: i32 = text.len();
-  // Lines = number of '\n' bytes (wc counts newlines, so a final
-  // line without a trailing '\n' isn't counted — matching wc(1)).
   let lines: i32 = 0;
-  // Characters = UTF-8 code points: count bytes that are not
-  // continuation bytes (0b10xxxxxx, i.e. 0x80..0xBF).
   let chars: i32 = 0;
   let i: i32 = 0;
   while (i < bytes) {

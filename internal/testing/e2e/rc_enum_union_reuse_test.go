@@ -5,16 +5,6 @@ import (
 	"testing"
 )
 
-// The enum reuse-overwrite path frees the displaced box's payloads with NO
-// runtime tag switch, from a payload layout uniformEnumDropLoads reports as
-// shared. That layout carries a concrete type, and the release is
-// TYPE-SPECIFIC — so a UNION enum whose variants carry different payload
-// structs at the same offset had one variant's box released through another's
-// drop glue: the fields the two structs do not share were never reached.
-//
-// `E { VA(A), VB(B) }` with A and B differing in exactly one droppable field
-// is the minimal shape. Loop-resident and scaled, because the loss is one
-// buffer per replacement — flat at any single round count only if it is zero.
 func enumUnionReplaceSrc(rounds int) string {
 	return `struct A { s: i32[], n: i32 }
 struct B { x: i32[], y: i32[] }

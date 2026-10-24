@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// A payload slot may hold a STRUCT pattern. `A(P { x })` and `A(Ok(n))` are
-// the same spelling, so only the slot's TYPE separates them: with a struct
-// there, the position projects fields instead of testing a tag.
 func TestStructPatternAtPayloadSlot(t *testing.T) {
 	src := `struct Pt { x: i32, y: i32, z: i32 }
 		enum H { S(Pt), N(i32) }
@@ -23,8 +20,6 @@ func TestStructPatternAtPayloadSlot(t *testing.T) {
 	}
 }
 
-// A struct has one shape, so the slot never fails on itself — the arm covers
-// its variant alone, with no wildcard and no sibling.
 func TestStructPatternAtPayloadSlotIsIrrefutable(t *testing.T) {
 	src := `struct Pt { x: i32, y: i32 }
 		enum H { S(Pt), N(i32) }
@@ -40,8 +35,6 @@ func TestStructPatternAtPayloadSlotIsIrrefutable(t *testing.T) {
 	}
 }
 
-// A field carrying a literal DOES make the slot refutable, so that arm no
-// longer covers `S` by itself and the match needs another one.
 func TestStructPatternFieldLiteralIsRefutable(t *testing.T) {
 	src := `struct Pt { x: i32, y: i32 }
 		enum H { S(Pt), N(i32) }
@@ -61,8 +54,6 @@ func TestStructPatternFieldLiteralIsRefutable(t *testing.T) {
 	}
 }
 
-// The slot's type decides: a struct pattern where the slot is an ENUM is
-// still the variant form, and an unknown variant there is still E014.
 func TestVariantPatternAtPayloadSlotUnaffected(t *testing.T) {
 	src := `enum In { Ok2(i32), Er2(i32) }
 		enum H { S(In), N(i32) }
@@ -82,8 +73,6 @@ func TestVariantPatternAtPayloadSlotUnaffected(t *testing.T) {
 	}
 }
 
-// A struct pattern naming the wrong struct is rejected rather than silently
-// projecting the slot's own fields.
 func TestStructPatternAtPayloadSlotNameMismatch(t *testing.T) {
 	src := `struct Pt { x: i32 }
 		struct Other { x: i32 }

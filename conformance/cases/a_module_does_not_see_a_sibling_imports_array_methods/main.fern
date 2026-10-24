@@ -1,7 +1,7 @@
-// The program imports std/array and lib, but lib does not: lib cannot see
-// std/array's `join`, so the call is one unknown method, with neither a
-// suggestion of a method lib cannot reach nor a check of its argument
-// against that method's parameters (#12901).
+
+
+
+
 import "std/array";
 import "lib";
 

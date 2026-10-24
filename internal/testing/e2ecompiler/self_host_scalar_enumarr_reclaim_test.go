@@ -4,18 +4,6 @@ import (
 	"testing"
 )
 
-// --- All-scalar-payload enum arrays free their element boxes (#7678) --------
-//
-// An enum whose every variant carries only scalars still boxes each element, so
-// releasing one of its arrays must free every element box, not just the
-// buffer. A buffer-only release strands one box per element — a constant leak
-// per array, invisible to the exit code. The release is box-only per element,
-// since there is no payload under it.
-//
-// Wants confirmed against bin/fern -interp; counts are the self-host's own.
-// Exit 99 is reserved for __rc_underflow_count() — the row that catches an
-// over-release here, since the census alone cannot.
-
 type scalarEnumArrCase struct {
 	name   string
 	src    string
@@ -27,8 +15,6 @@ type scalarEnumArrCase struct {
 func scalarEnumArrCases() []scalarEnumArrCase {
 	return []scalarEnumArrCase{
 		{
-			// The producer flavor: keep built by an append-built producer call.
-			// Was 3/2 with the element box stranded.
 			name: "scalar_producer",
 			src: `enum Tag { Box(i32), Nil }
 function mkv(i: i32): Tag[] { let o: Tag[] = []; o = o.append(Tag.Box(i)); return o; }
@@ -53,9 +39,6 @@ function main(): i32 {
 			want: 3, allocs: 2, frees: 2,
 		},
 		{
-			// The literal flavor — it never consulted the walk gate at all;
-			// only the element-admission fallback flips it. `idt` keeps the
-			// array a heap box around its static elements.
 			name: "scalar_literal",
 			src: `enum Tag { Box(i32), Nil }
 @noinline function idt(t: Tag): Tag { return t; }
@@ -80,8 +63,6 @@ function main(): i32 {
 			want: 4, allocs: 1, frees: 1,
 		},
 		{
-			// Control: the rc-payload sibling, admitted by the pre-existing
-			// path — must not move.
 			name: "rcpayload_control",
 			src: `enum E { A(i32[]), B }
 function mkv(i: i32): E[] { let o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
@@ -103,7 +84,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostScalarEnumArrReclaimX86_64 pins the leak accounting.
 func TestSelfHostScalarEnumArrReclaimX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)

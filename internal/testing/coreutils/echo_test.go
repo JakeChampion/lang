@@ -17,12 +17,9 @@ func echoCases(t *testing.T) []invocation {
 		{name: "no operands at all after -n", args: []string{"-n"}},
 		{name: "no operands at all after -e", args: []string{"-e"}},
 
-		// Write failures: `echo: write error: <strerror>`, exit 1 (#8265).
 		{name: "stdout closed", args: []string{"hi"}, stdout: stdoutClosed},
 		{name: "stdout full", args: []string{"hi"}, stdout: stdoutFull},
 
-		// The option scan: a run of e/E/n after the dash is an option
-		// token, anything else is an operand, and the last flag wins.
 		{name: "bundled flags", args: []string{"-en", `x\ny`}},
 		{name: "bundled flags the other way", args: []string{"-ne", `x\ny`}},
 		{name: "repeated flags", args: []string{"-n", "-e", "-n", `x\ny`}},
@@ -33,16 +30,13 @@ func echoCases(t *testing.T) []invocation {
 		{name: "dashdash does not end the options", args: []string{"--", "x"}},
 		{name: "an operand stops the option scan", args: []string{"x", "-n"}},
 
-		// Long options: only as the sole argument.
 		{name: "help with an operand after it", args: []string{"--help", "x"}},
 		{name: "version with an operand after it", args: []string{"--version", "x"}},
 		{name: "abbreviated help is an operand", args: []string{"--hel"}},
 
-		// -E is the default.
 		{name: "escapes off by default", args: []string{`a\tb`}},
 		{name: "escapes off explicitly", args: []string{"-E", `a\tb`}},
 
-		// The escape table.
 		{name: "named escapes", args: []string{"-e", `a\tb\nc\rd\\e`}},
 		{name: "the control escapes", args: []string{"-e", `\a\b\e\f\v`}},
 		{name: "octal escapes with a leading zero", args: []string{"-e", `oct:\0 \01 \012 \0129 \0777 \08`}},
@@ -56,8 +50,6 @@ func echoCases(t *testing.T) []invocation {
 		{name: "escapes in a later operand", args: []string{"-e", "a", `b\tc`}},
 		{name: "a byte that is not valid UTF-8", args: []string{"-e", "\xff\xfe"}},
 
-		// POSIXLY_CORRECT: escapes are always on, and options are only
-		// recognised when the first argument is exactly `-n`.
 		{name: "posix escapes are always on", args: []string{`a\tb`}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix does not recognise -e", args: []string{"-e", `a\tb`}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix recognises a leading -n", args: []string{"-n", `a\tb`}, env: []string{"POSIXLY_CORRECT=1"}},

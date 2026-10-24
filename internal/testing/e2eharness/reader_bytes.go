@@ -1,7 +1,5 @@
 package e2eharness
 
-// ReaderBytesInput starts with valid multibyte text, then exercises every byte
-// value repeatedly. The read sizes split the four-byte scalar after its lead.
 func ReaderBytesInput() []byte {
 	out := make([]byte, 1032)
 	copy(out, []byte{0, 0xc3, 0xa9, 0xf0, 0x9f, 0x99, 0x82, 0xff})

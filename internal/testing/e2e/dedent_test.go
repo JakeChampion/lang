@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/string.dedent across backends: common
-// prefix removal with deeper-indent preservation, blank / whitespace-only
-// line normalization, a column-0 line defeating the prefix, tab-vs-space
-// non-sharing, tab indentation, trailing-newline preservation, and an
-// indent→dedent round-trip. Returns 42 iff every check holds. Each leg
-// skips itself when its toolchain is absent.
 const dedentProg = `
 import "std/string";
 function main(): i32 {

@@ -9,9 +9,6 @@ import (
 	"testing"
 )
 
-// deadPid returns the pid of a process that has already exited and been
-// reaped. Pids are handed out in increasing order, so one just released is
-// not reused within the lifetime of this test.
 func deadPid(t *testing.T) int {
 	t.Helper()
 	cmd := exec.Command("/bin/sh", "-c", "exit 0")
@@ -21,9 +18,6 @@ func deadPid(t *testing.T) int {
 	return cmd.Process.Pid
 }
 
-// testPrefix keeps each test's dirs disjoint from every other run's, including
-// the real `fern-e2e-bin` and `selfhost-bincache` dirs of a concurrent
-// `go test`, so a sweep here can never reclaim something in use.
 func testPrefix(t *testing.T) string {
 	t.Helper()
 	return fmt.Sprintf("fern-scratch-test-%d-%s", os.Getpid(), t.Name())
@@ -66,9 +60,6 @@ func TestProcessScratchDirNamesItsPid(t *testing.T) {
 	}
 }
 
-// The whole point of the pid in the name: a dir whose process is gone is
-// reclaimed, one whose process is alive is not. Without this, every test
-// process leaks its scratch dir forever (#8866).
 func TestProcessScratchDirReclaimsOnlyDeadSiblings(t *testing.T) {
 	prefix := testPrefix(t)
 	dead := mkScratch(t, prefix, deadPid(t))
@@ -91,8 +82,6 @@ func TestProcessScratchDirReclaimsOnlyDeadSiblings(t *testing.T) {
 	}
 }
 
-// A sweep that reached past its own prefix would delete another harness's
-// cache — or an unrelated program's temp dir — the moment two of them ran.
 func TestRemoveDeadScratchDirsStaysWithinItsPrefix(t *testing.T) {
 	prefix := testPrefix(t)
 	other := testPrefix(t) + "-other"

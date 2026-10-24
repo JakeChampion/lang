@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// mathCases compile the real std/math with the self-hosted compiler.
-// math needed only the random_bytes builtin (its float helpers aside);
-// these exercise deterministic functions plus random_bytes' length.
 var mathCases = []struct {
 	name string
 	main string
@@ -18,9 +15,6 @@ var mathCases = []struct {
 	{"random-bytes-len", "import \"std/math\";\nfunction main(): i32 { let b: u8[] = random_bytes(7); return b.len(); }\n", 7},
 }
 
-// TestSelfHostMathX86_64 proves the self-hosted compiler compiles the
-// real internal/stdlib/std/math.fern (which it couldn't before, lacking
-// the random_bytes builtin) and the resulting binaries run correctly.
 func TestSelfHostMathX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
@@ -42,8 +36,6 @@ func TestSelfHostMathX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMathArm64 is the ARM64 counterpart (CI-gated, qemu),
-// compiled via the file-based driver (asm_modload_run -target arm64-linux).
 func TestSelfHostMathArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)

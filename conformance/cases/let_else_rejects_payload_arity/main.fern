@@ -1,4 +1,4 @@
-// `let PAT = E else { … }` reads the shared pattern grammar (#5356); the else
-// must diverge, so the bindings are live for the rest of the block.
+
+
 enum O { Has(i32), Nil }
 function main(): i32 { let o: O = Nil; let Has(a, b) = o else { return 0; }; return 0; }

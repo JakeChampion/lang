@@ -7,48 +7,28 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/lexer"
 )
 
-// failed marks a memo entry as a non-match. Positions are non-negative,
-// so -1 is unambiguous.
 const failed = -1
 
 type matcher struct {
 	g    *Grammar
 	toks []lexer.Token
-	memo []map[int]int // memo[ruleIndex][pos] = end position, or failed
-	used []bool        // rules that matched at least once
+	memo []map[int]int
+	used []bool
 
-	// furthest is the deepest token index any attempt reached. On
-	// failure it is far more useful than the start position: it points
-	// at the token the grammar could not get past, which is where the
-	// missing production is.
 	furthest int
 }
 
-// Match reports whether the whole token stream is derivable from the
-// start rule. On failure it returns the token index the grammar reached
-// before giving up.
 func (g *Grammar) Match(toks []lexer.Token) (ok bool, stuckAt int) {
 	ok, stuck, _ := g.MatchCoverage(toks)
 	return ok, stuck
 }
 
-// MatchCoverage is Match, plus the set of rules that matched at least
-// once. Accumulated across a corpus it answers "which productions does
-// no real program exercise?" — which for a normative grammar is the
-// question that separates a described language from an invented one.
-//
-// Coverage is only reported for a SUCCESSFUL match, so a rule credited
-// here was reached on a path that produced a whole valid program. A rule
-// can still be over-credited by a branch that matched and was then
-// backtracked past; that errs toward not flagging, which is the safe
-// direction for a gate that fails the build.
 func (g *Grammar) MatchCoverage(toks []lexer.Token) (ok bool, stuckAt int, used []string) {
 	m := &matcher{g: g, toks: toks, memo: make([]map[int]int, len(g.rules)), used: make([]bool, len(g.rules))}
 	end := m.matchNode(&node{kind: nRef, text: g.names[g.start], ruleI: g.start}, 0)
 	if end == failed {
 		return false, m.furthest, nil
 	}
-	// Trailing EOF token is not consumed by the grammar itself.
 	for end < len(toks) && toks[end].Kind == lexer.EOF {
 		end++
 	}
@@ -81,7 +61,6 @@ func (m *matcher) matchNode(n *node, pos int) int {
 		return pos
 
 	case nAlt:
-		// Ordered choice: first match wins, as in recursive descent.
 		for _, k := range n.kids {
 			if end := m.matchNode(k, pos); end != failed {
 				return end
@@ -96,8 +75,6 @@ func (m *matcher) matchNode(n *node, pos int) int {
 		return pos
 
 	case nRep:
-		// Greedy and possessive. A repetition that matched zero-width
-		// would spin forever, so stop when no progress is made.
 		for {
 			end := m.matchNode(n.kids[0], pos)
 			if end == failed || end == pos {
@@ -117,8 +94,6 @@ func (m *matcher) matchNode(n *node, pos int) int {
 		t := m.tok(pos)
 		switch n.text {
 		case "IDENT":
-			// A contextual keyword is spelled as a literal where the
-			// grammar needs it; everywhere else it is an ordinary name.
 			if t.Kind == lexer.Ident {
 				return pos + 1
 			}
@@ -159,10 +134,6 @@ func (m *matcher) matchRule(i, pos int) int {
 	if end, seen := m.memo[i][pos]; seen {
 		return end
 	}
-	// Left recursion would recurse forever. Seed the memo with a failure
-	// so a rule that reaches itself at the same position terminates
-	// instead of blowing the stack — the grammar is expected to be
-	// non-left-recursive, and RuleIsLeftRecursive reports any that are.
 	m.memo[i][pos] = failed
 	end := m.matchNode(m.g.rules[i], pos)
 	m.memo[i][pos] = end
@@ -179,10 +150,6 @@ func (m *matcher) tok(pos int) lexer.Token {
 	return lexer.Token{Kind: lexer.EOF}
 }
 
-// LeftRecursive returns the names of rules that can reach themselves
-// without consuming a token. The matcher survives them (it seeds a
-// failure), but they silently never match, so they are always a bug in
-// the grammar rather than a style question.
 func (g *Grammar) LeftRecursive() []string {
 	var bad []string
 	for i, name := range g.names {
@@ -194,8 +161,6 @@ func (g *Grammar) LeftRecursive() []string {
 	return bad
 }
 
-// reachesLeft reports whether n can reach rule target in leading
-// position without consuming input.
 func (g *Grammar) reachesLeft(n *node, target int, seen map[int]bool) bool {
 	switch n.kind {
 	case nRef:
@@ -208,8 +173,6 @@ func (g *Grammar) reachesLeft(n *node, target int, seen map[int]bool) bool {
 		seen[n.ruleI] = true
 		return g.reachesLeft(g.rules[n.ruleI], target, seen)
 	case nSeq:
-		// Only the leading item is in leading position, unless earlier
-		// items can match empty — which nOpt and nRep both can.
 		for _, k := range n.kids {
 			if g.reachesLeft(k, target, seen) {
 				return true
@@ -254,9 +217,6 @@ func nullable(n *node) bool {
 	return false
 }
 
-// Unreachable returns rules the start symbol cannot reach — dead
-// productions, which in a spec are worse than dead code: they read as
-// normative and describe nothing.
 func (g *Grammar) Unreachable() []string {
 	seen := map[int]bool{g.start: true}
 	var walk func(*node)
@@ -283,8 +243,6 @@ func (g *Grammar) Unreachable() []string {
 	return dead
 }
 
-// Context renders the tokens around a position, for a failure message
-// that points at the construct the grammar could not derive.
 func Context(toks []lexer.Token, at int) string {
 	lo := max(0, at-6)
 	hi := min(len(toks), at+6)

@@ -2,10 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A bound pairs with the impl of the trait its own module declares, not the
-// first impl of a trait with the same simple name (#10845). P implements an
-// imported From[string] ahead of the entry's own From[i32], so a match by
-// simple name read the bound From[i32] against From[string]: a spurious E021.
 const shadowedParamTraitBoundSrc = `import "std/convert";
 
 trait From[T] { function make(v: T): Self; }

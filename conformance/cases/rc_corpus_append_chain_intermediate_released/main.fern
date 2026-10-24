@@ -1,15 +1,15 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// An append whose receiver is itself an owned temp — the inner
-// result of a chain, a literal, a fresh call result — consumes that
-// reference: released after the outer grow, where before it was
-// stranded at rc 2 (the inner grew in place, so the outer copied
-// at rc 2 and nothing released the original) or at rc 1 (the inner
-// copied). `x = x.append(k).append(k + 1)` leaked eight of its nine
-// buffers per round. The string chain exercises the deep drop: the
-// outer grow's copy path retains the elements, so the superseded
-// buffer still owns its own and the walk is right.
+
+
+
+
+
+
+
+
+
+
+
+
 @noinline
 function mk(p: string): string[] { return [p + "seed"]; }
 

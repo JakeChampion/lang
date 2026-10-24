@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// uniquePushProg grows an array it was handed, one element at a time. The
-// receiver is a parameter, so no proof says it is the only holder: each append
-// tests whether it is unique and pushes in place when it is. That arm's inline
-// push needs no count test of its own, while the shared arm keeps one.
 const uniquePushProg = "@noinline function zeros(own out: i32[], n: i32): i32[] { let i: i32 = 0; while (i < n) { out = out.append(i); i = i + 1; } return out; }\n" +
 	"function main(): i32 { let z: i32[] = zeros([], 300); return z.len() - 300 + z[299] - 200; }\n"
 
@@ -25,7 +21,6 @@ func TestSelfHostUniquePushSkipsCountTest(t *testing.T) {
 			}
 		})
 	}
-	// z[299] is 299, so 0 + 299 - 200.
 	if got, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", uniquePushProg)); got != 99 {
 		t.Errorf("x86-64 exited %d, want 99", got)
 	}

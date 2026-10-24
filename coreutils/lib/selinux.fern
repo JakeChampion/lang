@@ -1,29 +1,8 @@
-// coreutils/lib/selinux.fern — what libselinux answers for the utilities
-// here: whether the kernel has SELinux at all, what the calling process's
-// own security context is, what a FILE's is and how it is set, and how a
-// context is rebuilt from replaced components.
-//
-// None needs libselinux: the first two are files, a file's context an
-// extended attribute, and the last is string work.
-//
-// No machine this corpus runs on has SELinux, so the only path the
-// oracle has ever compared is `enabled()` answering false and the
-// refusal each utility gives for it. `context()` IS compared, because
-// /proc/self/attr/current exists and reads `kernel` on a kernel with no
-// policy loaded, which is what `runcon` with no operands prints.
 import "std/string";
 import "std/array";
 import "std/errno";
 import "./gnu";
 
-// `enabled()` — libselinux's is_selinux_enabled(): find the selinuxfs
-// mount and, with no such mount, there is no SELinux. The mount POINT is
-// wherever the system put it, so the filesystem TYPE is what to look for
-// rather than a hardcoded /sys/fs/selinux.
-//
-// Ask it lazily: it costs an open and a read, and the shapes a script
-// runs in a loop — `id -u`, `runcon` with no operands — never need the
-// answer.
 pub function enabled(): boolean {
   match (read_file("/proc/self/mounts")) {
     Ok(text) => {
@@ -44,17 +23,6 @@ pub function enabled(): boolean {
   }
 }
 
-// The attribute's bytes as getcon reports them: the trailing NUL stripped
-// and NOTHING ELSE. Some kernels end the attribute with a newline, and that
-// newline is part of the context — `runcon` with no command prints a blank
-// line after it, and `id -Z` the same. Trimming it agreed with GNU on a host
-// whose file carries no newline and differed by one byte on a host whose
-// file does.
-//
-// Separate from the read so that either case can be tested wherever the
-// suite runs: neither `runcon` nor `id -Z` has an operand pointing at
-// another file, so the oracle corpus only ever sees what this machine's own
-// kernel wrote.
 pub function trim_context(text: string): string {
   let n: i32 = text.len();
   while (n > 0 && text[n - 1] as i32 == 0) {
@@ -63,11 +31,6 @@ pub function trim_context(text: string): string {
   return slice_unchecked(text, 0, n) + "";
 }
 
-// `context()` — getcon(3): the process's own security context, which the
-// kernel exposes as this file, NUL-terminated. libselinux reads
-// /proc/thread-self/attr/current; a Fern binary has one thread, for which
-// that is this same file. Darwin has no libselinux, so a GNU built there
-// answers from gnulib's stub, ENOTSUP.
 pub function context(): Result[string, IoError] {
   if (target_os() == "darwin") {
     return Err(Unsupported);
@@ -82,11 +45,6 @@ pub function context(): Result[string, IoError] {
   }
 }
 
-// `file_context(path, follow)` — getfilecon(3), or lgetfilecon(3) when
-// `follow` is false: a FILE's context, the `security.selinux` attribute
-// with its trailing NUL stripped. An empty attribute is ENOTSUP, as
-// libselinux makes it. Darwin has no libselinux, so a GNU built there always
-// answers from gnulib's stub, ENOTSUP, whatever the file carries.
 pub function file_context(path: string, follow: boolean): Result[string, IoError] {
   if (target_os() == "darwin") {
     return Err(Unsupported);
@@ -106,11 +64,6 @@ pub function file_context(path: string, follow: boolean): Result[string, IoError
   }
 }
 
-// `set_file_context(path, ctx, follow)` — setfilecon(3), or lsetfilecon(3)
-// when `follow` is false: the context written NUL-terminated, as libselinux
-// stores it. A filesystem that answers ENOTSUP is still a success when the
-// file already carries exactly `ctx`, which is libselinux's own fallback.
-// Darwin has no `security.selinux` to set (see file_context).
 pub function set_file_context(path: string, ctx: string, follow: boolean): Result[void, IoError] {
   if (target_os() == "darwin") {
     return Err(Unsupported);
@@ -137,16 +90,6 @@ pub function set_file_context(path: string, ctx: string, follow: boolean): Resul
   }
 }
 
-// `merge_context(ctx, comps, set)` — chcon's compute_context_from_mask:
-// libselinux's context_new(ctx), then each component `set` names replaced
-// in chcon's order (user, range, role, type), then context_str. `comps` and
-// `set` are indexed user 0, role 1, type 2, range 3. Err carries GNU's
-// diagnostics, every component that failed rather than only the first.
-//
-// context_new takes two to five colons — `user:role:type`, then a range
-// that may itself hold colons — and refuses whitespace anywhere. A
-// component may hold neither a tab, a newline nor a carriage return, and
-// only the range may hold a colon or a space.
 pub function merge_context(ctx: string, comps: string[], set: boolean[]): Result[string, string[]] {
   let parts: string[] = ["", "", "", ""];
   let has_range: boolean = false;

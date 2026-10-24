@@ -15,12 +15,6 @@ import (
 	"time"
 )
 
-// FetchUpstream is a loopback origin for FetchClientSource: it answers
-// each request from a script keyed by the request-target, so a client
-// test sees every response shape the parser must read (RFC 9112 §6.3)
-// without a real server's choices in the way. Port2 is a second
-// listener serving the same script: another origin for a cross-origin
-// redirect to land on.
 type FetchUpstream struct {
 	Port  int
 	Port2 int
@@ -31,9 +25,6 @@ type FetchUpstream struct {
 	release chan struct{}
 }
 
-// StartFetchUpstream listens twice on the loopback interface and serves
-// the script below until the test ends. A loopback listener that cannot
-// be had is a failure, not a skip: every networking lane has one.
 func StartFetchUpstream(t *testing.T) *FetchUpstream {
 	t.Helper()
 	up := &FetchUpstream{hits: map[string]int{}, release: make(chan struct{})}
@@ -59,8 +50,6 @@ func StartFetchUpstream(t *testing.T) *FetchUpstream {
 	return up
 }
 
-// hit counts a request to target and reports whether it is an odd one,
-// so a target can answer every other connection.
 func (up *FetchUpstream) hit(target string) (odd bool) {
 	up.mu.Lock()
 	defer up.mu.Unlock()
@@ -68,8 +57,6 @@ func (up *FetchUpstream) hit(target string) (odd bool) {
 	return up.hits[target]%2 == 1
 }
 
-// serve reads one request head and its Content-Length body, then writes
-// the scripted response for its target and closes.
 func (up *FetchUpstream) serve(c net.Conn) {
 	defer c.Close()
 	_ = c.SetDeadline(time.Now().Add(10 * time.Second))
@@ -92,8 +79,6 @@ func (up *FetchUpstream) serve(c net.Conn) {
 		return
 	}
 	if originPath(target) == "/slow" {
-		// The upstream a blocking-handler conformance case waits on: the
-		// answer arrives SlowUpstreamDelay after the request.
 		time.Sleep(SlowUpstreamDelay)
 		_, _ = c.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nslow"))
 		return
@@ -120,7 +105,6 @@ func (up *FetchUpstream) serve(c net.Conn) {
 	case target == "/garbage":
 		resp = []byte("NOT-HTTP\r\n\r\n")
 	case target == "/bighead":
-		// A header block past the 32 KiB budget: 431 before its end.
 		resp = []byte("HTTP/1.1 200 OK\r\nX-Pad: " + strings.Repeat("a", 40000) + "\r\nContent-Length: 0\r\n\r\n")
 	case target == "/gzipchunked":
 		resp = []byte("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n0\r\n\r\n")
@@ -129,8 +113,6 @@ func (up *FetchUpstream) serve(c net.Conn) {
 	case target == "/switch":
 		resp = []byte("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n\x81\x05hello")
 	case target == "/flood":
-		// Interim responses past the header budget before any final one:
-		// 2000 of 25 bytes each is 50 000 bytes, past 32 KiB.
 		resp = append(bytes.Repeat([]byte("HTTP/1.1 100 Continue\r\n\r\n"), 2000), "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"...)
 	case target == "/gzip":
 		z := gzipped([]byte("hello gzip"))
@@ -146,52 +128,36 @@ func (up *FetchUpstream) serve(c net.Conn) {
 		z := gzipped([]byte("hello gzip"))
 		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: x-gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
 	case target == "/gzip-floor":
-		// 60 000 zero bytes: a few dozen bytes encoded, far past a
-		// hundredfold growth, under the 64 KiB the ratio never refuses.
 		z := gzipped(make([]byte, 60000))
 		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
 	case target == "/gzip-wide":
-		// 100 000 bytes past that floor, from 2 000 seeded random bytes
-		// repeated: the first copy is incompressible, so the growth stays
-		// well under a hundredfold and the ratio admits the body.
 		z := gzipped(bytes.Repeat(wideBlock(), 50))
 		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
 	case target == "/gzip-bad":
 		resp = []byte("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 15\r\n\r\nnot gzip at all")
 	case target == "/gzip-bomb":
-		// 200 000 zero bytes: a few hundred bytes encoded, past a
-		// hundredfold growth, within the 1 MiB body cap.
 		z := gzipped(make([]byte, 200000))
 		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
 	case target == "/gzip-double":
 		z := gzipped(gzipped([]byte("twice")))
 		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip, gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
 	case target == "/gzip-double-wide":
-		// The /gzip-wide body under two codings: past the floor, within
-		// the ratio, so depth 2 is judged at a size the floor does not
-		// decide.
 		z := gzipped(gzipped(bytes.Repeat(wideBlock(), 50)))
 		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip, gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
 	case target == "/gzip-double-bomb":
-		// 100 000 zero bytes under two codings: past the floor and the
-		// ratio, so the whole-response verdict shows at depth 2.
 		z := gzipped(gzipped(make([]byte, 100000)))
 		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip, gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
 	case target == "/compress":
 		resp = []byte("HTTP/1.1 200 OK\r\nContent-Encoding: compress\r\nContent-Length: 3\r\n\r\nraw")
 	case target == "/zstd":
-		// "hello zstd" in zstd, as the reference encoder writes it.
 		z, _ := hex.DecodeString("28b52ffd200a51000068656c6c6f207a737464")
 		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: zstd\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
 	case target == "/brotli":
-		// "hello brotli" in brotli, as the reference encoder writes it.
 		z, _ := hex.DecodeString("8b058068656c6c6f2062726f746c6903")
 		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: br\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
 	case target == "/truncated":
 		resp = []byte("HTTP/1.1 200 OK\r\nContent-Length: 50\r\n\r\nonly a little")
 	case strings.HasPrefix(target, "http://"):
-		// An absolute-form target is what a client writes to a forward
-		// proxy: answer as the proxy saw it.
 		text := proxyLine(method, target, host, body, headerValue(head, "x-trace"), headerValue(head, "proxy-authorization"))
 		resp = []byte(fmt.Sprintf("HTTP/1.1 201 Created\r\nContent-Length: %d\r\n\r\n%s", len(text), text))
 	case strings.HasPrefix(target, "/echo"):
@@ -202,7 +168,6 @@ func (up *FetchUpstream) serve(c net.Conn) {
 	case target == "/redir-echo":
 		resp = redirect(302, "/echo")
 	case strings.HasPrefix(target, "/chain/"):
-		// /chain/N is N redirects before a 200.
 		n, _ := strconv.Atoi(strings.TrimPrefix(target, "/chain/"))
 		if n == 0 {
 			resp = []byte("HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nend")
@@ -226,8 +191,6 @@ func (up *FetchUpstream) serve(c net.Conn) {
 	case target == "/sameorigin":
 		resp = redirect(302, "/echo")
 	case target == "/reset":
-		// Every odd connection is closed without a byte of response; the
-		// client's one retry lands on the even one.
 		if up.hit(target) {
 			return
 		}
@@ -240,8 +203,6 @@ func (up *FetchUpstream) serve(c net.Conn) {
 	_, _ = c.Write(resp)
 }
 
-// hold parks the connection until Release, then answers it. It is the
-// upstream a handler stays suspended on for as long as a test needs.
 func (up *FetchUpstream) hold(c net.Conn) {
 	up.mu.Lock()
 	up.held++
@@ -253,14 +214,12 @@ func (up *FetchUpstream) hold(c net.Conn) {
 	_, _ = c.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nheld"))
 }
 
-// Held is how many /hold connections are parked since the last Release.
 func (up *FetchUpstream) Held() int {
 	up.mu.Lock()
 	defer up.mu.Unlock()
 	return up.held
 }
 
-// Release answers every parked /hold connection.
 func (up *FetchUpstream) Release() {
 	up.mu.Lock()
 	close(up.release)
@@ -269,12 +228,8 @@ func (up *FetchUpstream) Release() {
 	up.mu.Unlock()
 }
 
-// SlowUpstreamDelay is how long the upstream's /slow target waits before
-// answering.
 const SlowUpstreamDelay = 100 * time.Millisecond
 
-// originPath is the path of `target`, written in origin form or in the
-// absolute form a client writes to a forward proxy.
 func originPath(target string) string {
 	if rest, ok := strings.CutPrefix(target, "http://"); ok {
 		if i := strings.Index(rest, "/"); i >= 0 {
@@ -284,7 +239,6 @@ func originPath(target string) string {
 	return target
 }
 
-// keptPath is the kept target `target` names, in either form, or "".
 func keptPath(target string) string {
 	if path := originPath(target); path == "/kept" || path == "/kept-redir" {
 		return path
@@ -292,10 +246,6 @@ func keptPath(target string) string {
 	return ""
 }
 
-// serveKept answers /kept and /kept-redir on one connection for as long
-// as the client sends them, never asking it to close: /kept-redir
-// redirects to /kept, and /kept answers how many requests the connection
-// has carried.
 func serveKept(c net.Conn, target string) {
 	for served := 1; ; served++ {
 		resp := "HTTP/1.1 302 Found\r\nLocation: /kept\r\nContent-Length: 0\r\n\r\n"
@@ -318,21 +268,16 @@ func serveKept(c net.Conn, target string) {
 	}
 }
 
-// echoLine is what the /echo target answers: the request as the origin
-// saw it.
 func echoLine(method, target, host, body, trace, auth, cookie, accept string) string {
 	return fmt.Sprintf("%s %s host=%s len=%d body=%s trace=%s auth=%s cookie=%s accept=%s", method, target, host, len(body), body, trace, auth, cookie, accept)
 }
 
-// wideBlock is 2 000 seeded random bytes: incompressible on its own,
-// so a body of repeats grows far less than a hundredfold when decoded.
 func wideBlock() []byte {
 	block := make([]byte, 2000)
 	rand.New(rand.NewSource(7)).Read(block)
 	return block
 }
 
-// gzipped is data as one gzip member.
 func gzipped(data []byte) []byte {
 	var buf bytes.Buffer
 	w := gzip.NewWriter(&buf)
@@ -341,25 +286,15 @@ func gzipped(data []byte) []byte {
 	return buf.Bytes()
 }
 
-// proxyLine is what an absolute-form target answers: the request as the
-// proxy saw it.
 func proxyLine(method, target, host, body, trace, proxyAuth string) string {
 	return fmt.Sprintf("%s %s host=%s len=%d body=%s trace=%s proxy-auth=%s", method, target, host, len(body), body, trace, proxyAuth)
 }
 
-// SetFetchProxy names the upstream as the forward proxy for the test
-// process and every program it runs (`http_proxy`, with a user and no
-// password, the credential form that needs its colon supplied), so a
-// request for a host other than loopback goes to the upstream as an
-// absolute-form target. Loopback is never proxied, so every other case
-// of FetchClientSource is unaffected.
 func SetFetchProxy(t *testing.T, up *FetchUpstream) {
 	t.Helper()
 	t.Setenv("http_proxy", "http://u@127.0.0.1:"+strconv.Itoa(up.Port))
 }
 
-// readRequest reads a request head and the body its Content-Length
-// declares.
 func readRequest(c net.Conn) (head, body string, ok bool) {
 	var buf []byte
 	tmp := make([]byte, 4096)
@@ -369,9 +304,6 @@ func readRequest(c net.Conn) (head, body string, ok bool) {
 		if err != nil {
 			return "", "", false
 		}
-		// A TLS record (a handshake's first byte) is a client speaking
-		// `https` to this plain origin: close at once, so a host doing
-		// the handshake reports it instead of waiting for a server hello.
 		if buf[0] == 0x16 {
 			return "", "", false
 		}
@@ -402,44 +334,6 @@ func headerValue(head, name string) string {
 	return ""
 }
 
-// FetchClientSource is a program that sends one request per scripted
-// response shape through std/fetch and prints what came back, one line
-// per case, exiting 0 once every line is printed; the request-side
-// refusals (a CRLF in the URL or a header value, a header name or method
-// that is not a token, a file body) never reach the socket. The redirect
-// cases pin each hop rule: a 302 followed, a 302 kept as data, ten hops
-// allowed and eleven refused, a missing or unparseable Location, a
-// relative Location resolved, a 303 and a 302-after-POST rewritten to
-// GET, a 307 keeping the POST, credentials dropped across origins and
-// kept within one; the reset cases pin the one retry of an idempotent
-// request and none of a POST. The pool cases pin a held `Sockets`
-// carrying two requests on one connection, a one-shot `send` following a
-// same-origin redirect on the connection that carried it, and a host
-// platform carrying two `plat.http` requests on one connection through the
-// proxy while a fresh platform dials its own.
-// The policy cases pin `plat.http` refusing
-// a loopback origin that `send` reaches, the numeric host forms refused
-// before any lookup, and the proxy SetFetchProxy names taking every
-// request for a host that is not loopback (through `send` and through
-// `plat.http`, whose block list does not apply to the proxy), with the
-// absolute-form target, the origin's `Host` and the proxy credentials; the
-// `plat.http` request for a global literal is proxied, the one for the
-// metadata address is refused before the proxy sees it.
-// The gzip cases pin a `Content-Encoding: gzip` body decoded (with a
-// length, chunked, beside an `identity` coding, and named `x-gzip`) and
-// its encoding and length fields dropped, a HEAD answer naming a coding
-// left alone, a body that is not gzip, a body past a hundredfold growth
-// refused with its allowance named and two admitted (one under the
-// 64 KiB the ratio never refuses, one past it but within the ratio), the
-// body cap applied to the decoded bytes, two codings refused at the
-// default depth and undone at depth 2 (a few bytes, then a body past the
-// floor admitted and one past the ratio refused), a
-// caller's own `Accept-Encoding` and `Decoding { depth: 0 }` each leaving
-// the body as it came, a coding the client never asks for left alone,
-// zstd and brotli bodies decoded, and the `Accept-Encoding: gzip, zstd,
-// br` the client writes (every echo line carries it; `noencoding`
-// carries the caller's).
-// `closedPort` is a port nothing listens on.
 func FetchClientSource(port, closedPort int) string {
 	return fmt.Sprintf(`import "std/fetch";
 import "std/http";
@@ -593,21 +487,6 @@ function main(): i32 {
 `, port, closedPort)
 }
 
-// FetchHostedSource is FetchClientSource's twin for a `wasm32-wasi-http`
-// handler, where std/fetch sends through the host's outgoing-handler: the
-// handler answers `/run` with one line per case, the same lines the
-// program prints, for the cases the hosted route shares. It has no proxy
-// cases (the host dials, so the environment's proxy is the host's own),
-// no block-list cases (the host owns the network and its outbound policy
-// is the rule there, so a loopback upstream is reached), and no
-// `Connection: close` or interim-response cases (the host owns the
-// connection and steps over 1xx itself). The host's own refusals are
-// pinned where this client turns them into its errors: a response that
-// is not HTTP, one cut off before it ended, a connection refused, a TLS
-// handshake with an origin that speaks none, and a connection closed
-// before any response byte, which the host reports as its protocol error
-// (so the hosted route has no reset to retry on: `reset` and `resetpost`
-// answer alike).
 func FetchHostedSource(port, closedPort int) string {
 	return fmt.Sprintf(`import "std/fetch";
 import "std/http";
@@ -725,9 +604,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 `, port, closedPort, port)
 }
 
-// FetchHostedWant is what FetchHostedSource answers `/run` with.
-// The WASI host supplies lowercase field names; HeaderMap preserves that
-// spelling. The native origin's title-cased wire names are checked separately.
 const FetchHostedWant = `plain: 200 [hello] headers: content-length=5 x-up=1 trailers:
 chunked: 200 [abcde] headers: trailers:
 nobody: 204 [] headers: content-length=99 trailers:
@@ -783,8 +659,6 @@ reset: error protocol: the host read a malformed response
 resetpost: error protocol: the host read a malformed response
 `
 
-// CheckFetchHosted compares the hosted handler's answer against
-// FetchHostedWant with the upstream's ports and the echo lines filled in.
 func CheckFetchHosted(t *testing.T, up *FetchUpstream, body string) {
 	t.Helper()
 	host := "127.0.0.1:" + strconv.Itoa(up.Port)
@@ -809,7 +683,6 @@ func CheckFetchHosted(t *testing.T, up *FetchUpstream, body string) {
 	}
 }
 
-// FetchClientWant is what FetchClientSource prints.
 const FetchClientWant = `plain: 200 [hello] headers: Content-Length=5 X-Up=1 trailers:
 chunked: 200 [abcde] headers: trailers: X-T=tv
 interim: 404 [close-delimited] headers: X-Final=yes trailers:
@@ -886,8 +759,6 @@ keptredir: 200 [req=2] headers: Content-Length=5 trailers:
 status: 404
 `
 
-// CheckFetchClient compares the client's output against FetchClientWant
-// with the upstream's ports and the echo lines filled in.
 func CheckFetchClient(t *testing.T, up *FetchUpstream, stdout string, exit int) {
 	t.Helper()
 	host := "127.0.0.1:" + strconv.Itoa(up.Port)
@@ -916,8 +787,6 @@ func CheckFetchClient(t *testing.T, up *FetchUpstream, stdout string, exit int) 
 	}
 }
 
-// ClosedLoopbackPort is a loopback port nothing listens on: one that was
-// just released.
 func ClosedLoopbackPort(t *testing.T) int {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

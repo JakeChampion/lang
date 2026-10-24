@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// `xs.with(i, p)` is `xs.append(p)`'s sibling — emitArraySet incs
-// an aliased pointer element and the buffer's deep drop gives it
-// back — but no counted-retain tier had the position, so the
-// caller's fresh argument had no owner left to release it: 32 B a
-// round, and the whole point of the arg-temp stash.
+
+
+
+
+
+
+
+
 @noinline
 function put(xs: string[], v: string): string[] { return xs.with(0, v); }
 

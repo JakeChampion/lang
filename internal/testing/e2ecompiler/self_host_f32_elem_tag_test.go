@@ -7,28 +7,6 @@ import (
 	"testing"
 )
 
-// --- An inferred f32 element keeps its width (#7756) -------------------------
-//
-// An inferred f32 tuple element or Option payload keeps the f32 width its
-// method dispatch keys on. Both f32 and f64 occupy the 8-byte slot, so an f32
-// tagged f64 stores the right value and RENDERS it wrong:
-//
-//	let t = (3.14159 as f32 * 2.5 as f32, 1); print(t.0.to_string());
-//	as f32   19.634937
-//	as f64   19.634937286376953
-//
-// These rows assert the rendered LENGTH as the exit code rather than capturing
-// stdout, because the length is what separates the two precisions and an exit
-// code is comparable on all three backends. f32 renders 9 characters here, f64
-// renders 17 — so every row below returns 17 (or 178) if the width is lost,
-// which is what makes them non-vacuous.
-//
-// Every want was confirmed against `bin/fern -interp` and on wasm, and every
-// value stays under 126 because WASI refuses anything outside [0..126) and
-// reports 1 instead (the phantom mismatch docs/LOCAL-DEV-LOOP.md records).
-//
-// Nothing in the conformance corpus puts an f32 in a tuple element or an
-// Option payload; these rows are the only coverage.
 type f32ElemTagCase struct {
 	name string
 	src  string
@@ -38,7 +16,6 @@ type f32ElemTagCase struct {
 func f32ElemTagCases() []f32ElemTagCase {
 	return []f32ElemTagCase{
 		{
-			// THE REPRO, as a length: the tuple ELEMENT spelling. Was 17.
 			name: "tuple_elem_f32_renders_at_f32",
 			src: `import "std/f64";
 function main(): i32 {
@@ -48,9 +25,6 @@ function main(): i32 {
 			want: 9,
 		},
 		{
-			// An INFERRED Option payload (`let o = Some(<f32>)`). Its tag reaches
-			// the payload admission list, which dropped an f32 outright rather than
-			// widening it — losing the payload type, not just its width.
 			name: "inferred_option_f32_payload",
 			src: `import "std/f64";
 function main(): i32 {
@@ -61,8 +35,6 @@ function main(): i32 {
 			want: 9,
 		},
 		{
-			// The ANNOTATED spelling of the same: the payload type comes from
-			// `Option[f32]` rather than from the constructor.
 			name: "annotated_option_f32_payload",
 			src: `import "std/f64";
 function main(): i32 {
@@ -73,9 +45,6 @@ function main(): i32 {
 			want: 9,
 		},
 		{
-			// f32 and f64 elements in ONE tuple, so the row fails if the two
-			// collapse in either direction: 9 characters for the f32 and 8 for the
-			// f64, encoded as 9*10+8. A compiler that tags both "f64" returns 178.
 			name: "tuple_mixes_f32_and_f64_elems",
 			src: `import "std/f64";
 function main(): i32 {
@@ -85,9 +54,6 @@ function main(): i32 {
 			want: 98,
 		},
 		{
-			// A plain f32 LOCAL, which never went through elem_type_tag and was
-			// correct all along (expr_scalar_type has the f32-before-f64 arm this
-			// change ports). Here so a regression on the working path fails too.
 			name: "plain_f32_local_unchanged",
 			src: `import "std/f64";
 function main(): i32 {
@@ -99,11 +65,6 @@ function main(): i32 {
 	}
 }
 
-// The three legs share one CLI-driver build: these programs `import
-// "std/f64"` for `to_string`, and the single-source `*_run.fern` shims parse
-// raw source with no module loader, so the import never resolves there. The
-// unified fern.fern driver takes a source path plus the stdlib root and
-// resolves it for every target.
 func f32ElemTagDriver(t *testing.T) (gcc string, dir string, fernBin string, stdlibRoot string) {
 	t.Helper()
 	gcc, _ = x86_64Tooling(t)
@@ -135,8 +96,6 @@ func f32ElemTagEmit(t *testing.T, fernBin, dir, stdlibRoot, name, src, target st
 	return string(out)
 }
 
-// TestSelfHostF32ElemTagX86_64 — the rendered length matches native's on the
-// register backend.
 func TestSelfHostF32ElemTagX86_64(t *testing.T) {
 	gcc, dir, fernBin, stdlibRoot := f32ElemTagDriver(t)
 	_, runner := x86_64Tooling(t)
@@ -156,10 +115,6 @@ func TestSelfHostF32ElemTagX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostF32ElemTagWasm — the wasm leg, and the one that catches the
-// consumers this fix had to audit: three of the four read the tag by spelling
-// "f64" literally, and a wrong width there is a VALIDATION failure on wasm where
-// the register backends store 8 bytes regardless and never notice.
 func TestSelfHostF32ElemTagWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping f32 element-tag wasm e2e")
@@ -184,8 +139,6 @@ func TestSelfHostF32ElemTagWasm(t *testing.T) {
 	}
 }
 
-// TestSelfHostF32ElemTagArm64 — the arm64 sibling under qemu, emitted by the
-// x86 host driver.
 func TestSelfHostF32ElemTagArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	_, dir, fernBin, stdlibRoot := f32ElemTagDriver(t)

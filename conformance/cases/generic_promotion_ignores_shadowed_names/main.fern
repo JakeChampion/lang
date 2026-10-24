@@ -52,8 +52,8 @@ function main(): i32 {
   assert(parameter(2) == 2);
   assert(local() == 3);
   assert(pattern(Some(4)) == 4);
-  // A later local shadows only subsequent reads. The earlier call still
-  // names the generic function and must specialize it.
+
+
   let later: (() => i32)[] = [() => 5];
   let before: i32 = first(later);
   let first: i32 = 6;

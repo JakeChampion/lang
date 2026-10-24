@@ -11,9 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Reading a directory fails with EISDIR on every target (#11706). Every read
-// path is covered: wasm opens a directory without complaint, as the natives
-// do, so the failure only comes at the read.
 const readDirProg = `function msg(e: IoError): string {
     match (e) {
         Other(_, m, _) => { return m; },

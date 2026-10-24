@@ -6,9 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// A `match` or `if … else` at the end of a lambda's block body is a statement
-// when none of its branches gives a value (#13063), so a `void` lambda can
-// end in one. A branch with a value keeps the construct the body's value.
 func TestValuelessBranchTail(t *testing.T) {
 	lastOf := func(t *testing.T, lambda string) ast.Stmt {
 		t.Helper()

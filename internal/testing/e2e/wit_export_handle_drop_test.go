@@ -12,15 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExportOwnedHandleDropComposes is the P6 Slice 6c gate
-// (docs/WIT-BRING-YOUR-OWN.md): an `@export` taking an OWNED handle (`own<R>`)
-// the handler doesn't pass on — the auto-drop pass inserts the resource's
-// `[resource-drop]`, so the reactor core imports it. `ComposeExportsFromWorld`
-// now wires that drop (surfacing the resource + a canon `resource.drop`),
-// instead of rejecting it — the last composer gap before the real `wasi:http`
-// `incoming-handler#handle` (whose `own<...>` params are consumed/dropped).
-// Gated by `wasm-tools validate` + the component declaring `own<thing>` and a
-// `resource.drop`.
 func TestExportOwnedHandleDropComposes(t *testing.T) {
 	wasmtools, err := exec.LookPath("wasm-tools")
 	if err != nil {
@@ -62,10 +53,6 @@ world m {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// The handler creates a local owned handle that isn't passed on, so the
-	// auto-drop pass inserts its `[resource-drop]thing` — the core imports it, and
-	// the composer must wire it. (Owned *params* are left to the caller; an owned
-	// *local* is dropped at scope exit — the P5 contract.)
 	prog := `@import("local:test/res@0.1.0", "thing")
 resource Thing;
 

@@ -9,14 +9,9 @@ import (
 	"testing"
 )
 
-// TestArm64AndroidCLI exercises the `-target arm64-android` path end to end
-// through the fern CLI: it must emit a static position-independent (ET_DYN)
-// arm64 ELF with no W+X mapping, and run correctly (under qemu-aarch64, or
-// natively on arm64). The program uses a function value so the
-// self-relocation at `_start` is exercised, not just the reloc-free case.
 func TestArm64AndroidCLI(t *testing.T) {
 	bin := buildFernCLI(t)
-	qemu := arm64QemuOrEmpty(t) // "" on native arm64, else qemu path; skips if neither
+	qemu := arm64QemuOrEmpty(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
 	prog := `function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
@@ -50,8 +45,6 @@ function main(): i32 { print("android pie"); return apply(dbl, 21); }`
 		}
 	}
 
-	// Run it: the function-value relocation must be applied by the startup
-	// self-relocation prologue for the indirect call to land correctly.
 	var cmd *exec.Cmd
 	if qemu == "" {
 		cmd = exec.Command(out)

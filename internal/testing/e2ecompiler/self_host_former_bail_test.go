@@ -7,10 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostFormerBailsRun runs shapes that once failed to lower (#8590):
-// a loop over a 4-deep nested array and a value-position match binding an
-// 8-byte-element array payload. Keep the original static match and a runtime
-// counterpart, checking the result and allocation census on both native targets.
 func TestSelfHostFormerBailsRun(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range []struct {
@@ -34,7 +30,6 @@ function main(): i32 {
     return (u as i32) & 255i32;
 }
 `, 5, "main"},
-		// The program name supplies args length 1, retaining payloads 5 and 6.
 		{"iife-runtime-value-block", `enum W { Wide(i64[]), Empty }
 @noinline function probe(n: i64): i32 {
     let w: W = Wide([n + 4i64, n + 5i64]);
@@ -55,8 +50,6 @@ function main(): i32 { return probe(args().len() as i64); }
 					if err != nil {
 						t.Fatal(err)
 					}
-					// Both native emitters delimit function bodies with CFI. Scope
-					// these checks to exclude argv allocation/release in main.
 					body := selfHostFnBody(t, asm, tc.body)
 					heap := tc.body == "probe"
 					for _, helper := range []string{"__fern_arr_box", "__fn___fern_arr_dec"} {

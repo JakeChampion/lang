@@ -1,15 +1,5 @@
 import "std/test";
 
-// tests/stdlib/json_field_eq_test.fern — batch 34
-// additions to std/test:
-//   * `test.assert_json_eq_field_string(json_text, key, exp)`
-//     — top-level object's key is a JString equal to exp.
-//   * `test.assert_json_eq_field_i32(json_text, key, exp)` —
-//     top-level object's key is a JNumber parseable to
-//     i32 and equal to exp.
-//   * `test.assert_json_eq_field_bool(json_text, key, exp)` —
-//     top-level object's key is a JBool equal to exp.
-
 function test_field_string_pass(): test.TestOutcome {
   return test.assert_json_eq_field_string(
     "{\"name\":\"alice\",\"city\":\"NYC\"}",
@@ -121,8 +111,6 @@ function test_field_i32_wrong_type(): test.TestOutcome {
 }
 
 function test_field_i32_non_integer_number(): test.TestOutcome {
-  // Decimals aren't i32-parseable — must report the
-  // parse failure, not silently truncate.
   match (test.assert_json_eq_field_i32(
     "{\"count\":3.14}", "count", 3,
   )) {

@@ -12,23 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternImportCustomProvider is the main bring-your-own-WIT gate
-// (docs/WIT-BRING-YOUR-OWN.md): a Fern program `@import`s a *fully custom*
-// (non-WASI) interface, and the import is satisfied at link time by a separate
-// provider component — proving the whole premise end to end without any
-// built-in knowledge of the interface.
-//
-// Pieces:
-//   - a hand-built provider component exporting `local:test/answer@0.1.0`
-//     (get: func() -> u32 returning 42), via wasm-tools embed + component new;
-//   - a user Fern program that `@import`s that interface (+ a built-in write
-//     for output), compiled to a core and composed against a *custom* world
-//     (DecodeWorldBytes — the P3 entry point) that declares both interfaces;
-//   - `wasm-tools compose --definitions` plugging the provider's export into
-//     the user's import; the final component runs under wasmtime.
-//
-// This is also the reusable harness for future composite-parameter / record
-// tests, which have no non-resource WASI 0.2 target and need a custom provider.
 func TestExternImportCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -40,7 +23,6 @@ func TestExternImportCustomProvider(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	// --- 1. Build the provider component exporting local:test/answer@0.1.0. ---
 	provWit := filepath.Join(dir, "provwit")
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir provwit: %v", err)
@@ -67,14 +49,12 @@ func TestExternImportCustomProvider(t *testing.T) {
 	run(wasmtools, "component", "embed", provWit, "-w", "provider", provCore, "-o", provEmbed)
 	run(wasmtools, "component", "new", provEmbed, "-o", provider)
 
-	// --- 2. Author the user world (custom answer iface + wasi stdout). ---
 	userWit := filepath.Join(dir, "userwit")
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps")).CombinedOutput(); err != nil {
 		_ = os.MkdirAll(userWit, 0o755)
 		run("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps"))
 		_ = out
 	}
-	// The custom interface goes under deps so the world can import it.
 	if err := os.MkdirAll(filepath.Join(userWit, "deps", "test"), 0o755); err != nil {
 		t.Fatalf("mkdir deps/test: %v", err)
 	}
@@ -103,7 +83,6 @@ func TestExternImportCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// --- 3. Compile the user program (core) and compose against the world. ---
 	const want = "answer-ok"
 	src := `@import("local:test/answer@0.1.0", "get")
 function answer(): u32;
@@ -129,7 +108,6 @@ function main(): i32 {
 		t.Fatalf("write user component: %v", err)
 	}
 
-	// --- 4. Plug the provider into the user's import; run the result. ---
 	final := filepath.Join(dir, "final.wasm")
 	run(wasmtools, "compose", userPath, "--definitions", provider, "-o", final)
 	run(wasmtools, "validate", final)

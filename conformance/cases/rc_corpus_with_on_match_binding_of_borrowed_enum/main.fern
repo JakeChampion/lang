@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// `.with` on an array MATCH-BOUND from a borrowed enum: the arm binds
-// the payload with no retain, so the array sits at the box's rc==1 and
-// an in-place cow rewrote the payload of the enum `snap` still held,
-// then the old box's drop released the stored leaf (use-after-free).
-// The persistent-HAMT node update shape. Correct: snap keeps 39 at
-// slot 0 and t reads 100 → 39 + 100 - 139 = 0.
+
+
+
+
+
+
+
+
+
 enum N { L(i32), B(i32, N[]) }
 function bump(n: N, idx: i32, v: i32): N {
     match (n) {

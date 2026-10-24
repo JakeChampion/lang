@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// proc_exec and proc_exec_as copy the path and every vector string into
-// NUL-terminated blocks for execve, and returned from a failed exec without
-// giving any of them back: a caller trying candidate paths leaked a path, a
-// vector and a copy per string on every miss (#8837). Twenty misses of each,
-// then a subprocess, whose own scratch was already returned, to prove the
-// shared copy routine still builds a working argv.
 const procExecReclaimSrc = `function main(): i32 {
     let i: i32 = 0;
     while (i < 20) {

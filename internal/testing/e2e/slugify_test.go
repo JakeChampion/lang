@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/string.slugify across backends:
-// lower-casing, non-alphanumeric runs collapsing to a single hyphen,
-// leading/trailing separator trimming, underscores and dots as
-// separators, digit preservation, non-ASCII bytes acting as separators
-// (dropped, not transliterated), and the empty / all-separator results.
-// Returns 42 iff every check holds. Each leg skips itself when its
-// toolchain is absent.
 const slugifyProg = `
 import "std/string";
 function main(): i32 {

@@ -1,11 +1,5 @@
 package e2e
 
-// Differential coverage for std/array `find_indices` — the indices of every
-// element satisfying the predicate (the "all matches" plural of `position`).
-// Checks the matching indices, none-match (empty), all-match, and that the
-// result agrees with `position` on the first hit. Returns 42 iff every check
-// holds across interp / x86-64 / wasm / arm64.
-
 import "testing"
 
 const arrayFindIndicesProg = `

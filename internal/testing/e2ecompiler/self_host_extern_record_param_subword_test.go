@@ -11,24 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternRecordParamSubwordCustomProvider is the self-host port of
-// the record-field parameter test (docs/WIT-BRING-YOUR-OWN.md, Go-side
-// TestExternRecordParamSubwordCustomProvider). A self-host struct stores every
-// int in a 4-byte-or-wider slot, and the canonical ABI flattens each record
-// field to its own core value, so the wrapper reads each field with the
-// natural load matching extern_field_load_op.
-//
-// Historically this test exercised the sub-word (s8/u16) field path — a
-// self-host struct field narrower than 4 bytes, read with a width+sign-aware
-// load (i32.load8_s / i32.load16_u) to produce the correctly extended i32 the
-// canonical ABI flattens it to. i8/i16/u16 were removed from the language
-// (#4408) — a self-host struct can no longer declare a field narrower than
-// u8/i32 — so the sub-word load path is gone and this test now uses i32/u32
-// fields instead, still exercising multi-field record-parameter marshalling
-// end to end.
-//
-// The provider exports `sum-mix: func(p: record { a: s32, b: u32, c: s32 }) ->
-// s32` summing the flattened (a, b, c). Expected -5 + 300 + 1000 = 1295.
 func TestSelfHostExternRecordParamSubwordCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -56,8 +38,6 @@ func TestSelfHostExternRecordParamSubwordCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// sum-mix receives the record flattened to (a, b, c) — three i32 params
-	// (each field is already i32/u32) — and returns their sum.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (func (export "local:test/sink@0.1.0#sum-mix") (param $a i32) (param $b i32) (param $c i32) (result i32)

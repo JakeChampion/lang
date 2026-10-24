@@ -1,33 +1,3 @@
-// fern-coreutils.fern — every utility in `coreutils/` in one binary.
-//
-// The binary decides which utility to be from the basename of argv[0],
-// so it is used through symlinks named after the utilities:
-//
-//     $ ln -s fern-coreutils yes
-//     $ ./yes | head -2
-//     y
-//     y
-//
-// or by naming the utility as its first argument, `fern-coreutils yes`.
-// That form shifts argv with `set_args` before dispatching, so the
-// utility sees its own name as argv[0] either way.
-//
-// That is the whole dispatch, and it is why nothing here has to thread
-// a program name anywhere: `gnu.prog()` reads argv[0], which is already
-// the utility's own name. A usage error from the multicall binary is
-// byte-for-byte the one the standalone build prints.
-//
-// Run under its own name with no utility after it, the binary answers
-// for itself: `--list` prints the catalogue one per line, `--help` and
-// `--version` do the usual.
-//
-// The imports below are the catalogue, and
-// `internal/testing/coreutils/multicall_test.go` fails when a `coreutils/*.fern`
-// is missing from it — the list is checked in rather than generated so
-// that it is reviewable, and gated so that it cannot drift.
-//
-// Aliased imports throughout: a module name is bound as an identifier,
-// and `[`, `true` and `false` are not identifiers.
 import "../lib/gnu";
 import "../[" as u_bracket;
 import "../arch" as u_arch;
@@ -136,7 +106,6 @@ import "../who" as u_who;
 import "../whoami" as u_whoami;
 import "../yes" as u_yes;
 
-// The catalogue, in the order `--list` prints it.
 function catalogue(): string[] {
   return ["[", "arch", "b2sum", "base32", "base64", "basename", "basenc", "cat", "chcon", "chgrp", "chmod", "chown", "chroot", "cksum", "comm", "cp", "csplit", "cut", "date", "dd", "df", "dir", "dircolors", "dirname", "du", "echo", "env", "expand", "expr", "factor", "false", "fmt", "fold", "groups", "head", "hostid", "id", "install", "join", "kill", "link", "ln", "logname", "ls", "md5sum", "mkdir", "mkfifo", "mknod", "mktemp", "mv", "nice", "nl", "nohup", "nproc", "numfmt", "od", "paste", "pathchk", "pinky", "pr", "printenv", "printf", "ptx", "pwd", "readlink", "realpath", "rm", "rmdir", "runcon", "seq", "sha1sum", "sha224sum", "sha256sum", "sha384sum", "sha512sum", "shred", "shuf", "sleep", "sort", "split", "stat", "stty", "sum", "sync", "tac", "tail", "tee", "test", "timeout", "touch", "tr", "true", "truncate", "tsort", "tty", "uname", "unexpand", "uniq", "unlink", "uptime", "users", "vdir", "wc", "who", "whoami", "yes"];
 }
@@ -153,10 +122,6 @@ function in_catalogue(n: string): boolean {
   return false;
 }
 
-// argv[0] is what the process was invoked as, path and all; the
-// utility it names is its last path component. Nothing is stripped
-// beyond that: a trailing slash cannot appear in an exec'd argv[0],
-// and a name with no slash is already its own basename.
 function basename(p: string): string {
   let last: i32 = -1;
   let i: i32 = 0;
@@ -185,8 +150,6 @@ function help_text(): string {
   return out;
 }
 
-// Its own options, reached only when neither argv[0] nor argv[1] names a
-// utility.
 function own_main(argv: string[]): i32 {
   if (argv.len() < 2) {
     gnu.die_usage("missing option", 1);
@@ -219,7 +182,6 @@ function own_main(argv: string[]): i32 {
 }
 
 // fern-lint: allow cyclomatic-complexity
-// The catalogue is a flat table; splitting it would only hide the shape.
 function main(): i32 {
   let argv: string[] = args();
   if (argv.len() == 0) {

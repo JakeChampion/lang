@@ -6,18 +6,6 @@ import (
 	"testing"
 )
 
-// A closing scope in the SSA lift folds its slot rows into the enclosing
-// scope, except a row whose slot nothing reads again: that one is dropped, so
-// no enclosing merge builds a phi for it
-// (docs/ssa-log/2026-10-07-i-a-closing-scope-drops-the-slots-nothing-reads-again.md).
-// The driver lifts op streams directly and counts the phis:
-//
-//   - a temporary written in the innermost arm of three nested ifs, never
-//     read after it, gets the innermost merge's phi and no other;
-//   - the same temporary read after the outermost if keeps all three;
-//   - a slot read at the top of a loop and written in an if further down is
-//     read again through the back edge, so the if's fold keeps its row and
-//     the header phi takes the if's merge on the back edge, not itself.
 const ssaLiftDeadRowsProg = `import "./ir";
 import "./ssa";
 import "./ssa_lift";

@@ -1,17 +1,17 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The tuple sibling of the entry above (#6879): the exit sweep's
-// inline tuple arm frees a native single-word string element with
-// __fern_str_dec, so this is the case that says the free is guarded
-// by the element's own count rather than by the tuple box's. Every
-// spelling that can outlive the sweep is here — the element aliases
-// a live local, is bound out, is passed to a callee, is returned,
-// fills both slots of one tuple, and escapes into an array — and
-// each is checked for CONTENT, which a premature free turns into
-// wrong bytes rather than a wrong length. Literal / inline-SSO /
-// empty-sentinel elements cover the three sources __fern_str_dec
-// short-circuits on instead of freeing.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/string";
 function two(a: string, b: string): string { return a + b; }

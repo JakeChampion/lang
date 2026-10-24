@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Map-value reclamation: i32[][] values (valKind 3 = rc-elem
-// array → drop_arr_ptr recurses one level, dec'ing each inner
-// i32[], then frees the outer buffer). Exercises the rc-elem
-// value free path the other map cases don't.
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 import "std/string";

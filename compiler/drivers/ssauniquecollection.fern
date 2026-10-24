@@ -53,7 +53,6 @@ function indexed(a: ssaprepare.Emitted, prefix: string, suffix: string): void {
   let text = prefix;
   let i = 0;
   while (i < 65) {
-    // Prefix-related names and decimal order differ from encounter order.
     let name = "probe" + (if (i == 0) { "" } else { i.to_string() });
     let body = change(change(a.assembly, "__fn_" + f.name, "__fn_" + name), ".Lssa_" + f.name + "_", ".Lssa_" + name + "_");
     bodies = bodies.append(body);
@@ -95,7 +94,6 @@ pub function run(g: ircore.Gated, arm: boolean): void {
   check(out.text, arch, [h], false);
   check(out.text, arch, [f, h, h], false);
   check(out.text, arch, [f, h, ssa.SFunc { ...h, name: "missing" }], false);
-  // Both retained body strings stay valid throughout final-output mutations.
   let parts = out.text.split(b.assembly);
   require(parts.len() == 2);
   check(parts[0] + parts[1], arch, [f, h], false);
@@ -115,7 +113,6 @@ pub function run(g: ircore.Gated, arm: boolean): void {
   check(parts[0] + changed + parts[1], arch, [f, h], false);
   let wrong = ssa.SFunc { ...f, name: h.name };
   check(out.text, arch, [f, wrong], false);
-  // Physical order and supplied graph order are independent.
   let whole = out.text.split(a.assembly + b.assembly);
   require(whole.len() == 2);
   indexed(a, whole[0], whole[1]);

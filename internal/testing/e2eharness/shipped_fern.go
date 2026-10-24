@@ -14,10 +14,6 @@ var (
 	shippedFernErr  string
 )
 
-// ShippedFern is the `fern` a release ships: compiler/fern_main.fern built by
-// the current self-host compiler for this host with the tree
-// scripts/fern-embed-stage lays out embedded, so it carries its own stdlib,
-// explanations and VERSION. Built once per process.
 func ShippedFern(t testing.TB) string {
 	t.Helper()
 	host := HostSelfHostTarget()

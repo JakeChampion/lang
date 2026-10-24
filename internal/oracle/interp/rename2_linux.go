@@ -8,14 +8,11 @@ import (
 	"unsafe"
 )
 
-// Linux's renameat2 flags.
 const (
 	renameNoreplace = 1
 	renameExchange  = 2
 )
 
-// renameat2 is renameat2(AT_FDCWD, from, AT_FDCWD, to, flags). `syscall`
-// names the number only on some architectures, so it is spelled here.
 func renameat2(from, to string, flags uintptr) error {
 	var sysno uintptr
 	switch runtime.GOARCH {

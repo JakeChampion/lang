@@ -9,23 +9,10 @@ import (
 	"testing"
 )
 
-// TestSelfHostModloadX86_64 exercises the import-driven self-host driver
-// (asm_modload_run.fern): instead of the `///MODULE`-marker stdin bundle
-// and the synthetic builtin-type table, it reads an ENTRY file off argv,
-// follows its `import "./x"` graph to sibling files on disk, and takes the
-// built-in TYPES from module_with_builtins' injection.
-//
-// The first two program trees:
-//   - "real-builtins": a 2-module program using the built-in IoError enum
-//     (declared nowhere in the program), with the vendored builtins.fern in
-//     the tree — real multi-file loading.
-//   - "no-builtins": the same IoError program with NO builtins.fern in the
-//     tree, confirming the injection fills the types in.
 func TestSelfHostModloadX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
 
-	// Build the driver as an x86 host binary via the native toolchain.
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "driver")
 
 	builtinsSrc, err := os.ReadFile("../../../compiler/builtins.fern")
@@ -35,9 +22,6 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 
 	helperSrc := "pub function add(x: i32, y: i32): i32 { return x + y; }\n"
 
-	// A 2-module program: main imports ./helper and uses the built-in
-	// IoError enum (declared nowhere locally). classify(NotFound) = 1,
-	// add(1, 41) = 42.
 	ioErrMain := "" +
 		"import \"./helper\";\n" +
 		"function classify(e: IoError): i32 {\n" +
@@ -55,9 +39,9 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 	cases := []struct {
 		name     string
 		files    map[string]string
-		entryRel string            // entry file relative to the program dir (default main.fern)
-		lockDeps map[string]string // dep name → target dir (rel to progDir), written into fern.lock with abs paths
-		cacheDir bool              // point FERN_CACHE_DIR at <progDir>/cache (url-dep store cases, #4949)
+		entryRel string
+		lockDeps map[string]string
+		cacheDir bool
 		wantExit int
 	}{
 		{
@@ -72,8 +56,6 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 		{
 			name: "no-builtins",
 			files: map[string]string{
-				// No builtins.fern: module_with_builtins' idempotent
-				// injection must still supply IoError.
 				"helper.fern": helperSrc,
 				"main.fern":   ioErrMain,
 			},
@@ -82,9 +64,6 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 		{
 			name: "std-subpath",
 			files: map[string]string{
-				// A `std/`-prefixed import resolves to its sub-directory
-				// file (<dir>/std/mathx.fern) while the namespace stays the
-				// basename (mathx.triple → mathx__triple). triple(14) = 42.
 				"builtins.fern":  string(builtinsSrc),
 				"std/mathx.fern": "pub function triple(x: i32): i32 { return x * 3; }\n",
 				"main.fern": "" +
@@ -94,12 +73,6 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 			wantExit: 42,
 		},
 		{
-			// Manifest path dep: a fern.toml declares `dbl = { path =
-			// "../dbl" }`, so a bare `import "dbl"` resolves — via the new
-			// fern_toml reader in modloader — to ../dbl/lib.fern (the dep's
-			// lib module, its own manifest setting lib=api.fern). dbl(21)=42.
-			// Files are written into a `prog/` subdir so the ../dbl path is
-			// meaningful; the driver entry is prog/main.fern.
 			name: "manifest-path-dep",
 			files: map[string]string{
 				"builtins.fern": string(builtinsSrc),
@@ -112,10 +85,6 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 			wantExit: 42,
 		},
 		{
-			// A dependency whose lib sits below its root: helper's own
-			// manifest is one level above src/lib.fern, and it still governs
-			// that module's `textkit` import, while `./util` resolves beside
-			// the file. textkit.ten() + util.two() = 12.
 			name: "manifest-dep-lib-in-subdir",
 			files: map[string]string{
 				"app/fern.toml":        "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../helper\" }\n",
@@ -130,8 +99,6 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 			wantExit: 12,
 		},
 		{
-			// A module below its package root reaches a dependency the root's
-			// manifest declares: the nearest fern.toml above it governs it.
 			name: "manifest-governs-subdirectory-module",
 			files: map[string]string{
 				"app/fern.toml":  "[package]\nname = \"app\"\n[dependencies]\ndbl = { path = \"../dbl\" }\n",
@@ -144,10 +111,6 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 			wantExit: 42,
 		},
 		{
-			// Workspace member dep: app declares `lexer = { workspace = true }`
-			// and imports it by name; the loader walks up to the [workspace]
-			// root (ws/fern.toml) and resolves the member whose package name
-			// is "lexer" (its dir is ws/lexer). tok() = 42.
 			name: "workspace-member-dep",
 			files: map[string]string{
 				"ws/fern.toml":       "[workspace]\nmembers = [\"app\", \"lexer\"]\n",
@@ -160,27 +123,19 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 			wantExit: 42,
 		},
 		{
-			// Vendored mode: a declared path dep is resolved from
-			// <dir>vendor/<name>/ (the vendored copy), not its original
-			// ../ext location. val() = 42.
 			name: "vendored-dep",
 			files: map[string]string{
 				"app/fern.toml":            "[package]\nname = \"app\"\n[dependencies]\next = { path = \"../ext\" }\n",
 				"app/main.fern":            "import \"ext\";\nfunction main(): i32 { return ext.val(); }\n",
 				"app/vendor/ext/fern.toml": "[package]\nname = \"ext\"\n",
 				"app/vendor/ext/lib.fern":  "pub function val(): i32 { return 42; }\n",
-				// The original ../ext gives a DIFFERENT value, so a pass proves
-				// vendor/ took precedence.
-				"ext/fern.toml": "[package]\nname = \"ext\"\n",
-				"ext/lib.fern":  "pub function val(): i32 { return 7; }\n",
+				"ext/fern.toml":            "[package]\nname = \"ext\"\n",
+				"ext/lib.fern":             "pub function val(): i32 { return 7; }\n",
 			},
 			entryRel: "app/main.fern",
 			wantExit: 42,
 		},
 		{
-			// Versioned dep resolved through fern.lock with a `path` source:
-			// app declares `foo = "1.0.0"` and a fern.lock pins foo to a local
-			// directory (written with its absolute path by the test). v() = 42.
 			name:     "lock-path-dep",
 			lockDeps: map[string]string{"foo": "foo-1.0.0"},
 			files: map[string]string{
@@ -193,12 +148,6 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 			wantExit: 42,
 		},
 		{
-			// url+hash dep resolved from the content-addressed store
-			// (#4949): app declares `pkg = { url = "…", hash = "sha256:…" }`
-			// and the store (FERN_CACHE_DIR layout: <root>/pkgs/<hex>/)
-			// holds the unpacked package. The loader reads the store via
-			// the `env` builtin — no network, populating stays `fern
-			// -fetch`. v() = 42.
 			name:     "url-store-dep",
 			cacheDir: true,
 			files: map[string]string{
@@ -212,11 +161,6 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 			wantExit: 42,
 		},
 		{
-			// Versioned dep whose fern.lock source is a URL (#4949): the
-			// lock's [[package]] entry carries url+hash (no path), so the
-			// loader resolves it from the store by the lock's hash — the
-			// Fern lock parser used to skip these with an empty path.
-			// w() = 42.
 			name:     "lock-url-dep",
 			cacheDir: true,
 			files: map[string]string{
@@ -236,9 +180,6 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			progDir := t.TempDir()
 			if tc.cacheDir {
-				// The driver inherits the test process env, so the
-				// self-host loader's env("FERN_CACHE_DIR") sees the
-				// per-case store at compile time.
 				t.Setenv("FERN_CACHE_DIR", filepath.Join(progDir, "cache"))
 			}
 			for name, src := range tc.files {
@@ -250,8 +191,6 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 					t.Fatalf("write %s: %v", name, err)
 				}
 			}
-			// A fern.lock with absolute path sources (native writes absolute
-			// paths); the entry package's dir gets the lock.
 			if len(tc.lockDeps) > 0 {
 				lockDir := filepath.Dir(filepath.Join(progDir, filepath.FromSlash(tc.entryRel)))
 				var b strings.Builder
@@ -287,16 +226,6 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostModloadIRProbeX86_64 exercises the import-driven driver's
-// `-ir-probe` flag (asm_modload_run.fern), which reports the typed lowering's
-// verdict (semlower.verdict_text) AFTER real import resolution + bundling.
-//
-// This is the import-AWARE counterpart to asm_ir_run's stdin probe
-// (TestSelfHostIREligibilityProbe). The stdin probe parses one source with no
-// modload, so a function that calls an IMPORTED helper is measured with its
-// callee ABSENT. The modload probe loads the `import` graph off disk first, so
-// `f` (which calls `helper.dbl`, mangled `helper__dbl`) is measured with the
-// real callee in the module and shows `ir`.
 func TestSelfHostModloadIRProbeX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
@@ -306,9 +235,6 @@ func TestSelfHostModloadIRProbeX86_64(t *testing.T) {
 	progDir := t.TempDir()
 	files := map[string]string{
 		"helper.fern": "pub function dbl(n: i32): i32 { return n * 2; }\n",
-		// `f` calls the IMPORTED helper.dbl. Without modload (the stdin probe)
-		// helper__dbl is absent, so f bails `call`; with modload it is present,
-		// so f lowers (`f: ir`).
 		"main.fern": "" +
 			"import \"./helper\";\n" +
 			"@noinline function f(n: i32): i32 { return helper.dbl(n) + 1; }\n" +
@@ -340,10 +266,6 @@ func TestSelfHostModloadIRProbeX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostModloadArgOrderX86_64 pins that asm_modload_run reads its entry
-// path as the first argument no flag claims, wherever it sits: a flag before
-// the entry (`-target x86-64-linux main.fern`) must emit what the entry-first
-// order emits, and an unknown -target is refused in either order.
 func TestSelfHostModloadArgOrderX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)

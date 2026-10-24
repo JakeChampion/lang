@@ -6,10 +6,6 @@ import (
 	"testing"
 )
 
-// A type parameter written as the bare variable (`a: C`) and pinned only by a
-// generic enum's variant construction binds to the whole enum instantiation;
-// it used to bind nothing, leaving the call to the uninstantiated template,
-// which the self-host then reported as undefined (#10209).
 const variantArgInferSrc = `enum Bag[T] { Items(T[]), Empty }
 function size[C](a: C, b: C): i32 {
     let n: i32 = 0;

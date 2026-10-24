@@ -12,17 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternVariantMultiFieldResultCustomProvider is the *multi-field* `variant`
-// *result* gate (docs/WIT-BRING-YOUR-OWN.md): a WIT variant whose cases carry more
-// than one payload — `variant ev { click(u32, u32), key(u32), close }` — lifted
-// into a Fern enum. The canonical join is SlotCount=2 i32 slots; the result
-// wrapper reads the slots from the return area and, branching on the disc, stores
-// each matched arm's fields into the Fern box at their box offsets
-// (ir.ExternEnumParam.SlotCount/Variants[k].Fields + appendVariantResultStoreMultiField).
-//
-// `classify: func(n: s32) -> ev`: n<10 → close, n<100 → key(n), else →
-// click(n, n+1). The Fern `match` recovers each arm's fields, weighted so a wrong
-// slot/disc fails.
 func TestExternVariantMultiFieldResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -49,8 +38,6 @@ func TestExternVariantMultiFieldResultCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// classify returns the variant indirectly: a 12-byte area (disc:u8 @0, slot0
-	// @4, slot1 @8) via cabi_realloc. click=0/key=1/close=2.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))

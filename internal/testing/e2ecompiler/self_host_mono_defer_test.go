@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-// A `defer` body is walked by the monomorphisers like any other block. They
-// skipped it, so a call to a bounded generic inside one kept the generic's
-// name, which has no instance ("call target has no semantic contract"), and
-// a generic struct literal kept its unmangled type ("unsupported record
-// literal"). Found by fernsmith's trait productions. Each case prints from
-// the deferred block, so the deferred work is what the oracle compares.
 var monoDeferCases = []struct {
 	name, src, want string
 }{

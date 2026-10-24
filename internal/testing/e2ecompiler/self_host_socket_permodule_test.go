@@ -9,8 +9,6 @@ import (
 	"testing"
 )
 
-// A library owns the socket calls; its references must link against the
-// entry unit's one runtime, including the packed-byte helpers typed code uses.
 func TestSelfHostSocketRuntimePerModule(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)

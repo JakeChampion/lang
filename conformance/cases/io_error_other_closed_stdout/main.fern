@@ -1,12 +1,12 @@
-// A write to a closed stdout fails in write(2) with EBADF, and the
-// Writer reports it as IoError.Other("", strerror text, 9) — no path, since a
-// write has none, glibc's wording for the errno (#8265), and EBADF's Linux
-// number on every target (#11296). This is the
-// shape every C program prints for `prog >&-`, and coreutils parity
-// depends on it (`yes: standard output: Bad file descriptor`).
-//
-// Nothing can reach stdout once it is closed, so the verdict is the exit
-// status: 0 when all three fields carry exactly what the contract says.
+
+
+
+
+
+
+
+
+
 function main(): i32 {
   let w: Writer = stdout();
   match (w.close()) {

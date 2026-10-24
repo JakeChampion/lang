@@ -1,6 +1,6 @@
-// A parametric impl on a generic enum, reached only through a trait bound:
-// nothing calls `count` directly, so the bound call is the only site that
-// can instantiate it (#9308). Two instantiations, one reading its payload.
+
+
+
 import "core/int";
 import "std/i32";
 

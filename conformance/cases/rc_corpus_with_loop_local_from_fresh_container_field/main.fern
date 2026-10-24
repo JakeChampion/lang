@@ -1,5 +1,5 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
+
+
 struct P { a: i32, b: i32 }
 struct Box { items: P[], tag: i32 }
 function mk_box(): Box { return Box { items: [P{a:0,b:0}, P{a:1,b:1}], tag: 0 }; }

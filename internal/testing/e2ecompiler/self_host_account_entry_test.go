@@ -104,10 +104,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostAccountEntry pins `__account_entry` under the self-host. Linux
-// and WASI keep every account in the files a caller reads, so the builtin
-// answers 0 there and the program exits 0. An arm64-darwin image binds the
-// five libSystem functions its helper calls through.
 func TestSelfHostAccountEntry(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
@@ -141,9 +137,6 @@ func TestSelfHostAccountEntry(t *testing.T) {
 	})
 }
 
-// TestSelfHostArm64DarwinAccountEntry runs the same program as an Apple
-// Silicon binary the self-host built natively, against what Go's os/user
-// reports for the same questions.
 func TestSelfHostArm64DarwinAccountEntry(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("requires Apple Silicon")

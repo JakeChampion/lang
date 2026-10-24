@@ -7,10 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/tools/tty"
 )
 
-// The words Termios reports go back through SetTermios unchanged, and one
-// flag cleared through them is cleared in the kernel. ECHO is 0x8 in lflag
-// on both Linux and Darwin, so the probe is the same on each; what differs is
-// the layout, which the length and VINTR's slot pin.
 func TestTermiosRoundTrip(t *testing.T) {
 	master, slave, err := tty.OpenPTY()
 	if err != nil {

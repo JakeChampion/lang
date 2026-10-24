@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// accessProbeTree writes three paths with different permission bits, so the
-// probe below can ask a question whose answer is not the same for all of them.
 func accessProbeTree(t *testing.T) (readable, executable, missing string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -30,14 +28,6 @@ func accessProbeTree(t *testing.T) (readable, executable, missing string) {
 	return readable, executable, missing
 }
 
-// accessIdsSource exercises `access` on all four POSIX modes and both
-// effective-id builtins. Each failure returns its own code.
-//
-// The X_OK cases are the ones that carry signal whatever uid the suite runs
-// as: the execute bit is checked even for root (which is why `test -x` on a
-// 0644 file is false in a root shell), while R_OK and W_OK are granted to root
-// unconditionally. So a 0644 file is NOT executable and a 0755 one is, on
-// every account.
 func accessIdsSource(readable, executable, missing string, euid, egid int) string {
 	return fmt.Sprintf(`function ok(p: string, m: i32): boolean {
     match (access(p, m)) {
@@ -80,16 +70,6 @@ function main(): i32 {
 `, readable, executable, missing, euid, egid)
 }
 
-// `access` has to ask about the EFFECTIVE ids — GNU's `test -r` / `-w` / `-x`
-// is specified against `euidaccess`, not `access(2)`, which asks about the
-// REAL ones and answers a different question for a set-uid process. Every
-// native backend therefore uses the flag-taking call (faccessat2 on
-// Linux, faccessat on Darwin) with AT_EACCESS set, and the flag's VALUE
-// differs between the two (0x200 vs 0x10).
-//
-// What this test can prove without a set-uid binary is that the call is issued
-// with a flags word the kernel accepts at all: without AT_EACCESS support the
-// syscall answers EINVAL or ENOSYS and every case below fails at once.
 func TestX86_64AccessAndEffectiveIds(t *testing.T) {
 	readable, executable, missing := accessProbeTree(t)
 	src := accessIdsSource(readable, executable, missing, os.Geteuid(), os.Getegid())
@@ -99,10 +79,6 @@ func TestX86_64AccessAndEffectiveIds(t *testing.T) {
 	}
 }
 
-// The interpreter routes `access` through syscall.Faccessat with AT_EACCESS on
-// Linux and, where the platform has no Faccessat, through glibc's own
-// euidaccess fallback — the mode-bit evaluation the kernel would do. Both
-// answer this probe.
 func TestInterpAccessAndEffectiveIds(t *testing.T) {
 	readable, executable, missing := accessProbeTree(t)
 	src := accessIdsSource(readable, executable, missing, os.Geteuid(), os.Getegid())

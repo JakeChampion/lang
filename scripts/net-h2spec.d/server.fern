@@ -1,6 +1,3 @@
-// The server h2spec drives: std/serve with HTTP/2 on, answering every
-// request with a small body, so each conformance case sees a server that
-// takes the request it sends and answers the frames it checks.
 import "std/http";
 import "std/platform";
 import "std/serve";
@@ -34,8 +31,6 @@ function port(): i32 {
   return 8080;
 }
 
-// tls_config is the TLS the server speaks when TLS_CERT and TLS_KEY name
-// a certificate and its key, so h2spec can negotiate h2 by ALPN.
 function tls_config(cfg: serve.Config): Result[serve.Config, string] {
   match (env("TLS_CERT")) {
     Some(cert_path) => {

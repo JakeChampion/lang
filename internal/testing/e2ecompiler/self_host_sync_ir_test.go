@@ -9,22 +9,6 @@ import (
 	"testing"
 )
 
-// The write-back family through the SELF-HOST IR path, on all three of its
-// backends: `sync()` and the fsync / fdatasync / syncfs methods.
-//
-// `internal/testing/e2ecompiler` is PRIMARY for a self-host lowering change
-// (docs/TEST-GATES.md): the fixpoint is self-referential and cannot see a
-// stable miscompile of a construct the compiler does not itself use, and
-// nothing in the compiler flushes a file. #9124 landed a self-host op whose
-// kind_tag every emitter carried and whose lowering arm did not exist, and
-// every Go test passed.
-//
-// A call that lowered to nothing, or to the wrong syscall number, still links
-// and still answers None — so the probe never accepts a bare `ok`. It pins
-// each call to an answer only the RIGHT syscall gives: on a character device
-// fsync and fdatasync are EINVAL where syncfs succeeds, and on a closed handle
-// every one of them is EBADF. A helper that ignored its descriptor, or issued
-// some other number, fails one of those.
 func selfHostSyncSource(prefix string, wasm bool) string {
 	p := func(name string) string {
 		if prefix == "" {
@@ -32,8 +16,6 @@ func selfHostSyncSource(prefix string, wasm bool) string {
 		}
 		return filepath.Join(prefix, name)
 	}
-	// Neither WASI preview has a per-filesystem flush or a whole-machine one,
-	// so the wasm leg asserts syncfs's refusal and never names `sync()`.
 	tail := `
     match (open_reader("/dev/zero")) {
         Ok(f) => {
@@ -51,8 +33,6 @@ func selfHostSyncSource(prefix string, wasm bool) string {
 	if wasm {
 		tail = ""
 		syncfsArm = `match (w.syncfs()) { Ok(_) => { return 12; }, Err(_) => {} }`
-		// `close` drops the preview-2 descriptor resource, and a dropped
-		// handle traps rather than answering EBADF.
 		closed = ""
 	}
 	return `function main(): i32 {
@@ -72,9 +52,6 @@ func selfHostSyncSource(prefix string, wasm bool) string {
 `
 }
 
-// selfHostSyncTree asserts what the probe left on disk through Go's own read
-// rather than the compiler's, so a broken reader cannot make the program
-// self-consistent.
 func selfHostSyncTree(t *testing.T, dir string) {
 	t.Helper()
 	got, err := os.ReadFile(filepath.Join(dir, "flushed.txt"))
@@ -86,8 +63,6 @@ func selfHostSyncTree(t *testing.T, dir string) {
 	}
 }
 
-// TestSelfHostSyncIR is the x86-64 leg: the self-host driver emits the asm,
-// gcc links it, and the program runs against a real temporary directory.
 func TestSelfHostSyncIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -107,8 +82,6 @@ func TestSelfHostSyncIR(t *testing.T) {
 	if err != nil || len(asm) == 0 {
 		t.Fatalf("driver failed: %v", err)
 	}
-	// Each of the four has its own runtime symbol, so a lowering arm that was
-	// never written shows up here rather than as a silent success.
 	for _, sym := range []string{"__fern_fd_fsync", "__fern_fd_fdatasync", "__fern_fd_syncfs", "__fern_sync"} {
 		if !bytes.Contains(asm, []byte(sym)) {
 			t.Fatalf("%s did not reach the IR runtime path (no %s in the asm)", sym, sym)
@@ -123,9 +96,6 @@ func TestSelfHostSyncIR(t *testing.T) {
 	selfHostSyncTree(t, work)
 }
 
-// TestSelfHostSyncIRArm64 is the same probe through the arm64 IR backend under
-// qemu: four different syscall numbers, and syncfs branches inline on Darwin,
-// so none of it is taken on trust.
 func TestSelfHostSyncIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -160,9 +130,6 @@ func TestSelfHostSyncIRArm64(t *testing.T) {
 	selfHostSyncTree(t, work)
 }
 
-// TestSelfHostSyncWasmIR is the wasm leg. fsync and fdatasync are preview 1's
-// fd_sync / fd_datasync; syncfs has no import to reach at all and must answer
-// Unsupported, which is what the probe's inverted arm asserts.
 func TestSelfHostSyncWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host sync wasm IR e2e")

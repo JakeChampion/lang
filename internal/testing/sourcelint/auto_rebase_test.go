@@ -14,7 +14,6 @@ func autoRebaseSource(t *testing.T) string {
 	return workflowSource(t, autoRebaseFile)
 }
 
-// workflowSource reads one workflow from .github/workflows.
 func workflowSource(t *testing.T, name string) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", name))
@@ -24,11 +23,6 @@ func workflowSource(t *testing.T, name string) string {
 	return string(b)
 }
 
-// auto-rebase-prs.yml force-pushes other people's branches, so every guard
-// deciding WHICH branch gets written is a correctness boundary — and all of
-// them live in an inline shell body or a `github-script` block, where nothing
-// type-checks them. Each failure mode below is silent at the point it happens
-// and only visible later as someone's lost work.
 func TestAutoRebasePushesSafely(t *testing.T) {
 	src := autoRebaseSource(t)
 
@@ -80,10 +74,6 @@ func TestAutoRebasePushesSafely(t *testing.T) {
 	}
 }
 
-// Pushing is gated on AUTO_REBASE_TOKEN because a push made with the default
-// GITHUB_TOKEN triggers no workflow run: the rebased head would carry no checks
-// at all, in a repo that merges on the checks list. Both halves of that gate —
-// reading the secret, and refusing to push without it — have to stay.
 func TestAutoRebaseKeepsThePushGate(t *testing.T) {
 	src := autoRebaseSource(t)
 
@@ -101,10 +91,6 @@ func TestAutoRebaseKeepsThePushGate(t *testing.T) {
 	}
 }
 
-// A notice is posted on every push to main for as long as the branch needs its
-// author, so it needs a dedupe key that survives main moving. Keyed on the PR's
-// own head: the same state is reported once, and a push that does not fix it is
-// reported again.
 func TestAutoRebaseCommentsOnceEachHead(t *testing.T) {
 	src := autoRebaseSource(t)
 
@@ -121,10 +107,6 @@ func TestAutoRebaseCommentsOnceEachHead(t *testing.T) {
 			"tested, so the notice names a commit nothing was checked against",
 			autoRebaseFile)
 	}
-	// The marker has to be plain text. GitHub silently strips anything that
-	// reads as an HTML tag from a comment body, taking the rest of the span
-	// with it — an HTML-comment marker would be deleted and the dedupe would
-	// never match.
 	for _, line := range strings.Split(src, "\n") {
 		if strings.Contains(line, "const marker") && strings.Contains(line, "<!--") {
 			t.Errorf("%s: the dedupe marker is an HTML comment, which GitHub "+
@@ -133,11 +115,6 @@ func TestAutoRebaseCommentsOnceEachHead(t *testing.T) {
 	}
 }
 
-// Every branch the workflow cannot push is a branch whose author has to rebase
-// it by hand, and the only way they learn that is the comment. Without the
-// token — the state this repository is in — that is EVERY open PR, so a
-// reporting loop that only ever comments on conflicts leaves a clean branch
-// silently behind forever.
 func TestAutoRebaseAsksForARebaseWhenItCannotPush(t *testing.T) {
 	src := autoRebaseSource(t)
 
@@ -168,26 +145,15 @@ func TestAutoRebaseAsksForARebaseWhenItCannotPush(t *testing.T) {
 		}
 	}
 
-	// The clean-branch notice must not tell the author to resolve conflicts
-	// there are none of.
 	if !strings.Contains(src, "...resolve(false)") || !strings.Contains(src, "...resolve(true)") {
 		t.Errorf("%s: the two notices no longer differ in their resolve steps — one "+
 			"of them tells the author the wrong thing", autoRebaseFile)
 	}
 }
 
-// The lane shares a runner pool with ~85 jobs per open PR, so it routinely sits
-// queued for longer than the gap between merges here. `cancel-in-progress: true`
-// therefore cancels it on the next push every time — its first eleven runs were
-// all cancelled without one of them ever being allocated a runner, so not a
-// single step executed. Nothing else reports that: the lane is green-by-absence,
-// and the PRs it should have reported on get no comment at all.
 func TestAutoRebaseSurvivesTheNextMerge(t *testing.T) {
 	src := autoRebaseSource(t)
 
-	// The top-level `concurrency:` mapping, not the file: the header explains
-	// why the setting is what it is, and matching that prose would pass on the
-	// very config it warns about.
 	block, ok := topLevelBlock(src, "concurrency")
 	if !ok {
 		t.Fatalf("%s has no top-level `concurrency:` block", autoRebaseFile)
@@ -197,18 +163,12 @@ func TestAutoRebaseSurvivesTheNextMerge(t *testing.T) {
 			"branch it is cancelled in the queue before it runs a step, every time",
 			autoRebaseFile)
 	}
-	// GitHub keeps one pending run per group, so waiting collapses a burst of
-	// merges into a single follow-up rather than queueing one run per push.
 	if !strings.Contains(block, "group: auto-rebase-prs") {
 		t.Errorf("%s dropped its concurrency group: concurrent runs would push "+
 			"the same branches against each other", autoRebaseFile)
 	}
 }
 
-// A run that waited in the queue starts against a default branch that has
-// already moved. Rebasing onto the commit that TRIGGERED it would leave every
-// branch behind again the moment it landed, and the notice would name a commit
-// that is no longer the head.
 func TestAutoRebaseUsesTheLiveBase(t *testing.T) {
 	src := autoRebaseSource(t)
 
@@ -227,12 +187,6 @@ func TestAutoRebaseUsesTheLiveBase(t *testing.T) {
 	}
 }
 
-// The workflow must not run on pull_request. It force-pushes branches and
-// comments on PRs with `contents: write` + `pull-requests: write`; a
-// pull_request trigger would hand that to any fork PR, and it would rebase
-// every open branch on every push to every branch. A push trigger, when the
-// workflow has one, is scoped to main for the same reason; a manual-only
-// workflow has no push to scope.
 func TestAutoRebaseRunsOnlyOnTheDefaultBranch(t *testing.T) {
 	src := autoRebaseSource(t)
 	on, ok := onBlock(src)
@@ -249,9 +203,6 @@ func TestAutoRebaseRunsOnlyOnTheDefaultBranch(t *testing.T) {
 	}
 }
 
-// topLevelBlock returns a top-level mapping's body: everything under `key:` up
-// to the next line starting in column zero. Same shape as onBlock next door,
-// which is that function specialised to `on:`.
 func topLevelBlock(src, key string) (string, bool) {
 	lines := strings.Split(src, "\n")
 	start := -1

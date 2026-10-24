@@ -4,20 +4,6 @@ import (
 	"testing"
 )
 
-// Nested-concat temporary reclamation (RC-Perceus, statement-temporary
-// mechanism). Single-level statement temporaries already reclaim, but a
-// CHAINED / parenthesised concat `a + b + c` (= `(a + b) + c`) orphaned
-// each inner intermediate: OpStrConcat copies the inner `(a + b)` buffer's
-// bytes but never freed it, so a chain leaked one buffer per join
-// (`(a + b + a).len()` in a loop grew 192288 B → 1632288 B, unbounded).
-// The concat lowering now stashes an operand that is itself an owned
-// string temp (isOwnedStringTemp: a sub-concat or string slice), uses it
-// for the concat, then dec's it (ABI-correct: __fern_str_dec two-word /
-// __fern_rc_dec x86_64). It recurses — each level frees its own immediate
-// intermediate — so a whole left-/right-nested chain reclaims. Borrowed
-// operands (idents / literals) are not stashed (decing would free a live
-// value).
-
 func nestedConcatBumpSrc(n string) string {
 	return `function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
@@ -33,7 +19,6 @@ func nestedConcatBumpSrc(n string) string {
 }`
 }
 
-// Deep chain: value-correctness (length + content) + 0 over-release.
 const nestedConcatUnderflowSrc = `function main(): i32 {
     let a: string = "ab";
     let b: string = "cd";

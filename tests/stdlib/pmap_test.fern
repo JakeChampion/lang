@@ -4,16 +4,6 @@ import "std/option";
 import "std/i32";
 import "core/cmp";
 
-// tests/stdlib/pmap_test.fern — pure-Fern coverage of std/pmap, the
-// persistent hash map (hash array mapped trie). The essential
-// contracts exercised here are STRUCTURAL SHARING (a snapshot taken
-// before an update is unchanged after it), the trie invariants after
-// every kind of update (`is_valid`, including collapse on remove),
-// hash-collision handling through a key type whose hash is deliberately
-// coarse, and the set algebra. i32, string, and user-struct keys are
-// covered.
-// Every key with the same `bucket` hashes alike, so collision nodes
-// form and are told apart by `eq`.
 @derive(cmp.Eq)
 struct Coarse { bucket: i32, id: i32 }
 
@@ -106,7 +96,6 @@ function test_remove(): test.TestOutcome {
   if (m.contains(1) || !m.contains(3) || !keep.contains(1)) {
     return test.fail("membership after remove");
   }
-  // Removing an absent key is a no-op; removing everything empties it.
   if (m.remove(1).len() != 334) {
     return test.fail("remove absent");
   }
@@ -125,7 +114,6 @@ function test_iteration(): test.TestOutcome {
   if (ks.len() != 5 || vs.len() != 5) {
     return test.fail("lengths");
   }
-  // keys() and values() line up entry for entry, whatever the order.
   let i: i32 = 0;
   let total: i32 = 0;
   while (i < 5) {
@@ -148,7 +136,6 @@ function test_update_map_filter(): test.TestOutcome {
   if (u.get_or(2, -1) != 200 || m.get_or(2, -1) != 2) {
     return test.fail("update");
   }
-  // An absent key takes `f(init)`.
   let a: pmap.PMap[i32, i32] = m.update(9, 7, (v: i32) => v + 1);
   if (a.len() != 5 || a.get_or(9, -1) != 8 || m.contains(9)) {
     return test.fail("update absent");
@@ -177,7 +164,6 @@ function test_set_algebra(): test.TestOutcome {
     b = b.insert(i, 2);
     i = i + 1;
   }
-  // On a key in both, merge takes the other map's value.
   let u: pmap.PMap[i32, i32] = a.merge(b);
   if (u.len() != 750 || !u.is_valid() || u.get_or(300, -1) != 2 || u.get_or(100, -1) != 1 || u.get_or(600, -1) != 2) {
     return test.fail("merge (other wins)");

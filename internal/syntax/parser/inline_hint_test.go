@@ -7,8 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// `@inline` / `@noinline` parse as function attributes and stamp
-// FuncDecl.InlineHint (#4412 Rec §14).
 func TestInlineHintAttributes(t *testing.T) {
 	prog, err := Parse(`@inline
 function fast(x: i32): i32 { return x; }
@@ -32,8 +30,6 @@ function main(): i32 { return fast(1) + slow(2) + plain(); }`)
 	}
 }
 
-// The attributes only apply to functions — a struct target is a parse
-// error, mirroring @must_consume's placement rule.
 func TestInlineHintOnStructRejected(t *testing.T) {
 	_, err := Parse(`@inline
 struct P { x: i32 }

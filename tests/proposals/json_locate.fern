@@ -1,24 +1,7 @@
-// tests/proposals/json_locate.fern — proposal turn, drawn line 34:
-// "A JSON parser that reports the line and column of a syntax error."
-//
-// A hand-written recursive-descent JSON scanner that locates the first
-// syntax error, next to `std/json`'s `json_parse_result` — which grew the
-// same capability in this turn, because the stdlib parser could only say
-// `None`.
-//
-// The two are cross-checked rather than merely both present: for every
-// malformed fixture, this scanner and the stdlib must agree on the
-// offset. An independent implementation is the point — a shared one would
-// agree with a shared bug.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from
-// std/test, so the file is its own test suite.
-
 import "std/test";
 import "std/json";
 import "std/i32";
 
-// Where the scanner stopped, and why. offset < 0 means "no error".
 struct Loc { offset: i32, line: i32, col: i32 }
 
 struct Scan { pos: i32, err: i32 }
@@ -144,7 +127,7 @@ function scan_value(s: string, p0: Scan, depth: i32): Scan {
     return scan_number(s, p);
   }
 
-  if (b == 91) {  // '['
+  if (b == 91) {
     p = skip_ws(s, Scan { pos: p.pos + 1, err: p.err });
     if (p.pos < s.len() && s[p.pos] as i32 == 93) {
       return Scan { pos: p.pos + 1, err: p.err };
@@ -170,7 +153,7 @@ function scan_value(s: string, p0: Scan, depth: i32): Scan {
     }
   }
 
-  if (b == 123) {  // '{'
+  if (b == 123) {
     p = skip_ws(s, Scan { pos: p.pos + 1, err: p.err });
     if (p.pos < s.len() && s[p.pos] as i32 == 125) {
       return Scan { pos: p.pos + 1, err: p.err };
@@ -208,8 +191,6 @@ function scan_value(s: string, p0: Scan, depth: i32): Scan {
   return fail(p);
 }
 
-// Locate the first syntax error, or a Loc with offset -1 when the whole
-// document is a single well-formed value.
 function locate(s: string): Loc {
   let p: Scan = scan_value(s, Scan { pos: 0, err: -1 }, 0);
   if (p.err >= 0) {
@@ -221,8 +202,6 @@ function locate(s: string): Loc {
   }
   return Loc { offset: -1, line: 0, col: 0 };
 }
-
-// ---------------------------------------------------------------- tests
 
 function good_docs(): string[] {
   return [
@@ -250,7 +229,6 @@ function bad_docs(): string[] {
   ];
 }
 
-// Every well-formed document must be accepted by BOTH implementations.
 function test_good_documents_agree(): test.TestOutcome {
   let xs: string[] = good_docs();
   for i in 0..xs.len() {
@@ -270,9 +248,6 @@ function test_good_documents_agree(): test.TestOutcome {
   return test.pass();
 }
 
-// Every malformed document must be rejected by BOTH, at the SAME offset.
-// This is the cross-check: two independent scanners agreeing on where a
-// document goes wrong is much stronger evidence than either alone.
 function test_bad_documents_agree_on_the_offset(): test.TestOutcome {
   let xs: string[] = bad_docs();
   for i in 0..xs.len() {
@@ -296,8 +271,6 @@ function test_bad_documents_agree_on_the_offset(): test.TestOutcome {
   return test.pass();
 }
 
-// The location must be derived from the offset consistently: line and
-// column are 1-based, and re-deriving them from the offset must agree.
 function test_line_and_column_are_derived_from_the_offset(): test.TestOutcome {
   let xs: string[] = bad_docs();
   for i in 0..xs.len() {
@@ -324,8 +297,6 @@ function test_line_and_column_are_derived_from_the_offset(): test.TestOutcome {
   return test.pass();
 }
 
-// A multi-line document must report the line the error is actually on,
-// not line 1 — the whole reason for carrying a line at all.
 function test_the_reported_line_is_the_offending_one(): test.TestOutcome {
   let doc: string = "{\n  \"a\": 1,\n  \"b\": ,\n}";
   match (json.json_parse_result(doc)) {
@@ -344,8 +315,6 @@ function test_the_reported_line_is_the_offending_one(): test.TestOutcome {
   return test.pass();
 }
 
-// json_parse keeps its Option contract exactly: the two must agree on
-// accept/reject for every fixture, since one now delegates to the other.
 function test_json_parse_still_agrees(): test.TestOutcome {
   let good: string[] = good_docs();
   for i in 0..good.len() {
@@ -367,8 +336,6 @@ function test_json_parse_still_agrees(): test.TestOutcome {
   }
   return test.pass();
 }
-
-// ----------------------------------------------------------------- app
 
 function main(): i32 {
   eprint("json_locate — locating the first syntax error in a document");

@@ -9,10 +9,6 @@ import (
 	"time"
 )
 
-// A process stopped and continued while it waits on the reactor sees its
-// epoll_wait fail with EINTR, which the kernel does not restart even with
-// no signal handler installed. RealDriver.wait waits again for what is left
-// of its timeout rather than answering no events early (#11646).
 func TestReactorWaitSurvivesStopContinue(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()

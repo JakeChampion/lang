@@ -5,31 +5,9 @@ import (
 	"testing"
 )
 
-// TestSelfHostStage2Bootstrap is the strongest gate of the self-host effort:
-// a genuine TWO-STAGE bootstrap.
-//
-//	stage 0: the `fern` CLI builds the file-based asm driver
-//	         (asm_modload_run, via buildModloadDriverX86).
-//	stage 1: that driver compiles the compiler's OWN front end + back end
-//	         — lexer.fern + parser.fern + semlower.fern + asm_ir.fern
-//	         (+ deps) — plus a small entry that lexes → parses → emits a
-//	         program, loaded from FILES off disk.
-//	         asm_ir.emit_module_or_error_sub lowers the module to x86-64
-//	         asm; gcc links it into a SELF-HOSTED COMPILER binary (every
-//	         compiler stage Fern-authored).
-//	stage 2: that self-hosted compiler is run. It emits asm for its
-//	         embedded program `function main(): i32 { return 7; }`,
-//	         which is assembled, linked, and run — and must exit 7.
-//
-// So a compiler written entirely in Fern (lexer + parser + x86-64
-// emitter), compiled through its own import-driven pipeline, compiles a
-// program to a correct working binary.
 func TestSelfHostStage2Bootstrap(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
-	// The compiler's own front+back end plus a small entry that lexes →
-	// parses → emits an embedded program, compiled from FILES by the
-	// file-based asm driver.
 	entry := "import \"./lexer\";\n" +
 		"import \"./parser\";\n" +
 		"import \"./asm_ir\";\n" +
@@ -49,8 +27,6 @@ func TestSelfHostStage2Bootstrap(t *testing.T) {
 	t.Logf("stage 1: self-hosted compiler asm = %d bytes", len(compilerAsm))
 	compilerBin := buildBin(t, gcc, progDir, "selfcc", compilerAsm)
 
-	// stage 2: run the self-hosted compiler; it emits asm for its
-	// embedded `return 7` program.
 	stage2Asm := runCapture(t, gcc, runner, compilerBin, nil)
 	if len(stage2Asm) == 0 {
 		t.Fatal("stage 2: self-hosted compiler produced 0 bytes")

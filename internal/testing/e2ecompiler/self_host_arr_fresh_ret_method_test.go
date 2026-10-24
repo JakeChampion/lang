@@ -9,19 +9,6 @@ import (
 	"testing"
 )
 
-// --- A METHOD returning a fresh array is reclaimed like a free function (#7259)
-//
-// A method's fresh array result must be released in every consumption form —
-// a discarded statement, a `.len()` receiver, an index read — exactly as the
-// byte-identical free function's is. When it was not, nothing released it and
-// the leak grew with the round count:
-//
-//	rounds     100      200      400
-//	live      4000     8000    16000     frees=0 throughout
-//
-// Every want below was confirmed against bin/fern -interp, never read off the
-// self-host run.
-
 const arrFreshMethProlog = "struct H { v: i32 }\n" +
 	"function (h: H) mkm(): i32[] { return [h.v, h.v + 1]; }\n"
 
@@ -42,41 +29,26 @@ func arrFreshMethBody(body string) string {
 func arrFreshMethCases() []arrFreshMethCase {
 	return []arrFreshMethCase{
 		{
-			// The result is consumed by `.len()` and never bound — the receiver
-			// reclaim. This is the row that was 4000 / 8000 / 16000.
 			name: "method_len",
 			src:  arrFreshMethBody("t = t + hh.mkm().len();"),
 			want: 34,
 		},
 		{
-			// The result is DISCARDED outright — the statement reclaim, which had
-			// an ExprIdent-callee-only match.
 			name: "method_discarded",
 			src:  arrFreshMethBody("hh.mkm();"),
 			want: 0,
 		},
 		{
-			// An INDEX read — the #6491 shape. Its site already used the shared
-			// resolver, so this row is pinned to catch the registry key regressing
-			// rather than the site.
 			name: "method_index_read",
 			src:  arrFreshMethBody("t = t + hh.mkm()[0];"),
 			want: 2,
 		},
 		{
-			// The result is BOUND and read twice, so it outlives the call. The
-			// binding owns it and the exit sweep frees it; none of the three
-			// reclaim sites may fire. This is the case a release in the wrong
-			// place turns into an over-release of a live binding, and the
-			// underflow check below is what would show it.
 			name: "method_result_bound",
 			src:  arrFreshMethBody("let a: i32[] = hh.mkm(); t = t + a[0] + a.len();"),
 			want: 36,
 		},
 		{
-			// The returned array is DERIVED from the receiver's field rather than
-			// built from its scalars — still fresh, since the elements are copied
-			// scalars, so still admitted.
 			name: "method_derived_from_field",
 			src: "struct G { xs: i32[] }\n" +
 				"function (g: G) copy(): i32[] { return [g.xs[0], g.xs[1]]; }\n" +
@@ -88,12 +60,6 @@ func arrFreshMethCases() []arrFreshMethCase {
 	}
 }
 
-// TestSelfHostArrFreshRetMethodX86_64 — the fresh array a method returns is
-// released exactly once.
-//
-// `allocs == frees` at `live_bytes == 0` is the leak assertion; the exit code
-// carries the over-release one, since a doubly-released block returns to the
-// freelist and moves neither count.
 func TestSelfHostArrFreshRetMethodX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -128,13 +94,6 @@ func TestSelfHostArrFreshRetMethodX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostArrFreshRetMethodRefusedX86_64 — a method returning a BORROWED
-// field array must NOT be admitted to the registry.
-//
-// `return h.xs` hands back the receiver's own buffer, not a fresh one. Releasing
-// it at the call site would free a buffer the live `hh` still owns — the failure
-// this admission rule exists to prevent, and the direction that corrupts rather
-// than leaks. The census must still balance.
 func TestSelfHostArrFreshRetMethodRefusedX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -161,7 +120,6 @@ func TestSelfHostArrFreshRetMethodRefusedX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostArrFreshRetMethodWasmIR — the wasm sibling. Exit codes only.
 func TestSelfHostArrFreshRetMethodWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping fresh-ret method wasm IR e2e")
@@ -200,7 +158,6 @@ func TestSelfHostArrFreshRetMethodWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostArrFreshRetMethodIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostArrFreshRetMethodIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

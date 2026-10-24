@@ -7,14 +7,6 @@ import (
 	"testing"
 )
 
-// Heap-bump FIXPOINTS for the `.len()` CALL-receiver reclaim (#5141, #4357):
-// a user-call result consumed only as a len receiver (`f(i).len()`) is
-// released after the read, so a loop's heap growth does not scale with its
-// trip count. An identity callee hands back the CALLER's value, which must
-// stay intact.
-//
-// The builder shapes avoid literal-bound string LOCALS
-// (`let p: string = "..."`) so the fixpoints measure only the receiver.
 var lenRecvIRCases = []struct {
 	name  string
 	src   func(n string) string
@@ -51,9 +43,6 @@ function main(): i32 {
     return g / 8;
 }`
 	}},
-	// Identity callees return the CALLER's value: neither is registry-fresh
-	// (a bare-ident return is non-fresh for strings; not a direct array
-	// literal for "ARR:"), so no free fires — base / arr stay value-intact.
 	{name: "alias-negative", fixed: true, want: 0, src: func(string) string {
 		return `@noinline function id(s: string): string { return s; }
 @noinline function ida(xs: i32[]): i32[] { return xs; }
@@ -71,10 +60,6 @@ function main(): i32 {
 	}},
 }
 
-// TestSelfHostLenReceiverIRX86_64 runs the shapes through the self-hosted
-// x86-64 IR driver (asm_run). Fixpoint cases assert growth(N=50) ==
-// growth(N=5000), non-zero, under the leak guard; the fixed case asserts its
-// exact exit (121-123 = value corruption, 119 = leak guard).
 func TestSelfHostLenReceiverIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

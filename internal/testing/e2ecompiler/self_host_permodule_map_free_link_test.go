@@ -9,11 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostPerModuleMapFreeLinks: a LIBRARY unit that builds and releases a
-// map it owns links per module and answers. A runtime helper the library calls
-// and only the entry unit defines once left the unit dangling at the
-// per-module link — found when the compiler's own modloader started freeing a
-// local map and the emit-all fixpoint stopped linking.
 func TestSelfHostPerModuleMapFreeLinks(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)

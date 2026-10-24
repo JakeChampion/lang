@@ -1,30 +1,3 @@
-// numfmt.fern — GNU-compatible `numfmt`.
-//
-//   --from=UNIT --to=UNIT        auto-scale in and out (none auto si iec iec-i)
-//   --from-unit=N --to-unit=N    the unit each side counts in
-//   --round=METHOD               up down from-zero towards-zero nearest
-//   --format=FORMAT              a printf `%f` with width and precision
-//   --suffix --padding --grouping --field --delimiter --header
-//   --invalid=MODE --debug -z
-//
-// Every value goes through `lib/ld.fern` — C's `long double` as the
-// TARGET has it — because the answers differ in the last digit
-// otherwise: `numfmt --from=si 1.555` is 1.556 because 555/1000 lands a
-// hair above 0.555 in that format, and nothing but the same arithmetic
-// reproduces it. Which format that is belongs to the machine (x87 on
-// x86-64, IEEE binary128 on arm64 and wasm32, binary64 on Darwin), and
-// it decides more than the last digit: LDBL_DIG is how many digits the
-// unscaled path will print at all, so a value GNU prints on one machine
-// it refuses on another.
-//
-// The scaling is GNU's, not a rounding of the quotient: the value is
-// divided by the base until it is below it, then rounded at one decimal
-// when it is under ten (or at `min(3 * steps, precision)` decimals when
-// --format asked for a precision), and a value that carries up to the
-// base is scaled once more. That is why `numfmt --to=si 999.9` is 1.0K
-// and `--to=si 0.5` is 0 — the second is rounded at one decimal, which
-// changes nothing, and then printed at zero decimals, where printf's own
-// half-to-even takes over.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
@@ -73,11 +46,6 @@ function help_text(): string {
   return out;
 }
 
-// ---- option ids ------------------------------------------------------------
-//
-// Declared in GNU's order, which is visible: an ambiguous prefix lists
-// its candidates in it (`--f` is '--from' '--from-unit' '--field'
-// '--format').
 function opt_from(): i32 {
   return 1;
 }
@@ -142,7 +110,6 @@ function opt_zero(): i32 {
   return 15;
 }
 
-// The scale kinds `--from` and `--to` name.
 function scale_none(): i32 {
   return 0;
 }
@@ -163,7 +130,6 @@ function scale_iec_i(): i32 {
   return 4;
 }
 
-// The --invalid modes.
 function inv_abort(): i32 {
   return 0;
 }
@@ -180,54 +146,28 @@ function inv_ignore(): i32 {
   return 3;
 }
 
-// A conversion error exits 2; anything wrong with the command line
-// exits 1.
 function conv_status(): i32 {
   return 2;
 }
 
-// GNU refuses an input with more than this many digits before it ever
-// converts one. 33 is 999Q, the largest the unit letters reach, and is
-// the same on every machine.
 function max_acceptable_digits(): i32 {
   return 33;
 }
 
-// GNU's MAX_UNSCALED_DIGITS, which is LDBL_DIG: how many digits the
-// target's long double holds, so it moves with the target.
 function max_unscaled_digits(f: ld.Format): i32 {
   return f.dig();
 }
 
-// The unit letters, in order: K is 1, Q is 10.
 function unit_letters(): string {
   return "KMGTPEZYRQ";
 }
 
-// ---- the format --------------------------------------------------------
-//
-// `--format` is one printf `%f` directive with an optional zero flag,
-// grouping quote, minus flag, width and precision, and whatever text
-// surrounds it. The text before the directive goes through printf, so
-// `%%` in it is one percent sign; the text after is written as it
-// stands.
 struct Fmt { prefix: string, suffix: string, width: i32, prec: i64, zero: boolean, left: boolean, group: boolean, given: boolean }
 
 function no_format(): Fmt {
   return Fmt { prefix: "", suffix: "", width: 0, prec: 0 - 1 as i64, zero: false, left: false, group: false, given: false };
 }
 
-// ---- options ---------------------------------------------------------------
-//
-// `units` says --from-unit or --to-unit is not 1, so the value has to
-// be scaled by them; a multiplication and a division by exactly 1 are
-// the identity in any format, so the per-line work is skipped when
-// neither was given. `sep` is what is written between fields: the
-// --delimiter byte, or one space for the blank run it replaces. `ten`,
-// `thousand`, `kibi` and the `p10` table are the constants the
-// conversion reaches for on every number, built once; `fold_safe` is
-// how many digits fold exactly without a check and `zero_width` the
-// `%0Nf` width, both settled once the options are read.
 struct Opts { ldbl: ld.Format, from: i32, to: i32, from_unit: ld.LD, to_unit: ld.LD, units: boolean, round: i32, suffix: string, padding: i64, grouping: boolean, delim: i32, sep: i32, fields: i32[], all_fields: boolean, debug: boolean, fmt: Fmt, invalid: i32, header: i32, zero: boolean, conv: boolean, ten: ld.LD, thousand: ld.LD, kibi: ld.LD, p10: ld.LD[], fold_safe: i32, zero_width: i32, unit_sep: string, unit_sep_given: boolean }
 
 function default_opts(): Opts {
@@ -237,10 +177,6 @@ function default_opts(): Opts {
   return Opts { ldbl: f, from: scale_none(), to: scale_none(), from_unit: one, to_unit: one, units: false, round: ld.round_from_zero(), suffix: "", padding: 0 as i64, grouping: false, delim: 0 - 1, sep: 32, fields: none, all_fields: false, debug: false, fmt: no_format(), invalid: inv_abort(), header: 0, zero: false, conv: false, ten: f.from_i64(10 as i64), thousand: f.from_i64(1000 as i64), kibi: f.from_i64(1024 as i64), p10: pow10_table(f), fold_safe: safe_digits(f), zero_width: 0, unit_sep: "", unit_sep_given: false };
 }
 
-// 10^0 .. 10^33, each reached by multiplying as `pow10` reaches it. 33
-// is the most digits an input may have, and the most decimals a
-// precision can ask for before the unscaled path refuses it, so every
-// power a conversion needs is here; `pow10_of` computes any other.
 function pow10_table(f: ld.Format): ld.LD[] {
   let ten: ld.LD = f.from_i64(10 as i64);
   let out: ld.LD[] = [];
@@ -261,7 +197,6 @@ function pow10_of(o: Opts, k: i32): ld.LD {
   return o.ldbl.pow10(k);
 }
 
-// The scale's base as a long double.
 function base_of(o: Opts, base: i32): ld.LD {
   if (base == 1024) {
     return o.kibi;
@@ -269,7 +204,6 @@ function base_of(o: Opts, base: i32): ld.LD {
   return o.thousand;
 }
 
-// A `--from` / `--to` value, with GNU's list of what it could have been.
 function parse_scale(v: string, which: string): i32 {
   let names: string[] = ["none", "auto", "si", "iec", "iec-i"];
   if (which == "--to") {
@@ -304,15 +238,11 @@ function parse_invalid(v: string): i32 {
   return gnu.argmatch(v, names, "--invalid");
 }
 
-// `--from-unit` / `--to-unit`: a whole number, with an optional unit
-// letter, that must fit a uintmax and not be zero.
 function parse_unit(f: ld.Format, v: string): ld.LD {
   let i: i32 = 0;
   while (i < v.len() && is_blank(v[i] as i32)) {
     i = i + 1;
   }
-  // strtoumax takes a leading plus; a minus is refused below by the
-  // digit count, since nothing follows it.
   if (i < v.len() && v[i] as i32 == 43) {
     i = i + 1;
   }
@@ -364,12 +294,7 @@ function fits_u64(f: ld.Format, v: ld.LD): boolean {
   return v.cmp(f.from_u64(18446744073709551615 as u64)) <= 0;
 }
 
-// The power of the unit letter `b`, 0 when there is none and -1 when
-// the byte is not a unit letter at all.
 function unit_power(b: i32): i32 {
-  // A lowercase `k` reads as kilo on INPUT too, so `--from=si 1k` is
-  // 1000 where 9.4 called it an invalid suffix. iec-i still refuses both
-  // cases, because what it wants is the `i`.
   if (b == 107) {
     return 1;
   }
@@ -421,10 +346,6 @@ function parse_int_arg(v: string, msg: string): i32 {
   return acc;
 }
 
-// `--padding` allows a leading blank and a sign, and a value past
-// INTMAX saturates rather than being refused: GNU masks LONGINT_OVERFLOW
-// out of what it checks, so `--padding=99999999999999999999` pads to
-// the largest width there is.
 function parse_padding(v: string): i64 {
   let s: string = v;
   let i: i32 = 0;
@@ -470,10 +391,6 @@ function parse_header(v: string): i32 {
   return n;
 }
 
-// ---- field ranges ----------------------------------------------------------
-//
-// cut(1)'s list: `N`, `N-`, `-M`, `N-M` and `-`, separated by commas or
-// blanks. The pairs are kept flat, low then high, with 0 for "no end".
 function parse_fields(v: string, o: Opts): Opts {
   if (v == "-") {
     return Opts { ...o, all_fields: true };
@@ -561,7 +478,6 @@ function field_selected(o: Opts, field: i32): boolean {
   return false;
 }
 
-// ---- --format --------------------------------------------------------------
 function parse_format(s: string): Fmt {
   let at: i32 = directive_start(s);
   let f: (Fmt, i32) = parse_directive(s, at + 1);
@@ -570,8 +486,6 @@ function parse_format(s: string): Fmt {
   return Fmt { ...f.0, prefix: slice_unchecked(s, 0, prefix_len(s, at)) + "", suffix: slice_unchecked(s, i, s.len()) + "", given: true };
 }
 
-// The `%` that opens the one directive: a `%%` is a literal percent and
-// keeps looking.
 function directive_start(s: string): i32 {
   let i: i32 = 0;
   while (i < s.len()) {
@@ -589,8 +503,6 @@ function directive_start(s: string): i32 {
   return 0;
 }
 
-// What follows the directive is written out as it stands, but a second
-// directive in it is refused.
 function check_no_second_directive(s: string, from: i32): void {
   let i: i32 = from;
   while (i < s.len()) {
@@ -606,10 +518,6 @@ function check_no_second_directive(s: string, from: i32): void {
   }
 }
 
-// How much of the text before the directive is written out. GNU counts
-// STEPS rather than bytes and a `%%` is one step, so it writes the first
-// `steps` bytes and an earlier `%%` costs the prefix its last byte:
-// `numfmt --format=%%f%f 1` prints `%%1`.
 function prefix_len(s: string, at: i32): i32 {
   let i: i32 = 0;
   let steps: i32 = 0;
@@ -623,10 +531,6 @@ function prefix_len(s: string, at: i32): i32 {
   return steps;
 }
 
-// `%[0][\'][-][N][.][N]f`, read the way numfmt reads it: a zero and a
-// quote are flags, the width goes through strtol (so it takes the sign
-// and any leading blanks), and a precision is only a run of digits or an
-// immediate `f`.
 function parse_directive(s: string, from: i32): (Fmt, i32) {
   let i: i32 = skip_blanks(s, from);
   let zero: boolean = false;
@@ -680,8 +584,6 @@ function skip_blanks(s: string, from: i32): i32 {
   return i;
 }
 
-// strtol as the width parse uses it: blanks, an optional sign, digits.
-// The third value says whether any digit was there at all.
 function read_signed(s: string, from: i32): (i32, i32, boolean) {
   let i: i32 = skip_blanks(s, from);
   let neg: boolean = false;
@@ -707,8 +609,6 @@ function read_signed(s: string, from: i32): (i32, i32, boolean) {
   return (acc, i, true);
 }
 
-// A precision is a run of digits, or nothing at all when the `f` follows
-// the point straight away; anything else there is a fault of its own.
 function read_precision(s: string, from: i32): (i64, i32) {
   let i: i32 = from;
   if (i >= s.len()) {
@@ -731,19 +631,12 @@ function read_precision(s: string, from: i32): (i64, i32) {
   return (acc, i);
 }
 
-// ---- parsing a number ------------------------------------------------------
-//
-// The result of reading one field: the value, the number of fraction
-// digits it was written with, whether it had more digits than the
-// long double keeps (what --debug warns about), and the error to
-// report when it is not a number at all.
 struct Num { val: ld.LD, prec: i32, loss: boolean, err: string, ok: boolean }
 
 function bad(f: ld.Format, msg: string): Num {
   return Num { val: f.zero(false), prec: 0, loss: false, err: msg, ok: false };
 }
 
-// The text a diagnostic quotes: the field from its first non-blank on.
 function quoted_from(s: u8[], from: i32, n: i32): string {
   let h: usize = buf_new(n - from);
   buf_push_bytes_range(h, s, from, n);
@@ -752,29 +645,18 @@ function quoted_from(s: u8[], from: i32, n: i32): string {
   return gnu.quote_bytes(bytes);
 }
 
-// GNU's `simple_strtod_human`, which is not strtold: the digits are
-// accumulated as `v = v * 10 + d` and the fraction as an integer over a
-// power of ten, and each of those steps rounds. `numfmt --from=si 1.555`
-// answering 1.556 is exactly that. The number is `s[start..n)`: the
-// field less the --suffix it ends with.
 function parse_number(s: u8[], start: i32, n: i32, o: Opts): Num {
   let f: ld.Format = o.ldbl;
   let i: i32 = start;
   while (i < n && is_blank(s[i] as i32)) {
     i = i + 1;
   }
-  // Leading blanks are not part of the number and not part of the text
-  // a diagnostic quotes.
   let from: i32 = i;
   let neg: boolean = false;
   if (i < n && s[i] as i32 == 45) {
     neg = true;
     i = i + 1;
   }
-  // GNU counts the whole part's digits and the fraction's separately,
-  // each from its first non-zero digit: either side past LDBL_DIG is
-  // the precision loss --debug reports, and either side past 33 is
-  // refused — the whole part before the fraction is even read.
   let end: i32 = digit_end(s, i, n);
   let found: boolean = end > i;
   let counted: i32 = end - first_nonzero(s, i, end);
@@ -788,9 +670,6 @@ function parse_number(s: u8[], start: i32, n: i32, o: Opts): Num {
   if (i < n && s[i] as i32 == 46) {
     let fend: i32 = digit_end(s, i + 1, n);
     let fd: i32 = fend - (i + 1);
-    // A point with no digit after it ends the number, and the number is
-    // not one at all unless what follows is a SECOND point: `5.` and
-    // `1.K` are invalid numbers, while `1..5` is 1 followed by `..5`.
     if (fd == 0 && (i + 1 >= n || s[i + 1] as i32 != 46)) {
       return bad(f, "invalid number: " + quoted_from(s, from, n));
     }
@@ -811,16 +690,12 @@ function parse_number(s: u8[], start: i32, n: i32, o: Opts): Num {
   if (!found) {
     return bad(f, "invalid number: " + quoted_from(s, from, n));
   }
-  // numfmt reads no signed zero: `-0` and `-0.0` are 0. A value that is
-  // merely SMALL keeps its sign all the way down, so `--to=si -- -0.5`
-  // is still `-0`.
   if (neg && !val.is_zero()) {
     val = val.negate();
   }
   return apply_suffix(s, from, i, n, val, prec, loss, o);
 }
 
-// Where a run of blanks and newlines starting at `from` ends.
 function skip_blanks_from(s: u8[], from: i32, n: i32): i32 {
   let i: i32 = from;
   while (i < n && (is_blank(s[i] as i32) || s[i] as i32 == 10)) {
@@ -829,7 +704,6 @@ function skip_blanks_from(s: u8[], from: i32, n: i32): i32 {
   return i;
 }
 
-// Whether `s[from..n)` starts with `what`.
 function starts_at(s: u8[], from: i32, n: i32, what: string): boolean {
   if (from + what.len() > n) {
     return false;
@@ -844,7 +718,6 @@ function starts_at(s: u8[], from: i32, n: i32, what: string): boolean {
   return true;
 }
 
-// Where the digits in `s[from..to)` stop being zeros.
 function first_nonzero(s: u8[], from: i32, to: i32): i32 {
   let i: i32 = from;
   while (i < to && s[i] as i32 == 48) {
@@ -853,7 +726,6 @@ function first_nonzero(s: u8[], from: i32, to: i32): i32 {
   return i;
 }
 
-// Where the run of digits starting at `from` ends, within `s[..n)`.
 function digit_end(s: u8[], from: i32, n: i32): i32 {
   let i: i32 = from;
   while (i < n) {
@@ -866,13 +738,6 @@ function digit_end(s: u8[], from: i32, n: i32): i32 {
   return i;
 }
 
-// `s[from..to)` folded the way GNU folds digits. The fold is exact
-// while it stays inside the significand, so the digits go through
-// plain integer arithmetic until one would not fit and only then
-// through the rounding one. Where the significand is narrower than a
-// u64 the limit is the significand's, not u64's: every step past it
-// has to round as the C one does. The first `fold_safe` digits cannot
-// overflow whatever they are, so only the digits past them are checked.
 function fold_digits(o: Opts, s: u8[], from: i32, to: i32): ld.LD {
   let f: ld.Format = o.ldbl;
   let acc: u64 = 0 as u64;
@@ -897,9 +762,6 @@ function fold_digits(o: Opts, s: u8[], from: i32, to: i32): ld.LD {
   return f.from_u64(acc);
 }
 
-// How many decimal digits always fit the exact fold: 19 for a u64, and
-// LDBL_DIG — one fewer than the significand can hold in every case —
-// for a significand narrower than that.
 function safe_digits(f: ld.Format): i32 {
   if (f.mant >= 64) {
     return 19;
@@ -918,17 +780,12 @@ function fold_wide(f: ld.Format, s: u8[], from: i32, to: i32, v0: ld.LD): ld.LD 
   return v;
 }
 
-// What follows the digits: the unit letter `--from` allows, then the
-// `--suffix` string, and nothing else.
 function apply_suffix(s: u8[], from: i32, at: i32, n: i32, val0: ld.LD, prec: i32, loss: boolean, o: Opts): Num {
   let val: ld.LD = val0;
   let i: i32 = at;
   if (i >= n) {
     return Num { val: val, prec: prec, loss: loss, err: "", ok: true };
   }
-  // ONE separator stands between the number and its unit — a blank, or
-  // --unit-separator when it was given, and an explicit empty one turns
-  // the blank off. `1000 K` is a megabyte; `1000  K` is not.
   let matched_sep: boolean = false;
   if (o.unit_sep_given) {
     if (starts_at(s, i, n, o.unit_sep)) {
@@ -939,20 +796,16 @@ function apply_suffix(s: u8[], from: i32, at: i32, n: i32, val0: ld.LD, prec: i3
   if (!matched_sep && is_blank(s[i] as i32)) {
     i = i + 1;
   }
-  // A separator with nothing after it is not a separator at all.
   if (i >= n) {
     return Num { val: val, prec: prec, loss: loss, err: "", ok: true };
   }
   let power: i32 = unit_power(s[i] as i32);
   if (power < 0) {
-    // Not a unit letter: trailing blanks are allowed, anything else is not.
     if (skip_blanks_from(s, i, n) >= n) {
       return Num { val: val, prec: prec, loss: loss, err: "", ok: true };
     }
     return bad(o.ldbl, "invalid suffix in input: " + quoted_from(s, from, n));
   }
-  // A unit letter with no --from to read it by is refused as a suffix,
-  // and the message points at --from.
   if (o.from == scale_none()) {
     return bad(o.ldbl, "rejecting suffix in input: " + quoted_from(s, from, n) + " (consider using --from)");
   }
@@ -978,25 +831,11 @@ function apply_suffix(s: u8[], from: i32, at: i32, n: i32, val0: ld.LD, prec: i3
   if (after < n) {
     return bad(o.ldbl, "invalid suffix in input " + quoted_from(s, from, n) + ": " + quoted_from(s, after, n));
   }
-  // A scaled value loses the precision it was written with: `1.5K` is
-  // 1500, not 1500.0.
   return Num { val: val, prec: 0, loss: loss, err: "", ok: true };
 }
 
-// ---- formatting ------------------------------------------------------------
-// `Human` — a formatted value: the number, the scale letter that goes
-// after it, and the reason there is neither. `fatal` marks a refusal
-// that ends the run whatever --invalid says.
-// `pad` is how many spaces the field wants around the text: positive
-// before it, negative after. It is a count rather than a string because
-// --padding takes any intmax and GNU writes every space of it.
 struct Human { text: string, zeros: i64, unit: string, err: string, fatal: boolean, pad: i64 }
 
-// GNU's `double_to_human`. Without a scale the value is rounded at the
-// precision it was written with and printed there. With one it is
-// divided down by the base, rounded at one decimal while it is under ten
-// (or at `min(3 * steps, precision)` when --format set a precision), and
-// scaled once more when the rounding carried it up to the base.
 function to_human(val0: ld.LD, prec: i32, o: Opts): Human {
   let f: ld.Format = o.ldbl;
   if (o.to == scale_none()) {
@@ -1024,8 +863,6 @@ function to_human(val0: ld.LD, prec: i32, o: Opts): Human {
   } else if (val.cmp_abs(o.ten) < 0) {
     adjust = 1;
   }
-  // At zero decimals the scaling either way is the identity, and each
-  // of those operations would allocate a value to no purpose.
   if (adjust == 0) {
     val = f.round_to_int(val, o.round);
   } else {
@@ -1043,15 +880,7 @@ function to_human(val0: ld.LD, prec: i32, o: Opts): Human {
   if (o.fmt.prec >= 0 as i64) {
     out_prec = o.fmt.prec as i32;
   }
-  // No length refusal on the SCALED path. GNU <= 9.4 formatted into a
-  // fixed 128-byte buffer and refused a conversion that filled it; from
-  // 9.5 `prepare_padded_number` grows the buffer with xpalloc, so the
-  // conversion prints however long it is (#8765, settled in favour of
-  // following 9.5+). The UNSCALED path's `value/precision too large`
-  // limit is a different rule and 9.12 still applies it.
   let parts: (string, i64) = fixed_parts(f, val, out_prec);
-  // --unit-separator goes between the number and a unit letter, and
-  // only when there IS one.
   let unit: string = unit_suffix(power, o.to);
   if (power > 0 && o.unit_sep_given) {
     unit = o.unit_sep + unit;
@@ -1059,9 +888,6 @@ function to_human(val0: ld.LD, prec: i32, o: Opts): Human {
   return Human { text: parts.0, zeros: parts.1, unit: unit, err: "", fatal: false, pad: 0 as i64 };
 }
 
-// `%.Pf` split so a precision past what the format can express exactly
-// is a run of zeros rather than a string of them: at two billion it is
-// two gigabytes, and every digit past the exact expansion is a zero.
 function fixed_parts(f: ld.Format, v: ld.LD, prec: i32): (string, i64) {
   if (prec <= ld.max_exact_fraction()) {
     return (f.to_fixed(v, prec), 0 as i64);
@@ -1069,39 +895,16 @@ function fixed_parts(f: ld.Format, v: ld.LD, prec: i32): (string, i64) {
   return (f.to_fixed(v, ld.max_exact_fraction()), prec as i64 - ld.max_exact_fraction() as i64);
 }
 
-// GNU formats the number into a fixed 128-byte buffer: --suffix is
-// appended into whatever room the conversion leaves, and --padding is
-// applied outside it. The buffer is GNU's own, so unlike the unscaled
-// path's LDBL_DIG limit these lengths are the same on every target.
-//
-// This bound survives on the UNSCALED path only. The scaled path stopped
-// refusing on length in 9.5, where `prepare_padded_number` grows a
-// `padding_buffer` with xpalloc (#8765); the unscaled limit below is a
-// different rule and 9.12 still applies it. `--suffix` also measures its
-// room against this.
 function unit_suffix(power: i32, to: i32): string {
   if (to == scale_iec_i() && power > 0 && power <= unit_letters().len()) {
     return iec_i_letter(power);
   }
-  // SI's kilo is a LOWERCASE k, which is what GNU 9.5+ prints; 9.4 wrote
-  // `1.0K`. Only si: iec keeps `1.0K` and iec-i `1.0Ki` in both.
   if (to == scale_si() && power == 1) {
     return "k";
   }
   return suffix_power_char(power);
 }
 
-// GNU's `suffix_power_char`, which is what the conversion itself
-// writes; the `i` of --to=iec-i goes on afterwards.
-//
-// Rounding can carry a value past the last letter — `--to=si` of
-// 999999999999999999999999999999999 divides ten times and then rounds
-// up to 1000 — and GNU names that with a sentinel rather than a unit:
-// `1.0(error)`. Only a long double wide enough to keep the digits
-// reaches it, so this is an aarch64 and wasm answer, not an x86-64 one.
-//
-// Literals rather than a slice of `unit_letters()`, so that the letter
-// every scaled number carries is not an allocation per number.
 function suffix_power_char(power: i32): string {
   if (power == 0) {
     return "";
@@ -1170,9 +973,6 @@ function iec_i_letter(power: i32): string {
   return "Qi";
 }
 
-// The unscaled path rounds at the precision it prints at. Its own
-// refusal is `too_wide` upstream, which is about the significant digits
-// a long double holds rather than about the buffer.
 function scale_none_value(val: ld.LD, prec: i32, o: Opts): ld.LD {
   if (prec == 0) {
     return o.ldbl.round_to_int(val, o.round);
@@ -1181,10 +981,6 @@ function scale_none_value(val: ld.LD, prec: i32, o: Opts): ld.LD {
   return o.ldbl.div(o.ldbl.round_to_int(o.ldbl.mul(val, p10), o.round), p10);
 }
 
-// Whether the value and precision fit the significant digits the
-// unscaled path can print, which is the target long double's LDBL_DIG:
-// 18 in x87, 33 in binary128, 15 in binary64. GNU's limit is that same
-// macro, so a value it prints on one machine it refuses on another.
 function too_wide(o: Opts, val: ld.LD, prec: i64): boolean {
   let f: ld.Format = o.ldbl;
   if (prec > max_unscaled_digits(f) as i64) {
@@ -1193,10 +989,6 @@ function too_wide(o: Opts, val: ld.LD, prec: i64): boolean {
   return val.cmp_abs(pow10_of(o, max_unscaled_digits(f) + 1 - prec as i32)) >= 0;
 }
 
-// GNU checks the decimal exponent before choosing an output scale. Repeated
-// division by ten can round differently from division by a thousand, or a
-// comparison with a precomputed power. Values below 10^32 are a full decade
-// below the refusal boundary, so they do not need the rounded division loop.
 function exceeds_scaled_limit(o: Opts, val0: ld.LD): boolean {
   if (val0.cmp_abs(pow10_of(o, 32)) < 0) {
     return false;
@@ -1210,8 +1002,6 @@ function exceeds_scaled_limit(o: Opts, val0: ld.LD): boolean {
   return power == 33;
 }
 
-// The precision the output is written at: --format's when it set one,
-// else the one the input was written with.
 function effective_prec(o: Opts, prec: i32): i64 {
   if (o.fmt.prec >= 0 as i64) {
     return o.fmt.prec;
@@ -1219,16 +1009,8 @@ function effective_prec(o: Opts, prec: i32): i64 {
   return prec as i64;
 }
 
-// ---- output ----------------------------------------------------------------
-// Stop conversion through normal returns so records and options are released
-// before main flushes the output and returns the failure status.
 struct Out { w: io_buffered.BufWriter, status: i32, failed: boolean, stopped: boolean }
 
-// One converted field, with the padding the format or --padding asks
-// for; `auto` is the width the field had in the input, which is what
-// makes `numfmt --field=1 ' 1000'` keep its column.
-// How many spaces the field wants: positive before the text, negative
-// after it, zero when it is already at least as wide as the width.
 function pad_for(w: i64, o: Opts, auto: i32): i64 {
   let width: i64 = auto as i64;
   if (o.padding != 0 as i64) {
@@ -1237,7 +1019,6 @@ function pad_for(w: i64, o: Opts, auto: i32): i64 {
   if (o.fmt.given && o.fmt.width != 0) {
     width = o.fmt.width as i64;
   }
-  // A zero-padded format width has already padded the number itself.
   if (o.zero_width > 0 || width == 0 as i64) {
     return 0 as i64;
   }
@@ -1253,9 +1034,6 @@ function pad_for(w: i64, o: Opts, auto: i32): i64 {
   return 0 as i64;
 }
 
-// The width `%0Nf` zero-pads the number to, which sits inside the
-// conversion rather than around the field, or 0 when the format asks
-// for no such padding.
 function zero_pad_width(o: Opts): i32 {
   if (o.fmt.given && o.fmt.zero && o.fmt.width > 0) {
     return o.fmt.width;
@@ -1263,7 +1041,6 @@ function zero_pad_width(o: Opts): i32 {
   return 0;
 }
 
-// `%0Nf` pads with zeros, after any minus sign.
 function zero_pad_to(text: string, width: i32): string {
   if (text.len() >= width) {
     return text;
@@ -1275,15 +1052,8 @@ function zero_pad_to(text: string, width: i32): string {
   return "0".repeat(fill) + text;
 }
 
-// ---- one field -------------------------------------------------------------
-// Convert `text` into what is written for the field — the number with
-// its scale letter, --suffix, padding, and the format's surrounding
-// text — or report why it is not a number. `auto` is the width the
-// field had in the input.
 function convert(line: u8[], from: i32, to: i32, o: Opts, auto: i32): Human {
   let body_end: i32 = to;
-  // GNU <= 9.11 kept a field that was ONLY the suffix; 9.12 trims it and
-  // reports the empty remainder as the invalid number.
   if (o.suffix.len() > 0 && to - from >= o.suffix.len() && ends_with_at(line, to, o.suffix)) {
     body_end = to - o.suffix.len();
   }
@@ -1305,8 +1075,6 @@ function convert(line: u8[], from: i32, to: i32, o: Opts, auto: i32): Human {
   if (h.err.len() > 0) {
     return h;
   }
-  // `%0Nf` pads the NUMBER, before the scale letter, because the width
-  // is inside the conversion there; every other width pads the field.
   let body_text: string = h.text;
   if (o.zero_width > 0) {
     body_text = zero_pad_to(h.text, o.zero_width);
@@ -1335,7 +1103,6 @@ function wide_message(val: ld.LD, prec: i32, o: Opts): string {
   return "value too large to be printed: " + gnu.quote(o.ldbl.to_g(val)) + tail;
 }
 
-// Whether `s[..to)` ends with `suffix`.
 function ends_with_at(s: u8[], to: i32, suffix: string): boolean {
   let k: i32 = suffix.len();
   if (k > to) {
@@ -1351,11 +1118,6 @@ function ends_with_at(s: u8[], to: i32, suffix: string): boolean {
   return true;
 }
 
-// The --invalid modes: abort stops at the first bad field, fail and warn
-// report it and carry on, ignore says nothing. Everything but abort
-// leaves the field as it stands: it is written back untouched — no
-// padding, since its own blanks are part of it — and the run's status
-// is what the mode says.
 function fail_field(msg: string, o: Opts, status: i32): i32 {
   if (o.invalid != inv_ignore()) {
     gnu.error(msg);
@@ -1366,20 +1128,6 @@ function fail_field(msg: string, o: Opts, status: i32): i32 {
   return status;
 }
 
-// ---- one line --------------------------------------------------------------
-// One line, field by field, then `term`. A field the list does not
-// name is copied with the blanks that preceded it; a field it does
-// names loses them to the padding, which is what keeps a converted
-// column its width — except for the one blank that stood as the
-// separator, which is written back as a single space.
-//
-// The pieces go straight into the writer's builder and the flush check
-// is made once at the end of the line, `Out` is rebuilt once per line,
-// and each field's text is a view of the line rather than a copy: a
-// line is the unit of work, and a record per field was most of what
-// the loop spent. What separates whitespace-delimited fields is a
-// space, a tab or a newline, which -z can leave inside a line; a
-// carriage return is not one and stays part of the field.
 function process_line(line: u8[], from: i32, n: i32, term: i32, o: Opts, out: Out): Out {
   let w: io_buffered.BufWriter = out.w;
   let h: usize = w.handle();
@@ -1413,8 +1161,6 @@ function process_line(line: u8[], from: i32, n: i32, term: i32, o: Opts, out: Ou
         i = i + 1;
       }
     }
-    // What the field looks like when it is not converted: the blanks
-    // that preceded it, less the one written back as the separator.
     let raw_from: i32 = start;
     if (field > 1 && o.delim < 0) {
       raw_from = start + 1;
@@ -1456,8 +1202,6 @@ function process_line(line: u8[], from: i32, n: i32, term: i32, o: Opts, out: Ou
     if (i >= n) {
       break;
     }
-    // A named delimiter is consumed here; a blank run is left for the
-    // next field to absorb as its padding.
     if (o.delim >= 0) {
       i = i + 1;
     }
@@ -1468,10 +1212,6 @@ function process_line(line: u8[], from: i32, n: i32, term: i32, o: Opts, out: Ou
   return Out { w: gnu.settle(w), status: status, failed: failed, stopped: false };
 }
 
-// `push_fill(w, h, ch, n)` — `n` copies of a one-byte string, a block
-// at a time and flushed as it goes: `--padding` takes any intmax and a
-// `%f` precision runs to two billion, and GNU writes every byte of
-// either rather than building the run first.
 function push_fill(w: io_buffered.BufWriter, h: usize, ch: string, n: i64): io_buffered.BufWriter {
   if (n <= 0 as i64) {
     return w;
@@ -1496,8 +1236,6 @@ function fill_block(): i32 {
   return 4096;
 }
 
-// The blanks a whitespace-delimited field is preceded by are its
-// padding, less the one that was written as the separator.
 function auto_width(o: Opts, start: i32, text_start: i32, end: i32, field: i32): i32 {
   if (o.delim >= 0 || text_start <= start) {
     return 0;
@@ -1509,7 +1247,6 @@ function auto_width(o: Opts, start: i32, text_start: i32, end: i32, field: i32):
   return width;
 }
 
-// ---- the program -----------------------------------------------------------
 function declared_options(): gnu.Opt[] {
   return [gnu.valued("", "from", opt_from()), gnu.valued("", "from-unit", opt_from_unit()), gnu.valued("", "to", opt_to()), gnu.valued("", "to-unit", opt_to_unit()), gnu.valued("", "round", opt_round()), gnu.valued("", "padding", opt_padding()), gnu.valued("", "suffix", opt_suffix()), gnu.valued("", "unit-separator", opt_unit_sep()), gnu.flag("", "grouping", opt_grouping()), gnu.valued("d", "delimiter", opt_delimiter()), gnu.valued("", "field", opt_field()), gnu.flag("", "debug", opt_debug()), gnu.valued("", "format", opt_format()), gnu.valued("", "invalid", opt_invalid()), gnu.optional("", "header", opt_header()), gnu.flag("z", "zero-terminated", opt_zero())];
 }
@@ -1568,8 +1305,6 @@ function apply_option(o: Opts, m: gnu.OptMatch): Opts {
       gnu.error("the delimiter must be a single character");
       exit(1);
     }
-    // An empty --delimiter is the NUL byte, which a line does not hold:
-    // the whole line becomes one field.
     if (m.value.len() == 0) {
       return Opts { ...o, delim: 0, sep: 0 };
     }
@@ -1601,9 +1336,6 @@ function check_options(o: Opts, operands: string[]): Opts {
     gnu.error("--grouping cannot be combined with --format");
     exit(1);
   }
-  // GNU reads --format only after that check, so the directive's own
-  // `'` asks for grouping everywhere below without conflicting with
-  // the option that carried it.
   let grouping: boolean = o.grouping || o.fmt.group;
   if (grouping && o.to != scale_none()) {
     gnu.error("grouping cannot be combined with --to");
@@ -1612,8 +1344,6 @@ function check_options(o: Opts, operands: string[]): Opts {
   if (o.debug && !o.conv) {
     gnu.error("no conversion option specified");
   }
-  // A width in --format replaces --padding rather than adding to it,
-  // except that a zero-padded width leaves --padding to do the field.
   if (o.debug && o.padding != 0 && o.fmt.width != 0 && zero_pad_width(o) == 0) {
     gnu.error("--format padding overriding --padding");
   }
@@ -1626,7 +1356,6 @@ function check_options(o: Opts, operands: string[]): Opts {
   return Opts { ...o, zero_width: zero_pad_width(o) };
 }
 
-// The line delimiter: NUL under -z, else newline.
 function line_end(o: Opts): i32 {
   if (o.zero) {
     return 0;
@@ -1634,9 +1363,6 @@ function line_end(o: Opts): i32 {
   return 10;
 }
 
-// Process whole records as borrowed ranges of each raw input chunk. Only
-// records spanning chunks need a builder, avoiding a copy for each short line
-// and repeated copies of an ever-growing partial record.
 function run_stdin(o: Opts, out0: Out): Out {
   let out: Out = out0;
   let r: Reader = stdin();
@@ -1688,7 +1414,6 @@ function run_stdin(o: Opts, out0: Out): Out {
   return out;
 }
 
-// Preserve the final partial record on EOF or read failure.
 function finish_stdin(carry: usize, term: i32, line: i32, o: Opts, out: Out): Out {
   if (carry == 0 as usize) {
     return out;
@@ -1702,10 +1427,6 @@ function read_size(): i32 {
   return 65536;
 }
 
-// One input line, which is a header line or a line of fields. The line
-// is a C string to GNU, so a NUL in it ends it and what follows is
-// lost; a header line is written with `fputs`, which also drops its
-// terminator under -z or when an earlier NUL truncated the line.
 function one_line(text: u8[], from: i32, to0: i32, had_term: boolean, term: i32, line: i32, o: Opts, out: Out): Out {
   let to: i32 = to0;
   if (term != 0) {
@@ -1727,7 +1448,6 @@ function one_line(text: u8[], from: i32, to0: i32, had_term: boolean, term: i32,
   return process_line(text, from, to, 0 - 1, o, out);
 }
 
-// The first NUL in this record's `text[from..to)` range, or -1.
 function nul_before(text: u8[], from: i32, to: i32): i32 {
   let at: i32 = from;
   while (at < to) {

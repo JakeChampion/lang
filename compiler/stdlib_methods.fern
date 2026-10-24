@@ -1,9 +1,7 @@
-// stdlib_methods.fern — the stdlib module that declares each method on a
-// receiver a program reaches without declaring it. The Go checker's
-// stdlibMethodIndex holds the same entries.
+// This module maps receiver and method names to their standard library modules.
 //
-// Generated from the stdlib sources by TestStdlibMethodIndex. After a stdlib
-// change, run `go test ./internal/check/checker -run TestStdlibMethodIndex -update`.
+// TestStdlibMethodIndex generates this file from the standard library sources.
+// Use `go test ./internal/check/checker -run TestStdlibMethodIndex -update` to regenerate it.
 
 const RECEIVERS: string[] = ["Option", "Option", "Option", "Option", "Option", "Option", "Option", "Option", "Option", "Option", "Option", "Option", "Option", "Option", "Option", "Option", "Option", "Option", "Option", "Option", "Option", "Option", "Result", "Result", "Result", "Result", "Result", "Result", "Result", "Result", "Result", "Result", "Result", "Result", "Result", "Result", "Result", "Result", "Result", "Result", "Result", "boolean", "boolean", "boolean", "boolean", "boolean", "char", "char", "char", "char", "char", "char", "char", "char", "char", "char", "char", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f32", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "i64", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "string", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u64", "u8", "u8", "u8", "u8", "u8", "u8", "u8", "u8", "u8", "u8", "u8", "u8", "u8", "u8", "u8", "u8", "u8", "u8", "u8", "u8", "u8", "u8", "u8", "u8", "u8", "u8", "usize", "usize", "usize", "usize"];
 
@@ -33,8 +31,6 @@ pub function receiver_params(receiver: string, method: string): string[] {
   return [];
 }
 
-// module_of(receiver, method) — the module that declares method on the
-// receiver surface, or "" when no stdlib module does.
 pub function module_of(receiver: string, method: string): string {
   let i: i32 = 0;
   while (i < METHODS.len()) {
@@ -46,7 +42,6 @@ pub function module_of(receiver: string, method: string): string {
   return "";
 }
 
-// receiver_of returns the restricted receiver spelling, or "" for a general declaration.
 pub function receiver_of(receiver: string, method: string): string {
   let i: i32 = 0;
   while (i < METHODS.len()) {
@@ -58,8 +53,6 @@ pub function receiver_of(receiver: string, method: string): string {
   return "";
 }
 
-// methods_on(receiver) — every method the stdlib declares on the receiver
-// surface.
 pub function methods_on(receiver: string): string[] {
   let out: string[] = [];
   let i: i32 = 0;

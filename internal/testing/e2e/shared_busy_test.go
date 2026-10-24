@@ -1,8 +1,3 @@
-// The -shared busy flag (#11914): a shared object's reference counts and
-// freelists are not atomic, so two threads running its code at once would race
-// them. Each export entry takes `__fern_busy` and aborts when another thread
-// holds it; a `__c_call` frees it for the call, so a C callback that enters
-// an export on the same thread still runs.
 package e2e
 
 import (
@@ -31,9 +26,6 @@ function call_back(cb: usize, x: usize): i32 {
 function main(): i32 { return 0; }
 `
 
-// The loader's argv[2] picks the case: "overlap" runs spin on two threads at
-// once, "serial" on two threads one after the other, and "reenter" calls
-// call_back with a C function that calls spin.
 const sharedBusyLoader = `#include <dlfcn.h>
 #include <pthread.h>
 #include <stdio.h>

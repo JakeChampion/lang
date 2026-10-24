@@ -2,30 +2,10 @@ package e2e
 
 import "testing"
 
-// An int→float cast pushed its target INTO the operand expression: the
-// checker's CastExpr case ran `settleNumeric(inner, target)` for every
-// non-float inner, and settleFloat stamps a FloatWidth on a `+ - * /` binary
-// and recurses into both sides. `(7 / 2) as f64` therefore became float
-// division and produced a different wrong answer on each engine (#8456):
-//
-//	interp   3.5              — the operands were retyped, so `/` was f64 `/`
-//	x86-64   0                — an f64 landing in a slot read as an integer
-//	arm64    0
-//	wasm     module rejected  — the validator caught the same confusion
-//
-// `(7 / 2) as f32` gave 1080033300 on both natives, the f32 bit pattern read
-// as an integer, and `(3 * 4) as f64` gave 0 — division was not special; any
-// binary settleFloat reaches was.
-//
-// The variable form was correct on all four engines all along, because its
-// operands had already committed to i32 and settleFloat leaves a settled
-// operand alone. Each case below computes both forms in one program and
-// exits non-zero if they disagree or if the value is wrong.
 func TestIntExprCastToFloatConvertsTheResult(t *testing.T) {
 	cases := []struct {
 		name string
 		ft   string
-		// expr is instantiated twice: with the literals, and with `p` / `q`.
 		expr string
 		p, q string
 		want string
@@ -58,11 +38,6 @@ func TestIntExprCastToFloatConvertsTheResult(t *testing.T) {
 	}
 }
 
-// The i32 a cast stands in for a still-polymorphic operand was spelled
-// `NumberType{Width: 32}`, which is u32: `(3 - 4) as f64` wrapped to
-// 4294967295 on every engine. The narrowing rule carried the same spelling, so
-// `((0 - 7) / 2) as u8` divided as u32 — 252 from literals, 253 from a
-// variable. Both forms in one program, exit non-zero on a disagreement.
 func TestNarrowingCastComputesAtI32(t *testing.T) {
 	src := `function main(): i32 {
     let fromLiterals: u8 = ((0 - 7) / 2) as u8;
@@ -76,9 +51,6 @@ func TestNarrowingCastComputesAtI32(t *testing.T) {
 	assertExitsZeroEverywhere(t, src)
 }
 
-// A const operand reaches the cast through constfold's substitution — as a
-// width-stamped literal when the const is declared, polymorphic when it is
-// not — and both have to compute the subtraction signed.
 func TestConstOperandCastToFloatIsSigned(t *testing.T) {
 	src := `const P: i32 = 3;
 const Q = 4;
@@ -93,9 +65,6 @@ function main(): i32 {
 	assertExitsZeroEverywhere(t, src)
 }
 
-// The cast still settles a BARE literal at its target, which is what lets a
-// value wider than the i32 default reach an f64 at all. Pinned alongside the
-// fix, because the fix is precisely a carve-out from that rule.
 func TestBareLiteralCastToFloatStillSettlesAtTarget(t *testing.T) {
 	src := `function main(): i32 {
     let a: f64 = 7 as f64;
@@ -110,7 +79,6 @@ func TestBareLiteralCastToFloatStillSettlesAtTarget(t *testing.T) {
 	assertExitsZeroEverywhere(t, src)
 }
 
-// expand instantiates a two-operand template.
 func expand(tmpl, p, q string) string {
 	out := ""
 	for i := 0; i < len(tmpl); i++ {

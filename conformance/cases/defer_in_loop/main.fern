@@ -1,20 +1,20 @@
-// A `defer` inside a loop body (#6379, #6836). Nothing in the corpus put one
-// there, and that is how a four-way split between the engines stayed invisible:
-// the interpreter registered one deferred call per EXECUTION and replayed them
-// all at function exit, while every compiled backend armed one flag per defer
-// STATEMENT and fired it once. Straight-line code cannot tell the models apart.
-//
-// The contract being pinned: each execution of the statement schedules its own
-// run, and that run happens when the iteration that executed it ends — the
-// tail, a `break`, a `continue`, a labelled edge out of several bodies at once,
-// or a `return` / `?` that leaves the function from mid-iteration. The action
-// reads its names when it runs, so an iteration's action sees that iteration's
-// values.
+
+
+
+
+
+
+
+
+
+
+
+
 
 import "std/i32";
 
-// The count, and the values: three iterations, three runs, each reading its
-// own `k`. One run at function exit would print `w20` alone.
+
+
 function counted(): i32 {
     let i: i32 = 0;
     while (i < 3) {
@@ -26,8 +26,8 @@ function counted(): i32 {
     return i;
 }
 
-// The `for … in` form, whose loop variable is stepped after the body: the run
-// sits before the step, so it reads the iteration's own value.
+
+
 function ranged(): i32 {
     for i in 0..3 {
         defer print("f" + i.to_string());
@@ -36,8 +36,8 @@ function ranged(): i32 {
     return 0;
 }
 
-// `continue` and `break` are edges out of the body, so the iteration's pending
-// action runs there — and only once, not again at function exit.
+
+
 function edges(): i32 {
     let i: i32 = 0;
     while (i < 5) {
@@ -51,7 +51,7 @@ function edges(): i32 {
     return 0;
 }
 
-// A labelled `break` leaves two bodies at once: both run, innermost first.
+
 function nested(): i32 {
     let i: i32 = 0;
     outer: while (i < 2) {
@@ -69,11 +69,11 @@ function nested(): i32 {
     return 0;
 }
 
-// An edge that sits AHEAD of the `defer` in the body cannot have anything
-// pending: every edge out of the body clears the iteration's flags, so each
-// iteration reaches the top with none armed. The `continue` and the `break`
-// here must therefore run nothing, and the two iterations that reach the defer
-// must each run their own.
+
+
+
+
+
 function ahead(): i32 {
     let i: i32 = 0;
     while (i < 4) {
@@ -87,9 +87,9 @@ function ahead(): i32 {
     return 0;
 }
 
-// A `return` from mid-iteration is a function exit: the iteration's pending
-// action runs there, LIFO with the function-body defer, and the iterations
-// that already ended do not run a second time.
+
+
+
 function early(): i32 {
     defer print("fn-last");
     let i: i32 = 0;

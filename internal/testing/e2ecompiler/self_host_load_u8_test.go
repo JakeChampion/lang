@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// __load_u8 lowers to raw_load8, which the wasm backend had no instruction
-// selection for, so any program reading a byte through it refused to compile
-// on the self-host's wasm target while native wasm ran it. The word stored is
-// 0xC8030201: the high byte checks the load zero-extends.
 const loadU8Src = `function main(): i32 {
     let p: usize = __alloc(16);
     __store_i32(p, 0 - 939326975);

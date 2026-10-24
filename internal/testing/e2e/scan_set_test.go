@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// __scan_set(s, from, set) is the byte-set scan: the index of the first byte
-// of `s` at or after `from` whose entry in `set`, a u8[] indexed by byte
-// value, is nonzero, or len(s) when no byte qualifies. A byte past the end of
-// `set` is not in the set. The corpus sweeps dense and sparse sets, a short
-// set, the cursor at every offset, and NUL and high bytes on both sides.
-
-// scanSetRef is the reference semantics, matching the interpreter builtin.
 func scanSetRef(s string, from int, set []byte) int {
 	if from < 0 {
 		from = 0
@@ -47,8 +40,6 @@ func scanSetCases() []scanSetCase {
 	nul := fullSet(0)
 	high := fullSet(0xff, 0x80)
 
-	// The cursor at every offset over a haystack with one whitespace byte at
-	// each position, across the sizes a caller's run walk produces.
 	for n := 0; n <= 40; n++ {
 		base := strings.Repeat("a", n)
 		for from := -1; from <= n+1; from++ {
@@ -62,8 +53,6 @@ func scanSetCases() []scanSetCase {
 		}
 	}
 
-	// A short set: bytes past its end are never members, whatever the
-	// haystack holds.
 	short := []byte{0, 1, 0, 1}
 	out = append(out,
 		scanSetCase{"abc", 0, short},
@@ -74,7 +63,6 @@ func scanSetCases() []scanSetCase {
 		scanSetCase{"abc", 0, []byte{}},
 	)
 
-	// Edge cases the sweep cannot express.
 	out = append(out,
 		scanSetCase{"", 0, space},
 		scanSetCase{"", -5, space},
@@ -92,8 +80,6 @@ func scanSetCases() []scanSetCase {
 		scanSetCase{"the quick\tbrown\nfox", 10, space},
 	)
 
-	// Deterministic randoms over a small alphabet with a dense set, so hits
-	// land at irregular offsets and the cursor starts anywhere.
 	rng := rand.New(rand.NewSource(20260922))
 	dense := fullSet('a', 'c')
 	for i := 0; i < 60; i++ {
@@ -107,7 +93,6 @@ func scanSetCases() []scanSetCase {
 	return out
 }
 
-// fernSet spells a u8[] literal for a set.
 func fernSet(set []byte) string {
 	if len(set) == 0 {
 		return "[]"
@@ -119,9 +104,6 @@ func fernSet(set []byte) string {
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
-// runScanSetCorpus drives the corpus through one backend and compares every
-// answer against scanSetRef. The sets are built once each, since a 256-entry
-// literal per case would make the program the size of the corpus.
 func runScanSetCorpus(t *testing.T, run func(t *testing.T, src string) string) {
 	t.Helper()
 	cases := scanSetCases()
@@ -201,8 +183,6 @@ func TestArm64ScanSet(t *testing.T) {
 	})
 }
 
-// The wasm leg's short haystacks live in their two words with no address, so
-// the kernel reads them through __fern_str_byte.
 func TestWASMScanSet(t *testing.T) {
 	runScanSetCorpus(t, func(t *testing.T, src string) string {
 		out, _ := invokeWasmtime(t, src)

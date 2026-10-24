@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// Matching the stdlib's basename, record fields, method names and signatures
-// does not give a user module its semantics. These methods reverse the left
-// input, which both packed kernel rewrites would incorrectly discard.
 const customNdarrayModule = `pub struct NdArray[T] { data: T[], shape: i32[], strides: i32[], offset: i32 }
 pub function from_flat[T](data: T[], shape: i32[]): NdArray[T] {
   return NdArray[T] { data: data, shape: shape, strides: [1], offset: 0 };
@@ -123,8 +120,6 @@ func TestSelfHostNdarrayModuleOrigin(t *testing.T) {
 			}
 		})
 	}
-	// A `std/` import the configured stdlib does not hold is refused rather
-	// than read from a local module of the same basename (#12690).
 	t.Run("stdlib-missing", func(t *testing.T) {
 		dir := t.TempDir()
 		for name, source := range map[string]string{

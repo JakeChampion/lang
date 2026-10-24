@@ -1,7 +1,7 @@
-// A lane type can be a method receiver and a type argument: a trait of the
-// program's own is implemented for f64x2 and f32x4, and a generic function
-// bound by it runs at each. A method call on a concrete lane value has the
-// type of its impl.
+
+
+
+
 import "std/f64";
 
 trait Doubled {

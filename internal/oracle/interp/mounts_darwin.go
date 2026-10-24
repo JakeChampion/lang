@@ -6,9 +6,6 @@ import "syscall"
 
 const mountTablePath = ""
 
-// mountRows on Darwin is getfsstat(2), which fills one `struct statfs` per
-// mount. f_fsid is not the st_dev a stat of the mount point reports, so `dev`
-// stats the mount point, and is -1 when that fails.
 func mountRows() ([]rawMount, error) {
 	const mntNowait = 2
 	n, err := syscall.Getfsstat(nil, mntNowait)

@@ -12,36 +12,6 @@ import (
 	"testing"
 )
 
-// Drift gate for the import-free self-host modules.
-//
-// Several modules in compiler carry no `import` statement at all.
-// That is deliberate and required rather than an accident: several
-// e2ecompiler drivers build a single-module program by CONCATENATING one of
-// these files with a `main()`, which only works while the file pulls in
-// nothing. x86_native.fern says so at its head —
-//
-//	This module is intentionally **import-free** so the native emitter can
-//	`import "./x86_encode"` and the unit test can concatenate it with a
-//	driver `main()` for the single-module wasm_run driver.
-//
-// — and self_host_arm64_linux_elf_test.go, self_host_arm64_encode_test.go and
-// self_host_arm64_gas_test.go are three of the drivers that rely on it.
-//
-// The cost is duplication: parse_f64_bits (139 lines) plus pf64_mul2 / pf64_div2
-// / pf64_sub / pf64_all_zero exist in four copies each, ~410 redundant lines.
-// Sharing them through util.fern would break the concatenation drivers, so the
-// copies are the correct design and this test does NOT ask anyone to remove
-// them. util.fern imports std/envflag, so its copy is held to the others by
-// TestSelfHostParseF64MirrorsAgree instead.
-//
-// What it asks is that they stay in step. A bug fixed in one copy of 139 lines
-// of IEEE-754 bit manipulation and not the other three is silent: every driver
-// still builds, every fixpoint still converges, and float parsing quietly
-// depends on which module handled it. Nothing else in the tree would notice.
-//
-// Comparison is on CODE, not text: `//` comments are stripped and a leading
-// `pub ` is normalised away, because those legitimately differ between copies.
-// Diverging on a comment is not a bug; diverging on a statement is.
 func TestImportFreeModulesDoNotDrift(t *testing.T) {
 	paths, err := filepath.Glob(langSrcAbs(t, filepath.Join("compiler", "*.fern")))
 	inDrivers, _ := filepath.Glob(langSrcAbs(t, filepath.Join("compiler", "drivers", "*.fern")))
@@ -80,9 +50,6 @@ func TestImportFreeModulesDoNotDrift(t *testing.T) {
 		}
 	}
 
-	// The import-free set is itself worth pinning. If a module gains an import
-	// the concatenation drivers that depend on it break, and the failure lands
-	// far from the cause — so say it here, where the reason is written down.
 	sort.Strings(free)
 	wantFree := []string{
 		"aborts", "aesref", "arm64_native", "builtins", "capvocab", "docprintable", "elf", "literate", "rtbytecopy", "rtprofilemacho",
@@ -96,7 +63,6 @@ func TestImportFreeModulesDoNotDrift(t *testing.T) {
 			"    say in the commit message which driver you checked.", free, wantFree)
 	}
 
-	// Names that legitimately differ rather than copies that drifted.
 	allowed := map[string]string{
 		"main": "every driver entry point is different by definition.",
 	}
@@ -139,9 +105,6 @@ func TestImportFreeModulesDoNotDrift(t *testing.T) {
 	}
 }
 
-// sharedCopies is the module the rest of the compiler calls for the helpers the
-// import-free modules duplicate. It imports std/ modules, so it is not
-// import-free itself, but its copies are held to the same bodies.
 const sharedCopies = "util"
 
 var (
@@ -159,9 +122,6 @@ func hasImport(lines []string) bool {
 	return false
 }
 
-// topLevelFuncs returns each top-level `function` body, keyed by name. A body
-// runs from its declaration to the first column-0 `}` — the shape every
-// top-level declaration in these modules has.
 func topLevelFuncs(lines []string) map[string][]string {
 	out := map[string][]string{}
 	for i := 0; i < len(lines); i++ {
@@ -181,9 +141,6 @@ func topLevelFuncs(lines []string) map[string][]string {
 	return out
 }
 
-// normaliseCode strips comments, drops blank lines and removes a leading `pub `
-// from the declaration, leaving only the statements. Two copies that differ
-// solely in commentary or visibility compare equal.
 func normaliseCode(body []string) []string {
 	var out []string
 	for i, l := range body {

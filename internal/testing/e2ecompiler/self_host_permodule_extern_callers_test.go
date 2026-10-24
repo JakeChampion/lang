@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// A whole-module unit of the per-module driver leaves out what has no body
-// on its native target: an `@import` extern and every function that calls
-// one, a call made from inside a lambda body included. A function that only
-// spells an extern's name, as a local or a field, is no caller and stays;
-// the merged emit of the same program builds and runs.
 func TestSelfHostPerModuleUnitDropsExternCallers(t *testing.T) {
 	gcc, runner, bin := buildModloadDriverX86(t)
 	if len(runner) != 0 {

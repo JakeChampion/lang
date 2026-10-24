@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrPushOwnedReclaimArm64 covers the arm64 port of the sole-owner
-// self-append reclaim-on-grow (`__fern_arr_push_owned`): the unaliased
-// `a = a.append(v)` form now frees the dead old buffer when the push reallocates,
-// instead of leaking it — arm64 must not alias arr_push_owned to plain
-// __fern_arr_push. Verified by CORRECTNESS under qemu — a wrong free of the live
-// growing buffer is a use-after-free that corrupts the sum — plus an asm-content
-// check that the owned helper is dispatched (`bl __fern_arr_push_owned`) and its
-// real reclaim body (the freelist push `str x2, [x3, x1, lsl #3]`) is emitted.
 func TestSelfHostArrPushOwnedReclaimArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -23,9 +15,6 @@ func TestSelfHostArrPushOwnedReclaimArm64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	// 100 sole-owner self-appends grow the buffer several times; each grow's old
-	// buffer is reclaimed. A UAF of the live buffer would corrupt the read-back.
-	// sum(0..99) = 4950, so the program returns 7.
 	prog := `function build(): i32 {
     let a: i32[] = [];
     let i: i32 = 0;
@@ -55,13 +44,6 @@ function main(): i32 { return build() - 4943; }`
 	}
 }
 
-// TestSelfHostArrPushOwnedReclaimWasm is the wasm32 mirror: the sole-owner
-// self-append now frees the dead old buffer on a grow via $__fern_arr_push_owned
-// (was aliased to plain $__fern_arr_push, leaking it). Verified by CORRECTNESS
-// under wasmtime — a UAF of the live growing buffer corrupts the read-back sum —
-// plus a WAT-content check that the owned helper is dispatched
-// (`call $__fern_arr_push_owned`) and its body (which frees via $__fern_arr_dec)
-// is emitted. Reuses the arm64 program verbatim (100 self-appends → sum 7).
 func TestSelfHostArrPushOwnedReclaimWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm arr_push_owned reclaim e2e")
@@ -104,11 +86,6 @@ function main(): i32 { return build() - 4943; }`
 	}
 }
 
-// The 8-byte element widths take the same sole-owner reclaim: an i64[] or f64[]
-// grown by self-append lowers to arr_push_owned_i64 / arr_push_owned_f64, which
-// the register backends route through __fern_arr_push_owned (every slot is 8
-// bytes there) and wasm through a wide wrapper of its own. Correctness under
-// the grow is the check, as above, plus the dispatch in the emitted text.
 const wideOwnedPushProg = `function build_i64(): i64 {
     let a: i64[] = [];
     let i: i32 = 0;
@@ -179,13 +156,6 @@ func TestSelfHostArrPushOwnedWideReclaimWasm(t *testing.T) {
 	}
 }
 
-// A struct local that is BOTH loop-carried and returned supersedes a box at
-// every rebind, and only the final binding escapes. The credit for those
-// rebinds was withheld for the whole local because it is returned, so each
-// superseded box leaked — 100 of this program's 101 allocations, where the
-// native build reclaims them. The release is guarded by __fern_rc_is_unique on
-// the old box, so a counted share is left to whichever owner reaches rc 1, and
-// by the cow guard, so a self-store keeps the box it hands straight back.
 const returnedRebindProg = `struct V { a: i32, b: u64, c: boolean }
 function step(v: V, k: i32): V {
     return V { a: v.a + k, b: v.b + (k as u64), c: !v.c };

@@ -1,5 +1,5 @@
-// The foreach binder is a comma-separated list like any other, so it takes a
-// trailing comma: `for (k, v,) in m`.
+
+
 
 import "core/map";
 
@@ -12,7 +12,7 @@ function main(): i32 {
     let without: i32 = 0;
     for (k, v) in m { without = without + v + k.len(); }
 
-    // The comma is punctuation, so both loops must agree: 6 + 3 = 9 each.
+
     if (with_trailing != without) { return 1; }
     return with_trailing;
 }

@@ -1,8 +1,8 @@
 import "core/int";
 
-// Exercises core/int's radix parse direction (parse_int_radix / __radix_digit)
-// plus int_to_string_radix across all four native backends. FEATURE-AUDIT
-// core/int row (parse direction; to_string routes raw-memory builtins).
+
+
+
 function main(): i32 {
     match (int.parse_int_radix("ff", 16)) { Some(v) => { print(int.int_to_string(v)); }, None => { print("none"); }, }
     match (int.parse_int_radix("-42", 10)) { Some(v) => { print(int.int_to_string(v)); }, None => { print("none"); }, }

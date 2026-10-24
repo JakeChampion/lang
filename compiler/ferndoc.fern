@@ -1,68 +1,9 @@
-// compiler/ferndoc.fern — `fern -doc`, the reference-page generator (#6642):
-// doc-comment association, and the Markdown rendering over it.
-//
-// The lexer hands back a flat comment list in source order (#6739) and the
-// parser hands back declarations carrying `line` / `col` / `is_pub` (#6718,
-// #6731). Neither knows about the other. This file is the join: which comment
-// block is which declaration's documentation.
-//
-// That join is where the semantics live, and they are not obvious:
-//
-//   - A comment block is a RUN — comments on consecutive lines. A blank line
-//     between two comments starts a new run, which is how a file-header
-//     comment stays out of the first declaration's doc.
-//   - A run documents a declaration only when it ends on the line DIRECTLY
-//     above it. A run with a blank line before the declaration documents
-//     nothing.
-//   - The walk is stateful and single-pass. A cursor advances past each run it
-//     consumes or skips, so a comment can never be handed to two declarations,
-//     and the declarations must be visited in source order for it to be right.
-//
-// Two consequences a reader may not expect:
-//
-//   - Association is by LINE alone. A trailing comment on the line above a
-//     declaration is therefore absorbed as that declaration's doc, even though
-//     it visibly belongs to the code it trails.
-//   - Only PUBLIC declarations take. A private declaration between a comment
-//     run and a public one does not consume the run — but the cursor's
-//     run-skipping does, because the run no longer ends directly above the
-//     declaration that asks.
-//
-// # The parse is VERBATIM
-//
-// docs_of and render_page parse through `parse_module_verbatim`, the mode
-// `-fmt` selects (#6773), not the compile-path `parse_module`. The compile
-// parse canonicalises a written type to what the dispatch sites downstream
-// read — `str` becomes `string`, and an unbounded `[T]` survives only as a
-// COUNT with its name discarded. Both are exactly what a doc page is FOR: a
-// signature documented as returning `string` when it returns a borrowed `str`
-// documents different ownership than the code has, and `map[T, U]` cannot be
-// spelled at all without the parameter names. Verbatim keeps the written
-// spelling, which is the same reason the formatter needs it.
-//
-// # Consts arrive as functions
-//
-// `const NAME: T = EXPR;` is desugared by `parse_const_decl` into a zero-arg
-// `FuncDecl` returning EXPR, so the only thing separating a const from a
-// hand-written zero-arg function is `FuncDecl.is_const`. This file reads that
-// marker rather than the shape, for the reason `print_const_decl` states: the
-// two AST shapes are identical, so guessing from shape rewrites real functions
-// into consts.
-//
-// The `__`-prefix filter drops a `__` function and keeps a `__` const.
-
 import "./ast";
 import "./lexer";
 import "./parser";
 import "./util";
 import "./docsummary";
 
-// ---- results -----------------------------------------------------------
-
-// DocDecl is one documented declaration. `kind` is the source keyword
-// ("function", "struct", "enum"), which is what a renderer dispatches on;
-// `doc` is the associated comment run, its lines joined by newline, or empty
-// when nothing documents it.
 pub struct DocDecl {
   kind: string,
   name: string,
@@ -71,30 +12,16 @@ pub struct DocDecl {
   doc: string,
 }
 
-// TakeResult is `take_doc`'s pair: the run it consumed and where the cursor
-// ended up. Returned rather than mutated because the walker's state is the
-// cursor and nothing else.
 pub struct TakeResult { doc: string, cursor: i32 }
 
-// ---- text --------------------------------------------------------------
-
-// is_space matches Go's unicode.IsSpace for the ASCII range, which is all
-// TrimSpace can see here: comment text is raw source bytes.
 function is_space(b: i32): boolean {
   return b == 32 || b >= 9 && b <= 13;
 }
 
-// own copies a `str` view into an owned string. A `str` coerces into a string
-// PARAMETER but not into a return type or a struct field, so the round trip
-// through a parameter is how the self-host front end already materialises a
-// slice — lexer.fern's comment_tok does the same for the same reason.
 function own(v: string): string {
   return v;
 }
 
-// trim_space is strings.TrimSpace over a comment's text. Comment bodies keep
-// the space after `//`, so trimming is what makes two comment lines join into
-// readable prose.
 pub function trim_space(s: string): string {
   let a: i32 = 0;
   let b: i32 = s.len();
@@ -107,10 +34,6 @@ pub function trim_space(s: string): string {
   return own(slice_unchecked(s, a, b));
 }
 
-// ---- the walk ----------------------------------------------------------
-
-// run_end is the index of the last comment in the run starting at `start` — a
-// run being comments on consecutive lines.
 function run_end(cs: lexer.Comment[], start: i32): i32 {
   let e: i32 = start;
   while (e + 1 < cs.len() && cs[e + 1].line == cs[e].line + 1) {
@@ -119,8 +42,6 @@ function run_end(cs: lexer.Comment[], start: i32): i32 {
   return e;
 }
 
-// join_run renders comments [start, end] as a doc string: each line trimmed,
-// joined by newline.
 function join_run(cs: lexer.Comment[], start: i32, end: i32): string {
   let out: string = "";
   let i: i32 = start;
@@ -134,14 +55,6 @@ function join_run(cs: lexer.Comment[], start: i32, end: i32): string {
   return out;
 }
 
-// take_doc is the run that ends on the line directly above `decl_line`, with
-// the cursor advanced past it.
-//
-// The skip loop is the subtle half. It walks past runs that end before
-// `decl_line - 1` — those document nothing that is being asked about — but it
-// stops the moment it finds a run that DOES reach `decl_line - 1`, because
-// that is the answer. Without the stop, a file whose header comment is
-// followed by a documented declaration would consume both.
 pub function take_doc(cs: lexer.Comment[], cursor: i32, decl_line: i32): TakeResult {
   let cur: i32 = cursor;
   while (cur < cs.len() && cs[cur].line < decl_line - 1) {
@@ -161,13 +74,6 @@ pub function take_doc(cs: lexer.Comment[], cursor: i32, decl_line: i32): TakeRes
   return TakeResult { doc: join_run(cs, cur, e), cursor: e + 1 };
 }
 
-// module_intro is the file-header block: the run of comments starting on line
-// 1, each line trimmed and joined by newline, so a blank comment line still
-// separates paragraphs.
-//
-// It is not an intro when it runs straight into the first declaration — then
-// it is that declaration's doc and take_doc will claim it. `first_decl_line`
-// of 0 means the module declares nothing, so there is nothing to run into.
 pub function module_intro(cs: lexer.Comment[], first_decl_line: i32): string {
   if (cs.len() == 0) {
     return "";
@@ -202,29 +108,14 @@ pub function module_intro(cs: lexer.Comment[], first_decl_line: i32): string {
   return out;
 }
 
-// module_summary is the intro's first sentence without its leading
-// "std/x — " label, for the page description.
-// A sentence opening on a lowercase word gains a capital unless its first word
-// has an upper-case letter or a digit.
 pub function module_summary(intro: string): string {
   return docsummary.summary(intro);
 }
 
-// Quote every description byte with the reference renderer's escaping rules.
 function quote(s: string): string {
   return docsummary.quote(s);
 }
 
-// ---- declarations ------------------------------------------------------
-
-// public_decls collects the declarations a doc page covers, in source order.
-//
-// Public only, and functions additionally drop the `__`-prefixed internals.
-// Both filters matter to the WALK as well as the output: a declaration that is not collected never calls take_doc, so the
-// run above it is left for the cursor's skip logic rather than consumed.
-//
-// Sorted by (line, col) because the parser hands back separate lists per decl
-// kind and the walk is only correct in source order.
 pub function public_decls(mod: parser.Module): DocDecl[] {
   let out: DocDecl[] = [];
   let i: i32 = 0;
@@ -242,9 +133,6 @@ pub function public_decls(mod: parser.Module): DocDecl[] {
   let si: i32 = 0;
   while (si < mod.structs.len()) {
     let sd: parser.StructDecl = mod.structs[si];
-    // A desugared enum variant is a struct decl carrying its enum's name
-    // in enum_owner. It is not a declaration anyone wrote, so it is not
-    // one anyone documents.
     if (sd.is_pub && sd.enum_owner.len() == 0) {
       out = insert_sorted(out, DocDecl { kind: "struct", name: sd.name, line: sd.line, col: sd.col, doc: "" });
     }
@@ -266,9 +154,6 @@ pub function public_decls(mod: parser.Module): DocDecl[] {
     }
     di = di + 1;
   }
-  // Type aliases are not collected: one would advance the WALK, so an alias
-  // sitting above a documented declaration would consume the run that
-  // declaration is owed.
   return out;
 }
 
@@ -276,9 +161,6 @@ function starts_with_dunder(name: string): boolean {
   return name.len() >= 2 && name[0] as i32 == 95 && name[1] as i32 == 95;
 }
 
-// insert_sorted places `d` at its (line, col) position. Insertion rather than a
-// sort pass because the lists are short and the walk needs a total order, not
-// a fast one.
 function insert_sorted(xs: DocDecl[], d: DocDecl): DocDecl[] {
   let out: DocDecl[] = [];
   let placed: boolean = false;
@@ -304,10 +186,6 @@ function before(a: DocDecl, b: DocDecl): boolean {
   return a.col < b.col;
 }
 
-// first_decl_line is the earliest line any declaration starts on, or 0 when
-// the module declares nothing. It reads EVERY declaration, public or not:
-// module_intro asks whether the header comment runs into the code below it,
-// and a private declaration ends the header just as a public one does.
 pub function first_decl_line(mod: parser.Module): i32 {
   let min: i32 = 0;
   let i: i32 = 0;
@@ -348,10 +226,6 @@ function min_line(min: i32, line: i32): i32 {
   return min;
 }
 
-// ---- the pass ----------------------------------------------------------
-
-// associate walks the declarations in source order, handing each the comment
-// run directly above it.
 pub function associate(cs: lexer.Comment[], decls: DocDecl[]): DocDecl[] {
   let out: DocDecl[] = [];
   let cursor: i32 = 0;
@@ -365,11 +239,8 @@ pub function associate(cs: lexer.Comment[], decls: DocDecl[]): DocDecl[] {
   return out;
 }
 
-// DocModule is one source file's documentation inputs, extracted.
 pub struct DocModule { intro: string, decls: DocDecl[] }
 
-// docs_of is the whole extraction for one source: lex with comments, parse,
-// collect the public declarations, and bind the comment runs to them.
 pub function docs_of(src: string): DocModule {
   let lr: lexer.LexResult = lexer.tokenize_full(src);
   let mod: parser.Module = parser.parse_module_verbatim(lr.tokens).pmod;
@@ -380,14 +251,6 @@ pub function docs_of(src: string): DocModule {
   };
 }
 
-// ---- rendering ---------------------------------------------------------
-//
-// The Markdown half: the page the docs site publishes, pinned byte for byte by
-// TestSelfHostFernDocPage. Types print as written, from the source spelling
-// the parser keeps on each declaration (`ParamDecl.type_name`,
-// `FuncDecl.ret_type`).
-
-// type_str renders a declared type, `?` for an unannotated position.
 function type_str(t: string): string {
   if (t.len() == 0) {
     return "?";
@@ -395,14 +258,6 @@ function type_str(t: string): string {
   return t;
 }
 
-// param_type_str renders a parameter's declared type.
-//
-// A function-typed parameter needs the two sidecars: the parser collapses it to
-// the flat tag `fn` and keeps the spellings it threw away in `fn_param_types`
-// (comma-separated, no spaces) and `fn_ret`. Their own header says they exist to
-// "reconstruct the declared signature the flat `fn` tag threw away" — this is
-// the reconstruction, and without it every higher-order function in the stdlib
-// documents its callback as `fn`.
 function param_type_str(p: ast.ParamDecl): string {
   if (p.type_name != "fn") {
     return type_str(p.type_name);
@@ -419,18 +274,12 @@ function param_type_str(p: ast.ParamDecl): string {
       i = i + 1;
     }
   }
-  // An empty return spelling on a fn type is `void`, not the `?` an absent
-  // type renders as: the parser records no return for `() => void`, and the
-  // two are different facts.
   if (p.fn_ret.len() == 0) {
     return out + ") => void";
   }
   return out + ") => " + p.fn_ret;
 }
 
-// split_commas splits on `,`. Written out rather than reached for as a method:
-// these modules import no stdlib, so a string here carries only the builtin
-// operations.
 function split_commas(s: string): string[] {
   let out: string[] = [];
   let start: i32 = 0;
@@ -445,8 +294,6 @@ function split_commas(s: string): string[] {
   return out.append(own(slice_unchecked(s, start, s.len())));
 }
 
-// join_type_params renders `[A, B]`, or nothing when the declaration is not
-// generic.
 function join_plus(names: string[]): string {
   let out: string = "";
   for n in names {
@@ -474,8 +321,6 @@ function join_type_params(tps: string[]): string {
   return out + "]";
 }
 
-// doc_block is a declaration's doc under its signature and a blank line, or
-// nothing, so an undocumented declaration is not followed by a stray blank.
 function doc_block(doc: string): string {
   if (doc.len() == 0) {
     return "";
@@ -501,9 +346,6 @@ function render_func(fd: parser.FuncDecl, doc: string): string {
   return out + doc_block(doc);
 }
 
-// render_const documents what a const IS rather than what it currently
-// equals: its initialiser is not rendered. An unannotated const renders with
-// no `: T` clause rather than type_str's `?`, since nothing was omitted.
 function render_const(fd: parser.FuncDecl, doc: string): string {
   let out: string = "## `const " + fd.name + "`\n\n```fern\npub const " + fd.name;
   if (fd.ret_type.len() > 0) {
@@ -526,11 +368,6 @@ function render_struct(sd: parser.StructDecl, doc: string): string {
   return out + " }\n```\n\n" + doc_block(doc);
 }
 
-// variant_payloads renders `(T, U)` for a variant that carries a payload, or
-// nothing for a unit variant.
-//
-// The types are not on the EnumDecl: the parser DESUGARS each variant into a
-// StructDecl tagged with `enum_owner`, so the payload lives there.
 function variant_payloads(enum_name: string, variant: string, structs: parser.StructDecl[]): string {
   let i: i32 = 0;
   while (i < structs.len()) {
@@ -567,12 +404,6 @@ function render_enum(ed: parser.EnumDecl, structs: parser.StructDecl[], doc: str
   return out + "}\n```\n\n" + doc_block(doc);
 }
 
-// render_trait renders a trait's header — type parameters and supertraits —
-// and its required methods.
-//
-// Params go through param_type_str, not type_str: the parser flattens a
-// function-typed param to the tag `fn` and keeps the spelling in a sidecar,
-// and a trait method can take one (std/iter).
 function render_trait(td: parser.TraitDecl, doc: string): string {
   let out: string = "## `trait " + td.name + "`\n\n```fern\npub trait " + td.name + join_type_params(td.type_params);
   if (td.supertraits.len() > 0) {
@@ -608,16 +439,6 @@ function trait_named(mod: parser.Module, name: string, line: i32): parser.TraitD
   return mod.trait_decls[0];
 }
 
-// render_impls is the trait to implementing-types table. Grouped by trait in
-// FIRST-SEEN order, not sorted: core/cmp alone carries ~30 primitive impls and
-// a section each would be unreadable.
-//
-// `cells` accumulates each trait's row already rendered — the types joined by
-// the backtick-comma-backtick that separates them in the table — because the
-// self-host has no array-of-arrays to group into.
-// trait_label is the trait as the source wrote it, qualifier included. parse_type_name resolves `async.Driver` to
-// `Driver`, so the spelling is stored beside the resolved name on ImplInfo; an
-// unqualified trait has no separate spelling.
 function trait_label(im: parser.ImplInfo): string {
   if (im.trait_spelling.len() > 0) {
     return im.trait_spelling;
@@ -652,9 +473,6 @@ function render_impls(impls: parser.ImplInfo[]): string {
   return out + "\n";
 }
 
-// The three lookups below re-find the declaration a DocDecl came from. Keyed on
-// LINE as well as name, since a module may declare a struct and a function with
-// the same name.
 function func_named(mod: parser.Module, name: string, line: i32): parser.FuncDecl {
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
@@ -688,11 +506,6 @@ function enum_named(mod: parser.Module, name: string, line: i32): parser.EnumDec
   return mod.enums[0];
 }
 
-// render_page is a module's page: front matter, title, the module intro,
-// every public declaration in source order, then the impl table.
-//
-// An empty page is the empty string — a page with nothing on it would clutter
-// the sidebar with a heading and no content.
 pub function render_page(src: string, mod_path: string): string {
   let lr: lexer.LexResult = lexer.tokenize_full(src);
   let mod: parser.Module = parser.parse_module_verbatim(lr.tokens).pmod;

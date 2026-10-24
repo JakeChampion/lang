@@ -8,13 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructConsumeRebindReclaimIRX86_64 covers the escaping-struct
-// reclaim slice (#3456): a LOCAL struct threaded through a consume-rebind —
-// `let s = S{...}; ... s = bump(s) ...` — must have each previous box released
-// at the rebind even though it appears as a call ARGUMENT / method RECEIVER,
-// while the builder's shared field buffers survive until the final box dies.
-//
-// `s` is never returned; only a field is read out at the end.
 func TestSelfHostStructConsumeRebindReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -27,11 +20,6 @@ func TestSelfHostStructConsumeRebindReclaimIRX86_64(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
-	// CHURN: 4,000,000 consume-rebinds of a struct holding a heap (array) field.
-	// Each `s = bump(s)` allocates a fresh box (+ a fresh xs array); without the
-	// per-rebind reclaim the dead boxes accumulate and exhaust the bump heap
-	// (exit 137). With the reclaim the box is freed each iteration, so it runs to
-	// exit 0. `s` is read (s.n) but never returned, so it is reclaim-eligible.
 	churn := `struct S { xs: i32[], n: i32 }
 function bump(s: S): S { return S { xs: [s.n], n: s.n + 1 }; }
 function main(): i32 {
@@ -44,9 +32,6 @@ function main(): i32 {
 	if len(asm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes for the churn program")
 	}
-	// The per-rebind reclaim must be present (a bail, or no reclaim, emits
-	// no box dec in main's loop). bump borrows its param + main's `s` is a
-	// borrow-safe consume-rebind, so the reassign frees the old box.
 	if frees := bytes.Count(asm, []byte("call __fn___fern_arr_dec")); frees < 1 {
 		t.Errorf("found %d __fern_arr_dec calls, want >= 1 — consume-rebind struct box not reclaimed (module bailed or reclaim gate too strict)", frees)
 	}
@@ -62,9 +47,6 @@ function main(): i32 {
 		t.Errorf("consume-rebind churn exited %d, want 0 (137 = box leak: the per-rebind struct reclaim did not fire)", code)
 	}
 
-	// CORRECTNESS: the reclaim must not corrupt the live builder. Build a struct
-	// up through consume-rebinds and read its array back — a use-after-free of a
-	// wrongly-freed (shared) field buffer would corrupt the values.
 	val := `struct B { xs: i32[], n: i32 }
 function push(b: B, v: i32): B { return B { xs: b.xs.append(v), n: b.n + 1 }; }
 function main(): i32 {
@@ -88,7 +70,6 @@ function main(): i32 {
 		vcmd = exec.Command(runner[0], append(runner[1:], valBin)...)
 	}
 	_ = vcmd.Run()
-	// 3*(0+1+...+19) = 3*190 = 570; exit code is the low byte: 570 & 255 = 58.
 	if code := vcmd.ProcessState.ExitCode(); code != 58 {
 		t.Errorf("consume-rebind builder value = %d, want 58 (570 & 255) — reclaim corrupted the shared field buffer", code)
 	}

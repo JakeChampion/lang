@@ -4,12 +4,6 @@ import "std/string";
 import "std/crypto/aead";
 import "std/crypto/chacha20poly1305";
 
-// tests/stdlib/chacha20poly1305_test.fern — std/crypto/chacha20poly1305
-// against the RFC 8439 vectors (§2.3.2 the block, §2.4.2 the cipher,
-// §2.5.2 Poly1305, §2.8.2 the AEAD), plus vectors from an independent
-// implementation for an empty message, a message spanning several blocks
-// with a partial last one, and Poly1305's final reduction.
-
 function shown(r: Result[u8[], aead.AeadError]): string {
   match (r) {
     Ok(b) => {
@@ -70,7 +64,6 @@ function test_poly1305(): test.TestOutcome {
   );
 }
 
-// Every limb at its largest: r clamped from all ones, a message of all ones.
 function test_poly1305_ones(): test.TestOutcome {
   let ff: string = "ffffffffffffffffffffffffffffffff";
   return test.assert_eq(
@@ -79,7 +72,6 @@ function test_poly1305_ones(): test.TestOutcome {
   );
 }
 
-// h lands in [2^130 - 5, 2^130), so the final reduction must subtract p.
 function test_poly1305_reduces(): test.TestOutcome {
   return test.assert_eq(
     shown(chacha20poly1305.poly1305(hex.hex_decode("0200000000000000000000000000000000000000000000000000000000000000"), hex.hex_decode("ffffffffffffffffffffffffffffffff"))),
@@ -151,8 +143,6 @@ function forged(r: Result[u8[], aead.AeadError]): boolean {
   return false;
 }
 
-// A flipped bit in the tag or the ciphertext, other additional data, or a
-// message shorter than a tag does not open.
 function test_open_refuses(): test.TestOutcome {
   let sealed: u8[] = hex.hex_decode(rfc_sealed());
   let last: i32 = sealed.len() - 1;

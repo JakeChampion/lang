@@ -7,18 +7,6 @@ import (
 	"testing"
 )
 
-// The self-host x86-64 emitter's lowering of division by a literal divisor
-// (asm_ir.fern's ir_div_const, the twin of native's emitConstDivRem), and the
-// dword forms its dynamic-divisor sequence now uses at i32 width.
-//
-// Semantics are pinned by conformance/cases/const_divisor_runtime on every
-// self-host leg. What is checked here is the SHAPE — that the emitter took the
-// specialised path and dropped the guards — since a lowering that quietly
-// stopped firing would still compute the right answers, plus an interp-oracled
-// run over the dividends the shapes are subtle for.
-
-// selfHostX86Emit runs a program through the asm_ir_run driver and returns
-// the emitted asm.
 func selfHostX86Emit(t *testing.T, runner []string, driverBin, src string) []byte {
 	t.Helper()
 	var cmd *exec.Cmd
@@ -35,8 +23,6 @@ func selfHostX86Emit(t *testing.T, runner []string, driverBin, src string) []byt
 	return out
 }
 
-// selfHostFnBody slices one function's body out of the self-host emitter's
-// AT&T output: from its label to its .cfi_endproc.
 func selfHostFnBody(t *testing.T, asm []byte, fn string) string {
 	t.Helper()
 	s := string(asm)
@@ -86,57 +72,32 @@ function main(): i32 {
 `
 	asm := selfHostX86Emit(t, runner, driverBin, src)
 
-	// The guards and the widening are what every literal-divisor shape must
-	// have shed; each case then names the instruction that replaced the divide.
 	guards := []string{"testq %rcx", "testl %ecx", "cmpq $-1", "cmpl $-1", "movslq", "jz ", "je "}
 	cases := []struct {
 		fn          string
 		want, avoid []string
 	}{
-		// i32 reciprocal: the magic (ir.derive_magic_s(4093, 32) — also pins the
-		// derivation), the dividend stashed in ecx, the multiply-back for the
-		// remainder, and the sign-extension back into the slot.
 		{"m4093", []string{"movl %eax, %ecx", "movl $-2145909631, %eax", "imull %ecx", "addl %ecx, %edx", "sarl $11, %edx", "imull $4093, %eax, %eax", "cltq"}, append([]string{"idiv"}, guards...)},
 		{"d7", []string{"movl $-1840700269, %eax", "imull %ecx", "shrl $31, %edx"}, append([]string{"idiv", "imull $7"}, guards...)},
-		// Signed power of two: the round-toward-zero bias, then the shift.
 		{"d8", []string{"sarl $31, %ecx", "shrl $29, %ecx", "addl %eax, %ecx", "sarl $3, %eax"}, append([]string{"idiv", "imul"}, guards...)},
 		{"m8", []string{"andl $-8, %ecx", "subl %ecx, %eax"}, append([]string{"idiv"}, guards...)},
-		// Unsigned reciprocal: 2863311531 written as its imm32 bit pattern,
-		// and the 33-bit magic's shift-average for 7.
 		{"d3u", []string{"movl $-1431655765, %eax", "mull %ecx", "shrl $1, %edx"}, append([]string{"div ", "divl", "divq"}, guards...)},
 		{"m7u", []string{"mull %ecx", "subl %edx, %eax", "shrl $1, %eax", "addl %edx, %eax", "shrl $2, %eax", "imull $7, %eax, %eax"}, append([]string{"divl", "divq"}, guards...)},
-		// i64 takes the reciprocal too: the high half of the 128-bit product
-		// in %rdx, the multiply-back an imm32 while the divisor fits one and
-		// a movabsq once it does not.
 		{"m97w", []string{"movq %rax, %rcx", "movabsq $-6275696437447579415, %rax", "imulq %rcx", "addq %rcx, %rdx", "sarq $6, %rdx", "shrq $63, %rdx", "imulq $97, %rax, %rax"}, append([]string{"idiv", "cqto"}, guards...)},
 		{"d10uw", []string{"movabsq $-3689348814741910323, %rax", "mulq %rcx", "shrq $3, %rdx"}, append([]string{"divq", "idiv"}, guards...)},
-		// An even divisor whose magic needs the extra bit divides the
-		// dividend shifted right by its trailing zeros instead: 100 is 25
-		// after two shifts, and 14 is 7 after one.
 		{"d100uw", []string{"shrq $2, %rdx", "movabsq $2951479051793528259, %rax", "mulq %rdx"}, append([]string{"divq", "subq %rdx, %rax", "shrq $1, %rax"}, guards...)},
 		{"m14u", []string{"shrl $1, %edx", "mull %edx", "imull $14, %eax, %eax"}, append([]string{"divl", "subl %edx, %eax", "shrl $1, %eax"}, guards...)},
-		// A division and a remainder by one constant share the quotient: one
-		// multiply-high, and the remainder is its product taken back off.
 		{"dm100uw", []string{"mulq %rdx", "imulq $100"}, append([]string{"divq"}, guards...)},
 		{"mtw", []string{"movabsq $2535301200456458803, %rax", "sarq $37, %rdx", "movabsq $1000000000000, %rdx", "imulq %rdx, %rax"}, append([]string{"idiv"}, guards...)},
 		{"d8w", []string{"sarq $63, %rcx", "shrq $61, %rcx", "sarq $3, %rax"}, append([]string{"idiv"}, guards...)},
-		// A mask past bit 31 is a shift pair, never an immediate gas refuses.
 		{"mbig", []string{"shrq $40, %rcx", "shlq $40, %rcx"}, append([]string{"idiv", "andq $-1099511627776"}, guards...)},
 		{"dneg1", []string{"negl %eax", "cltq"}, append([]string{"idiv"}, guards...)},
-		// (The most negative divisor is not reachable as a literal here: the
-		// self-host lowers -2147483648 as `0 - 2147483648`, which is not one
-		// readable constant, so it keeps the guarded path below.)
-		// A divisor only known at run time keeps both guards, on the dword
-		// forms: nothing is widened, and the result is sign-extended once.
 		{"dxy", []string{"testl %ecx, %ecx", "cmpl $-1, %ecx", "cltd", "idivl %ecx", "negl %eax", "cltq"}, []string{"movslq", "idivq", "cqto", "testq", "cmpq"}},
 		{"mxyu", []string{"testl %ecx, %ecx", "xorl %edx, %edx", "divl %ecx", "movl %edx, %eax"}, []string{"movslq", "divq", "cmpl", "cltq"}},
 	}
 	if n := strings.Count(selfHostFnBody(t, asm, "dm100uw"), " mulq "); n != 1 {
 		t.Errorf("dm100uw multiplies %d times, want 1: the remainder reuses the quotient", n)
 	}
-	// By a runtime divisor too, in one block or with the remainder in a
-	// block that dominates the division: one divide, the remainder its
-	// product taken back off.
 	if n := strings.Count(selfHostFnBody(t, asm, "dmxyuw"), "divq"); n != 1 {
 		t.Errorf("dmxyuw divides %d times, want 1: the remainder reuses the quotient", n)
 	}
@@ -160,36 +121,20 @@ function main(): i32 {
 	}
 }
 
-// constDivisorOracleCases are the dividends the literal-divisor shapes are
-// subtle for, each reduced to a small exit code and oracled against interp.
-// Every dividend is read out of an array so the folder cannot see it.
 var constDivisorOracleCases = []struct {
 	name string
 	main string
 }{
-	// INT_MIN / -1 wraps to INT_MIN and INT_MIN % -1 is 0, through `neg`
-	// and the zeroing arm rather than a guard.
 	{"int-min-by-neg1", `function main(): i32 { let xs: i32[] = [-2147483648]; let x: i32 = xs[0]; if (x / -1 == -2147483648 && x % -1 == 0) { return 5; } return 9; }`},
-	// The biased shift: -17 / 8 is -2 (not -3) and -17 % 8 is -1 (not 7).
 	{"neg-by-pow2", `function main(): i32 { let xs: i32[] = [-17]; let x: i32 = xs[0]; return (x / 8 + 10) * 10 + (x % 8 + 5); }`},
 	{"int-min-by-pow2", `function main(): i32 { let xs: i32[] = [-2147483648]; let x: i32 = xs[0]; if (x / 1024 == -2097152 && x % 1024 == 0 && x / -1024 == 2097152) { return 5; } return 9; }`},
-	// The reciprocal on both signs, INT_MIN and INT_MAX, and a negative divisor.
 	{"reciprocal", `function main(): i32 { let xs: i32[] = [9000, -9000, -2147483648, 2147483647]; let h: i32 = 0; let i: i32 = 0; while (i < 4) { let x: i32 = xs[i]; h = h * 31 + x / 4093 + x % 4093 + x / -7 + x % -7 + x / 3; i = i + 1; } if (h < 0) { h = 0 - h; } return h % 200; }`},
-	// u32 above 2^31 through the 33-bit magic (7) and the plain one (3).
 	{"u32-highbit", `function main(): i32 { let us: u32[] = [3000000000u32, 4294967295u32]; let h: u32 = 0u32; let i: i32 = 0; while (i < 2) { let u: u32 = us[i]; h = h * 31u32 + u / 7u32 + u % 7u32 + u / 3u32 + u % 3u32 + u / 1024u32 + u % 1024u32; i = i + 1; } return (h % 200u32) as i32; }`},
-	// i64: the reciprocal, and a power-of-two mask past bit 31.
 	{"i64-wide", `function main(): i32 { let ws: i64[] = [-9223372036854775808i64, -7i64, 1099511627783i64]; let h: i64 = 0i64; let i: i32 = 0; while (i < 3) { let w: i64 = ws[i]; h = h * 31i64 + w / 97i64 + w % 97i64 + w / 1099511627776i64 + w % 1099511627776i64 + w / -1099511627776i64; i = i + 1; } if (h < 0i64) { h = 0i64 - h; } return (h % 200i64) as i32; }`},
-	// The 64-bit reciprocals at the ends of the range: u64 through a magic one
-	// bit wider than the word (7) and a plain one (10), i64 by a divisor too
-	// wide for an imm32.
 	{"u64-reciprocal", `function main(): i32 { let us: u64[] = [18446744073709551615u64, 9223372036854775808u64, 12345678901234567u64]; let h: u64 = 0u64; let i: i32 = 0; while (i < 3) { let u: u64 = us[i]; h = h * 31u64 + u / 7u64 + u % 7u64 + u / 10u64 + u % 10u64 + u / 100u64; i = i + 1; } return (h % 200u64) as i32; }`},
-	// Even divisors through the pre-shift, at the top of both widths, and a
-	// division and remainder by one constant sharing the quotient.
 	{"even-preshift", `function main(): i32 { let us: u64[] = [18446744073709551615u64, 18446744073709551516u64, 9223372036854775899u64, 99u64]; let vs: u32[] = [4294967295u32, 4294967282u32, 13u32]; let h: u64 = 0u64; let i: i32 = 0; while (i < 4) { let u: u64 = us[i]; h = h * 31u64 + u / 100u64 + u % 100u64 + u / 6u64 + u % 6u64; i = i + 1; } i = 0; while (i < 3) { let v: u32 = vs[i]; h = h * 31u64 + (v / 14u32 + v % 14u32) as u64; i = i + 1; } return (h % 200u64) as i32; }`},
 	{"i64-wide-reciprocal", `function main(): i32 { let ws: i64[] = [9223372036854775807i64, -9223372036854775808i64, -1234567890123i64]; let h: i64 = 0i64; let i: i32 = 0; while (i < 3) { let w: i64 = ws[i]; h = h * 31i64 + w / 1000000000000i64 + w % 1000000000000i64 + w / -7i64 + w % -7i64 + w / 10i64; i = i + 1; } if (h < 0i64) { h = 0i64 - h; } return (h % 200i64) as i32; }`},
-	// Zero and one literals, which need no arithmetic at all.
 	{"degenerate", `function main(): i32 { let xs: i32[] = [-17]; let x: i32 = xs[0]; if (x / 0 == 0 && x % 0 == -17 && x / 1 == -17 && x % 1 == 0) { return 5; } return 9; }`},
-	// The dynamic path on its dword forms: INT_MIN and -1 from arrays.
 	{"dynamic-int-min", `function main(): i32 { let xs: i32[] = [-2147483648, -1, 0, 7]; let a: i32 = xs[0]; let b: i32 = xs[1]; let z: i32 = xs[2]; let s: i32 = xs[3]; if (a / b == -2147483648 && a % b == 0 && s / z == 0 && s % z == 7 && a / s == -306783378 && a % s == -2) { return 5; } return 9; }`},
 	{"dynamic-u32-highbit", `function main(): i32 { let us: u32[] = [3000000003u32, 10u32, 0u32]; let u: u32 = us[0]; let d: u32 = us[1]; let z: u32 = us[2]; if (u / d == 300000000u32 && u % d == 3u32 && u / z == 0u32 && u % z == u) { return 5; } return 9; }`},
 }

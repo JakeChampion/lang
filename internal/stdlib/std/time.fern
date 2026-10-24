@@ -1,38 +1,9 @@
-// std/time — dates, times, instants and durations as distinct types.
-//
-// Backs the seven time types registered as built-ins:
-// `Instant`, `Date`, `Time`, `DateTime`, `Zoned`, `Span`,
-// `Duration`, plus `TimeZone`. Each is meaning-distinct
-// (docs/STDLIB-DESIGN-RESEARCH.md Rec §4):
-//
-//   Instant   — point in physical time, UTC, ns precision.
-//   Date      — civil (year, month, day); no time, no zone.
-//   Time      — civil wall-clock (h, m, s, ns); no date, no zone.
-//   DateTime  — pair of (Date, Time); no zone.
-//   Zoned     — Instant + TimeZone, fully qualified.
-//   Span      — calendar-flavoured interval (years, months, …).
-//   Duration  — absolute interval (sec + nsec).
-//
-// Conversions stay explicit:
-//   Date → Instant requires a TimeZone.
-//   Zoned → Date discards the zone.
-//   Span ↔ Duration only round-trips in the no-DST-shift case.
-//
-// Includes constructors, clock reads, arithmetic, civil-date operations,
-// RFC 3339 parsing and formatting, and calendar intervals.
-// std/tz supplies time zones and their transitions.
+// This module provides dates, times, durations, and fixed-offset time zones.
 
 import "core/int";
-// `relative_to` renders magnitudes via (i64) `.to_string()`; declare
-// std/i64 so that method registers under no-prelude.
 import "std/i64";
-// std/time dispatches string methods (.index_of) when parsing
-// ISO timestamps; declare the source module so they resolve under
-// no-prelude.
 import "std/string";
 
-// Unit conversion constants — used everywhere; pull them out
-// so callers don't repeat magic numbers.
 pub const NANOS_PER_SECOND: i32 = 1000000000;
 
 pub const NANOS_PER_MILLI: i32 = 1000000;
@@ -51,79 +22,38 @@ pub const HOURS_PER_DAY: i32 = 24;
 
 pub const DAYS_PER_WEEK: i32 = 7;
 
-// `instant_from_unix(sec)` — build an Instant from a Unix
-// epoch second count. Sub-second precision is left at zero;
-// callers needing nanoseconds use the struct literal directly.
-//
-// Negative `sec` is accepted (pre-1970 instants) and the
-// nsec stays non-negative — same shape as `clock_gettime`.
 pub function instant_from_unix(sec: i64): Instant {
   return Instant { sec: sec, nsec: 0 };
 }
 
-// `instant_now()` — wall-clock now, UTC. Reads the system
-// real-time clock through `now_unix_ms()` (which delegates
-// to host-specific syscalls: wasi:clocks/wall-clock on the
-// wasm target, Go's time.Now() under the interp). Splits
-// the result into (sec, nsec) — `nsec` only carries
-// millisecond resolution since the underlying primitive
-// caps there; future Phase 2.x can swap to a nanosecond-
-// resolution call when the backends grow it.
-//
-// NTP-adjustable: subject to backward clock jumps when the
-// host adjusts time. Use `monotonic_ns` (also in this
-// module's future surface) for benchmark / elapsed-time
-// measurement.
 pub function instant_now(): Instant {
   let ms: i64 = now_unix_ms();
   let sec: i64 = ms / (1000 as i64);
   let rem_ms: i64 = ms - sec * (1000 as i64);
-  let ns: i32 = rem_ms as i32 * 1000000;  // NANOS_PER_MILLI (see duration_millis)
+  let ns: i32 = rem_ms as i32 * 1000000;
   return Instant { sec: sec, nsec: ns };
 }
 
-// `date_make(year, month, day)` — construct a civil Date.
-// Doesn't validate that the date is real (Feb 30 builds fine);
-// validation lands with the Hinnant arithmetic in Phase 3.
 pub function date_make(year: i32, month: i32, day: i32): Date {
   return Date { year: year, month: month, day: day };
 }
 
-// `time_make(hour, minute, second)` — construct a Time at
-// second precision. Use the struct literal directly when you
-// need nanosecond precision.
 pub function time_make(hour: i32, minute: i32, second: i32): Time {
   return Time { hour: hour, minute: minute, second: second, nsec: 0 };
 }
 
-// `datetime_make(d, t)` — pair a Date with a Time, no zone.
 pub function datetime_make(d: Date, t: Time): DateTime {
   return DateTime { date: d, time: t };
 }
 
-// `timezone_utc()` — the UTC zone constant. Offset zero. A real zone,
-// with its transitions, is `std/tz`; `(z: tz.Zone).at(sec)` gives the
-// fixed offset in force at an instant as a `TimeZone`.
 pub function timezone_utc(): TimeZone {
   return TimeZone { name: "UTC", offset_seconds: 0 };
 }
 
-// `duration_seconds(s)` — absolute interval of `s` seconds.
-// Negative is allowed (start-after-end durations).
 pub function duration_seconds(s: i64): Duration {
   return Duration { sec: s, nsec: 0 };
 }
 
-// `duration_millis(ms)` — convert milliseconds to a Duration.
-// Splits whole-seconds + sub-second nsec so the storage
-// matches the (sec, nsec) shape callers see in struct fields.
-//
-// The `1000000` is `NANOS_PER_MILLI` inlined — modload's
-// flat-load path doesn't yet plumb constants across modules,
-// so references to the module-level const above resolve
-// only at the qualified-import call site, not from inside
-// the module's own bodies. Use the literal until the const
-// resolution gets fixed.
 pub function duration_millis(ms: i64): Duration {
   let s: i64 = ms / (1000 as i64);
   let rem_ms: i64 = ms - s * (1000 as i64);
@@ -131,42 +61,21 @@ pub function duration_millis(ms: i64): Duration {
   return Duration { sec: s, nsec: ns };
 }
 
-// `duration_nanos(ns)` — convert nanoseconds to a Duration, the inverse
-// of `as_nanos`.
 pub function duration_nanos(ns: i64): Duration {
   let s: i64 = ns / (1000000000 as i64);
   let rem: i64 = ns - s * (1000000000 as i64);
   return Duration { sec: s, nsec: rem as i32 };
 }
 
-// `(d: Duration) as_nanos()` — the whole interval in nanoseconds.
 pub function (d: Duration) as_nanos(): i64 {
   return d.sec * (1000000000 as i64) + d.nsec as i64;
 }
 
-// `(d: Duration) as_millis()` — the interval in whole milliseconds,
-// rounded toward zero.
 pub function (d: Duration) as_millis(): i64 {
   return d.as_nanos() / (1000000 as i64);
 }
 
-// `(d: Duration) to_string()` — the compact canonical form of a
-// duration, e.g. `"1h30m45s"`, `"500ms"`, `"-2h5m"`, `"0s"`. The largest
-// units come first and zero units are omitted (so `"1h5s"` skips the
-// zero minutes). A negative duration gets a leading `-`. Millisecond
-// resolution: the sub-millisecond part of `nsec` is dropped, and a
-// duration under 1ms renders as `"0s"`.
-//
-// Distinct from `format_duration_ms(ms: i64)`, which is the
-// space-separated `"1h 23m 45s"` shape over a millisecond count; this is
-// the sign-aware method on the Duration type itself (the Go / Rust
-// `Duration.to_string()` idiom). The split is deliberate (#5347): the
-// format helper serves callers holding a number, without std/format
-// depending on std/time, and `parse_duration_ms` reads both shapes.
 pub function (d: Duration) to_string(): string {
-  // Signed total milliseconds. `nsec` is 0..1e9 and non-negative even
-  // for a negative duration (sec carries the borrow), so the two
-  // combine directly.
   let total_ms: i64 = d.sec * (1000 as i64) + (d.nsec / 1000000) as i64;
   if (total_ms == 0 as i64) {
     return "0s";
@@ -199,9 +108,6 @@ pub function (d: Duration) to_string(): string {
   return out;
 }
 
-// `span_days(n)` — calendar-flavoured interval of n days.
-// Convenience for the common "tomorrow" / "yesterday" use
-// case (`today.add_span(span_days(1))` once Phase 3 lands).
 pub function span_days(n: i32): Span {
   return Span {
     years: 0, months: 0, weeks: 0, days: n,
@@ -209,11 +115,6 @@ pub function span_days(n: i32): Span {
   };
 }
 
-// `span_hours(n)` — calendar-flavoured interval of n hours.
-// Distinct from `duration_seconds(n * 3600)` — `span_hours(24)`
-// is "same wall-clock time tomorrow," not "exactly 86400
-// seconds later," and the two diverge across DST boundaries
-// (once TimeZone arithmetic lands).
 pub function span_hours(n: i32): Span {
   return Span {
     years: 0, months: 0, weeks: 0, days: 0,
@@ -221,21 +122,6 @@ pub function span_hours(n: i32): Span {
   };
 }
 
-// ============================================================
-// Civil-date arithmetic — Howard Hinnant's algorithms (Phase 3
-// per docs/STDLIB-DESIGN-RESEARCH.md Rec §4). Reference impl:
-// https://hinnant.github.io/date_v2.html. Days-since-epoch
-// is a signed i32 (range ±5.8M years from 1970, plenty).
-// ============================================================
-
-// `__days_from_civil(y, m, d)` — serial day number relative to
-// 1970-01-01. Assumes the input is a valid civil date — Feb 30
-// produces a nonsense result rather than trapping; callers
-// should `.is_valid()` first if they're sanitising user input.
-//
-// The era trick (groups of 400 years = 146097 days) folds
-// negative-year arithmetic into the same closed form as
-// positive — no branchy "is this year before epoch" guards.
 function __days_from_civil(y_in: i32, m: i32, d: i32): i32 {
   let y: i32 = y_in;
   if (m <= 2) {
@@ -259,8 +145,6 @@ function __days_from_civil(y_in: i32, m: i32, d: i32): i32 {
   return era * 146097 + doe - 719468;
 }
 
-// `__civil_from_days(z)` — inverse of `__days_from_civil`.
-// Returns a Date. Same era trick for the negative branch.
 function __civil_from_days(z_in: i32): Date {
   let z: i32 = z_in + 719468;
   let era: i32 = 0;
@@ -287,9 +171,6 @@ function __civil_from_days(z_in: i32): Date {
   return Date { year: y, month: m, day: d };
 }
 
-// `is_leap_year(y)` — Gregorian leap-year rule. Divisible by 4,
-// except century years (divisible by 100) which must also be
-// divisible by 400. 2000 yes, 1900 no, 2024 yes, 2100 no.
 pub function is_leap_year(y: i32): boolean {
   if (y % 4 != 0) {
     return false;
@@ -300,10 +181,6 @@ pub function is_leap_year(y: i32): boolean {
   return y % 400 == 0;
 }
 
-// `days_in_month(y, m)` — calendar days for the given month.
-// Handles February's leap-year branch. Returns 0 for an
-// out-of-range month — callers should `.is_valid()` first if
-// they care.
 pub function days_in_month(y: i32, m: i32): i32 {
   if (m == 1) {
     return 31;
@@ -347,10 +224,6 @@ pub function days_in_month(y: i32, m: i32): i32 {
   return 0;
 }
 
-// `(d).is_valid()` — does the (year, month, day) triple name
-// a real Gregorian date? Year is unbounded (negative years are
-// "BCE", which Hinnant's algorithm handles); month must be
-// 1..12; day must be 1..days_in_month(year, month).
 pub function (d: Date) is_valid(): boolean {
   if (d.month < 1) {
     return false;
@@ -364,47 +237,22 @@ pub function (d: Date) is_valid(): boolean {
   return d.day <= days_in_month(d.year, d.month);
 }
 
-// `(d).add_days(n)` — calendar-add `n` days. Negative `n` walks
-// backward. Round-trips through the serial day number so
-// month / year / leap-year boundaries handle themselves.
 pub function (d: Date) add_days(n: i32): Date {
   let z: i32 = __days_from_civil(d.year, d.month, d.day);
   return __civil_from_days(z + n);
 }
 
-// `(d).days_since(other)` — number of whole days from `other`
-// to `d`. Positive when `d` is after `other`; negative when
-// before. Subtracts serial day numbers — exact, no floating
-// point.
 pub function (d: Date) days_since(other: Date): i32 {
   let a: i32 = __days_from_civil(d.year, d.month, d.day);
   let b: i32 = __days_from_civil(other.year, other.month, other.day);
   return a - b;
 }
 
-// `(d).weekday()` — 0..6 with Sunday=0 (Hinnant convention,
-// matches `strftime` `%w`). 1970-01-01 was a Thursday so
-// `__days_from_civil` returns 0 for that date; we offset by
-// 4 to land Thursday → 4. The `((x % 7) + 7) % 7` trick
-// makes the result non-negative even when `__days_from_civil`
-// returns a negative i32 (pre-1970 dates).
 pub function (d: Date) weekday(): i32 {
   let z: i32 = __days_from_civil(d.year, d.month, d.day);
   return ((z + 4) % 7 + 7) % 7;
 }
 
-// `(d).day_of_year()` — 1..366. Jan 1 returns 1. Computed
-// from Hinnant's intra-year offset; doesn't need the era
-// machinery since the value only depends on (month, day) plus
-// the leap-year flag.
-//
-// Hinnant's frame anchors at March 1 (so months map to mp =
-// {Mar→0, Apr→1, …, Feb→11}); Jan/Feb of year Y are framed in
-// year Y-1, so their frame-doy values 307..365 (+1 in leap)
-// map to Jan-based 1..59 (+1). Convert with two cases:
-//   m ≤ 2:  Jan-based = frame_doy - 306
-//   m > 2:  Jan-based = frame_doy + 59 + (is_leap_year(y) ? 1 : 0)
-// Mar 1 is day 60 in non-leap, 61 in leap; Dec 31 is 365 / 366.
 pub function (d: Date) day_of_year(): i32 {
   let m: i32 = d.month;
   let mp: i32 = 0;
@@ -424,16 +272,6 @@ pub function (d: Date) day_of_year(): i32 {
   return doy + 59 + add_for_leap;
 }
 
-// ============================================================
-// RFC 3339 / ISO 8601 parsing + formatting — Phase 4 per
-// docs/STDLIB-DESIGN-RESEARCH.md Rec §4.
-//
-// Surface today: ISO date (YYYY-MM-DD) and UTC RFC 3339 instant
-// (YYYY-MM-DDTHH:MM:SS[.fraction]Z). DateTime + zoned-offset
-// forms (`+01:00`) land with TimeZone in Phase 5.
-// ============================================================
-
-// `__pad2(n)` — zero-pad an i32 to two digits. Assumes 0 ≤ n ≤ 99.
 function __pad2(n: i32): string {
   if (n < 10) {
     return "0" + int.int_to_string(n);
@@ -441,11 +279,6 @@ function __pad2(n: i32): string {
   return int.int_to_string(n);
 }
 
-// `__pad4(n)` — zero-pad a non-negative i32 to four digits.
-// Years past 9999 stretch beyond four; ISO 8601 allows them
-// (with a leading `+` sign on extended-year form) but Phase 4
-// emits the natural decimal representation for those — RFC
-// 3339 parsers in practice tolerate the extra digit.
 function __pad4(n: i32): string {
   if (n < 10) {
     return "000" + int.int_to_string(n);
@@ -459,10 +292,6 @@ function __pad4(n: i32): string {
   return int.int_to_string(n);
 }
 
-// `__parse_digits(s, start, end)` — parse the [start, end) slice
-// of `s` as a decimal integer. Returns -1 on any non-digit byte
-// — callers use this as a sentinel for malformed input. Doesn't
-// handle leading sign; date components are all non-negative.
 function __parse_digits(s: string, start: i32, end: i32): i32 {
   if (start >= end) {
     return -1;
@@ -480,24 +309,15 @@ function __parse_digits(s: string, start: i32, end: i32): i32 {
   return acc;
 }
 
-// `(d: Date).format_iso()` — emit `YYYY-MM-DD`. Doesn't
-// validate; callers should `.is_valid()` first if the date
-// came from arithmetic that could produce nonsense.
 pub function (d: Date) format_iso(): string {
   return __pad4(d.year) + "-" + __pad2(d.month) + "-" + __pad2(d.day);
 }
 
-// `date_parse_iso(s)` — parse `YYYY-MM-DD`. Returns None on
-// any deviation from the exact shape: wrong length, missing
-// hyphens at offsets 4 and 7, or non-digit bytes in the
-// year/month/day slices. Doesn't check that the resulting
-// date is calendar-valid (Feb 30 parses); callers use
-// `.is_valid()` afterward.
 pub function date_parse_iso(s: string): Option[Date] {
   if (s.len() != 10) {
     return None;
   }
-  if (s[4] != 45 || s[7] != 45) {  // '-' = 45
+  if (s[4] != 45 || s[7] != 45) {
     return None;
   }
   let y: i32 = __parse_digits(s, 0, 4);
@@ -509,19 +329,6 @@ pub function date_parse_iso(s: string): Option[Date] {
   return Some(Date { year: y, month: m, day: d });
 }
 
-// `(i: Instant).format_rfc3339()` — emit
-// `YYYY-MM-DDTHH:MM:SSZ` (UTC). When `i.nsec > 0`, includes a
-// fractional-seconds component `.nnnnnnnnn` (always 9 digits;
-// callers wanting trimmed trailing zeros can post-process).
-//
-// Built from the civil-date arithmetic: `sec / 86400` →
-// serial days → `__civil_from_days` → Y/M/D. Remainder gives
-// H/M/S. nsec passes through unchanged.
-//
-// Negative `i.sec` (pre-1970) works via the era trick in
-// `__civil_from_days`; the day-rem-and-sec-rem math below
-// uses floor division on negatives by adjusting when the
-// remainder would otherwise come back negative.
 pub function (i: Instant) format_rfc3339(): string {
   let sec: i64 = i.sec;
   let spd: i64 = 86400 as i64;
@@ -541,18 +348,11 @@ pub function (i: Instant) format_rfc3339(): string {
   if (i.nsec == 0) {
     return head + "Z";
   }
-  // 9-digit fractional. Build manually to preserve leading
-  // zeros — int_to_string(123) is "123", which would
-  // misrepresent ".000000123" as ".123".
   let ns: i32 = i.nsec;
   let div: i32 = 100000000;
   let frac: string = "";
   while (div >= 1) {
     let digit: i32 = ns / div - ns / (div * 10) * 10;
-    // Bytes 48..57 = '0'..'9'. We append each digit as a
-    // 1-char string via index → __char_to_string trick:
-    // emitting the literal digit chars via an if/else-if chain
-    // is the cleanest path that doesn't need a char helper.
     if (digit == 0) {
       frac = frac + "0";
     } else if (digit == 1) {
@@ -583,14 +383,6 @@ pub function (i: Instant) format_rfc3339(): string {
   return head + "." + frac + "Z";
 }
 
-// `__rfc3339_fields_valid(y, mo, d, h, mn, sc)` — does the digit-parsed
-// date-time name a real instant? RFC 3339 §5.6 constrains every field
-// (`date-mday` is "01-28, 01-29, 01-30, 01-31 based on month/year"), so
-// `2023-02-29` and hour `24` are syntax errors there, not values to
-// normalise. `:60` is rejected too: the grammar admits it for a leap
-// second, but a Unix `Instant` counts seconds without them, so the only
-// thing this parser could do with one is silently mean 00:00:00 the
-// next day.
 function __rfc3339_fields_valid(y: i32, mo: i32, d: i32, h: i32, mn: i32, sc: i32): boolean {
   if (!Date { year: y, month: mo, day: d }.is_valid()) {
     return false;
@@ -601,34 +393,18 @@ function __rfc3339_fields_valid(y: i32, mo: i32, d: i32, h: i32, mn: i32, sc: i3
   return true;
 }
 
-// `instant_parse_rfc3339(s)` — parse the UTC form
-// `YYYY-MM-DDTHH:MM:SS[.fraction]Z`. Returns None on any
-// deviation, in shape OR in value: a field outside its RFC 3339
-// range is rejected, not normalised, so `2023-02-29`, hour `24`
-// and the leap second `:60` are all None rather than the
-// following midnight. (`date_parse_iso` deliberately keeps the
-// opposite contract — it checks shape only and leaves
-// `.is_valid()` to the caller.)
-//
-// Doesn't accept the lowercase `t` / `z` variants (RFC 3339
-// §5.6 allows them, but the canonical form dominates in
-// practice and accepting both invites case-mismatch bugs in callers
-// comparing strings). Zone offsets `+HH:MM` / `-HH:MM` belong to
-// `instant_zoned_parse_rfc3339`.
 pub function instant_parse_rfc3339(s: string): Option[Instant] {
   let n: i32 = s.len();
-  // 20 = "YYYY-MM-DDTHH:MM:SSZ" minimum. Beyond that there's
-  // an optional ".fraction" before the trailing Z.
   if (n < 20) {
     return None;
   }
-  if (s[4] != 45 || s[7] != 45) {  // hyphens
+  if (s[4] != 45 || s[7] != 45) {
     return None;
   }
-  if (s[10] != 84) {  // 'T' = 84
+  if (s[10] != 84) {
     return None;
   }
-  if (s[13] != 58 || s[16] != 58) {  // colons
+  if (s[13] != 58 || s[16] != 58) {
     return None;
   }
   let y: i32 = __parse_digits(s, 0, 4);
@@ -643,14 +419,12 @@ pub function instant_parse_rfc3339(s: string): Option[Instant] {
   if (!__rfc3339_fields_valid(y, mo, d, h, mn, sc)) {
     return None;
   }
-  // Fraction (optional) + trailing Z.
   let nsec: i32 = 0;
-  if (s[19] == 46) {  // '.' = 46
-    // Find Z; everything between '.' and 'Z' is digits.
+  if (s[19] == 46) {
     let z_idx: i32 = -1;
     let i: i32 = 20;
     while (i < n) {
-      if (s[i] == 90) {  // 'Z' = 90
+      if (s[i] == 90) {
         z_idx = i;
         i = n;
       } else {
@@ -660,17 +434,16 @@ pub function instant_parse_rfc3339(s: string): Option[Instant] {
     if (z_idx < 0) {
       return None;
     }
-    if (z_idx == 20) {  // empty fraction
+    if (z_idx == 20) {
       return None;
     }
-    if (z_idx - 20 > 9) {  // too many digits (>nsec)
+    if (z_idx - 20 > 9) {
       return None;
     }
     let frac: i32 = __parse_digits(s, 20, z_idx);
     if (frac < 0) {
       return None;
     }
-    // Pad to 9 digits: each missing digit multiplies by 10.
     let pad: i32 = 9 - (z_idx - 20);
     while (pad > 0) {
       frac = frac * 10;
@@ -678,10 +451,8 @@ pub function instant_parse_rfc3339(s: string): Option[Instant] {
     }
     nsec = frac;
   } else if (s[19] == 90) {} else {
-    // Bare Z directly after seconds; nsec stays 0.
     return None;
   }
-  // Compose Instant: seconds = days_from_civil(y,m,d)*86400 + h*3600 + mn*60 + sc.
   let days: i32 = __days_from_civil(y, mo, d);
   let spd: i64 = 86400 as i64;
   let sec: i64 = days as i64 * spd
@@ -689,19 +460,6 @@ pub function instant_parse_rfc3339(s: string): Option[Instant] {
   return Some(Instant { sec: sec, nsec: nsec });
 }
 
-// ============================================================
-// HTTP-date (RFC 9110 §5.6.7 IMF-fixdate) + weekday/month name
-// tables. IMF-fixdate is the format HTTP senders MUST generate
-// for `Date:` / `Expires:` / `Last-Modified:` and recipients
-// parse from `If-Modified-Since` — a fixed-width, always-GMT
-// stamp: `Sun, 06 Nov 1994 08:49:37 GMT`. Emitting and parsing
-// it is what lets an edge handler answer conditional requests and
-// set cache headers, the main use case this module was built
-// toward (#4388 item 5).
-// ============================================================
-
-// `__weekday_short(n)` — three-letter English weekday for a
-// `weekday()` value (0=Sun … 6=Sat). Out of range → "".
 function __weekday_short(n: i32): string {
   if (n == 0) {
     return "Sun";
@@ -727,8 +485,6 @@ function __weekday_short(n: i32): string {
   return "";
 }
 
-// `__month_short(m)` — three-letter English month name for a
-// 1..12 month number. Out of range → "".
 function __month_short(m: i32): string {
   if (m == 1) {
     return "Jan";
@@ -769,8 +525,6 @@ function __month_short(m: i32): string {
   return "";
 }
 
-// `month_name(m)` — full English month name for a 1..12 month
-// number (`month_name(11)` → "November"). Out of range → "".
 pub function month_name(m: i32): string {
   if (m == 1) {
     return "January";
@@ -811,8 +565,6 @@ pub function month_name(m: i32): string {
   return "";
 }
 
-// `(d).weekday_name()` — full English weekday name for the date
-// ("Monday"). Built on `weekday()` (0=Sun … 6=Sat).
 pub function (d: Date) weekday_name(): string {
   let n: i32 = d.weekday();
   if (n == 0) {
@@ -836,11 +588,6 @@ pub function (d: Date) weekday_name(): string {
   return "Saturday";
 }
 
-// `(i).format_http_date()` — emit the RFC 9110 IMF-fixdate for
-// this instant, in GMT: `Sun, 06 Nov 1994 08:49:37 GMT`. Suitable
-// verbatim for an HTTP `Date:` / `Expires:` / `Last-Modified:`
-// value. Sub-second precision is dropped (HTTP-date is
-// second-resolution). Decomposition mirrors `format_rfc3339`.
 pub function (i: Instant) format_http_date(): string {
   let sec: i64 = i.sec;
   let spd: i64 = 86400 as i64;
@@ -861,15 +608,10 @@ pub function (i: Instant) format_http_date(): string {
     + __pad2(h) + ":" + __pad2(mn) + ":" + __pad2(s) + " GMT";
 }
 
-// `__month_from_short(s, start)` — the 1..12 month number for the
-// three-letter English month name at `[start, start+3)`, or -1 if
-// it isn't one. Case-sensitive (IMF-fixdate is `Nov`, not `NOV`).
 function __month_from_short(s: string, start: i32): i32 {
   if (start + 3 > s.len()) {
     return -1;
   }
-  // slice_snap: a multibyte sequence in the month field yields a
-  // snapped (shorter) slice that matches no month name → -1.
   let m: str = s.slice_snap(start, start + 3);
   if (m == "Jan") {
     return 1;
@@ -910,14 +652,6 @@ function __month_from_short(s: string, start: i32): i32 {
   return -1;
 }
 
-// `http_date_parse(s)` — an HTTP-date (RFC 9110 §5.6.7) as an
-// Instant: the IMF-fixdate senders generate
-// (`Sun, 06 Nov 1994 08:49:37 GMT`) or the obsolete asctime form
-// (`Sun Nov  6 08:49:37 1994`); None for anything else. The weekday
-// name is not checked against the date, and a field out of range (an
-// April 31st, a 25th hour) is refused. The third form, RFC 850's,
-// carries a two-digit year that is read against the current time, so
-// only `http_date_parse_at` takes it.
 pub function http_date_parse(s: string): Option[Instant] {
   if (s.len() == 29) {
     return __imf_fixdate(s);
@@ -928,10 +662,6 @@ pub function http_date_parse(s: string): Option[Instant] {
   return None;
 }
 
-// `http_date_parse_at(s, now)` — as `http_date_parse`, and the RFC 850
-// form (`Sunday, 06-Nov-94 08:49:37 GMT`) as well: the three a recipient
-// must accept. A two-digit year is the latest year ending in those digits
-// that is not more than 50 years after `now`'s year.
 pub function http_date_parse_at(s: string, now: Instant): Option[Instant] {
   match (http_date_parse(s)) {
     Some(i) => {
@@ -942,9 +672,6 @@ pub function http_date_parse_at(s: string, now: Instant): Option[Instant] {
   return __rfc850_date(s, now);
 }
 
-// `__http_instant(year, mo, day, h, mn, sc)` — the instant of a parsed
-// HTTP-date's fields, None when any is missing (negative) or out of range;
-// a 60th second is a leap second's.
 function __http_instant(year: i32, mo: i32, day: i32, h: i32, mn: i32, sc: i32): Option[Instant] {
   if (year < 0 || mo < 1 || day < 1 || day > days_in_month(year, mo) || !__time_of_day_ok(h, mn, sc)) {
     return None;
@@ -954,8 +681,6 @@ function __http_instant(year: i32, mo: i32, day: i32, h: i32, mn: i32, sc: i32):
   return Some(Instant { sec: sec, nsec: 0 });
 }
 
-// `__asctime_date(s)` — `Sun Nov  6 08:49:37 1994`, its day either two
-// digits or a space and one.
 function __asctime_date(s: string): Option[Instant] {
   if (s[3] != 32 || s[7] != 32 || s[10] != 32 || s[19] != 32 || s[13] != 58 || s[16] != 58) {
     return None;
@@ -967,8 +692,6 @@ function __asctime_date(s: string): Option[Instant] {
   return __http_instant(__parse_digits(s, 20, 24), __month_from_short(s, 4), __parse_digits(s, day_from, 10), __parse_digits(s, 11, 13), __parse_digits(s, 14, 16), __parse_digits(s, 17, 19));
 }
 
-// `__rfc850_date(s, now)` — `Sunday, 06-Nov-94 08:49:37 GMT`: a weekday
-// name, then 24 bytes from its comma.
 function __rfc850_date(s: string, now: Instant): Option[Instant] {
   let Some(c) = s.index_of(",") else {
     return None;
@@ -990,8 +713,6 @@ function __rfc850_punctuation(s: string, c: i32): boolean {
   return s[c + 14] == 58 && s[c + 17] == 58 && s[c + 20] == 32 && s.slice_snap(c + 21, c + 24) == "GMT";
 }
 
-// `__rfc850_year(yy, now)` — the latest year ending in `yy` that is not
-// more than 50 years after `now`'s (RFC 9110 §5.6.7), judged by year.
 function __rfc850_year(yy: i32, now: Instant): i32 {
   let days: i64 = now.sec / (86400 as i64);
   if (now.sec < 0 as i64 && days * (86400 as i64) != now.sec) {
@@ -1012,7 +733,6 @@ function __time_of_day_ok(h: i32, mn: i32, sc: i32): boolean {
   return h >= 0 && h <= 23 && mn >= 0 && mn <= 59 && sc >= 0 && sc <= 60;
 }
 
-// `__imf_fixdate(s)` — `Sun, 06 Nov 1994 08:49:37 GMT`, 29 bytes.
 function __imf_fixdate(s: string): Option[Instant] {
   if (!__imf_punctuation(s)) {
     return None;
@@ -1020,8 +740,6 @@ function __imf_fixdate(s: string): Option[Instant] {
   return __http_instant(__parse_digits(s, 12, 16), __month_from_short(s, 8), __parse_digits(s, 5, 7), __parse_digits(s, 17, 19), __parse_digits(s, 20, 22), __parse_digits(s, 23, 25));
 }
 
-// `__imf_punctuation(s)` — `Xxx, 00 Xxx 0000 00:00:00 GMT`'s fixed
-// bytes, the zone `GMT` being the only one it permits.
 function __imf_punctuation(s: string): boolean {
   if (s[3] != 44 || s[4] != 32 || s[7] != 32 || s[11] != 32 || s[16] != 32 || s[25] != 32) {
     return false;
@@ -1029,22 +747,6 @@ function __imf_punctuation(s: string): boolean {
   return s[19] == 58 && s[22] == 58 && s.slice_snap(26, 29) == "GMT";
 }
 
-// ============================================================
-// TimeZone + Zoned — Phase 5 per docs/STDLIB-DESIGN-RESEARCH.md
-// Rec §4. Fixed-offset zones; IANA zones with their DST
-// transitions are std/tz's.
-// ============================================================
-
-// `timezone_fixed_offset(offset_seconds)` — construct a fixed-
-// offset TimeZone (no DST). Common use: `±09:00` (Japan),
-// `±05:00` (Eastern US in winter), `±00:00` (UTC alias).
-// The name field carries the canonical `UTC+HH:MM` /
-// `UTC-HH:MM` representation for display.
-//
-// Range: ±14:00:00 covers every real fixed offset (the IANA
-// extreme is +14:00 Kiribati / -12:00 Baker Island). Out-of-
-// range offsets get the same canonical-name treatment; we
-// don't reject them here.
 pub function timezone_fixed_offset(offset_seconds: i32): TimeZone {
   let abs_sec: i32 = offset_seconds;
   let sign: string = "+";
@@ -1058,21 +760,12 @@ pub function timezone_fixed_offset(offset_seconds: i32): TimeZone {
   return TimeZone { name: name, offset_seconds: offset_seconds };
 }
 
-// `(i: Instant).in_zone(z)` — pair this UTC instant with a
-// zone. Doesn't change the absolute time; the Zoned shows
-// the *wall-clock* time at the zone when subsequently
-// formatted or decomposed.
 pub function (i: Instant) in_zone(z: TimeZone): Zoned {
   return Zoned { instant: i, zone: z };
 }
 
-// `(z: Zoned).to_datetime()` — split into the wall-clock
-// `DateTime` at the zone. Drops the zone — callers needing
-// the round-trip should hold onto the Zoned.
 pub function (z: Zoned) to_datetime(): DateTime {
   let spd: i64 = 86400 as i64;
-  // Wall-clock seconds = UTC + offset (offset is positive
-  // east of UTC, so east-of-UTC zones get later wall-clock).
   let local_sec: i64 = z.instant.sec + z.zone.offset_seconds as i64;
   let days: i64 = local_sec / spd;
   let sec_in_day: i64 = local_sec - days * spd;
@@ -1092,23 +785,14 @@ pub function (z: Zoned) to_datetime(): DateTime {
   };
 }
 
-// `(z: Zoned).format_rfc3339()` — emit
-// `YYYY-MM-DDTHH:MM:SS[.fraction]±HH:MM`. UTC zones (offset
-// zero) emit `Z` instead of `+00:00`, matching the canonical
-// form. Other zones emit the signed offset; mirrors the
-// shape `instant_zoned_parse_rfc3339` round-trips against.
 pub function (z: Zoned) format_rfc3339(): string {
   let dt: DateTime = z.to_datetime();
   let head: string = dt.date.format_iso() + "T"
     + __pad2(dt.time.hour) + ":" + __pad2(dt.time.minute) + ":" + __pad2(dt.time.second);
   let tail: str = "";
   if (dt.time.nsec != 0) {
-    // Reuse the Instant fractional emitter logic via a
-    // surrogate Instant. Cheap — no syscalls.
     let tmp: Instant = Instant { sec: 0 as i64, nsec: dt.time.nsec };
     let s: string = tmp.format_rfc3339();
-    // tmp's format is "1970-01-01T00:00:00.<frac>Z" —
-    // splice the fractional segment (between '.' and 'Z').
     if let Some(dot) = s.index_of(".") {
       if let Some(z_idx) = s.index_of("Z") {
         tail = slice_unchecked(s, dot, z_idx);
@@ -1129,17 +813,6 @@ pub function (z: Zoned) format_rfc3339(): string {
   return head + tail + sign + __pad2(oh) + ":" + __pad2(om);
 }
 
-// `instant_zoned_parse_rfc3339(s)` — parse the full RFC 3339
-// surface: `YYYY-MM-DDTHH:MM:SS[.fraction](Z|±HH:MM)`.
-// Returns the parsed Zoned (instant in UTC; zone holds the
-// original offset). `Z` is a fixed-offset alias for `+00:00`
-// — the returned Zoned's zone.name is `"UTC"` for that case,
-// or `"UTC±HH:MM"` for explicit offsets.
-//
-// Lowercase `t`/`z` still rejected, and out-of-range fields
-// rejected rather than normalised — same strictness as
-// `instant_parse_rfc3339`, extended to the offset (`±HH:MM` with
-// HH <= 23 and MM <= 59).
 pub function instant_zoned_parse_rfc3339(s: string): Option[Zoned] {
   let n: i32 = s.len();
   if (n < 20) {
@@ -1166,16 +839,15 @@ pub function instant_zoned_parse_rfc3339(s: string): Option[Zoned] {
   if (!__rfc3339_fields_valid(y, mo, d, h, mn, sc)) {
     return None;
   }
-  // After seconds: optional `.fraction`, then `Z` or `±HH:MM`.
   let pos: i32 = 19;
   let nsec: i32 = 0;
-  if (s[pos] == 46) {  // '.'
+  if (s[pos] == 46) {
     let frac_start: i32 = pos + 1;
     let frac_end: i32 = -1;
     let i: i32 = frac_start;
     while (i < n) {
       let b: i32 = s[i] as i32;
-      if (b == 90 || b == 43 || b == 45) {  // Z, +, -
+      if (b == 90 || b == 43 || b == 45) {
         frac_end = i;
         i = n;
       } else {
@@ -1203,11 +875,9 @@ pub function instant_zoned_parse_rfc3339(s: string): Option[Zoned] {
     nsec = frac;
     pos = frac_end;
   }
-  // Now pos points at Z / + / -. Need at least 1 more byte
-  // for Z, or 6 more for ±HH:MM.
   let offset_seconds: i32 = 0;
   let zone_name: string = "";
-  if (s[pos] == 90) {  // Z
+  if (s[pos] == 90) {
     if (pos + 1 != n) {
       return None;
     }
@@ -1216,7 +886,7 @@ pub function instant_zoned_parse_rfc3339(s: string): Option[Zoned] {
     if (pos + 6 != n) {
       return None;
     }
-    if (s[pos + 3] != 58) {  // colon
+    if (s[pos + 3] != 58) {
       return None;
     }
     let oh: i32 = __parse_digits(s, pos + 1, pos + 3);
@@ -1239,8 +909,6 @@ pub function instant_zoned_parse_rfc3339(s: string): Option[Zoned] {
   } else {
     return None;
   }
-  // Compose: local sec from y/m/d/h/mn/sc, then subtract
-  // offset to get UTC sec.
   let days: i32 = __days_from_civil(y, mo, d);
   let spd: i64 = 86400 as i64;
   let local_sec: i64 = days as i64 * spd
@@ -1252,22 +920,6 @@ pub function instant_zoned_parse_rfc3339(s: string): Option[Zoned] {
   });
 }
 
-// ============================================================
-// Span + Duration arithmetic — Phase 6 per docs/STDLIB-DESIGN-
-// RESEARCH.md Rec §4. Span carries calendar fields (years,
-// months, weeks, days); Duration carries absolute fields
-// (sec, nsec). Adding a Span to a Date snaps to month-end when
-// the day overflows ("Jan 31 + 1 month = Feb 28/29"). Adding
-// a Duration to an Instant is straight sec/nsec arithmetic.
-//
-// The two fall back to the same value in the no-calendar-edge
-// case (`span_days(1)` and `duration_seconds(86400)` both move
-// you 24 hours forward when no DST / month boundary
-// intervenes), but they're distinct types so the calendar /
-// absolute intent stays visible at the call site.
-// ============================================================
-
-// Span constructors for seconds, minutes, weeks, months, and years.
 pub function span_seconds(n: i32): Span {
   return Span {
     years: 0, months: 0, weeks: 0, days: 0,
@@ -1303,42 +955,24 @@ pub function span_years(n: i32): Span {
   };
 }
 
-// `(d: Date).add_span(s)` — calendar-add. Years and months
-// shift the year/month fields with month-overflow rollover,
-// then the day clamps to `days_in_month(new_year, new_month)`
-// to handle "Jan 31 + 1 month = Feb 28/29" and similar
-// month-end-clamping cases. Weeks + days add as serial-day-
-// number offsets (no calendar clamping; March 30 + 7 days =
-// April 6).
-//
-// Time fields (hours/minutes/seconds/nanos) on a `Date` are
-// ignored — Date has no time component. Use the Phase 6
-// Instant.add_duration path for sub-day shifts.
 pub function (d: Date) add_span(s: Span): Date {
-  // Step 1: total months (years*12 + months) added to
-  // (year*12 + month-1) in serial-month form.
   let serial_month: i32 = d.year * 12 + (d.month - 1) + s.years * 12 + s.months;
   let new_year: i32 = 0;
   let new_month_zero: i32 = 0;
-  // Floor division on negatives: same era trick as
-  // __days_from_civil — adjust before the divide.
   if (serial_month >= 0) {
     new_year = serial_month / 12;
     new_month_zero = serial_month - new_year * 12;
   } else {
-    // serial_month is negative; convert to floor-div.
     new_year = (serial_month - 11) / 12;
     new_month_zero = serial_month - new_year * 12;
   }
   let new_month: i32 = new_month_zero + 1;
-  // Step 2: clamp day to the new month's length.
   let max_day: i32 = days_in_month(new_year, new_month);
   let clamped_day: i32 = d.day;
   if (clamped_day > max_day) {
     clamped_day = max_day;
   }
   let anchor: Date = Date { year: new_year, month: new_month, day: clamped_day };
-  // Step 3: add weeks + days as straight serial-day offset.
   let total_days: i32 = s.weeks * 7 + s.days;
   if (total_days == 0) {
     return anchor;
@@ -1346,9 +980,6 @@ pub function (d: Date) add_span(s: Span): Date {
   return anchor.add_days(total_days);
 }
 
-// `(i: Instant).add_duration(d)` — absolute-add. Sums the
-// (sec, nsec) pairs with nsec-overflow carry into sec. Negative
-// durations (`Duration { sec: -10, nsec: 0 }`) walk backward.
 pub function (i: Instant) add_duration(d: Duration): Instant {
   let sec: i64 = i.sec + d.sec;
   let nsec: i32 = i.nsec + d.nsec;
@@ -1363,11 +994,6 @@ pub function (i: Instant) add_duration(d: Duration): Instant {
   return Instant { sec: sec, nsec: nsec };
 }
 
-// `(i: Instant).duration_since(other)` — absolute interval
-// between two instants. Returns `i - other`. Positive when `i`
-// is after `other`; negative otherwise. The nsec field is
-// kept non-negative by borrow / carry, even for negative
-// total durations.
 pub function (i: Instant) duration_since(other: Instant): Duration {
   let sec: i64 = i.sec - other.sec;
   let nsec: i32 = i.nsec - other.nsec;
@@ -1382,19 +1008,11 @@ pub function (i: Instant) duration_since(other: Instant): Duration {
   return Duration { sec: sec, nsec: nsec };
 }
 
-// `(d: Date).days_until(other)` — days from `d` to `other`.
-// The Span counterpart to `days_since`; the returned Span
-// carries the result in the `days` field with all other
-// fields zero. Year/month decomposition is a separate
-// follow-up (it's ambiguous — "1 month minus 3 days" could
-// represent the same 28-day delta two ways).
 pub function (d: Date) days_until(other: Date): Span {
   let delta: i32 = other.days_since(d);
   return span_days(delta);
 }
 
-// __rel_unit(n, unit) — "<n> <unit>", pluralising the unit noun
-// unless n is exactly 1 (e.g. "1 hour", "3 hours", "0 seconds").
 function __rel_unit(n: i64, unit: string): string {
   let s: string = n.to_string() + " " + unit;
   if (n != 1 as i64) {
@@ -1403,12 +1021,6 @@ function __rel_unit(n: i64, unit: string): string {
   return s;
 }
 
-// __rel_phrase(secs) — bare magnitude phrase for a non-negative
-// second count, picking the largest unit that fits: seconds →
-// minutes → hours → days → months (≈30 days) → years (365 days).
-// Approximate calendar units (no month-length or leap handling) —
-// good enough for the "X ago" / "in X" humanised shape, not for
-// exact arithmetic (use Span / Duration for that).
 function __rel_phrase(secs: i64): string {
   if (secs < 60 as i64) {
     return __rel_unit(secs, "second");
@@ -1433,13 +1045,6 @@ function __rel_phrase(secs: i64): string {
   return __rel_unit(years, "year");
 }
 
-// `(i: Instant).relative_to(now)` — humanised relative time, the
-// `fromNow` shape: describe `i` as seen from `now`. Past instants
-// read "5 minutes ago", future ones "in 2 days", and anything
-// within 5 seconds either way is "just now". Only the whole-second
-// delta matters (sub-second nsec is ignored). Units are coarse
-// approximations (month ≈ 30 days, year = 365 days) — for exact
-// intervals use `duration_since` / Span arithmetic instead.
 pub function (i: Instant) relative_to(now: Instant): string {
   let raw: i64 = i.sec - now.sec;
   let mag: i64 = raw;

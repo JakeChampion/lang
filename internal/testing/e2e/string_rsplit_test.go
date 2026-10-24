@@ -1,11 +1,5 @@
 package e2e
 
-// Differential coverage for std/string `rsplit` — `split` with the pieces in
-// reverse order, as if scanning from the end (`"a.b.c".rsplit(".")` is
-// `["c","b","a"]`). Checks the ordinary case, no-separator (whole string as
-// one piece), empty input, and an empty middle piece. Returns 42 iff every
-// check holds across interp / x86-64 / wasm / arm64.
-
 import "testing"
 
 const stringRsplitProg = `

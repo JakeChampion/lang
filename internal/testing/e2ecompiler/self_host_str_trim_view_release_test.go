@@ -10,23 +10,6 @@ import (
 	"testing"
 )
 
-// `let t: string = base.trim()` releases its box on every backend.
-//
-// `asmcore.rt_src_str_trim` returns `s[start:end]` — always a slice, never the
-// receiver — so the box is new on every call and nobody else names it. Only the
-// bytes belong to the receiver. A leak is 24 bytes per round on the register
-// backends: exactly one view box.
-//
-// The backends release it differently. On the register backends the box
-// carries the immortal rc the slice op stamps, so `__fern_str_view_free`
-// returns the 24 bytes and leaves the data alone; on wasm the slice COPIES, so
-// the same helper takes `__fern_str_free`'s path and frees box and data
-// together.
-//
-// Only a `.trim()` on a string receiver qualifies: a user-declared `.trim()` on
-// another type may return an alias of a field the receiver still owns. That
-// shape is the last case below.
-
 const strTrimPrelude = strProbeHelpers + `function w(pre: string): string { return pre + "   -a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789   "; }
 `
 
@@ -55,9 +38,6 @@ var strTrimHeapCases = []struct {
 }{
 	{"str-trim-view-released", `    let t: string = base.trim();
     return t.len() % 251;`},
-	// A trim OF a trim: a view over a view on the register backends, so the
-	// second box's data pointer is inside the first box's source. Both are
-	// released, and neither release may touch the bytes.
 	{"str-trim-of-trim-released", `    let t: string = base.trim();
     let u: string = t.trim();
     return (t.len() + u.len()) % 251;`},
@@ -67,10 +47,6 @@ var strTrimFaultCases = []struct {
 	name string
 	src  string
 }{
-	// LIVENESS: the receiver AND both trim results are read after decoy
-	// allocations that would be handed a freed block if a release landed early
-	// or freed the wrong thing. `base.len() == t.len() + 3` pins that the bytes
-	// behind the view are intact, not merely readable.
 	{"str-trim-source-and-result-live", strTrimPrelude + `function round(pre: string): i32 {
     let base: string = w(pre);
     let t: string = base.trim();
@@ -89,8 +65,6 @@ var strTrimFaultCases = []struct {
     return 3;
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
-	// ESCAPE: the trim result is returned, so the credit is withheld and the
-	// caller's read has to find both the box and the bytes.
 	{"str-trim-escapes-return", strTrimPrelude + `function trimmed(pre: string): string { let base: string = w(pre); let t: string = base.trim(); return t; }
 function round(pre: string): i32 {
     let t: string = trimmed(pre);
@@ -100,9 +74,6 @@ function round(pre: string): i32 {
     return t.len() % 251;
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; let want: i32 = round(pre); while (i < 2000) { if (round(pre) != want) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
-	// A USER `.trim()` whose result ALIASES a field the receiver still owns.
-	// The name matches the builtin but the receiver type does not, so it must
-	// not get the builtin's treatment: keep's fields stay readable.
 	{"str-trim-user-method-not-credited", strTrimPrelude + `struct Holder { name: string, tag: string }
 function (h: Holder) trim(): string { return h.name; }
 function trimmed(h: Holder): i32 { let t: string = h.trim(); return t.len() % 251; }
@@ -135,7 +106,6 @@ func strTrimSources() []struct{ name, src string } {
 	return out
 }
 
-// TestSelfHostStrTrimViewReleaseIRX86_64 is the x86-64 leg.
 func TestSelfHostStrTrimViewReleaseIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -163,8 +133,6 @@ func TestSelfHostStrTrimViewReleaseIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrTrimViewReleaseIRArm64 is the arm64 leg — the other backend
-// whose trim yields a view rather than a copy.
 func TestSelfHostStrTrimViewReleaseIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -188,8 +156,6 @@ func TestSelfHostStrTrimViewReleaseIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrTrimViewReleaseWasmIR is the wasm leg, where the same flag
-// selects the copy-freeing path instead.
 func TestSelfHostStrTrimViewReleaseWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping trim view release wasm IR e2e")

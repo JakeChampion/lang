@@ -13,24 +13,6 @@ func init() {
 	registerCorpus("stat", statCases)
 }
 
-// statTree builds the one tree every case reads and hands back its path.
-//
-// ONE tree, not one per side, and that is what makes the corpus stable at
-// all: almost everything stat prints is the machine's answer rather than
-// the utility's — an inode number, a device id, an allocated block count,
-// three timestamps — so the only way two implementations can be compared
-// on those fields is to point them at the same inode. Nothing in the
-// corpus writes, and stat(2) does not move an atime, so the record both
-// sides read is the same record.
-//
-// What is NOT stable even then is the file SYSTEM's free counts. The two
-// sides run seconds apart on a shared machine, and `stat -f -c '%f'` moved
-// by tens of thousands of blocks between consecutive probe runs here. No
-// case below ever renders one: the `-f` cases select the fields that do
-// not move — the total block and inode counts, the block size, the name
-// length — and `%a` / `%d` / `%f` appear only as the byte a directive
-// under `H` hands back unanswered (`[%Ha]` is `?a`), where the count is
-// not reached at all.
 func statTree(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -41,10 +23,6 @@ func statTree(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	// Go's FileMode does not spell the three special bits the way chmod(1)
-	// does — 0o4000 in a FileMode is not ModeSetuid and is silently dropped
-	// — so every mode here is written with the constants and the corpus
-	// gets the file it asked for.
 	mkdir := func(path string, mode os.FileMode) {
 		t.Helper()
 		if err := os.Mkdir(path, 0o755); err != nil {
@@ -82,9 +60,6 @@ func statTree(t *testing.T) string {
 	}
 	seedFifo(t, j("fifo"))
 
-	// The permission alphabet %A and %a have to render: the three special
-	// bits with and without the execute bit under them, an empty mode and
-	// a full one.
 	write(j("setuid"), 0)
 	write(j("setgid"), 0)
 	write(j("nox-setuid"), 0)
@@ -102,13 +77,6 @@ func statTree(t *testing.T) string {
 	chmod(j("allperm"), 0o777)
 	chmod(j("setuid-setgid-sticky"), os.ModeSetuid|os.ModeSetgid|os.ModeSticky|0o707)
 
-	// Pinned timestamps, so the cases that print a time exactly are
-	// answering a date this corpus chose rather than whenever the suite
-	// happened to run. The set is what the renderer has to get right: the
-	// epoch itself, a whole second with no fraction, a fraction, and two
-	// times BEFORE the epoch — one whole, one with a remainder, which is
-	// where %.3Y has to carry the borrow (-1.5 seconds is -0.500, not
-	// -1.500).
 	stamp := func(path string, sec int64, nsec int64) {
 		t.Helper()
 		write(path, 0)
@@ -124,8 +92,6 @@ func statTree(t *testing.T) string {
 	stamp(j("t-neg"), -315521755, 0)
 	stamp(j("t-neg-frac"), -315521756, 500000000)
 	stamp(j("t-leap"), 1709164800, 999999999)
-	// atime and mtime differ from each other and from ctime, so %x / %y /
-	// %z cannot pass by printing one field three times.
 	if err := os.Chtimes(j("t-split"), time.Unix(1000000000, 111111111), time.Unix(2000000000, 222222222)); err != nil {
 		write(j("t-split"), 0)
 		if err := os.Chtimes(j("t-split"), time.Unix(1000000000, 111111111), time.Unix(2000000000, 222222222)); err != nil {
@@ -133,17 +99,11 @@ func statTree(t *testing.T) string {
 		}
 	}
 
-	// Names a diagnostic and %N have to quote: a space, an apostrophe, a
-	// double quote, a tab, a backslash, and bytes that are not UTF-8.
 	write(j("sp ace"), 1)
 	write(j("quo'te"), 1)
 	write(j("dq\"x"), 1)
 	write(j("tab\tx"), 1)
 	write(j("back\\x"), 1)
-	// The two names that are not valid UTF-8 exist only where the filesystem
-	// holds one — APFS refuses them with EILSEQ. Built conditionally rather
-	// than fataling, so the other ninety stat cases still run; the cases that
-	// name them are omitted below by the same predicate.
 	if rawByteNamesHeld(t) {
 		write(j("weird\xffname"), 1)
 	}
@@ -151,11 +111,6 @@ func statTree(t *testing.T) string {
 	if rawByteNamesHeld(t) {
 		link("weird\xffname", j("weird\xfelink"))
 	}
-	// The rest of what tells the ten QUOTING_STYLE styles apart: a colon
-	// (never special), a lone brace (special) against one inside a name
-	// (not), an apostrophe beside a byte that is only safe in double
-	// quotes, `=`, and the control bytes the `shell` style leaves bare
-	// against the ones it quotes.
 	write(j("col:on"), 1)
 	write(j("{"), 1)
 	write(j("a{b}"), 1)
@@ -168,9 +123,6 @@ func statTree(t *testing.T) string {
 	write(j("bs\\dq\""), 1)
 	link("quo'te@", j("link'to"))
 
-	// A symlink's first readlink moves its atime under relatime, and stat
-	// reads the target of every link it reports on. Read each one here, so
-	// the reference does not change what the second run sees.
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -185,23 +137,6 @@ func statTree(t *testing.T) string {
 	return dir
 }
 
-// statCases is stat(1)'s corpus.
-//
-// The utility is a format ENGINE with two alphabets, so the corpus is
-// mostly formats: every directive of each mode, then the flag / width /
-// precision grid over one directive of each of the three kinds (string,
-// unsigned, signed-with-a-fraction), then the scanner's own edges — an
-// unknown conversion, which prints `?` and consumes its byte, against an
-// unknown conversion UNDER `H` or `L`, which prints `?` and gives the byte
-// back, against `%%` carrying a modifier, which is fatal.
-//
-// %C has its own test (stat_context_test.go), because the reference
-// the corpus runs is built without libselinux.
-// appendRawStatNames adds the two fixture names that are not valid UTF-8, on a
-// filesystem that holds them. Where it does not, the names were never created
-// (see statTree) and the cases quoting them would be stat'ing something absent
-// — so they are left out rather than added and skipped, because what they
-// test is the QUOTING of a name and there is no name to quote.
 func appendRawStatNames(t *testing.T, names []string) []string {
 	t.Helper()
 	if !rawByteNamesHeld(t) {
@@ -220,10 +155,6 @@ func statCases(t *testing.T) []invocation {
 		cases = append(cases, invocation{name: name, args: args, dir: dir, env: envs})
 	}
 
-	// --- every file directive ---------------------------------------------
-	// One case per directive rather than one case naming them all: a
-	// failure then says which one, and a directive that crashes does not
-	// take the rest of the alphabet with it.
 	for _, spec := range []string{
 		"%a", "%A", "%b", "%B", "%d", "%D", "%f", "%F", "%g", "%G", "%h",
 		"%i", "%m", "%n", "%N", "%o", "%r", "%R", "%s", "%t", "%T", "%u",
@@ -234,7 +165,6 @@ func statCases(t *testing.T) []invocation {
 	add("file-all-directives", "-c", "%a %b %B %d %D %f %g %h %i %o %r %R %s %t %T %u", "f")
 	add("file-all-strings", "-c", "%A|%F|%G|%U|%n|%N|%m", "f")
 
-	// --- the record, per file kind ----------------------------------------
 	for _, name := range []string{
 		"f", "empty", "big", "d", "sub", "sl", "dangle", "dirlink", "hard",
 		"fifo", "setuid", "setgid", "nox-setuid", "nox-setgid", "zeromode",
@@ -244,9 +174,6 @@ func statCases(t *testing.T) []invocation {
 	}
 	add("kind-chardev", "-c", "%A|%F|%f|%r|%R|%t|%T|%Hr|%Lr|%Hd|%Ld", "/dev/null")
 
-	// --- the birth time and the two built-in layouts that carry it --------
-	// A filesystem that records no birth time prints `-` for %w and 0 for
-	// %W; /proc is one on Linux.
 	add("birth-grid", "-c", "[%w][%W][%.3W][%.9W][%-12W][%30w][%-30w]", "f")
 	for _, name := range []string{"t-epoch", "t-epoch-frac", "t-neg", "t-neg-frac"} {
 		add("birth-"+name, "-c", "[%w][%W][%.3W][%.9W]", name)
@@ -257,10 +184,6 @@ func statCases(t *testing.T) []invocation {
 		add("default-"+name, name)
 		add("terse-"+name, "-t", name)
 	}
-	// A character device is outside the tree, and on Darwin a write to
-	// /dev/null moves its times, so the two sides of a comparison can see
-	// different ones. Its default and terse layouts are read without the
-	// three time fields.
 	add("default-chardev", "-c", "%n|%s|%b|%o|%F|%Hd,%Ld|%i|%h|%Hr,%Lr|%a|%A|%u|%U|%g|%G", "/dev/null")
 	add("terse-chardev", "-c", "%n %s %b %f %u %g %D %i %h %t %T %W %o", "/dev/null")
 	add("default-deref", "-L", "sl")
@@ -274,7 +197,6 @@ func statCases(t *testing.T) []invocation {
 	add("kind-dir-root", "-c", "%A|%F|%n|%m", "/")
 	add("kind-proc", "-c", "%F|%m", "/proc")
 
-	// --- %N and the names it has to quote ---------------------------------
 	for _, name := range appendRawStatNames(t, []string{
 		"f", "sp ace", "quo'te", "dq\"x", "tab\tx", "back\\x",
 		"sl", "dangle", "link to", "dirlink",
@@ -282,13 +204,6 @@ func statCases(t *testing.T) []invocation {
 		add("quoted-name-"+name, "-c", "%N", name)
 		add("raw-name-"+name, "-c", "%n", name)
 	}
-	// A modifier — ANY modifier — turns %N from the quoted form into the
-	// raw one, and applies itself to the name and the link target
-	// separately.
-	// --- QUOTING_STYLE picks %N's style ------------------------------------
-	// Every gnulib style over every name above, then the abbreviations
-	// ARGMATCH accepts and the values it does not, which warn once and
-	// fall back to the default.
 	quotedNames := appendRawStatNames(t, []string{
 		"f", "sp ace", "quo'te", "dq\"x", "tab\tx", "back\\x",
 		"sl", "dangle", "link to", "dirlink", "link'to",
@@ -307,10 +222,6 @@ func statCases(t *testing.T) []invocation {
 		env("style-"+style+"-plain", []string{"QUOTING_STYLE=" + style}, "-c", "%N", "f")
 		env("style-"+style+"-quote", []string{"QUOTING_STYLE=" + style}, "-c", "%N", "quo'te")
 	}
-	// The variable is read the first time a `%N` or `%Qn` is PRINTED and
-	// not before, so a format that never reaches one never warns, an
-	// operand that cannot be stat'd is reported first, and a format
-	// holding two warns once.
 	bogus := []string{"QUOTING_STYLE=bogus"}
 	env("bogus-unread-n", bogus, "-c", "%n", "f")
 	env("bogus-unread-raw-N", bogus, "-c", "%-N", "f")
@@ -329,8 +240,6 @@ func statCases(t *testing.T) []invocation {
 	env("bogus-N-then-missing", bogus, "--printf", "%N\n", "f", "nowhere")
 	env("bogus-missing-then-N", bogus, "--printf", "%N\n", "nowhere", "f")
 
-	// `%Q` quotes a name, and `n` is the only name there is — in either
-	// mode, and unlike `H` and `L`, which only a device number has.
 	for _, spec := range []string{"%Qn", "%-Qn", "%12Qn", "%-12Qn", "%.3Qn", "%Q", "%QQn", "%HQn", "%QHn", "%Qs", "%QN", "%Qd", "%Qr", "%Qz"} {
 		add("mod-Q-"+spec, "-c", "["+spec+"]", "sp ace")
 		add("mod-Q-fs-"+spec, "-f", "-c", "["+spec+"]", "f")
@@ -356,11 +265,6 @@ func statCases(t *testing.T) []invocation {
 	add("name-prec-tab", "-c", "[%.5N]", "tab\tx")
 	add("name-prec-nonutf8", "-c", "[%.7N]", "weird\xffname")
 	add("name-width-prec", "-c", "[%10.3N]", "dangle")
-	// GNU writes a stray `s` after a SYMLINK's target when %N carries
-	// exactly one flag other than `-`. The grid is what pins the rule: zero
-	// flags, one, two and three, with and without `-` among them, and the
-	// same directives against a file that is not a link, where none of it
-	// happens.
 	for _, spec := range []string{
 		"%N", "%-N", "%--N", "%#N", "%+N", "%0N", "% N", "%'N", "%IN",
 		"%##N", "%###N", "%#+N", "%0#N", "%+0N", "%##+N", "%  N",
@@ -373,9 +277,6 @@ func statCases(t *testing.T) []invocation {
 	add("name-flag-grid-real-link", "-c", "[%#N]", "sl")
 	add("name-flag-grid-real-link-width", "-c", "[%#5N]", "sl")
 
-	// --- the flag / width / precision grid --------------------------------
-	// A string conversion: precision truncates, width pads, `0` and `#`
-	// do nothing.
 	for _, spec := range []string{
 		"[%A]", "[%20A]", "[%-20A]", "[%.3A]", "[%20.3A]", "[%-20.3A]",
 		"[%08A]", "[%#A]", "[%+A]", "[%.0A]", "[%.20A]", "[%1A]",
@@ -383,9 +284,6 @@ func statCases(t *testing.T) []invocation {
 	} {
 		add("string-grid-"+spec, "-c", spec, "f")
 	}
-	// An unsigned conversion: width, precision and `0`; `+` and a space
-	// are ignored because the value is unsigned, and `#` reaches only the
-	// octal and hex renderings.
 	for _, spec := range []string{
 		"[%s]", "[%8s]", "[%-8s]", "[%08s]", "[%.5s]", "[%.0s]", "[%8.5s]",
 		"[%08.5s]", "[%-8.5s]", "[%+s]", "[% s]", "[%#s]", "[%'s]", "[%Is]",
@@ -393,8 +291,6 @@ func statCases(t *testing.T) []invocation {
 	} {
 		add("unsigned-grid-"+spec, "-c", spec, "f")
 	}
-	// `%.0u` of ZERO writes nothing at all, which only an empty file and a
-	// zero mode can reach.
 	add("unsigned-prec0-zero", "-c", "[%.0s]", "empty")
 	add("unsigned-prec0-zero-width", "-c", "[%8.0s]", "empty")
 	add("unsigned-prec0-zero-left", "-c", "[%-8.0s]", "empty")
@@ -408,10 +304,6 @@ func statCases(t *testing.T) []invocation {
 	add("hex-raw-mode-dir", "-c", "[%f][%#f]", "d")
 	add("hex-raw-mode-link", "-c", "[%f][%#f]", "sl")
 
-	// --- timestamps --------------------------------------------------------
-	// The pinned files, so the calendar and the fraction are this corpus's
-	// choice rather than the clock's. Local time is UTC under the harness
-	// environment; the zone cases below are what prove the offset is read.
 	for _, name := range []string{
 		"t-epoch", "t-whole", "t-frac", "t-neg", "t-neg-frac", "t-leap", "t-split",
 	} {
@@ -428,10 +320,6 @@ func statCases(t *testing.T) []invocation {
 	add("time-width-negative", "-c", "[%20Y][%020Y][%020.3Y]", "t-neg-frac")
 	add("time-human-width", "-c", "[%40y][%-40y][%.5y][%.0y][%40.10y]", "t-frac")
 
-	// The zone. GNU renders a timestamp in LOCAL time, so the same inode
-	// reads differently under a different TZ and the offset moves with the
-	// date — which is all that makes these three cases worth
-	// having over a fourth UTC one.
 	for _, zone := range []string{
 		"UTC", "America/New_York", "Asia/Kolkata", "Australia/Lord_Howe",
 		"Europe/London", "Pacific/Chatham", "EST5EDT,M3.2.0,M11.1.0",
@@ -439,13 +327,10 @@ func statCases(t *testing.T) []invocation {
 	} {
 		env("zone-"+zone, []string{"TZ=" + zone}, "-c", "%y|%Y|%x|%z", "t-whole")
 	}
-	// A summer date and a winter one on one zone: the offset the format
-	// prints is the offset AT THAT INSTANT, not the zone's standard one.
 	env("zone-dst-summer", []string{"TZ=America/New_York"}, "-c", "%y", "t-leap")
 	env("zone-dst-winter", []string{"TZ=America/New_York"}, "-c", "%y", "t-whole")
 	env("zone-prehistoric", []string{"TZ=Europe/London"}, "-c", "%y", "t-neg")
 
-	// --- the scanner -------------------------------------------------------
 	add("literal-only", "-c", "plain text", "f")
 	add("empty-format", "-c", "", "f")
 	add("empty-printf", "--printf", "", "f")
@@ -483,7 +368,6 @@ func statCases(t *testing.T) []invocation {
 	add("format-backslash-is-literal", "-c", "a\\nb\\tc", "f")
 	add("format-nonutf8", "-c", "a\xffb%s", "f")
 
-	// --- --printf escapes ---------------------------------------------------
 	add("printf-newline", "--printf", "%s\\n", "f")
 	add("printf-tab", "--printf", "a\\tb\\n", "f")
 	add("printf-named-escapes", "--printf", "a\\ab\\bc\\ed\\fe\\rf\\vg\\n", "f")
@@ -500,10 +384,6 @@ func statCases(t *testing.T) []invocation {
 	add("printf-hex-three-digits", "--printf", "[\\x414]\\n", "f")
 	add("printf-hex-no-digits", "--printf", "[\\xz]\\n", "f")
 	add("printf-hex-upper", "--printf", "[\\xFf]\\n", "f")
-	// Escapes are resolved as each operand prints, after the directives
-	// are found: a backslash hides the `%` after it, an escaped `%` is
-	// text rather than a directive, and an unknown escape warns once per
-	// operand, after whatever was printed before it.
 	add("printf-warns-per-operand", "--printf", "[\\q]\\n", "f", "sl")
 	add("printf-warns-after-missing", "--printf", "[\\q]", "nowhere", "f")
 	add("printf-escaped-percent", "--printf", "\\%s|\\n", "f")
@@ -519,7 +399,6 @@ func statCases(t *testing.T) []invocation {
 	add("format-two-operands", "-c", "%s", "f", "empty")
 	add("format-three-operands", "-c", "%n", "f", "empty", "big")
 
-	// --- -L ------------------------------------------------------------------
 	add("deref-symlink", "-c", "%F|%s|%i", "sl")
 	add("deref-symlink-L", "-L", "-c", "%F|%s|%i", "sl")
 	add("deref-long", "--dereference", "-c", "%F|%i", "sl")
@@ -531,7 +410,6 @@ func statCases(t *testing.T) []invocation {
 	add("deref-combined", "-Lc", "%i", "sl")
 	add("deref-regular-file", "-L", "-c", "%i", "f")
 
-	// --- --cached -------------------------------------------------------------
 	add("cached-always", "--cached=always", "-c", "%s", "f")
 	add("cached-never", "--cached=never", "-c", "%s", "f")
 	add("cached-default", "--cached=default", "-c", "%s", "f")
@@ -545,7 +423,6 @@ func statCases(t *testing.T) []invocation {
 	add("cached-eats-next-option", "--cached", "-c", "%s", "f")
 	add("cached-missing-argument", "--cached")
 
-	// --- the option table -----------------------------------------------------
 	add("format-joined", "-c%s", "f")
 	add("format-long-equals", "--format=%s", "f")
 	add("format-long-separate", "--format", "%s", "f")
@@ -576,7 +453,6 @@ func statCases(t *testing.T) []invocation {
 	add("help-with-value", "--help=x")
 	add("version-with-value", "--version=x")
 
-	// --- operands and error paths ----------------------------------------------
 	add("no-operand")
 	add("missing-file", "-c", "%n", "nosuch")
 	add("missing-file-default-format", "nosuch")
@@ -595,7 +471,6 @@ func statCases(t *testing.T) []invocation {
 	add("stdin-operand-twice", "-c", "%n", "-", "-")
 	add("stdin-after-dashdash", "-c", "%n", "--", "-")
 
-	// --- %m --------------------------------------------------------------------
 	add("mount-point-file", "-c", "%m", "f")
 	add("mount-point-dir", "-c", "%m", "sub")
 	add("mount-point-relative", "-c", "%m", "sub/../f")
@@ -608,22 +483,7 @@ func statCases(t *testing.T) []invocation {
 	add("mount-point-fails-on-stdin", "-c", "%m", "-")
 	add("mount-point-width", "-c", "[%10m][%-10m][%.2m]", "f")
 
-	// --- the file system mode ---------------------------------------------------
-	// Only the fields that do not move between the two runs: the total block
-	// count, the block size and the name length. The three free counters are
-	// what a busy machine changes underneath the corpus, so they appear only
-	// where the point is the SCANNER.
-	//
-	// %c, the total inode count, WAS in that stable set and is not stable.
-	// That was an ext4 assumption — a fixed inode table sized at mkfs time —
-	// and APFS has no such table: it computes the total and the answer drifts
-	// between two runs of the same case, which is exactly the comparison this
-	// corpus makes. It reads as a standalone-vs-multicall disagreement of a
-	// few thousand inodes and is neither binary's doing. It can come back if
-	// the harness ever learns to compare a field's SHAPE rather than its
-	// value; until then it belongs with the free counters.
 	add("fs-block-size", "-f", "-c", "%s", ".")
-	// %a, %c, %d and %f are absent by design: see statTree's header.
 	add("fs-blocks-total", "-f", "-c", "%b", ".")
 	add("fs-namelen", "-f", "-c", "%l", ".")
 	add("fs-name", "-f", "-c", "%n", ".")
@@ -642,9 +502,6 @@ func statCases(t *testing.T) []invocation {
 	add("fs-stdin-refused-among-others", "-f", "-c", "%n", ".", "-", "/")
 	add("fs-deref", "-f", "-L", "-c", "%s", "sl")
 	add("fs-widths", "-f", "-c", "[%10l][%-10l][%.6l][%08l]", ".")
-	// The scanner in file-system mode: `H` and `L` are not modifiers here
-	// at all, so the byte after one comes back as literal text, and the
-	// directives that belong to the OTHER alphabet are unknown.
 	add("fs-unknown-A", "-f", "-c", "[%A]", ".")
 	add("fs-unknown-N", "-f", "-c", "[%N]", ".")
 	add("fs-unknown-z", "-f", "-c", "[%z]", ".")
@@ -656,8 +513,6 @@ func statCases(t *testing.T) []invocation {
 	add("fs-invalid-directive", "-f", "-c", "%5%", ".")
 	add("fs-printf", "-f", "--printf", "%b\\n", ".")
 	add("fs-printf-no-newline", "-f", "--printf", "%l", ".")
-	// f_fsid, f_frsize and f_type: fixed for a mounted filesystem, so they
-	// compare exactly. %i joins f_fsid's two words with the first one high.
 	add("fs-id", "-f", "-c", "%i", ".")
 	add("fs-frag-size", "-f", "-c", "%S", ".")
 	add("fs-type-hex", "-f", "-c", "%t", ".")
@@ -666,7 +521,6 @@ func statCases(t *testing.T) []invocation {
 	add("fs-type-name", "-f", "-c", "%T", ".")
 	add("fs-type-name-widths", "-f", "-c", "[%12T][%-12T][%.3T]", ".")
 	add("fs-type-name-dev", "-f", "-c", "%t|%T", "/dev")
-	// Use a filesystem with stable counts for the built-in layouts.
 	stableFS := "/dev"
 	if runtime.GOOS == "linux" {
 		stableFS = "/proc"
@@ -682,7 +536,6 @@ func statCases(t *testing.T) []invocation {
 		add("terse-none", "-t", "/proc/version")
 	}
 
-	// --- write failures -----------------------------------------------------------
 	cases = append(cases, invocation{
 		name: "write-error-full", args: []string{"-c", "%n", "f"}, dir: dir, stdout: stdoutFull,
 	})

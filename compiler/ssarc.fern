@@ -1,6 +1,4 @@
 import "./sourcepos";
-// Verified semantic ownership to the production stack IR. No AST ownership
-// facts or alternate backend ABI enter this boundary.
 import "./ir";
 import "./irtables";
 import "./ssa";
@@ -29,36 +27,14 @@ function empty(why: string): irtables.LowerResult {
   };
 }
 
-// This physical boundary refuses types whose stack representation is not
-// implemented here, even when the unit planner knows their abstract
-// ownership: the 32-bit float, and a record with no schema or with type
-// arguments (its box is named by the bare declaration). The byte occupies the
-// same i32-shaped slot as an i32, narrowed by the wrap below; the 64-bit
-// integer and the f64 each get a slot of their own, which is a VALUE here, a
-// declared field and an array element, but never a tuple element
-// (narrow_slot). A string view is a value here, and an element or field of a
-// container, whose drop releases it through the view's own release
-// (release_name).
 function supported_integer(i: typeinfo.TypeI32): boolean {
   return i.width == 32 || i.width == 8 && i.unsigned || i.width == 64 || i.width == typeinfo.width_ptr() && i.unsigned;
 }
 
-// A value that fits the ONE i32-shaped word an undeclared construction writes
-// per operand. An array's element ops each carry their own width, a record or
-// variant field stores at the width its declaration names, and a tuple
-// construction names its element kinds (`op_tuple_make_k`), so none of the
-// three has to narrow — a closure box still does.
 function narrow_slot(t: typeinfo.Type): boolean {
   return !ssasem.is_wide(t) && !ssasem.is_float(t);
 }
 
-// The slot width an array's element ops carry: eight bytes for a 64-bit
-// scalar, one byte for a u8, one i32-shaped word for everything else. Every
-// backend packs a u8 array a byte an element (ir.packed); the register
-// backends give every other element eight bytes.
-// The `_i64` forms name the SLOT, not the sign, so an i64 and a u64 take the
-// same ones; a float shares the width and differs in the load and store wasm
-// selects, the f32 occupying the f64's slot.
 function elem_width(t: typeinfo.Type): i32 {
   if (ssasem.is_wide(t) || ssasem.is_float(t)) {
     return 64;
@@ -83,7 +59,6 @@ function byte_view(t: typeinfo.Type): boolean {
   return false;
 }
 
-// A byte view's sub-range whose descriptor the plan keeps in the frame.
 function frame_byte_slice(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): boolean {
   return ins.kind_tag == ssasem.arr_slice() && byte_view(f.values[ins.result]) && p.frame_views[ins.result];
 }
@@ -130,8 +105,6 @@ function arr_make_op(elem: typeinfo.Type, n: i32): ir.Op {
 }
 
 function arr_get_op(elem: typeinfo.Type, unchecked: boolean): ir.Op {
-  // A lane read checks its whole group itself, whatever the bounds pass
-  // proved of its first index.
   if let typeinfo.TypeLanes(l) = elem {
     return ir.op_lane("vget", l.width);
   }
@@ -158,7 +131,6 @@ function arr_set_op(elem: typeinfo.Type): ir.Op {
   return ir.op_arr_set(elem_width(elem));
 }
 
-// The sole-owner push, which reclaims the superseded buffer when it grows.
 function arr_push_op(elem: typeinfo.Type): ir.Op {
   if (ssasem.is_wide(elem)) {
     return ir.op_arr_push_owned_i64();
@@ -172,10 +144,6 @@ function arr_push_op(elem: typeinfo.Type): ir.Op {
   return ir.op_arr_push_owned();
 }
 
-// The push that does NOT consume its receiver, for the one case where the
-// frame has not taken a unit yet: `deferred_retain` holds the receiver's
-// retain back so the buffer can grow in place, and a consuming push would then
-// free a buffer the caller still points at on a realloc.
 function arr_push_borrowed_op(elem: typeinfo.Type): ir.Op {
   if (ssasem.is_wide(elem)) {
     return ir.op_arr_push_i64();
@@ -189,12 +157,6 @@ function arr_push_borrowed_op(elem: typeinfo.Type): ir.Op {
   return ir.op_arr_push();
 }
 
-// The types whose stack representation needs no declaration looked up: a
-// boolean and a void occupy one word, a string is its own box, a function
-// value is the env box its captures are stored in, and a handle is the
-// descriptor word. The handle is read here rather than under the nominal
-// ladder below, which would look for a schema no handle has. A never slot
-// (a `never[]`'s element) holds no value at all.
 function supported_leaf(t: typeinfo.Type): boolean {
   if (semtypes.is_never(t)) {
     return true;
@@ -217,16 +179,10 @@ function supported_leaf(t: typeinfo.Type): boolean {
   return semtypes.is_handle(t);
 }
 
-// A nominal box is named by a declaration this function's schema table carries,
-// except a cell's: no declaration names it, and what it holds is one slot of
-// its element.
 function nominal_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean {
   if (semtypes.is_cell(t)) {
     return walk_shape(semtypes.cell_elem(t), f, lookup);
   }
-  // A map cursor has no record layout to find: its block is the map's address
-  // and an index, and what it answers is the map's columns, so the two
-  // element types are what has to be emittable.
   if (semtypes.is_map_iter(t)) {
     return walk_shape(semtypes.map_iter_key(t), f, lookup) && walk_shape(semtypes.map_iter_value(t), f, lookup);
   }
@@ -243,8 +199,6 @@ function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
   return rc_shape(t, f, true);
 }
 
-// rc_shape: whether `t` is a value of this physical vocabulary, its struct and
-// union types looked up in f's table with `lookup` (ssaunits.nominal).
 function rc_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean {
   if (supported_leaf(t)) {
     return true;
@@ -275,8 +229,6 @@ function rc_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean {
   return nominal_shape(t, f, lookup);
 }
 
-// A record cloned at a type variable is one declaration per binding, named
-// by its arguments (semlower.instance_records).
 function record_name(t: typeinfo.Type): string {
   if let typeinfo.TypeStruct(r) = t {
     if (semtypes.is_env(t)) {
@@ -304,14 +256,6 @@ function fields_have_children(fields: semrecords.Field[]): boolean {
   return false;
 }
 
-// The field types a record's release walks — every reference, a function value
-// included. That works from a frame that never built the box because
-// `semsource.env_rows` pairs every environment a value of that type could
-// carry with the type itself, and drop_captures matches on the body address at
-// run time. A closure box's own captures are no exception since #9637: it
-// takes a unit of each (ssaunits.taken), so walking them is what balances it.
-// A routed map whose columns own what their slots name, released with the
-// map: a string or view column's strings, and a wide column's cells.
 function owned_columns(t: typeinfo.Type): boolean {
   let k: typeinfo.Type = ssasem.map_key(t);
   let v: typeinfo.Type = ssasem.map_value(t);
@@ -322,15 +266,6 @@ function walked(t: typeinfo.Type): boolean {
   return ssasem.reference(t);
 }
 
-// A string box is released by its own helper: its block starts before the
-// value, where an array's starts before the data words.
-// A view's box is this function's, but its bytes belong to the source.
-// __fern_str_view_free frees the box alone when the rc is the immortal view
-// sentinel and takes the ordinary path otherwise, which is what makes one
-// release symbol correct on both the register backends and wasm (whose slices
-// copy, so the result is an ordinary counted box).
-// A map's helper releases one unit of a counted box: a decrement while the
-// box is shared, and the columns and the block for the last unit.
 function release_name(t: typeinfo.Type, f: ssasem.Func): string {
   if (byte_view(t)) {
     return ssabytes.release_name();
@@ -362,17 +297,10 @@ function release_name(t: typeinfo.Type, f: ssasem.Func): string {
   return "__fern_rc_dec";
 }
 
-// A map or cursor type in a program without core/map, which a field or a
-// variant payload can name with no map operation anywhere (#10851). No such
-// value can be built, so its release has only to link.
 function unlinked_map(t: typeinfo.Type, f: ssasem.Func): boolean {
   return (ssasem.is_map(t) || semtypes.is_map_iter(t)) && !f.map_module;
 }
 
-// The one release of a unit in `slot`. A map with a keyed column hands its
-// release the function that releases one key, and a map of boxes the one
-// that releases one value — the key's first, the value's on top — so the
-// runtime can walk a column whose shape it does not know.
 function release(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerResult {
   if (unlinked_map(t, f)) {
     return helper(r, slot, release_name(t, f));
@@ -397,14 +325,10 @@ function emit(own r: irtables.LowerResult, op: ir.Op): irtables.LowerResult {
   return irtables.LowerResult { ...r, ops: r.ops.append(op) };
 }
 
-// shell_release marks the release call `release` just emitted as a shell's
-// (ir.shell): the box goes shallowly, its payload is the frame's.
 function shell_release(own r: irtables.LowerResult): irtables.LowerResult {
   return mark_release(r, ir.shell);
 }
 
-// sole_release marks the release call `release` just emitted as a box's the
-// frame holds the only count on (ir.sole).
 function sole_release(own r: irtables.LowerResult): irtables.LowerResult {
   return mark_release(r, ir.sole);
 }
@@ -426,14 +350,9 @@ function helper(own r: irtables.LowerResult, slot: i32, name: string): irtables.
   return emit(r, ir.op_drop());
 }
 
-// `defer0` holds an append's or a with's receiver's retain back, so the
-// operation's own rc gate reads the box rather than this supply — see `deferred_retain` for why the
-// order is the whole of it.
 function supplies(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, defer0: boolean, kept: i32[], late: i32[]): irtables.LowerResult {
   let j: i32 = 0;
   for supply in step.supplies {
-    // A string literal's retain is the immortal guard's no-op; a late kept
-    // read is retained where the construction copies it.
     if (supply.mode == ssaunits.retain_unit() && !(defer0 && supply.slot == 0) && !p.literal[supply.value]
       && util.index_of_i32(late, supply.value) < 0) {
       if (util.index_of_i32(kept, supply.value) >= 0) {
@@ -447,12 +366,9 @@ function supplies(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan,
       j = j + 1;
     }
   }
-  // A move transfers the existing unit. Value locals are never implicitly
-  // swept, so neither a runtime decrement nor a clear is needed for a move.
   return r;
 }
 
-// The instruction that defines `v`.
 function definition(f: ssasem.Func, v: i32): ssa.SInst {
   for b in f.graph.blocks {
     for ins in b.insts {
@@ -464,14 +380,6 @@ function definition(f: ssasem.Func, v: i32): ssa.SInst {
   return f.graph.blocks[0].insts[0];
 }
 
-// A stolen unit: when the box the value projects has no other holder, the
-// slot is nulled and the value's unit is the taker's; otherwise the value is
-// retained, as `append_field` does around its push. A record's field and an
-// enum's payload are the same slot to this, since both read through
-// `op_struct_get`; a tuple's element has no shape word before it, so it is
-// written with `op_tuple_set`; the builtin Option layout's payload with
-// `op_opt_set_payload`; an array's element is written at its index.
-// The scratch slot holds the box's answer; nothing reads it past this point.
 function steal(own r: irtables.LowerResult, f: ssasem.Func, v: i32, unique: i32): irtables.LowerResult {
   let get: ssa.SInst = definition(f, v);
   r = reserve(r, unique + 1);
@@ -482,7 +390,6 @@ function steal(own r: irtables.LowerResult, f: ssasem.Func, v: i32, unique: i32)
   r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_load_local(get.args[0]));
   if (get.kind_tag == ssasem.array_get()) {
-    // The read checked the index; the slot is nulled where it was read.
     r = emit(r, ir.op_load_local(get.args[1]));
     r = emit(r, ir.op_const_i32(0));
     r = emit(r, ir.in_bounds(arr_set_op(f.values[v])));
@@ -500,43 +407,6 @@ function steal(own r: irtables.LowerResult, f: ssasem.Func, v: i32, unique: i32)
   return unless_unique(r, unique, v, "__fern_rc_inc");
 }
 
-// The arguments of a direct call this frame has to hold a second count on
-// across it. A callee handed a BORROWED array may grow or overwrite it in
-// place when it is the box's only reader, and it cannot see the caller's
-// binding to know whether it is — so the caller says so, by holding a count
-// while the call runs. A value this step DROPS is not one the caller reads
-// again, so it needs no bracket and the callee is free to work in place,
-// unless it is lent twice: the callee would grow one parameter under the
-// other's reads. Nor is a buffer the plan HANDS on (ssaunits.hands) — a
-// borrowed parameter, or a field of a record, this frame reads no further.
-//
-// An array is bracketed only at a position the callee's grow row says it may
-// grow (ssaunits.grows_buffer). The table answers for every callee a kept body
-// names: `semlower.prune` drops a body that calls anything the AST lowering
-// defines, and a builtin never grows what it is lent. Unconditional, the
-// bracket cost a retain and a release per call, per loop turn.
-//
-// ARRAYS only. A text box is never updated in place — a concatenation builds
-// its own — so a bracket buys nothing there, and a `string` that is really a
-// view at run time carries the immortal count, where the retain is a no-op and
-// the paired reclaim would free a box the frame still reads (#9328).
-//
-// A RECORD argument is bracketed field by field, and only at the fields the
-// callee's own plan says it may grow (`grows`, from ssaunits.grow_rows):
-// retaining the record's box would answer for the wrong box, since the buffer
-// the callee's push tests is the field's, at its own count. Each held buffer
-// is captured in a scratch local, so the release after the call decrements
-// the buffer that was retained rather than re-reading a field the callee may
-// have replaced.
-//
-// A field HANDED on (ssaunits.hands) is gated rather than bracketed: the
-// record's own count says whether a holder this frame cannot see still names
-// it, and a shared record holds a second count on the field across the call,
-// as `append_field` does around its push. A whole record handed on is gated
-// the same way at every field the callee may grow (`gated_records` /
-// `gated_fields`); bracketing those fields would make the callee's first
-// append copy a buffer nobody else reads, once per call up the chain of
-// wrappers that lend a record on.
 struct Held { arrays: i32[], records: i32[], fields: i32[], gated: i32[], gated_roots: i32[], gated_records: i32[], gated_fields: i32[] }
 
 function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowTable, links: i32[]): Held {
@@ -578,13 +448,6 @@ function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: s
   return out;
 }
 
-// A call through a function value or a dyn receiver names no body, so it is
-// bracketed at every position one of the bodies it may reach may grow
-// (`ssaunits.dispatched_rows`), and whole: a record's field, or a dyn value's
-// concrete box's, is grown only under the box's own count, which the bracket
-// raises. A value dying at the call is the frame's to give unless it is a
-// link, whose box may still be the caller's, and a handed parameter is
-// bracketed here, its caller's row naming no body this call reaches.
 function dispatch_bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowTable, links: i32[], name: string, first: i32): Held {
   let out: Held = Held { arrays: [], records: [], fields: [], gated: [], gated_roots: [], gated_records: [], gated_fields: [] };
   let modes: i32[] = dispatch_modes(f, ins, first);
@@ -602,9 +465,6 @@ function dispatch_bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst,
   return out;
 }
 
-// The mode at each operand of a dispatched call: a dyn call's contract's, and
-// for a call through a function value, lent at every slot its type does not
-// spell `own`, the callee at operand 0 included.
 function dispatch_modes(f: ssasem.Func, ins: ssa.SInst, first: i32): i32[] {
   if (first == 0) {
     return ssaunits.callee_modes(f, ins);
@@ -622,8 +482,6 @@ function dispatch_modes(f: ssasem.Func, ins: ssa.SInst, first: i32): i32[] {
   return out;
 }
 
-// A box a body may grow under its own count: an array, a record holding the
-// field, or a dyn value, which is its concrete's box.
 function whole_bracketable(t: typeinfo.Type): boolean {
   if let typeinfo.TypeDyn(_) = t {
     return true;
@@ -662,8 +520,6 @@ function record_bracketable(t: typeinfo.Type): boolean {
   return false;
 }
 
-// The scratch locals sit above the value ids; a call's own lowering reserves
-// none, so the held buffers keep theirs from the take to the give.
 function bracket_take(own r: irtables.LowerResult, f: ssasem.Func, held: Held): irtables.LowerResult {
   for v in held.arrays {
     r = helper(r, v, "__fern_rc_inc");
@@ -688,8 +544,6 @@ function bracket_take(own r: irtables.LowerResult, f: ssasem.Func, held: Held): 
     r = unless_unique(r, unique, held.gated[j], "__fern_arr_share_inc");
     j = j + 1;
   }
-  // A gated field takes two scratch slots: the buffer, captured before the
-  // call for the reason a bracketed field's is, and the record's answer.
   let g: i32 = 0;
   while (g < held.gated_records.len()) {
     let slot: i32 = gated_field_slot(f, held, g);
@@ -733,7 +587,6 @@ function bracket_give(own r: irtables.LowerResult, f: ssasem.Func, held: Held): 
   return r;
 }
 
-// Scratch storage is shared by successive drops and distinct within recursion.
 function reserve(own r: irtables.LowerResult, end: i32): irtables.LowerResult {
   if (end > r.n_locals) {
     return irtables.LowerResult { ...r, n_locals: end };
@@ -741,11 +594,6 @@ function reserve(own r: irtables.LowerResult, end: i32): irtables.LowerResult {
   return r;
 }
 
-// A value's SSA id is its local slot, so the slots above `nvals` are the
-// frame's scratch. The lowest belongs to the reuse pairing and is the only one
-// that lives ACROSS instructions: a token is taken where a value dies and
-// spent at a construction further down the block. Everything else is scratch
-// within one instruction, so it starts above it.
 function token_slot(f: ssasem.Func): i32 {
   return f.graph.nvals;
 }
@@ -754,20 +602,10 @@ function scratch_base(f: ssasem.Func): i32 {
   return f.graph.nvals + 1;
 }
 
-// A parent owns one unit per reference field. Shared parents release only
-// their own unit; the final parent release walks children before its box.
-// Array/tuple/struct opcodes preserve the production native/Wasm layouts.
-// The answer for a type must not depend on which body of a module asks:
-// with_drop_helpers settles each record and enum type at the first body
-// whose table holds it (Helpers.seen).
 function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
-  // A handle has no box, so there is nothing under it to walk — and
-  // no schema either, which is what the record arm below would go looking
-  // for.
   if (semtypes.is_handle(t)) {
     return false;
   }
-  // A cursor holds a unit of its map.
   if (semtypes.is_map_iter(t)) {
     return true;
   }
@@ -795,12 +633,9 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
   if (semtypes.is_cell(t)) {
     return ssasem.reference(semtypes.cell_elem(t));
   }
-  // A map's own release reads the count and walks its columns, so no guard
-  // is emitted around it here.
   if (ssasem.is_map(t)) {
     return false;
   }
-  // A finalizer is a child the box owes whatever its fields hold.
   if (ssasem.has_finalizer(f, t)) {
     return true;
   }
@@ -817,20 +652,6 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
   return false;
 }
 
-// The environments a function value of type `fn_ty` may be carrying, whose
-// captures own a unit: the boxes releasing one has to be able to walk.
-//
-// Keyed on `fn_ty` and ordered by body name, and both halves are the same
-// requirement. A drop helper is emitted by EVERY function that mentions its
-// type and `merge_helpers` refuses two copies that disagree, so the chain
-// `drop_captures` emits must not vary with the frame emitting it. `f.envs`
-// supplies the pairing, read off the module's whole contract table; a schema
-// table on its own is the producing function's own values in the producing
-// function's own order, which varies with both.
-//
-// `semsource.env_rows_closed` closes the rows over the schema table, so a
-// frame that holds the type only indirectly — as a field of a record it never
-// names — lists the same environments as the frame that built the closure.
 function env_records(f: ssasem.Func, fn_ty: typeinfo.Type): semrecords.Record[] {
   let out: semrecords.Record[] = [];
   for rec in f.records.list {
@@ -874,12 +695,6 @@ function inserted_record(recs: semrecords.Record[], at: i32, rec: semrecords.Rec
   return out;
 }
 
-// A function value's static type names no captures, so its box is matched at
-// run time: slot 0 holds the body's address, and each environment a value of
-// that type could be carrying is tried against it. A box whose captures own
-// nothing matches none and is released alone. The box need not have been built
-// in this frame — that is the point of matching on the body address rather
-// than on what the frame knows it made.
 function drop_captures(own r: irtables.LowerResult, slot: i32, fn_ty: typeinfo.Type, f: ssasem.Func): irtables.LowerResult {
   let open: i32 = 0;
   for rec in env_records(f, fn_ty) {
@@ -894,9 +709,6 @@ function drop_captures(own r: irtables.LowerResult, slot: i32, fn_ty: typeinfo.T
   return close_ifs(r, open);
 }
 
-// else_if_open and close_ifs chain tests that exclude one another: each test
-// after the first sits in the previous one's else, so the first that holds
-// ends the chain.
 function else_if_open(own r: irtables.LowerResult, open: i32): irtables.LowerResult {
   if (open > 0) {
     return emit(r, ir.op_else());
@@ -913,12 +725,6 @@ function close_ifs(own r: irtables.LowerResult, open: i32): irtables.LowerResult
   return r;
 }
 
-// A dyn value's box is one of the concretes its type can hold, matched at run
-// time by the shape the box carries at offset 0: a record's is its own, a
-// boxed string's is `string`, and an enum's helper tests its variants itself,
-// so it is called unguarded. The value need not have been widened in this
-// frame, which is why the set is the type's (`ssasem.Func.dyns`) rather than
-// what the frame saw built.
 function drop_dyn(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
   for c in dyn_concretes(f, t) {
     if (ssasem.is_string(c)) {
@@ -959,9 +765,6 @@ function dyn_concretes(f: ssasem.Func, t: typeinfo.Type): typeinfo.Type[] {
   return out;
 }
 
-// The units a box owns, released without releasing the box. The caller has
-// already emitted the uniqueness test this belongs under: `drop_value` before
-// it releases the box, `reuse_token` before it hands the box on.
 function drop_children(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
   if (unlinked_map(t, f)) {
     return r;
@@ -990,7 +793,6 @@ function drop_children(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type,
   return r;
 }
 
-// A cursor's one child is the map it holds a unit of, read through core/map.
 function drop_cursor_map(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
   let m: typeinfo.Type = semtypes.map_iter_map(t);
   r = reserve(r, scratch + 1);
@@ -1000,9 +802,6 @@ function drop_cursor_map(own r: irtables.LowerResult, slot: i32, t: typeinfo.Typ
   return drop_value(r, scratch, m, scratch + 1, f);
 }
 
-// A nominal type with children is released by its own helper: the inline
-// test-walk-release is ~20 emitted lines a site, and the self-host assembles
-// every line it emits.
 function drop_value(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
   if (outlined_release(t, f)) {
     return helper(r, slot, release_helper_name(t));
@@ -1017,8 +816,6 @@ function outlined_release(t: typeinfo.Type, f: ssasem.Func): boolean {
 function drop_value_inline(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
   if (has_children(t, f)) {
     r = emit(r, ir.op_load_local(slot));
-    // A box with children cannot be a tagged byte view. Preserve this fact
-    // inside generated release helpers too, where slots are not SSA values.
     r = emit(r, aligned_unique());
     r = emit(r, ir.op_if(0));
     r = drop_children(r, slot, t, scratch, f);
@@ -1032,8 +829,6 @@ function aligned_unique(): ir.Op {
   return ir.Op { ...op, i64_imm: 4 };
 }
 
-// A builtin union's box carries no shape pointer, so the walk selects its one
-// payload by the tag the box stores rather than by a variant shape.
 function drop_payload(own r: irtables.LowerResult, slot: i32, e: semrecords.Enum, scratch: i32, f: ssasem.Func): irtables.LowerResult {
   let child: i32 = scratch;
   r = reserve(r, child + 1);
@@ -1057,8 +852,6 @@ function drop_payload(own r: irtables.LowerResult, slot: i32, e: semrecords.Enum
   return r;
 }
 
-// A variant box carries only its own variant's fields, so the walk selects
-// them by the box's runtime variant.
 function drop_variant_fields(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
   let e: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, t)];
   if (e.layout == semrecords.layout_option()) {
@@ -1078,7 +871,6 @@ function drop_variant_fields(own r: irtables.LowerResult, slot: i32, t: typeinfo
   return close_ifs(r, open);
 }
 
-// A recursive tail is the enum itself or an owned array of that enum.
 function self_tail_type(field: typeinfo.Type, whole: typeinfo.Type): boolean {
   if (semtypes.equal(field, whole)) {
     return true;
@@ -1089,7 +881,6 @@ function self_tail_type(field: typeinfo.Type, whole: typeinfo.Type): boolean {
   return false;
 }
 
-// self_tail_field is the variant's last recursive field, or -1.
 function self_tail_field(v: semrecords.Variant, t: typeinfo.Type): i32 {
   let at: i32 = 0 - 1;
   let i: i32 = 0;
@@ -1115,13 +906,6 @@ function self_tail_enum(t: typeinfo.Type, f: ssasem.Func): boolean {
   return false;
 }
 
-// drop_variant_chain is drop_variant_fields for an enum whose variants reach
-// the enum itself, directly or through an array: its final child becomes
-// the next node of a loop, so the helper's stack stays constant however long
-// the chain is (#9046). Each node after the first is released here once its
-// children are, exactly as drop_value would release it; a shared next node is
-// released without its children, and the walk stops. Slots: 1 the node, 2
-// whether it is the caller's box, 3 the next node, 4 up scratch.
 function drop_variant_chain(own r: irtables.LowerResult, t: typeinfo.Type, f: ssasem.Func): irtables.LowerResult {
   let e: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, t)];
   let node: i32 = 1;
@@ -1174,13 +958,11 @@ function drop_variant_chain(own r: irtables.LowerResult, t: typeinfo.Type, f: ss
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_store_local(first));
-  // No next node: done. A shared one: release it and stop.
   r = emit(r, ir.op_load_local(next));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_bin("eq", ir.width_ptr(), false));
   r = emit(r, ir.op_brif(1));
   r = emit(r, ir.op_load_local(next));
-  // The next link has the same nominal union type as the current node.
   r = emit(r, aligned_unique());
   r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_else());
@@ -1194,9 +976,6 @@ function drop_variant_chain(own r: irtables.LowerResult, t: typeinfo.Type, f: ss
   return emit(r, ir.op_end());
 }
 
-// The unique array's final element becomes the next node. Release every
-// earlier element and the array shell. A shared array keeps its children.
-// Slots 1 to 3 belong to drop_variant_chain, and slot 4 holds this array.
 function drop_tail_array(own r: irtables.LowerResult, elem: typeinfo.Type, array: typeinfo.Type, f: ssasem.Func): irtables.LowerResult {
   r = reserve(r, 8);
   r = emit(r, ir.op_load_local(4));
@@ -1283,8 +1062,6 @@ function drop_tuple_fields(own r: irtables.LowerResult, slot: i32, tup: typeinfo
   return r;
 }
 
-// `env` selects the box LAYOUT, not what is walked: an environment addresses
-// its captures as array slots and a record its fields as struct ones.
 function drop_record_fields(own r: irtables.LowerResult, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func, env: boolean): irtables.LowerResult {
   let child: i32 = scratch;
   r = reserve(r, child + 1);
@@ -1315,16 +1092,10 @@ function drops(own r: irtables.LowerResult, step: ssaunits.Step, f: ssasem.Func,
   return r;
 }
 
-// A zero's unit is the null word, so its drop would be a call that tests the
-// null and returns.
 function null_unit(p: ssaunits.Plan, value: i32): boolean {
   return value < p.defs.len() && p.defs[value].kind_tag == ssasem.zero();
 }
 
-// The drops of a step less the one a construction took as its box: that value's
-// storage became the result's, so releasing it here would free a live box.
-// `shell` is a box whose payload this step took without emptying its slot
-// (`ssaunits.shell_root`), so its drop releases the box alone.
 function drops_less(own r: irtables.LowerResult, step: ssaunits.Step, f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock, links: i32[], taken: i32, took: i32, held: i32, shell: i32): irtables.LowerResult {
   for value in step.drops {
     if (value == shell) {
@@ -1336,9 +1107,6 @@ function drops_less(own r: irtables.LowerResult, step: ssaunits.Step, f: ssasem.
   return r;
 }
 
-// The fields of the variant a dying value's box holds where a payload read
-// fixes it (ssaunits.known_variant), when they are few enough to walk in
-// place and its type has no finalizer for the helper to run.
 struct KnownFields { ok: boolean, fields: semrecords.Field[] }
 
 function known_fields(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock, d: i32): KnownFields {
@@ -1358,9 +1126,6 @@ function known_fields(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock, d: i32): 
   return KnownFields { ok: true, fields: f.enums[e].variants[v].fields };
 }
 
-// A dying value of a known variant: one with no counted field is released
-// alone, and one with a few has them walked in place, where the type's
-// release helper would test the variant again.
 function drop_known(own r: irtables.LowerResult, value: i32, links: i32[], f: ssasem.Func, k: KnownFields): irtables.LowerResult {
   if (!k.ok || value < links.len() && links[value] >= 0) {
     return drop_linked(r, value, links, f);
@@ -1375,7 +1140,6 @@ function drop_known(own r: irtables.LowerResult, value: i32, links: i32[], f: ss
   return release(r, value, f.values[value], f);
 }
 
-// The children a unique donor gives up as it becomes a token.
 function token_children(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, k: KnownFields): irtables.LowerResult {
   if (k.ok) {
     return drop_fields_except(r, donor, k.fields, [], scratch_base(f), f);
@@ -1386,29 +1150,11 @@ function token_children(own r: irtables.LowerResult, f: ssasem.Func, donor: i32,
   return r;
 }
 
-// The donor's box when this frame holds its only count, and null otherwise —
-// the token recipe of docs/SELFHOST-PERCEUS-REUSE.md §6.2, emitted in place of
-// the drop. The runtime helper is pure: it hands a token back when the size
-// class matches and allocates when the token is null, so the shared arm
-// releases the donor's count here and passes null. The static plan already
-// proved the donor dead; the count test makes a hole in that proof degrade to a
-// fresh box rather than corrupt one another holder still reads (#4350).
-//
-// A donor owning references gives up its children here, through the same
-// helper `drop_value` calls under the same uniqueness gate — the box arrives
-// at the construction as storage and nothing else. The helper releases the
-// CHILDREN ONLY, which is what makes it the one to call: the box itself is not
-// freed but handed on, and the runtime's mismatch path frees a donor block
-// shallowly, so its children are owed here either way.
 function zero_local(own r: irtables.LowerResult, slot: i32): irtables.LowerResult {
   r = emit(r, ir.op_const_i32(0));
   return emit(r, ir.op_store_local(slot));
 }
 
-// A construction's own donor's token: taken here when the donor dies at the
-// construction, and moved from the donor's local when a carry brought it,
-// where `hold_token` took it as the box or null and a null edge may have
-// zeroed it.
 function self_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, carried: boolean, k: KnownFields): irtables.LowerResult {
   if (!carried) {
     return reuse_token(r, f, donor, k);
@@ -1418,10 +1164,6 @@ function self_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, car
   return zero_local(r, donor);
 }
 
-// A carried donor's token, taken where the donor dies: the box with its
-// children released when it is unique, else null once the donor's unit is
-// released. It stays in the donor's local for the construction it is carried
-// to, or for the exit edge that frees it (`free_token`).
 function hold_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, k: KnownFields): irtables.LowerResult {
   r = reserve(r, scratch_base(f));
   r = emit(r, ir.op_load_local(donor));
@@ -1434,8 +1176,6 @@ function hold_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, k: 
   return emit(r, ir.op_end());
 }
 
-// A carried token leaving its ways unspent: a box is freed, its children
-// already released where the token was taken; null is nothing.
 function free_token(own r: irtables.LowerResult, slot: i32): irtables.LowerResult {
   r = emit(r, ir.op_load_local(slot));
   r = emit(r, ir.op_const_i32(0));
@@ -1459,14 +1199,10 @@ function reuse_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, k:
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_store_local(token));
   r = emit(r, ir.op_end());
-  // Dead from here: the box is the construction's, and nothing may reach it
-  // through the name it arrived under.
   r = emit(r, ir.op_const_i32(0));
   return emit(r, ir.op_store_local(donor));
 }
 
-// The token as the kept steals read it: the donor's box when it is unique,
-// null when it is shared.
 function keep_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32): irtables.LowerResult {
   let token: i32 = token_slot(f);
   r = reserve(r, scratch_base(f));
@@ -1481,9 +1217,6 @@ function keep_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32): ir
   return emit(r, ir.op_end());
 }
 
-// The kept donor's drop: a unique donor gives up the children it neither keeps
-// nor has moved out, and its box is the token; a shared one is released as any
-// dying value.
 function keep_release(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, fields: semrecords.Field[], skip: boolean[]): irtables.LowerResult {
   r = emit(r, ir.op_load_local(token_slot(f)));
   r = emit(r, ir.op_const_i32(0));
@@ -1497,17 +1230,6 @@ function keep_release(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, f
   return emit(r, ir.op_store_local(donor));
 }
 
-// A classified donor's death (ssaunits.classified): the token slot holds its
-// box when it was unique at its first take, and the slots it took are then
-// the frame's, so only its other fields are released before the box is freed,
-// or, `held` for a construction, left in its local as the token. Past a few
-// such fields the taken slots are nulled and the type's drop helper walks the
-// rest, which costs a store a slot rather than a walk a field at every death.
-// The free reads no count (ir.sole): the one read at the first take still
-// holds, as nothing between admits the donor but its takes and tests, and no
-// other holder exists to retain it. A donor read as shared had its takes
-// retained, and is released whole by the ordinary test, which also covers its
-// count having fallen since.
 function classified_death(own r: irtables.LowerResult, f: ssasem.Func, k: ssaunits.Keeps, at: i32, held: boolean): irtables.LowerResult {
   let donor: i32 = k.donors[at];
   let fields: semrecords.Field[] = donor_fields(f, k.moved[at][0], donor);
@@ -1536,7 +1258,6 @@ function max_inline_rest(): i32 {
   return 2;
 }
 
-// The counted fields `skip` does not mark.
 function walked_rest(fields: semrecords.Field[], skip: boolean[]): i32 {
   let n: i32 = 0;
   let i: i32 = 0;
@@ -1562,7 +1283,6 @@ function null_slots(own r: irtables.LowerResult, box: i32, slots: boolean[]): ir
   return r;
 }
 
-// The fields of the record or variant the take `taken` read out of `donor`.
 function donor_fields(f: ssasem.Func, taken: i32, donor: i32): semrecords.Field[] {
   let get: ssa.SInst = definition(f, taken);
   if (get.kind_tag == ssasem.record_get()) {
@@ -1572,7 +1292,6 @@ function donor_fields(f: ssasem.Func, taken: i32, donor: i32): semrecords.Field[
   return owner.variants[semrecords.find_variant(owner, get.str)].fields;
 }
 
-// drop_record_fields over the fields `skip` does not mark.
 function drop_fields_except(own r: irtables.LowerResult, slot: i32, fields: semrecords.Field[], skip: boolean[], scratch: i32, f: ssasem.Func): irtables.LowerResult {
   let child: i32 = scratch;
   r = reserve(r, child + 1);
@@ -1589,19 +1308,10 @@ function drop_fields_except(own r: irtables.LowerResult, slot: i32, fields: semr
   return r;
 }
 
-// A construction with a keep (block_keeps, `at` its row) stores the kept
-// slots only under the token's null arm, where its box is fresh: a late read
-// is copied from the donor there, retained, and any other kept operand is
-// stored from its local. The donor's drop follows, inside the same
-// construction: a unique donor gives up the children the construction
-// replaces before their slots are overwritten, and a shared one is released
-// once its kept fields are copied. The replaced slots are stored last.
 function reuse_construct(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, k: ssaunits.Keeps, at: i32): irtables.LowerResult {
   if (ins.kind_tag == ssasem.tuple_new()) {
     return reuse_tuple(r, f, ins);
   }
-  // A declared variant's box is laid out as a record's: the shape word
-  // `struct_make` writes, naming the variant, then the variant's fields.
   let fields: semrecords.Field[] = [];
   let shape: string = ins.str;
   if (ins.kind_tag == ssasem.variant_new()) {
@@ -1612,9 +1322,6 @@ function reuse_construct(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.S
     fields = record_fields(f.values[ins.result], f);
     shape = record_name(f.values[ins.result]);
   }
-  // A kept donor has the construction's own type, so a token is a box of the
-  // right size whose first word already names the type: it is the result as
-  // it stands, and only the fresh box of the null arm is allocated and shaped.
   if (at >= 0) {
     r = emit(r, ir.op_load_local(token_slot(f)));
     r = emit(r, ir.op_const_i32(0));
@@ -1625,12 +1332,6 @@ function reuse_construct(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.S
   r = emit(r, ir.op_const_i32(fields.len() + 1));
   r = emit(r, ir.op_call_direct("__fern_alloc_reuse", 2));
   r = emit(r, ir.op_store_local(ins.result));
-  // The box's first word identifies its type, and `struct_make` is what
-  // normally writes it. A construction building through a token never runs
-  // that op, and neither box that reaches it carries the right word: the
-  // donor's is the DONOR's, and the fresh one holds the length `__fern_arr_box`
-  // wrote. So the recipient writes its own, which is also what lets a donor of
-  // another type serve it.
   r = emit(r, ir.op_load_local(ins.result));
   r = emit(r, ir.op_struct_set_shape(shape));
   r = emit(r, ir.op_drop());
@@ -1682,7 +1383,6 @@ function either(a: boolean[], b: boolean[]): boolean[] {
   return out;
 }
 
-// The store of field `i` from the box and the value on the stack.
 function field_store(own r: irtables.LowerResult, fields: semrecords.Field[], i: i32): irtables.LowerResult {
   if (ssasem.is_wide(fields[i].ty)) {
     return emit(r, ir.op_struct_set_i64(i));
@@ -1690,10 +1390,6 @@ function field_store(own r: irtables.LowerResult, fields: semrecords.Field[], i:
   return emit(r, ir.op_struct_set(i, load_width(fields[i].ty)));
 }
 
-// A tuple box has no shape word: element i is slot i, so the box is one word
-// per element and there is nothing at slot 0 to identify. The element stores
-// carry their own width, as `op_tuple_make_k` does on the fresh path, or wasm
-// writes the low half of an eight-byte slot and the read back is garbage.
 function reuse_tuple(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let elems: typeinfo.Type[] = tuple_elements(f.values[ins.result]);
   r = emit(r, ir.op_load_local(token_slot(f)));
@@ -1729,7 +1425,6 @@ function at(p: ssaunits.Plan, idx: i32[][], block: i32, point: i32, target: i32)
   if (i >= 0) {
     return p.steps[i];
   }
-  // Unreachable after verification of the complete plan.
   return ssaunits.Step { block: 0 - 1, point: point, target: 0 - 1, supplies: [], drops: [], hand_roots: [], hand_fields: [] };
 }
 
@@ -1746,7 +1441,6 @@ function successors(t: ssa.STerm): i32[] {
   return [];
 }
 
-// `dest_at` is the target's position in the block list.
 function edge(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], from: i32, target: i32, dest_at: i32): irtables.LowerResult {
   let step: ssaunits.Step = at(p, idx, from, ssaunits.edge_point(), target);
   let dest: ssa.SBlock = f.graph.blocks[dest_at];
@@ -1755,9 +1449,6 @@ function edge(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx
   while (dest.preds[pi] != from) {
     pi = pi + 1;
   }
-  // All phi sources remain on the operand stack while old edge units are
-  // released. Assign in reverse stack order, after every source was read.
-  // Drop helpers and their nested scopes preserve the existing stack prefix.
   for ins in dest.insts {
     if (ins.kind_tag == 8) {
       r = emit(r, ir.op_load_local(ins.args[pi]));
@@ -1775,22 +1466,8 @@ function edge(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx
   return r;
 }
 
-// What a schema field has to satisfy is weaker than what a value has to: the
-// walk visits only the REFERENCE fields, so a scalar one needs no vocabulary
-// here at all, and an array or tuple of scalars needs only its own box
-// released. Asking `supported` of every field instead refuses a function for
-// a field it never reads.
-// An array's element store carries its own width, so a 64-bit element has a
-// form there. A tuple construction and a closure box write one i32-shaped word
-// per operand and have none. A record or variant stores each field at the
-// width its declaration names, which is what `op_struct_make` carries as the
-// declaration index; a wide field of a construction whose declaration is not
-// in the table has no store width to carry.
 function construction_error(f: ssasem.Func, ins: ssa.SInst, structs: irtables.StructTab): string {
   let declared: boolean = ins.kind_tag == ssasem.record_new() || ins.kind_tag == ssasem.variant_new();
-  // A builtin union names no declaration and needs none: its box carries the
-  // payload's width in the op (`op_opt_make_w`) rather than reading it from a
-  // field table.
   if (ins.kind_tag == ssasem.variant_new() && enum_layout(f, f.values[ins.result]) == semrecords.layout_option()) {
     return "";
   }
@@ -1809,10 +1486,6 @@ function construction_error(f: ssasem.Func, ins: ssa.SInst, structs: irtables.St
   return "";
 }
 
-// The undeclared constructions that carry their own element width: the array
-// ops, of which a cell's slot is one, and the tuple construction through the
-// kinds `tuple_kinds` names.
-// A dyn box stores its primitive at the width the primitive's name gives.
 function wide_element_site(k: i32): boolean {
   return kind_in(
     [
@@ -1823,10 +1496,6 @@ function wide_element_site(k: i32): boolean {
   );
 }
 
-// The declaration a record or variant construction stores its fields
-// through: a record's by its name, a variant's by its name within its enum,
-// since two enums may declare one variant name with differently sized
-// payloads. -1 when the table holds no such declaration.
 function decl_of(f: ssasem.Func, ins: ssa.SInst, structs: irtables.StructTab): i32 {
   if (ins.kind_tag == ssasem.record_new()) {
     return irtables.decl_index_of(structs, record_name(f.values[ins.result]));
@@ -1857,8 +1526,6 @@ function walk_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean 
   if (ssasem.reference(t)) {
     return rc_shape(t, f, lookup);
   }
-  // A handle stores as the descriptor word and its release walks
-  // nothing, so a field or payload of one is walkable without a schema.
   if (semtypes.is_handle(t) || semtypes.is_never(t)) {
     return true;
   }
@@ -1887,7 +1554,6 @@ function record_walk(r: semrecords.Record, f: ssasem.Func): boolean {
 
 function enum_walk(e: semrecords.Enum, f: ssasem.Func): boolean {
   for vr in e.variants {
-    // No physical payload exists for a variant with an uninhabited field.
     if (!semrecords.inhabited(vr)) {
       continue;
     }
@@ -1931,8 +1597,6 @@ function schema_types_error(f: ssasem.Func, view: ssaunits.SchemaView): string {
   return "";
 }
 
-// SchemaSeen is every distinct record and enum schema_views has met, with the
-// verdicts it formed for each, indexed by name like a function's own table.
 struct SchemaSeen {
   recs: semrecords.Record[],
   rec_names: util.NameIndex,
@@ -1946,9 +1610,6 @@ struct SchemaSeen {
 
 struct ViewStep { seen: SchemaSeen, view: ssaunits.SchemaView }
 
-// schema_views forms every function's schema checks once per module: a record
-// or enum several functions' tables hold is checked once, and each function's
-// view carries the verdicts for its own table.
 pub function schema_views(funcs: ssasem.Func[]): ssaunits.SchemaView[] {
   let none: string[] = [];
   let seen: SchemaSeen = SchemaSeen { recs: [], rec_names: util.name_index(none), rec_unit: [], rec_walk: [], enums: [], enum_names: util.name_index(none), enum_unit: [], enum_walk: [] };
@@ -2008,18 +1669,10 @@ function named(t: typeinfo.Type): string {
   return "";
 }
 
-// A nominal type's children are released by its own helper rather than by an
-// inline expansion. The descent that would close a cycle is a call, so a type
-// that reaches itself still has a finite lowering. The helper releases the
-// box's CHILDREN ONLY: its caller has already proved __fern_rc_is_unique(box)
-// and releases the box itself once the helper returns.
 pub function drop_helper_name(t: typeinfo.Type): string {
   return "__sem_drop_" + ssasem.type_key(t);
 }
 
-// The release of ONE value of a map's column of boxes, called by the runtime
-// on the entry an insert supersedes and on every entry the map's release
-// walks: the same drop a frame gives a unit of the type it holds.
 pub function release_helper_name(t: typeinfo.Type): string {
   return "__sem_release_" + ssasem.type_key(t);
 }
@@ -2035,8 +1688,6 @@ function release_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerResult 
   return r;
 }
 
-// The element types of the columns of boxes the schema's `maps` name — a
-// keyed key column's and a boxed value column's — each once.
 function boxed_columns(maps: typeinfo.Type[]): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
   let names: string[] = [];
@@ -2060,8 +1711,6 @@ function boxed_columns(maps: typeinfo.Type[]): typeinfo.Type[] {
   return out;
 }
 
-// The box value columns of the schema's `maps` that run on core/map, each
-// once.
 function routed_box_columns(maps: typeinfo.Type[], f: ssasem.Func): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
   let names: string[] = [];
@@ -2079,9 +1728,6 @@ function routed_box_columns(maps: typeinfo.Type[], f: ssasem.Func): typeinfo.Typ
   return out;
 }
 
-// The map types among this function's values and schema fields, in that
-// order, and whether any of those values and fields, map or not, contains a
-// byte view.
 struct SchemaScan { maps: typeinfo.Type[], bytes: boolean }
 
 function schema_scan(f: ssasem.Func): SchemaScan {
@@ -2118,8 +1764,6 @@ function env_release_name(t: typeinfo.Type): string {
   return release_helper_name(t) + "$env";
 }
 
-// The routed maps among the schema's `maps` whose key column is keyed, each
-// once.
 function routed_keyed_maps(maps: typeinfo.Type[], f: ssasem.Func): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
   let names: string[] = [];
@@ -2136,10 +1780,6 @@ function routed_keyed_maps(maps: typeinfo.Type[], f: ssasem.Func): typeinfo.Type
   return out;
 }
 
-// What a keyed routed map hands core/map as function values: the key's hash
-// and equality, the key's release, and the value's release, each a closure
-// body taking its environment first. `done` grows as each is added, so two
-// maps sharing a key or value type add its closure once.
 function append_keyed_closures(own out: irtables.LowerResult[], t: typeinfo.Type, done: util.NameIndex): irtables.LowerResult[] {
   let k: typeinfo.Type = ssasem.map_key(t);
   let v: typeinfo.Type = ssasem.map_value(t);
@@ -2160,9 +1800,6 @@ function result_names(rows: irtables.LowerResult[]): string[] {
   return out;
 }
 
-// The closure body a keyed probe calls for `which`, "hash" or "eq": its
-// environment, then the key or the two keys, handed to the key type's own
-// function (ssasem.keyed_map_key_fn).
 function key_closure(k: typeinfo.Type, which: string, nparams: i32): irtables.LowerResult {
   let r: irtables.LowerResult = irtables.LowerResult {
     ...empty(""), ok: true,
@@ -2181,9 +1818,6 @@ function key_closure_name(k: typeinfo.Type, which: string): string {
   return "__sem_key" + which + "_" + ssasem.type_key(k) + "$env";
 }
 
-// The release of one value of a keyed routed map's column, as a closure: a
-// string's or a view's, a box's through its type's helper, a wide value's
-// cell, or nothing for a scalar.
 function value_env_release(v: typeinfo.Type): string {
   if (ssasem.is_text(v)) {
     return "__sem_str_release$env";
@@ -2219,9 +1853,6 @@ function value_env_helper(v: typeinfo.Type): irtables.LowerResult {
   return emit(r, ir.op_return());
 }
 
-// A box column's release in the shape a function value's body takes, its
-// environment first: core/map's drop of a routed map calls it through a
-// closure.
 function env_release_helper(t: typeinfo.Type): irtables.LowerResult {
   let r: irtables.LowerResult = irtables.LowerResult {
     ...empty(""), ok: true,
@@ -2233,17 +1864,11 @@ function env_release_helper(t: typeinfo.Type): irtables.LowerResult {
   return r;
 }
 
-// n_locals starts at n_params: `reserve` only grows it, and a body whose frame
-// is smaller than its parameters puts the prologue's parameter copy below the
-// allocated frame. The body is the raw op sequence: every function that
-// mentions the type produces one, and `merge_helpers` runs the peephole once
-// per symbol it keeps rather than once per producer.
 function one_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerResult {
   let r: irtables.LowerResult = irtables.LowerResult {
     ...empty(""), ok: true,
     n_params: 1, n_locals: 1, name: drop_helper_name(t),
   };
-  // The finalizer runs first, while every field is still live.
   let finalizer: string = ssasem.finalizer_of(f, t);
   if (finalizer != "") {
     r = helper(r, 0, finalizer);
@@ -2258,7 +1883,6 @@ function one_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerResult {
       r = drop_variant_fields(r, 0, t, 1, f);
     }
   }
-  // The one value the caller's `drop` after the call discards.
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_return());
   return r;
@@ -2269,30 +1893,13 @@ function optimized_helper(h: irtables.LowerResult): irtables.LowerResult {
   return irtables.LowerResult { ...h, ops: optimized.ops, n_locals: optimized.n_locals };
 }
 
-// One helper per nominal schema the walk can call, gated on has_children —
-// the same predicate that decides whether drop_value emits the call, so every
-// call this function's lowering makes has a body here. A schema the function
-// mentions but never drops yields a body nothing reaches, which the weak
-// linkage discards; the reverse, a call with no body, is what the shared gate
-// rules out. A function's schema set is closed under field reachability, so
-// iterating it also reaches the types the bodies themselves call.
 pub function drop_helpers(f: ssasem.Func): irtables.LowerResult[] {
   let none: string[] = [];
   return helpers_not_in(f, util.name_index(none), util.name_index(none)).rows;
 }
 
-// Sparse provenance for nominal helpers, recorded where the body is made.
-// `row` is a position in Helpers.rows, not a symbol lookup. Other helper
-// families have no descriptor. These facts do not certify ABI or effects.
 pub struct HelperType { row: i32, ty: typeinfo.Type, children_only: boolean }
 
-// Helpers is the drop helpers collected over a module's bodies, with an index
-// over their symbols: a helper is generated once per module, by the first
-// function whose schema names its type. Every function's table is built from
-// the module's one declaration set, so a later function's body would be the
-// same one. `seen` holds the record and enum types (ssasem.type_key) an
-// earlier function's schema held: their helpers are in `rows`, or they have
-// none.
 pub struct Helpers { rows: irtables.LowerResult[], types: HelperType[], done: util.NameIndex, seen: util.NameIndex }
 
 pub function no_helpers(): Helpers {
@@ -2300,8 +1907,6 @@ pub function no_helpers(): Helpers {
   return Helpers { rows: [], types: [], done: util.name_index(none), seen: util.name_index(none) };
 }
 
-// with_drop_helpers adds the helpers of f whose symbols h does not carry yet,
-// skipping the record and enum types h has seen.
 pub function with_drop_helpers(h: Helpers, f: ssasem.Func): Helpers {
   let fresh: Fresh = helpers_not_in(f, h.done, h.seen);
   let out: Helpers = Helpers { ...h, seen: fresh.seen };
@@ -2314,12 +1919,8 @@ pub function with_drop_helpers(h: Helpers, f: ssasem.Func): Helpers {
   return out;
 }
 
-// Fresh is helpers_not_in's answer: the helpers, and `seen` with the record
-// and enum types of the schema added.
 struct Fresh { rows: irtables.LowerResult[], types: HelperType[], seen: util.NameIndex }
 
-// helpers_not_in is drop_helpers less the symbols `done` carries, and less the
-// record and enum types `seen` holds.
 function helpers_not_in(f: ssasem.Func, done: util.NameIndex, seen: util.NameIndex): Fresh {
   let out = Fresh { rows: [], types: [], seen: seen };
   let grown: util.NameIndex = seen;
@@ -2364,9 +1965,6 @@ function helpers_not_in(f: ssasem.Func, done: util.NameIndex, seen: util.NameInd
   return Fresh { ...out, seen: grown };
 }
 
-// append_helpers adds t's drop and release helpers when t has children, each
-// unless done has it. Most of a module's bodies find both done, so that is
-// asked first.
 function append_helpers(own out: Fresh, t: typeinfo.Type, f: ssasem.Func, done: util.NameIndex): Fresh {
   let need_drop: boolean = !done.has(drop_helper_name(t));
   let need_release: boolean = !done.has(release_helper_name(t));
@@ -2390,18 +1988,10 @@ function row_names(rows: irtables.LowerResult[]): string[] {
   return out;
 }
 
-// merge_helpers appends to the cache the bodies whose symbol it lacks, the
-// first of each symbol in order. A body lowered from a declaration carries no
-// name, so a declaration-less body cannot collide with one. The helpers a
-// module collects are one per symbol already (Helpers); the merge keeps the
-// first of a symbol handed to it twice rather than co-linking both under the
-// .weak linkage, which would pick one silently.
 pub function merge_helpers(cache: irtables.LowerResult[], helpers: irtables.LowerResult[]): irtables.LowerResult[] {
   return merged_helpers(cache, helpers, false).bodies;
 }
 
-// The unchanged cache prefix is followed by one body per helper_indices entry.
-// Each index names the selected input helper, before its ops are optimized.
 pub struct MergedHelpers { bodies: irtables.LowerResult[], cache_len: i32, helper_indices: i32[] }
 
 pub function merge_helpers_mapped(cache: irtables.LowerResult[], helpers: irtables.LowerResult[]): MergedHelpers {
@@ -2469,8 +2059,6 @@ function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irtab
   if (why != "") {
     return why;
   }
-  // Keep this physical vocabulary closed when semantic analysis grows new
-  // operations. Verification of a new operation does not implement its ABI.
   for b in f.graph.blocks {
     for ins in b.insts {
       if (!supported_op(ins.kind_tag)) {
@@ -2490,8 +2078,6 @@ function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irtab
   return "";
 }
 
-// The operations that write a value into a container's slot. A closure box is
-// one: its captures occupy the same i32-shaped words an array element does.
 function builds(k: i32): boolean {
   return kind_in(
     [
@@ -2511,10 +2097,6 @@ function kind_in(kinds: i32[], k: i32): boolean {
   return false;
 }
 
-// Everything that is not a container operation: the constants and a type's
-// zero, a parameter, a copy, a phi, the scalar operators, a call, a closure
-// value and the call through one.
-// unchecked_str_index is a byte read whose index the lowering proved in range.
 function unchecked_str_index(ins: ssa.SInst): boolean {
   return ins.kind_tag == ssasem.str_index() && ins.imm == 1;
 }
@@ -2539,10 +2121,6 @@ function variant_op(k: i32): boolean {
   return kind_in([ssasem.variant_new(), ssasem.variant_is(), ssasem.variant_get(), ssasem.dyn_is()], k) || identity_op(k);
 }
 
-// A struct-union's member is its own box, a view and the string it borrows
-// are one box, and a dyn value is the box it was widened from, so widening,
-// narrowing and a string retag move no bytes: the operand is already on the
-// stack and the store below takes it.
 function identity_op(k: i32): boolean {
   return kind_in([ssasem.variant_up(), ssasem.variant_as(), ssasem.str_as(), ssasem.array_lend(), ssasem.dyn_up(), ssasem.dyn_as()], k);
 }
@@ -2551,10 +2129,6 @@ function supported_op(k: i32): boolean {
   return value_op(k) || container_op(k) || ssasem.is_map_op(k) || ssasem.is_map_iter_op(k);
 }
 
-// A value's SSA id is its local slot, so the slot lists are a walk of the
-// value types. Only wasm reads them: it spells each local and the result in
-// the function's type, where the register backends give every value the same
-// 64-bit slot and ignore the distinction.
 function result_kind(t: typeinfo.Type): i32 {
   if (ssasem.is_wide(t)) {
     return irtables.result_i64();
@@ -2605,12 +2179,6 @@ function frame(f: ssasem.Func): irtables.LowerResult {
   return r;
 }
 
-// dbg_type is how a `-g` variable's type is described to the ELF writer, ""
-// for one it cannot describe. A scalar is its spelling, a payloadless enum
-// dbg_enum's spelling. A struct is a pointer
-// to its box, `*Name@size{field:type:offset,...}`, each field in its 8-byte
-// slot after the shape word; fields that cannot be described are left out,
-// and a struct already being described (`open`) is named without its fields.
 function dbg_type(f: ssasem.Func, t: typeinfo.Type, open: string[]): string {
   let s: string = typeinfo.spelling(t);
   for scalar in ["i32", "i64", "u8", "u32", "u64", "usize", "isize", "f64", "f32", "boolean"] {
@@ -2635,9 +2203,6 @@ function dbg_type(f: ssasem.Func, t: typeinfo.Type, open: string[]): string {
   return "";
 }
 
-// dbg_enum describes a declared enum whose variants carry nothing,
-// `%Name{Name$North,Name$East,...}`: its value points at a box whose word 0 is
-// the variant's shape, which the emitter names and the link resolves.
 function dbg_enum(f: ssasem.Func, t: typeinfo.Type, s: string): string {
   let at: i32 = semrecords.find_enum(f.enums, t);
   if (at < 0 || f.enums[at].layout != semrecords.layout_variant()) {
@@ -2656,7 +2221,6 @@ function dbg_enum(f: ssasem.Func, t: typeinfo.Type, s: string): string {
   return "%" + dbg_type_name(s) + "{" + out + "}";
 }
 
-// dbg_members is a struct's describable fields as `field:type:offset`.
 function dbg_members(f: ssasem.Func, fields: semrecords.Field[], open: string[]): string {
   let out: string = "";
   let k: i32 = 0;
@@ -2673,8 +2237,6 @@ function dbg_members(f: ssasem.Func, fields: semrecords.Field[], open: string[])
   return out;
 }
 
-// dbg_type_name is a type's spelling with the description's separators
-// replaced, so a generic's arguments cannot be read as structure.
 function dbg_type_name(s: string): string {
   let out: string = "";
   let i: i32 = 0;
@@ -2690,8 +2252,6 @@ function dbg_type_name(s: string): string {
   return out;
 }
 
-// The stack IR's name for each integer operator, the signed form where the
-// IR distinguishes one.
 function binary_kind(op: string): string {
   let ops: string[] = ["+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "<", "<=", ">", ">=", "=="];
   let kinds: string[] = ["add", "sub", "mul", "div_s", "rem_s", "and", "or", "xor", "shl", "shr_s", "lt_s", "le_s", "gt_s", "ge_s", "eq"];
@@ -2705,17 +2265,10 @@ function binary_kind(op: string): string {
   return "ne";
 }
 
-// `+`, `-`, `*` and `<<` are the operators whose result can leave the range its
-// type names; every other one lands inside a range its operands are already in,
-// and a comparison lands in a boolean.
 function wraps(op: string): boolean {
   return op == "+" || op == "-" || op == "*" || op == "<<";
 }
 
-// The stack IR runs the integer operators in a register wider than any of these
-// types, so a result that can exceed the type's width is masked back to it
-// explicitly — the same step the AST lowering emits, and what the interpreter's
-// per-width arithmetic does (`2147483647 + 1` is INT_MIN, `255u8 + 1` is 0).
 function wrap_kind(t: typeinfo.Type): string {
   if (ssasem.is_u8(t)) {
     return "u8";
@@ -2726,10 +2279,6 @@ function wrap_kind(t: typeinfo.Type): string {
   return "i32";
 }
 
-// The stack IR's name for an integer operator at its operands' own
-// signedness. The orderings, the right shift and div/rem read the slot's sign
-// bit, which an unsigned operand does not have; the verifier gives both
-// operands the same type, so one of them names the form.
 function integer_kind(op: string, operand: typeinfo.Type): string {
   if (ssasem.is_unsigned_int(operand)) {
     return irtables.to_unsigned_kind(binary_kind(op));
@@ -2737,8 +2286,6 @@ function integer_kind(op: string, operand: typeinfo.Type): string {
   return binary_kind(op);
 }
 
-// The width the operator RUNS at, which a comparison's boolean result does not
-// name — its operands do.
 function operand_width(f: ssasem.Func, ins: ssa.SInst): i32 {
   if (ssasem.is_wide(f.values[ins.args[0]])) {
     return 64;
@@ -2749,10 +2296,6 @@ function operand_width(f: ssasem.Func, ins: ssa.SInst): i32 {
   return 0;
 }
 
-// A string append handed the left operand's unit: the runtime grows that
-// buffer in place when the block has room, and the result IS the operand;
-// otherwise it builds a fresh box with headroom for both and the operand's
-// unit is released.
 function grow_or_concat(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let res: i32 = scratch_base(f);
   r = reserve(r, res + 1);
@@ -2768,12 +2311,6 @@ function grow_or_concat(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SI
   return emit(r, ir.op_load_local(res));
 }
 
-// A string append onto a FIELD of a record this frame owns and reads no
-// further through that field (ssaunits.field_grow_root). A sole-owned record
-// lets the runtime grow the field's buffer in place, and the field is then
-// nulled so the record's release skips the buffer the result now owns; a
-// shared record, or a buffer that cannot grow, takes a fresh box and leaves
-// the field for the record's release.
 function grow_field_or_concat(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
   let root: i32 = p.grows[ins.result];
   let grown: i32 = scratch_base(f);
@@ -2801,11 +2338,6 @@ function grow_field_or_concat(own r: irtables.LowerResult, f: ssasem.Func, p: ss
   return emit(r, ir.op_load_local(res));
 }
 
-// grow_call is the append's runtime call: with `form` "" it answers whether
-// the right operand went onto the left one's block in place, and with
-// "_fresh" it leaves a grown box of both on the stack, taking nothing. A
-// range append hands over the source and its bounds, so the bytes go
-// straight from the source into the block either way.
 function grow_call(own r: irtables.LowerResult, ins: ssa.SInst, form: string): irtables.LowerResult {
   for arg in ins.args {
     r = emit(r, ir.op_load_local(arg));
@@ -2816,10 +2348,6 @@ function grow_call(own r: irtables.LowerResult, ins: ssa.SInst, form: string): i
   return emit(r, ir.op_call_direct("__fern_str_grow" + form, 2));
 }
 
-// concatenation leaves a fresh box of a range append's operands on the
-// stack and takes nothing: the exact-size join of a string the frame keeps.
-// The range's window is built in the frame, in `view`, and released once
-// the bytes are copied out of it.
 function concatenation(own r: irtables.LowerResult, ins: ssa.SInst, view: i32): irtables.LowerResult {
   r = reserve(r, view + 1);
   r = emit(r, ir.op_load_local(ins.args[1]));
@@ -2833,10 +2361,6 @@ function concatenation(own r: irtables.LowerResult, ins: ssa.SInst, view: i32): 
   return helper(r, view, "__fern_str_view_free");
 }
 
-// A string `+` is the runtime's concatenation, a fresh box; equality reads
-// both operands, and an ordering is `str_cmp` — which hands back a signed i32
-// under, at or over zero — against a zero constant. The verifier admits no
-// other string operator (ssasem.string_result).
 function string_binary(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   if (ins.str == "+") {
     return emit(r, ir.op_str_concat());
@@ -2853,9 +2377,6 @@ function string_binary(own r: irtables.LowerResult, ins: ssa.SInst): irtables.Lo
   return r;
 }
 
-// The operand of a string `==` or `!=` that is a literal, whose length then
-// decides most comparisons without the runtime's call; -1 for any other
-// instruction.
 function literal_text_eq(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): i32 {
   if (ins.kind_tag != 9 || ins.str != "==" && ins.str != "!=" || ins.args.len() != 2) {
     return 0 - 1;
@@ -2872,8 +2393,6 @@ function literal_text_eq(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): i32 
   return 0 - 1;
 }
 
-// A comparison against a literal of length K reads the other operand's length
-// first and calls `str_eq` only when it is K.
 function text_eq_by_length(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
   let lit: i32 = literal_text_eq(f, p, ins);
   let other: i32 = ins.args[1 - lit];
@@ -2898,10 +2417,6 @@ function text_eq_by_length(own r: irtables.LowerResult, f: ssasem.Func, p: ssaun
   return r;
 }
 
-// The float operators are the stack IR's own f64 opcodes: arithmetic hands
-// back an f64, rounded to single precision where the result is an f32, a
-// comparison the i32 the boolean occupies, and negation flips the sign bit.
-// Nothing wraps.
 function float_scalar(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   if (ins.kind_tag == 10) {
     return emit(r, ir.op_funary("fneg"));
@@ -2913,15 +2428,11 @@ function float_scalar(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIns
   return r;
 }
 
-// An f32 is the f64 on the stack rounded to single precision, which the
-// demote-and-promote pair applies.
 function round_f32(own r: irtables.LowerResult): irtables.LowerResult {
   r = emit(r, ir.op_f32_bits());
   return emit(r, ir.op_f32_from_bits());
 }
 
-// Into a float: an integer converts at its width and signedness, the other
-// float width is already the f64, and an f32 destination rounds.
 function into_float(own r: irtables.LowerResult, from: typeinfo.Type, to: typeinfo.Type): irtables.LowerResult {
   if (!ssasem.is_float(from)) {
     let bits: i32 = 32;
@@ -2936,9 +2447,6 @@ function into_float(own r: irtables.LowerResult, from: typeinfo.Type, to: typein
   return r;
 }
 
-// A saturating or checked operator is the shape irtables.sat_binary_ops /
-// chk_binary_ops builds over this function's slots: the operands are values,
-// so they are already in slots, and the result's slot holds the outcome.
 function overflow_binary(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let t: typeinfo.Type = f.values[ins.args[0]];
   let wide: boolean = ssasem.is_wide(t);
@@ -2954,7 +2462,6 @@ function overflow_binary(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.S
   return r;
 }
 
-// The width-and-signedness name the shape is written against.
 function overflow_kind(t: typeinfo.Type): string {
   if (ssasem.is_u8(t)) {
     return "u8";
@@ -2993,10 +2500,6 @@ function scalar(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): ir
   } else {
     r = emit(r, ir.op_bin("sub", w, false));
   }
-  // The 64-bit operators are already full-width, so only a narrower result
-  // can leave the range its type names. An address is the register's own
-  // width too: wrapping one sign-extended `base + n` from 32 bits, which
-  // faulted on any mapping above 2 GiB (#10454).
   if (!wraps(ins.str) || register_width(f.values[ins.result])) {
     return r;
   }
@@ -3007,11 +2510,6 @@ function register_width(t: typeinfo.Type): boolean {
   return ssasem.is_wide(t) || ssasem.is_usize(t);
 }
 
-// The mask a NARROW destination applies to a narrow operand: the byte's 255,
-// the u32's zero-extension of the low word, the i32's sign-extension of it.
-// "" where the operand's own type already keeps its value inside the
-// destination's range — a byte is inside every wider narrow type, and a
-// conversion to the type the value already has moves no bits.
 function narrow_mask(from: typeinfo.Type, to: typeinfo.Type): string {
   if (semtypes.equal(from, to)) {
     return "";
@@ -3028,10 +2526,6 @@ function narrow_mask(from: typeinfo.Type, to: typeinfo.Type): string {
   return "i32";
 }
 
-// Out of a float: the truncation, and then the u8 mask. The conversions below
-// answer at 32 or 64 bits, so a u8 destination needs the narrowing the integer
-// wrap applies for the same destination — without it `300.7 as u8` keeps 300
-// where the AST lowering and native both answer 44.
 function out_of_float(own r: irtables.LowerResult, to: typeinfo.Type): irtables.LowerResult {
   r = emit(r, from_f64(to));
   if (!ssasem.is_u8(to)) {
@@ -3040,16 +2534,6 @@ function out_of_float(own r: irtables.LowerResult, to: typeinfo.Type): irtables.
   return emit(r, ir.op_int_cast("u8"));
 }
 
-// Out of the f64: a truncation toward zero at the destination's width and
-// signedness. The signed forms clamp at the signed maximum, and at the signed
-// MINIMUM out of a negative, which is the wrong answer for a destination that
-// has no sign bit: out_of_float's u8 mask then reads that clamp's low byte,
-// so `-1.0 as u8` answered 255 rather than native's 0 (#9912).
-//
-// Signedness comes from the destination, not from its width — the narrow
-// unsigned types share the u32's conversion, exactly as native picks
-// `Unsigned: !dstInt.IsSigned()` and then canonicalises to the destination's
-// representation.
 function from_f64(to: typeinfo.Type): ir.Op {
   if (ssasem.is_u64(to)) {
     return ir.op_f64_to_u64();
@@ -3063,34 +2547,18 @@ function from_f64(to: typeinfo.Type): ir.Op {
   return ir.op_f64_to_i32();
 }
 
-// A conversion between the integer types, in the two domains the stack IR
-// separates. Crossing the 64-bit boundary is an explicit extend or wrap, and
-// the SOURCE's signedness is what an extension extends by: only the signed
-// 32-bit width fills the high half from a sign bit. Inside the narrow domain
-// the conversion is the destination's own mask. Into and out of a float is a
-// real conversion: the convert at the operand's width and signedness, and the
-// truncation toward zero at the result's; into the f32 the value is rounded
-// to single precision, and out of it to the f64 it is already the f64.
 function cast(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let from: typeinfo.Type = f.values[ins.args[0]];
   let to: typeinfo.Type = f.values[ins.result];
-  // An address and the box it names share a slot, so neither direction of the
-  // reinterpretation moves anything. Both have to answer before the width
-  // arms below, which would read the reference as a narrow integer and emit a
-  // wrap for it.
   if (ssasem.is_usize(from) && ssasem.reference(to)) {
     return r;
   }
   if (ssasem.reference(from) && ssasem.is_usize(to)) {
     return r;
   }
-  // A handle is its descriptor, so reading it as the i32 moves nothing.
   if (semtypes.is_handle(from)) {
     return r;
   }
-  // An address converts at the pointer width: the u64 forms on a register
-  // backend, the u32 forms on wasm, where `f64 as usize` saturates at
-  // u32::MAX as native's does.
   if (ssasem.is_float(to) && ssasem.is_usize(from)) {
     r = emit(r, ir.op_ptr_to_f64());
     if (ssasem.is_f32(to)) {
@@ -3133,14 +2601,6 @@ function cast(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irta
   return emit(r, ir.op_int_cast(mask));
 }
 
-// The pointer width is the whole slot on a register backend and the i32 on
-// wasm, so neither direction of an address conversion is one opcode. Each is
-// written as the pair that is a no-op on whichever of the two the address
-// already matches: the address is taken to the 64-bit domain and wrapped back
-// down to the destination, and a narrow source is extended to 64 bits before
-// being wrapped to the address. On a register backend the pointer-width half
-// moves nothing and the 64-bit half does the extension; on wasm the two halves
-// cancel for a 32-bit destination and the 64-bit half is the real conversion.
 function from_address(own r: irtables.LowerResult, to: typeinfo.Type): irtables.LowerResult {
   if (ssasem.is_usize(to)) {
     return r;
@@ -3166,11 +2626,6 @@ function into_address(own r: irtables.LowerResult, from: typeinfo.Type): irtable
   return emit(r, ir.op_int_wrap_ptr());
 }
 
-// A tuple's slots are a uniform eight bytes on every backend; only wasm picks
-// the store instruction per element, and it reads the choice out of the kinds
-// string `op_tuple_make_k` carries. The READ side has named its width all
-// along (`op_tuple_get_w`), which is why this was the only half missing. An
-// f32 occupies the f64's slot, as it does in an array.
 function tuple_kind(t: typeinfo.Type): string {
   if (ssasem.is_float(t)) {
     return "f64";
@@ -3196,9 +2651,6 @@ function tuple_kinds(t: typeinfo.Type): string {
   return out;
 }
 
-// The window copy the runtime hands back aliases every element pointer it
-// copied, so the copy takes its own unit on each — the same `own_copied`
-// `sole_owned_base` makes over the same copy.
 function arr_slice(own r: irtables.LowerResult, f: ssasem.Func, elem: typeinfo.Type): irtables.LowerResult {
   r = emit(r, ir.op_arr_slice(elem_width(elem)));
   if (!ssasem.reference(elem)) {
@@ -3207,8 +2659,6 @@ function arr_slice(own r: irtables.LowerResult, f: ssasem.Func, elem: typeinfo.T
   return owned_copy(r, f, elem);
 }
 
-// The array on the stack aliases every element pointer it holds, and takes
-// its own unit on each.
 function owned_copy(own r: irtables.LowerResult, f: ssasem.Func, elem: typeinfo.Type): irtables.LowerResult {
   let copy: i32 = scratch_base(f);
   r = reserve(r, copy + 1);
@@ -3217,9 +2667,6 @@ function owned_copy(own r: irtables.LowerResult, f: ssasem.Func, elem: typeinfo.
   return emit(r, ir.op_load_local(copy));
 }
 
-// `copy`'s first len(`source`) elements alias `source`'s, and each needs a
-// unit of its own: a count on a counted element, and on a string view a fresh
-// box, since a view box carries the immortal rc and cannot be counted.
 function own_copied(own r: irtables.LowerResult, elem: typeinfo.Type, copy: i32, source: i32): irtables.LowerResult {
   if (!ssasem.is_view(elem)) {
     return helper(r, source, "__fern_arr_inc_elems");
@@ -3230,10 +2677,6 @@ function own_copied(own r: irtables.LowerResult, elem: typeinfo.Type, copy: i32,
   return emit(r, ir.op_drop());
 }
 
-// A record box is named by its declaration, a variant box by its variant. The
-// declaration index is where wasm reads each field's store width; the register
-// backends store every field as 8 bytes, and every read takes its offset from
-// the field index alone.
 function container(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irtables.StructTab): irtables.LowerResult {
   if (ins.kind_tag == ssasem.bytes_new()) {
     r = emit(r, ir.op_const_bytes(ins.str));
@@ -3313,22 +2756,14 @@ function container(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, 
   return field_get(r, f, ins);
 }
 
-// The boxes a routed value column can hold: any counted value but a string or
-// a view, released through the type's own release helper.
 function routed_box(t: typeinfo.Type): boolean {
   return ssasem.boxed_map_value(t) && !ssasem.is_view(t) || ssasem.is_string_array(t);
 }
 
-// A key or value wider than four bytes, an i64 or u64 or a float, crosses
-// the slot as a cell holding its eight bytes (core/map's __map_cell).
 function cell_column(t: typeinfo.Type): boolean {
   return ssasem.wide_map_key(t) || ssasem.float_map_value(t);
 }
 
-// A routed map op as a call to the core/map function native's
-// ir.CodegenAliases names for it. Every key and value crosses as core/map's
-// `usize` slot, converted the way `as usize` converts it, so equal keys are
-// equal slots.
 function routed_map_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let k: i32 = ins.kind_tag;
   if (k == ssasem.map_new() || k == ssasem.map_cleared()) {
@@ -3373,7 +2808,6 @@ function routed_map_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.S
   return helper(r, key_cell(f), "__map_cell_free");
 }
 
-// has, get and get_or, with the receiver on the stack.
 function routed_lookup(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let t: typeinfo.Type = f.values[ins.args[0]];
   let v: typeinfo.Type = ssasem.map_value(t);
@@ -3406,9 +2840,6 @@ function routed_lookup(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   return routed_from_slot(r, v);
 }
 
-// get_or on a cell column: the fallback crosses as a cell of its own, the
-// answer is read out of whichever cell comes back, and the fallback's cell
-// is returned after.
 function cell_get_or(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let v: typeinfo.Type = ssasem.map_value(f.values[ins.args[0]]);
   let fallback: i32 = key_cell(f) + 1;
@@ -3421,14 +2852,10 @@ function cell_get_or(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst
   return helper(r, fallback, "__map_cell_free");
 }
 
-// The scratch slot a wide key's cell is held in across one map op, above
-// every slot the insert and delete sequences take.
 function key_cell(f: ssasem.Func): i32 {
   return scratch_base(f) + 4;
 }
 
-// A wide key crosses as a cell, made once per op and returned after it,
-// unless an insert's new entry keeps it.
 function box_key(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let kt: typeinfo.Type = ssasem.map_key(f.values[ins.args[0]]);
   if (!cell_column(kt)) {
@@ -3447,9 +2874,6 @@ function key_operand(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst
   return routed_slot(r, ins.args[1], kt);
 }
 
-// core/map's valTag: 5 a string or a view, 4 a counted box, 0 a scalar held
-// in the slot itself, or in an eight-byte cell, whose size is the tag's high
-// bytes.
 function routed_val_tag(t: typeinfo.Type): i32 {
   if (ssasem.is_text(t)) {
     return 5;
@@ -3463,9 +2887,6 @@ function routed_val_tag(t: typeinfo.Type): i32 {
   return 0;
 }
 
-// core/map's keyTag: 1 a string, 0 a scalar held in the slot itself, 2 one
-// held in an eight-byte cell, whose size is the tag's high bytes, 4 a
-// counted keyed key.
 function routed_key_tag(t: typeinfo.Type): i32 {
   if (ssasem.is_text(t)) {
     return 1;
@@ -3479,8 +2900,6 @@ function routed_key_tag(t: typeinfo.Type): i32 {
   return 0;
 }
 
-// A string key crosses as its box's address, which is its slot already; a
-// wide scalar as a fresh cell (`cell_column`).
 function routed_slot(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type): irtables.LowerResult {
   r = emit(r, ir.op_load_local(slot));
   if (ssasem.reference(t)) {
@@ -3509,8 +2928,6 @@ function routed_from_slot(own r: irtables.LowerResult, t: typeinfo.Type): irtabl
   return r;
 }
 
-// A column snapshot is a fresh array in this compiler's own layout, built by
-// core/map as a typed Fern array.
 function routed_column_read(own r: irtables.LowerResult, elem: typeinfo.Type, offset: ir.Op): irtables.LowerResult {
   r = emit(r, offset);
   if (ssasem.is_bool(elem)) {
@@ -3539,8 +2956,6 @@ function routed_column_read(own r: irtables.LowerResult, elem: typeinfo.Type, of
   return emit(r, ir.op_call_direct("__map_i32_column", 2));
 }
 
-// A cursor past the last entry has no key or value to read: reading one is the
-// array index abort, as it is in both interpreters.
 function cursor_in_range(own r: irtables.LowerResult, cursor: i32): irtables.LowerResult {
   r = emit(r, ir.op_load_local(cursor));
   r = emit(r, ir.op_call_direct("__mapiter_has_next_impl", 1));
@@ -3552,8 +2967,6 @@ function cursor_in_range(own r: irtables.LowerResult, cursor: i32): irtables.Low
   return emit(r, ir.op_end());
 }
 
-// The cursor holds the map's buffer and, beside it, the unit of the map that
-// keeps the buffer live; it is released through __mapiter_drop_impl.
 function routed_cursor(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let k: i32 = ins.kind_tag;
   if (k == ssasem.mapiter_key() || k == ssasem.mapiter_value()) {
@@ -3578,15 +2991,6 @@ function routed_cursor(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   return routed_from_slot(r, semtypes.map_iter_value(t));
 }
 
-// An insert consumes the receiver's unit. The receiver is made the frame's
-// alone first, by core/map's own copy-on-write, and when that copied it the
-// receiver's unit is released here; it cannot be the last.
-//
-// A string key arrives with a unit of its own. A new entry keeps it; an
-// overwrite keeps the equal key already in the column, so the entry count not
-// growing is what says the arriving unit is released. An overwrite of a box
-// likewise releases the box it supersedes, which core/map leaves to its
-// caller and which the put hands back.
 function routed_insert(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let t: typeinfo.Type = f.values[ins.args[0]];
   let res: i32 = scratch_base(f);
@@ -3633,11 +3037,6 @@ function routed_insert(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   return emit(r, ir.op_load_local(res));
 }
 
-// `remove` answers the map. The receiver is
-// made the frame's alone first, by core/map's own copy-on-write, and the
-// delete then runs on it in place. A string or box column's removed entry is
-// the map's unit, which core/map's delete drops from the column without
-// releasing, so it is read out first and released after.
 function routed_delete(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let t: typeinfo.Type = f.values[ins.args[0]];
   let box: i32 = scratch_base(f);
@@ -3675,13 +3074,10 @@ function routed_delete(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   return emit(r, ir.op_load_local(box));
 }
 
-// A key column holding one unit of each key: a string or a keyed column.
 function counted_key_column(k: typeinfo.Type): boolean {
   return ssasem.is_text(k) || ssasem.keyed_map_key(k);
 }
 
-// The release of one value a routed column holds: a string's, or a box's
-// through its type's own release helper.
 function value_release(v: typeinfo.Type): string {
   if (ssasem.is_text(v)) {
     return "__fern_str_free";
@@ -3689,7 +3085,6 @@ function value_release(v: typeinfo.Type): string {
   return release_helper_name(v);
 }
 
-// The slot `reader` finds in `box` for the instruction's key, kept in `into`.
 function read_at_key(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, box: i32, reader: string, into: i32): irtables.LowerResult {
   r = emit(r, ir.op_load_local(box));
   r = key_operand(r, f, ins);
@@ -3704,9 +3099,6 @@ function keyed_twin(reader: string): string {
   return "__map_lookup_val_keyed";
 }
 
-// A call to core/map's `plain` entry for the instruction's map, or for a
-// keyed key column to its `keyed` twin, with the key type's hash and
-// equality closures after the other `argc` arguments.
 function map_entry(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, plain: string, keyed: string, argc: i32): irtables.LowerResult {
   let k: typeinfo.Type = ssasem.map_key(f.values[ins.args[0]]);
   if (!ssasem.keyed_map_key(k)) {
@@ -3726,10 +3118,6 @@ function release_if_copied(own r: irtables.LowerResult, receiver: i32, handle: i
   return emit(r, ir.op_end());
 }
 
-// A get answers an Option box of the frame's own whose payload the runtime
-// copies out of the column without a retain, so a hit on a counted column
-// retains the payload here: the box then owns one unit of it, as any Option
-// this frame drops is expected to.
 function retain_hit_payload(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   r = emit(r, ir.op_store_local(ins.result));
   r = emit(r, ir.op_load_local(ins.result));
@@ -3745,11 +3133,6 @@ function retain_hit_payload(own r: irtables.LowerResult, ins: ssa.SInst): irtabl
   return emit(r, ir.op_load_local(ins.result));
 }
 
-// A field read at the width its type names. Every slot is 8 bytes on every
-// backend, so the offset is the index alone; only wasm's typed load needs to
-// know that the slot holds an i64 or an f64 rather than a pointer in its low
-// half, and the schema this boundary verified the projection against is what
-// says so.
 function load_width(t: typeinfo.Type): i32 {
   if (ssasem.is_wide(t) || ssasem.is_float(t)) {
     return 64;
@@ -3757,10 +3140,6 @@ function load_width(t: typeinfo.Type): i32 {
   return 0;
 }
 
-// An environment record is the closure box, physically the word array the
-// lift builds: its field k is the box's slot k, read with the array op, since
-// only the register backends give a record's fields and an array's elements
-// the same stride.
 function field_get(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let t: typeinfo.Type = f.values[ins.result];
   if (semtypes.is_env(f.values[ins.args[0]])) {
@@ -3773,8 +3152,6 @@ function field_get(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
   return emit(r, marked_load(ir.op_struct_get(ins.imm, load_width(t)), t));
 }
 
-// A load of a counted reference carries ir.counted, which the emitted-RC
-// certifier reads; a scalar's does not.
 function marked_load(op: ir.Op, t: typeinfo.Type): ir.Op {
   if (ssasem.reference(t)) {
     return ir.counted(op);
@@ -3802,10 +3179,6 @@ function variant(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, st
   return field_get(r, f, ins);
 }
 
-// A dyn box carries its concrete's shape where a member box carries its
-// variant's, so the downcast's test is the member test. An enum's box carries
-// the shape of the variant it holds, so an enum target is any of them, each
-// test reading the operand afresh.
 function dyn_test(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let at: i32 = semrecords.find_enum(f.enums, typeinfo.TypeUnion { name: ins.str, args: [] });
   if (at < 0) {
@@ -3825,8 +3198,6 @@ function dyn_test(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): 
   return r;
 }
 
-// The union a variant instruction works on: a construction produces one, and
-// a test or a projection reads one.
 function variant_union(f: ssasem.Func, ins: ssa.SInst): typeinfo.Type {
   if (ins.kind_tag == ssasem.variant_new()) {
     return f.values[ins.result];
@@ -3842,9 +3213,6 @@ function enum_layout(f: ssasem.Func, t: typeinfo.Type): i32 {
   return f.enums[at].layout;
 }
 
-// The word-0 identity of union `whole`'s member `name`: a declared enum's
-// variant names its enum (irtables.variant_shape); a struct-union member's box
-// is its own struct's.
 function member_shape(f: ssasem.Func, whole: typeinfo.Type, name: string): string {
   if (enum_layout(f, whole) == semrecords.layout_variant()) {
     return irtables.variant_shape(ssasem.type_key(whole), name);
@@ -3856,24 +3224,10 @@ function variant_tag(f: ssasem.Func, t: typeinfo.Type, name: string): i32 {
   return semrecords.find_variant(f.enums[semrecords.find_enum(f.enums, t)], name);
 }
 
-// A payload wider than the narrow slot rides the box's wide form, chosen from
-// the payload AT THIS SITE rather than from the union: a mixed
-// `Result[i64, string]` writes its Ok through the wide form and its Err — a
-// pointer — through the narrow one, which is what each arm reads back. Making
-// the whole union wide instead pushes the pointer into an i64 slot, and wasm
-// refuses the module for it.
-//
-// An f32 takes the same 8-byte slot as an f64 rather than a narrow one of its
-// own (#7756); `is_float` covers both, and the flag says integer or float
-// rather than which width.
 function wide_payload(t: typeinfo.Type): boolean {
   return ssasem.is_wide(t) || ssasem.is_float(t);
 }
 
-// A builtin union's box is a tag word and one payload word: the tag IS the
-// variant's position in the schema, so a test compares it and a projection
-// reads the single payload without a field index. A variant with no payload
-// (None, or an Ok/Err carrying `void`) is the static box for its tag.
 function option_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, whole: typeinfo.Type): irtables.LowerResult {
   let tag: i32 = variant_tag(f, whole, ins.str);
   if (ins.kind_tag == ssasem.variant_new()) {
@@ -3898,10 +3252,6 @@ function option_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst
   return emit(r, marked_load(ir.op_opt_payload(), got));
 }
 
-// Zero at a given width: a 64-bit literal reaches the backends as source text,
-// which they splice into a 64-bit immediate, and nothing narrower needs one. A
-// float slot takes a float zero — the negation caller guards floats out, so it
-// is the zero VALUE that needs this arm.
 function zero(t: typeinfo.Type): ir.Op {
   if (ssasem.is_float(t)) {
     return ir.op_const_f64_text("0");
@@ -3912,9 +3262,6 @@ function zero(t: typeinfo.Type): ir.Op {
   return ir.op_const_i32(0);
 }
 
-// A constant the verifier gave literal text to reaches the backends as that
-// text, spliced into an immediate of its own width (ssasem.text_constant);
-// every other integer constant is carried in the instruction's i32 immediate.
 function constant(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   if (ins.kind_tag == 1 && ssasem.is_wide(f.values[ins.result])) {
     return emit(r, ir.op_const_i64_text(ins.str));
@@ -3946,9 +3293,6 @@ function constant(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): 
   return emit(r, ir.op_const_i32(ins.imm));
 }
 
-// Integer negation is a zero-minus, so the zero is pushed under the operand at
-// the operand's own width or the two sides of the subtraction disagree; a
-// float has its own sign-flip opcode and pushes nothing.
 function negation_zero(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   if (ins.kind_tag == 10 && ins.str == "-" && !ssasem.is_float(f.values[ins.args[0]]) && !ssasem.is_lanes(f.values[ins.args[0]])) {
     return emit(r, zero(f.values[ins.args[0]]));
@@ -3956,8 +3300,6 @@ function negation_zero(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   return r;
 }
 
-// A construction the plan found constant is a static box: its operands were
-// loaded for the ordinary construction and are dropped unread.
 function static_box(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
   if (ins.kind_tag == ssasem.bytes_new()) {
     return emit(r, ir.op_const_bytes(ins.str));
@@ -3972,8 +3314,6 @@ function static_box(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
   return emit(r, ir.op_const_struct(static_name(f, ins), nfields, static_values(f, p, p.constants[ins.result])));
 }
 
-// An element in a 64-bit slot on every backend: wasm's i64, u64 and f64 arrays
-// have an 8-byte stride where its other scalars' is 4.
 function wide_elem(t: typeinfo.Type): boolean {
   return ssasem.is_wide(t) || ssasem.is_float(t);
 }
@@ -4000,9 +3340,6 @@ function static_name(f: ssasem.Func, ins: ssa.SInst): string {
   return ins.str;
 }
 
-// A static box's field words with each `@<value>` replaced by the packing of
-// the box that value is, in braces (ir.const_struct_ref), and each `$<value>`
-// by its string literal's (ir.const_str_word).
 function static_values(f: ssasem.Func, p: ssaunits.Plan, words: string): string {
   let out: string = "";
   for w in ir.const_struct_values(words) {
@@ -4063,7 +3400,6 @@ function source_tagged(own r: irtables.LowerResult, begin: i32, pos: sourcepos.S
 function instruction_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, structs: irtables.StructTab, defer0: boolean, link: Link, kept: boolean): irtables.LowerResult {
   r = negation_zero(r, f, ins);
   if (ins.kind_tag == 35) {
-    // The frame's position table carries this metadata past IR optimization.
     return r;
   }
   if (ins.kind_tag == ssasem.with()) {
@@ -4119,15 +3455,12 @@ function instruction_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssauni
   if (ins.kind_tag == ssasem.append_range()) {
     r = concatenation(r, ins, scratch_base(f));
   } else if (ins.kind_tag == ssasem.call() && rtbytecopy.is_helper(ins.str) && util.index_of_str(f.shadows, ins.str) < 0) {
-    // Fern runtime entries take parameter zero on top of the stack.
     let i = ins.args.len() - 1;
     while (i >= 0) {
       r = emit(r, ir.op_load_local(ins.args[i]));
       i = i - 1;
     }
   } else if (unchecked_str_index(ins)) {
-    // The string's data address, then the index: hoist_loop_invariants can
-    // lift the address out of a loop that only reads the string.
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_str_data());
     r = emit(r, ir.op_load_local(ins.args[1]));
@@ -4154,20 +3487,14 @@ function instruction_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssauni
     r = container(r, f, ins, structs);
   }
   r = mark_reference_result(r, f, ins, container_op(ins.kind_tag));
-  // A call's counted parameters were supplied before its operands were
-  // loaded; its result is the unit the callee returns. A runtime builtin
-  // is its own op, pushing the value its contract names or the dummy a
-  // statement op pushes, so the store below takes either.
   if (ins.kind_tag == ssasem.call()) {
     r = call_site(r, f, ins);
     r = scan_set_members(r, f, p, ins);
     r = mark_reference_result(r, f, ins, !paired_op(ins.str));
     r = mark_lane_result(r, f, ins);
   }
-  // A verified copy already has its single operand on the stack.
   r = emit(r, ir.op_store_local(ins.result));
   if (ins.kind_tag == ssasem.call() && ins.imm > 0) {
-    // A paired call (sempair): its word is read before anything can call again.
     r = emit(r, ir.op_call_word());
     r = emit(r, ir.op_store_local(ins.imm - 1));
   }
@@ -4183,9 +3510,6 @@ function instruction_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssauni
   return held(r, p, ins);
 }
 
-// A byte-set scan over a constant table carries the table's membership on
-// its op (ir.op_scan_set), so a backend can classify a block of bytes at once
-// rather than read the table a byte at a time.
 function scan_set_members(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
   if (!constant_set_scan(r, f, p, ins)) {
     return r;
@@ -4195,8 +3519,6 @@ function scan_set_members(own r: irtables.LowerResult, f: ssasem.Func, p: ssauni
   return irtables.LowerResult { ...r, ops: r.ops.with(at, ir.Op { ...r.ops[at], str: members }) };
 }
 
-// constant_set_scan: `ins` is a byte-set scan whose set is a constant table,
-// and the op it just lowered to is the scan.
 function constant_set_scan(r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): boolean {
   if (ins.str != "__scan_set" && ins.str != "__scan_set_bytes" || ins.args.len() != 3) {
     return false;
@@ -4209,7 +3531,6 @@ function constant_set_scan(r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.
   return at >= 0 && (r.ops[at].kind_tag == ir.kind_id("scan_set") || r.ops[at].kind_tag == ir.kind_id("scan_set_bytes"));
 }
 
-// membership spells a table's entries for bytes 0..255 as `1` (nonzero) or `0`.
 function membership(vals: string[]): string {
   let members: string = "";
   let b: i32 = 0;
@@ -4224,8 +3545,6 @@ function membership(vals: string[]): string {
   return members;
 }
 
-// An element read the plan HOLDS retains what it read: the unit is the frame's
-// own from here (ssaunits.held_elements).
 function held(own r: irtables.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
   if (ins.result >= p.held.len() || !p.held[ins.result]) {
     return r;
@@ -4233,25 +3552,12 @@ function held(own r: irtables.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): ir
   return helper(r, ins.result, "__fern_rc_inc");
 }
 
-// __fern_arr_str_join reads the array as parameter 0, and a direct call takes
-// its last parameter from the top of the stack, so the separator is pushed
-// first. The instruction spells the receiver first, as every other operation
-// here does, which is why this loads the two in reverse rather than leaving
-// them to the generic push.
 function join_call(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   r = emit(r, ir.op_load_local(ins.args[1]));
   r = emit(r, ir.op_load_local(ins.args[0]));
   return emit(r, ir.op_call_direct("__fern_arr_str_join", 2));
 }
 
-// The scalar concat's runtime call: arguments go on in reverse, the last
-// parameter first, as join's do, with the element width telling the runtime
-// how the boxes store their elements. The runtime grows the receiver's block
-// in place when it holds the block's only count and the block has room, else
-// hands back a fresh box of both, and frees nothing either way: the caller
-// settles the receiver's unit by comparing addresses. `counted` marks the
-// result a unit of the frame's own, for the certifier, where the frame holds
-// the receiver's unit.
 function concat_call(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, counted: boolean): irtables.LowerResult {
   r = emit(r, ir.op_const_i32(elem_width(elem_type(f.values[ins.result]))));
   r = emit(r, ir.op_load_local(ins.args[1]));
@@ -4263,10 +3569,6 @@ function concat_call(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst
   return emit(r, call);
 }
 
-// The concat onto a receiver this frame holds a unit of, into `res`, that
-// unit released when the join moved to a fresh box: in place, the result
-// carries it on; a shared receiver always moves, and the release is the
-// frame's count going.
 function concat_owned(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, res: i32): irtables.LowerResult {
   r = concat_call(r, f, ins, true);
   r = emit(r, ir.op_store_local(res));
@@ -4278,11 +3580,6 @@ function concat_owned(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIns
   return emit(r, ir.op_end());
 }
 
-// The concat onto a box the frame holds no unit of, into `scratch`, as
-// `borrowed_push`: the receiver's own block, grown in place where the caller
-// bracketed it as done with (ssaunits.grow_rows), is retained as the result
-// unless `out` defers that to where the chain of links ends; a fresh box is
-// the frame's own already. Scalar elements, so no count moves with them.
 function concat_borrowed(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, scratch: i32, out: boolean): irtables.LowerResult {
   r = concat_call(r, f, ins, false);
   r = emit(r, ir.op_store_local(scratch));
@@ -4297,9 +3594,6 @@ function concat_borrowed(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.S
   return emit(r, ir.op_end());
 }
 
-// A scalar concat is an append of many elements and takes `append_push`'s
-// forms: onto a link, onto a field of a record this frame owns, onto a
-// receiver the frame holds no unit of, and otherwise onto one it does.
 function concat_push(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean, link: Link): irtables.LowerResult {
   if (link.root >= 0) {
     return concat_linked(r, f, ins, link);
@@ -4317,11 +3611,6 @@ function concat_push(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
   return emit(r, ir.op_load_local(res));
 }
 
-// The concat onto a FIELD buffer of a record this frame reads no further
-// through that field, as `append_field`: a sole-owned record lets the join
-// run in place, and the identity arm moves the buffer out of the field; a
-// shared record holds a second count on the buffer across it, so the join
-// takes a fresh box and the field stays for the record's release.
 function concat_field(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
   let root: i32 = p.grows[ins.result];
   let unique: i32 = scratch_base(f);
@@ -4345,8 +3634,6 @@ function concat_field(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.P
   return emit(r, ir.op_load_local(res));
 }
 
-// A concat onto a link, as `append_linked`: still the parameter's box, the
-// borrowed form; a box of the frame's own, the owned one.
 function concat_linked(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, link: Link): irtables.LowerResult {
   let scratch: i32 = scratch_base(f);
   r = reserve(r, scratch + 1);
@@ -4361,10 +3648,6 @@ function concat_linked(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   return emit(r, ir.op_load_local(scratch));
 }
 
-// A tuple read the plan admitted as a TAKE nulls the slot it read. The source
-// dies at this instruction, so its drop runs in this same step, after this —
-// and the release helpers are null-guarded, so the walk goes past the slot the
-// frame now owns rather than freeing it twice (ssaunits.tuple_take_field).
 function took(own r: irtables.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
   if (ins.result >= p.takes.len() || p.takes[ins.result] < 0) {
     return r;
@@ -4374,13 +3657,6 @@ function took(own r: irtables.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): ir
   return emit(r, ir.op_tuple_set(p.takes[ins.result]));
 }
 
-// A variant read the plan admitted as a payload TAKE moves the payload out of
-// the box when nobody else holds the box, and retains it as a borrow did when
-// somebody does: `steal`'s shape at the READ rather than at a call's supply,
-// so every consuming use downstream sees a unit of the frame's own. The box
-// dies at this read, so its own drop runs in this same step — walking past
-// the slot the take emptied, then releasing the box itself
-// (ssaunits.payload_root).
 function took_payload(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
   if (!ssaunits.payload_taken(f, p, ins)) {
     return r;
@@ -4388,16 +3664,6 @@ function took_payload(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.P
   return steal(r, f, ins.result, scratch_base(f));
 }
 
-// The received unit's box when it is the only one and a fresh sole-owned copy
-// otherwise, left in `scratch`. The unit is one the frame has already taken —
-// moved in, or retained up front — so the unique arm keeps it and the shared
-// arm releases it, the copy having replaced it. The copy duplicated every
-// element pointer, so a counted element type retains them all. Either way
-// exactly one unit goes in and `scratch` holds one nobody else shares.
-//
-// A receiver whose retain was DEFERRED never arrives here: `append_push` sends
-// it to `append_borrowed` or `append_field` instead, and `with_update` to
-// `borrowed_with_base` or `with_field`.
 function sole_owned_base(own r: irtables.LowerResult, f: ssasem.Func, base: i32, scratch: i32): irtables.LowerResult {
   let elem: typeinfo.Type = elem_type(f.values[base]);
   r = emit(r, ir.op_load_local(base));
@@ -4419,12 +3685,6 @@ function sole_owned_base(own r: irtables.LowerResult, f: ssasem.Func, base: i32,
   return emit(r, ir.op_end());
 }
 
-// One element pushed onto the sole-owned box above, so the push grows a buffer
-// no one else can read and the reclaim-on-grow form may reuse it. The runtime's
-// push consumes the receiver's unit only when it is the box's only one — it
-// leaves a shared receiver's count alone and hands back an un-share copy — so
-// the release that makes the operation take exactly one unit at every count
-// belongs here rather than in the shared helper the AST lowering also calls.
 function append_push(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean, link: Link): irtables.LowerResult {
   if (link.root >= 0) {
     return append_linked(r, f, ins, link);
@@ -4446,19 +3706,11 @@ function append_push(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
   r = emit(r, ir.op_if(0));
-  // The box's only unit is the one this frame holds, so the consuming push
-  // grows it in place and reclaims it on a realloc.
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_load_local(ins.args[1]));
   r = emit(r, ir.Op { ...arr_push_op(elem), i32_imm: 1 });
   r = emit(r, ir.op_store_local(res));
   r = emit(r, ir.op_else());
-  // Shared: the NON-consuming push un-shares, which is the same copy
-  // `sole_owned_base` would make here and a memcpy rather than a per-element
-  // loop through `__fern_arr_slice` (#9526). It frees nothing, so this
-  // frame's unit on the receiver is released after, and the counted elements
-  // the fresh box now aliases are retained over the receiver exactly as
-  // `append_borrowed` retains them.
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_load_local(ins.args[1]));
   r = emit(r, arr_push_borrowed_op(elem));
@@ -4471,28 +3723,6 @@ function append_push(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
   return emit(r, ir.op_load_local(res));
 }
 
-// The push onto a receiver the frame holds no unit of. The non-consuming push
-// decides for itself: it grows the buffer in place when it is the box's only
-// reader — which `bracketed` makes true only when the caller keeps no
-// binding — and un-shares otherwise, never freeing what it was handed. So
-// the unit this operation owes is a retain of the result exactly when the
-// result IS the receiver's box.
-//
-// The other case is where this gets its second half. `__fern_arr_push` FREES
-// NOTHING on any path: it allocates a fresh box, memcpy's the element pointers
-// into it WITHOUT retaining them, and abandons the old buffer. The two then
-// share one count per element, which the AST lowering settles by never
-// releasing the old buffer — the LOAD-BEARING LEAK comment in asm_ir.fern, and
-// why the AST build leaks 524 KB on #9365's reproducer. This frame's caller
-// does release it, because the plan balances every unit, so the aliased
-// elements have to be counted for: `own_copied` over the RECEIVER's length
-// names exactly the boxes the fresh one aliases, since the receiver is
-// untouched and the element just pushed is not among them. O(n) per grow, so
-// amortised O(1) against the doubling, and the same shape `sole_owned_base`
-// already uses on its copy arm.
-//
-// A result that is a chain LINK (`out`, see `append_linked`) skips the retain:
-// it is owed where the chain ends.
 function append_borrowed(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, out: boolean): irtables.LowerResult {
   let scratch: i32 = scratch_base(f);
   r = reserve(r, scratch + 1);
@@ -4500,10 +3730,6 @@ function append_borrowed(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.S
   return emit(r, ir.op_load_local(scratch));
 }
 
-// The non-consuming push onto a box the frame holds no unit of, into
-// `scratch`, and the units that settles: a retain of the result when it is
-// the receiver's box, unless `out` defers it, and a count on every element
-// the receiver shares with a fresh result.
 function borrowed_push(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, scratch: i32, out: boolean): irtables.LowerResult {
   let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
   r = emit(r, ir.op_load_local(ins.args[0]));
@@ -4532,16 +3758,6 @@ function borrowed_push(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   return emit(r, ir.op_end());
 }
 
-// Appends threaded through a borrowed parameter, `b = b.append(x); return
-// b.append(y)` or the same in a loop. Retaining each result as
-// `append_borrowed` does would leave the caller's box at two counts, and the
-// next push would copy it whole. So such a value is a LINK (`links_of`): it
-// still carries the unit the plan gives it, but encoded at run time. A link
-// that is still the parameter's box (`root`) has not taken its unit, and the
-// push onto it is the non-consuming one again. Any other link is a fresh box
-// of the frame's own at one count, which the consuming push grows in place.
-// The unit that is owed is taken where the value stops being a link: by an
-// append whose result is not one, or at the return (`take_owed`).
 struct Link { root: i32, out: boolean }
 
 function append_linked(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, link: Link): irtables.LowerResult {
@@ -4562,8 +3778,6 @@ function append_linked(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   return emit(r, ir.op_load_local(scratch));
 }
 
-// An append's, a with's or a scalar concat's view of the links: the root its
-// receiver is a link of, and whether its own result is one.
 function link_at(f: ssasem.Func, links: i32[], ins: ssa.SInst): Link {
   if (ins.kind_tag != ssasem.append() && ins.kind_tag != ssasem.with() && ins.kind_tag != ssasem.arr_concat()) {
     return Link { root: 0 - 1, out: false };
@@ -4575,8 +3789,6 @@ function link_at(f: ssasem.Func, links: i32[], ins: ssa.SInst): Link {
   return Link { root: root, out: links[ins.result] >= 0 };
 }
 
-// An edge's supplies less the retain of a parameter into a link phi of it:
-// the phi still holds the parameter's box, whose unit stays owed.
 function owed_on_entry(step: ssaunits.Step, dest: ssa.SBlock, links: i32[]): ssaunits.Step {
   let kept: ssaunits.Supply[] = [];
   for supply in step.supplies {
@@ -4589,9 +3801,6 @@ function owed_on_entry(step: ssaunits.Step, dest: ssa.SBlock, links: i32[]): ssa
   return ssaunits.Step { ...step, supplies: kept };
 }
 
-// A call result that is a link and still the parameter's box gives the
-// callee's retain back: the caller's count keeps the box live, and the link
-// holds no unit while it is the parameter's.
 function settle_call_link(own r: irtables.LowerResult, f: ssasem.Func, links: i32[], ins: ssa.SInst): irtables.LowerResult {
   if (ins.kind_tag != ssasem.call() || links[ins.result] < 0) {
     return r;
@@ -4604,8 +3813,6 @@ function settle_call_link(own r: irtables.LowerResult, f: ssasem.Func, links: i3
   return emit(r, ir.op_end());
 }
 
-// The drop of `value`, which a link owes only when it is a box of the frame's
-// own.
 function drop_linked(own r: irtables.LowerResult, value: i32, links: i32[], f: ssasem.Func): irtables.LowerResult {
   if (value >= links.len() || links[value] < 0) {
     return drop_value(r, value, f.values[value], scratch_base(f), f);
@@ -4618,8 +3825,6 @@ function drop_linked(own r: irtables.LowerResult, value: i32, links: i32[], f: s
   return emit(r, ir.op_end());
 }
 
-// The unit a link owes, taken where it leaves the frame: a retain when it is
-// still the parameter's box, nothing when it is a box of the frame's own.
 function take_owed(own r: irtables.LowerResult, v: i32, root: i32): irtables.LowerResult {
   r = emit(r, ir.op_load_local(v));
   r = emit(r, ir.op_load_local(root));
@@ -4629,16 +3834,6 @@ function take_owed(own r: irtables.LowerResult, v: i32, root: i32): irtables.Low
   return emit(r, ir.op_end());
 }
 
-// The push onto a FIELD buffer of a record this frame reads no further
-// through that field (ssaunits.field_grow_root). The record's own count says whether
-// another holder can still reach the buffer. A shared record holds a second
-// count on the field across the push, so the push copies and the field stays
-// in place; a sole-owned record lets it grow in place, and the identity arm
-// then MOVES the buffer out of the field — nulled, so the record's release
-// finds nothing there — the result being its only remaining name. A grow
-// that reallocated, or a copy, leaves the old buffer in the field for the
-// record's release, its elements now aliased by the result and counted for
-// exactly as `append_borrowed` counts them.
 function append_field(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
   let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
   let root: i32 = p.grows[ins.result];
@@ -4669,8 +3864,6 @@ function append_field(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.P
   return emit(r, ir.op_load_local(res));
 }
 
-// `if (!unique) { fn(value) }`: one half of the share bracket a shared record
-// holds on its field across the push.
 function unless_unique(own r: irtables.LowerResult, unique: i32, value: i32, fn: string): irtables.LowerResult {
   r = emit(r, ir.op_load_local(unique));
   r = emit(r, ir.op_const_i32(0));
@@ -4680,7 +3873,6 @@ function unless_unique(own r: irtables.LowerResult, unique: i32, value: i32, fn:
   return emit(r, ir.op_end());
 }
 
-// The element the store replaces gives back the one count it held.
 function drop_replaced(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, scratch: i32, elem: typeinfo.Type): irtables.LowerResult {
   let old: i32 = scratch + 1;
   r = reserve(r, old + 1);
@@ -4691,11 +3883,6 @@ function drop_replaced(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   return drop_value(r, old, elem, old + 1, f);
 }
 
-// One element replaced in the sole-owned box above: in place when the received
-// unit was the box's only one and in a fresh copy otherwise, the AST lowering's
-// two forms chosen here by the count at run time rather than by the receiver's
-// syntax. A receiver whose retain was deferred is written as `borrowed_with_base`
-// writes it, and one that is a link as `with_linked` does.
 function with_update(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean, link: Link): irtables.LowerResult {
   if (link.root >= 0) {
     return with_linked(r, f, p, ins, link);
@@ -4716,9 +3903,6 @@ function with_update(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
   return with_write(r, f, p, ins, scratch);
 }
 
-// A with onto a link (`append_linked`): one still the parameter's box is
-// written as `borrowed_with_base` writes it, and any other is a box of the
-// frame's own.
 function with_linked(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, link: Link): irtables.LowerResult {
   let scratch: i32 = scratch_base(f);
   r = reserve(r, scratch + 1);
@@ -4733,11 +3917,6 @@ function with_linked(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
   return with_write(r, f, p, ins, scratch);
 }
 
-// The box a with writes when the frame holds no unit of its receiver, left in
-// `scratch`: the receiver's own when its count test finds it sole, which
-// `bracketed` makes true only when the caller keeps no binding, retained for
-// the unit the result owes unless `out` leaves that to the chain's end; and a
-// fresh copy otherwise, holding a count on every element it shares.
 function borrowed_with_base(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, scratch: i32, out: boolean): irtables.LowerResult {
   let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
   r = emit(r, ir.op_load_local(ins.args[0]));
@@ -4761,8 +3940,6 @@ function borrowed_with_base(own r: irtables.LowerResult, f: ssasem.Func, ins: ss
   return emit(r, ir.op_end());
 }
 
-// The element at the with's index replaced in the sole-held box in `scratch`,
-// which is the with's result.
 function with_write(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, scratch: i32): irtables.LowerResult {
   let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
   if (ssasem.reference(elem)) {
@@ -4775,13 +3952,6 @@ function with_write(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
   return emit(r, ir.op_load_local(scratch));
 }
 
-// One element replaced in a record FIELD the plan admitted (grows): written
-// in place when the record and its buffer are each sole-held, with the field
-// nulled so the record's release skips the buffer the result now owns, and
-// in a fresh copy otherwise, which leaves the record whole for its other
-// holders. The receiver's retain was held back (deferred_retain), so the two
-// count tests read the boxes rather than this frame's supply, as the field
-// append's do.
 function with_field(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
   let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
   let root: i32 = p.grows[ins.result];
@@ -4826,8 +3996,6 @@ function with_field(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
   return emit(r, ir.op_load_local(res));
 }
 
-// A with writes a box of its receiver's length, so an index the plan saw
-// checked against the receiver, or one ssabounds proved, needs no check.
 function with_set_op(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, elem: typeinfo.Type): ir.Op {
   if let typeinfo.TypeLanes(l) = f.values[ins.args[2]] {
     return ir.op_lane("vset", l.width);
@@ -4838,21 +4006,6 @@ function with_set_op(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, elem: typ
   return arr_set_op(elem);
 }
 
-// R7 of docs/REUSE-CONTRACT.md: a same-shape `map` over an `own` array writes
-// each result through the donor's buffer instead of appending to a fresh one.
-// `maps` marks, by result value, the calls every static condition admits:
-//
-// - the receiver is a parameter this function consumes, and its unit dies at
-//   the call with nothing else supplied from it, so it is the frame's to give;
-// - the element function is a lambda that captures nothing and reaches no
-//   observable effect (`pure`), so it cannot read the buffer it is writing;
-// - the element type is unchanged and is a 64-bit integer, the slice native
-//   implements, and the result is not linked to a borrowed parameter.
-//
-// The uniqueness test at run time (`sole_owned_base`) is what keeps a shared
-// donor immutable: its buffer is copied before the first write.
-// The reuse layer's off switch (`no_reuse`) turns it off with the pairings.
-// The same table also marks scale kernels admitted by scale_reason below.
 function in_place_maps(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, idx: i32[][], links: i32[], pure: util.NameIndex, no_reuse: boolean): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
   if (no_reuse) {
@@ -4885,11 +4038,6 @@ function in_place_array(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, step: ss
   return map_reason(f, modes, step, links, pure, ins) == semarrayreport.storage_guarded_reuse();
 }
 
-// The scale builtin lends its argument, but a unit already owned by this
-// frame and dropped immediately after the call may instead become the result.
-// This includes a guarded record-field take admitted by the typed planner.
-// Borrowed fields and still-live values cannot donate. The dynamic buffer
-// uniqueness test remains necessary even when the record itself was unique.
 function scale_reason(f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, links: i32[], ins: ssa.SInst): i32 {
   if (util.has_str(f.shadows, ins.str)) {
     return semarrayreport.scale_storage_builtin_shadowed();
@@ -4953,9 +4101,6 @@ function map_element_reason(f: ssasem.Func, value: i32, pure: util.NameIndex): i
   return semarrayreport.storage_guarded_reuse();
 }
 
-// Called only for the final selected ownership plans. It shares the exact
-// static decision used above; it does not guess whether the runtime donor
-// will be unique. Both branches of the guard are stated in the report.
 pub function map_report(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, pure: util.NameIndex): semarrayreport.Site[] {
   let out: semarrayreport.Site[] = [];
   let idx: i32[][] = ssaunits.step_index(p);
@@ -5010,9 +4155,6 @@ pub function scale_report(f: ssasem.Func, p: ssaunits.Plan): semarrayreport.Site
   return out;
 }
 
-// Every array append's receiver storage, from the plan as `lower` prepares
-// it. Under `-g` a site also names the statement's line and the source
-// bindings of its receiver, the ones whose later reads force a copy.
 pub function append_report(f: ssasem.Func, p: ssaunits.Plan): semarrayreport.Site[] {
   let out: semarrayreport.Site[] = [];
   let idx: i32[][] = ssaunits.step_index(p);
@@ -5039,7 +4181,6 @@ function append_location(f: ssasem.Func, value: i32): string {
   return " line=" + util.i32_to_string(util.pos_line(pos.line)) + ":" + pos.col;
 }
 
-// The order append_push takes its cases in.
 function append_reason(f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, ins: ssa.SInst): i32 {
   if (link_at(f, p.links, ins).root >= 0) {
     return semarrayreport.append_borrow_linked();
@@ -5114,13 +4255,6 @@ function without(xs: i32[], v: i32): i32[] {
   return out;
 }
 
-// The loop R7 lowers a marked map to: `buf[i] = f(buf[i])` over the buffer
-// the receiver's unit becomes, which is the result. The receiver's drop is
-// the result's unit, so the caller takes it out of the step's drops.
-//
-// The element read and the call stay on the operand stack beneath the store's
-// box and index: the frame's scratch slots are typed once per function, and a
-// 64-bit element in one would collide with a narrow use of the same slot.
 function map_in_place(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   if (ins.str == "__scale_f64") {
     return scale_in_place(r, f, ins);
@@ -5160,9 +4294,6 @@ function map_in_place(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIns
   return emit(r, ir.op_store_local(ins.result));
 }
 
-// Each branch completes allocation before its vector loop. Unlike a general
-// map, scale has a fresh-buffer kernel: the shared arm writes the transformed
-// result directly, avoiding a full memcpy followed by a second pass.
 function scale_in_place(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let base: i32 = ins.args[0];
   r = emit(r, ir.op_load_local(base));
@@ -5181,8 +4312,6 @@ function scale_in_place(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SI
   return emit(r, ir.op_end());
 }
 
-// A cell is a one-element array box shared by every holder, built over the
-// one element it takes.
 function cell_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   if (ins.kind_tag == ssasem.cell_get()) {
     return cell_read(r, f, ins);
@@ -5195,9 +4324,6 @@ function cell_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
   return emit(r, ir.op_store_local(ins.result));
 }
 
-// A node's address is the box's own word. A fill writes the node at the hole
-// over its zero placeholder, so nothing is released, and answers the chain;
-// the first fill has no node to write and answers the value itself.
 function hole_site(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   if (ins.kind_tag == ssasem.hole_at()) {
     r = emit(r, ir.op_load_local(ins.args[0]));
@@ -5218,9 +4344,6 @@ function hole_site(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerR
   return emit(r, ir.op_end());
 }
 
-// A read hands out a unit of the element: the slot is loaded and, for a
-// reference, retained, since a later write may release what the slot held
-// while the value read is still in hand.
 function cell_read(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let elem: typeinfo.Type = f.values[ins.result];
   r = emit(r, ir.op_load_local(ins.args[0]));
@@ -5233,8 +4356,6 @@ function cell_read(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
   return r;
 }
 
-// A write releases what the slot held, stores the unit it was supplied and
-// leaves the dummy a statement op leaves for the store of its void result.
 function cell_write(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let elem: typeinfo.Type = f.values[ins.args[1]];
   if (ssasem.reference(elem)) {
@@ -5254,18 +4375,8 @@ function cell_write(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst)
   return emit(r, ir.op_store_local(ins.result));
 }
 
-// A closure value and the call through one. The value is the env box the
-// lambda lift builds: the body's address in slot 0, then the captures, which
-// is the layout the `__mkclo$` marker names.
-// The call is environment-first — the box, the written arguments, then the
-// address out of slot 0, which is the order call_indirect pops them in — so a
-// body reaches its captures through the parameter it was hoisted with. The
-// call carries the signature tag the value's type spells, so wasm dispatches
-// a wide or float slot through the funcref type the body was declared with.
 function function_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   if (ins.kind_tag == ssasem.closure_new()) {
-    // Capturing nothing, every word of the box is known at compile time, so
-    // it is one static block rather than a fresh box per evaluation (#9839).
     if (ins.args.len() == 0) {
       return emit(r, ir.op_const_closure(ins.str));
     }
@@ -5278,10 +4389,6 @@ function function_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   for operand in ins.args {
     r = emit(r, ir.op_load_local(operand));
   }
-  // A locally constructed closure already names its exact body. Keep the
-  // same borrowed environment and arguments, but omit the slot lookup and
-  // indirect dispatch. In particular, fused array callbacks retain this
-  // identity after their source combinator calls have been removed.
   let callee: ssa.SInst = definition(f, ins.args[0]);
   if (callee.result == ins.args[0] && callee.kind_tag == ssasem.closure_new()) {
     return emit(r, ir.op_call_direct(callee.str, ins.args.len()));
@@ -5290,18 +4397,12 @@ function function_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   return emit(r, ir.op_call_indirect_sig(ins.args.len(), signature_tag(f.values[ins.args[0]])));
 }
 
-// body_address reads slot 0 of the closure box in `slot`. Every box has that
-// slot, so the read is unchecked.
 function body_address(own r: irtables.LowerResult, slot: i32): irtables.LowerResult {
   r = emit(r, ir.op_load_local(slot));
   r = emit(r, ir.op_const_i32(0));
   return emit(r, ir.op_arr_get_nc(32));
 }
 
-// The funcref signature tag a call through a value dispatches by: one width
-// char per slot, the environment word first, then `_` and the result — the
-// spelling wasm_ir.fn_type_name turns into `$fn<tag>`.
-// An all-narrow signature carries no tag.
 function signature_tag(sig: typeinfo.Type): string {
   let tag: string = "w";
   for p in ssasem.func_params(sig) {
@@ -5328,11 +4429,6 @@ function width_char(t: typeinfo.Type): string {
   return "w";
 }
 
-// A dyn method call dispatches on the receiver's shape, and every arm reloads
-// the operands, so the dispatch reads them from a run of consecutive slots
-// rather than the stack. semsource defines the operands as a run of copies,
-// which makes their value ids, and so their slots, that run. Every operand is
-// lent, so there is nothing to supply and nothing taken.
 function dyn_call(ins: ssa.SInst): boolean {
   return ins.kind_tag == ssasem.call() && ssasem.is_dyn_call(ins.str);
 }
@@ -5352,10 +4448,6 @@ function dyn_site(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerRe
   return emit(r, ir.op_dyn_dispatch(ssasem.dyn_call_arms(ins.str), ins.args[0], ins.args.len()));
 }
 
-// mark_reference_result marks the op a builtin call or a container op just
-// emitted for its reference-typed result (ir.counted), which is how the
-// certifier tells an op that hands back a fresh unit from one that hands
-// back a word. A paired call's word is reloaded, not produced.
 function mark_reference_result(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, producer: boolean): irtables.LowerResult {
   if (!producer || ins.result < 0 || ins.result >= f.values.len() || !ssasem.reference(f.values[ins.result])) {
     return r;
@@ -5363,9 +4455,6 @@ function mark_reference_result(own r: irtables.LowerResult, f: ssasem.Func, ins:
   return counted_result(r);
 }
 
-// A direct call returning a lane value is marked so (ir.lane_call): the lift
-// classes its result a lane value. A lane builtin's last op is a lane op, and
-// keeps no mark.
 function mark_lane_result(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let last: i32 = r.ops.len() - 1;
   if (last < 0 || ins.result < 0 || ins.result >= f.values.len() || !ssasem.is_lanes(f.values[ins.result])) {
@@ -5385,9 +4474,6 @@ function counted_result(own r: irtables.LowerResult): irtables.LowerResult {
   return irtables.LowerResult { ...r, ops: r.ops.with(last, ir.counted(r.ops[last])) };
 }
 
-// mark_got_value marks a get_or call for the certifier by its column: core/map
-// retains a box column's value as it answers (ir.counted); a text column's is
-// answered as stored (ir.lent) and retained by the caller.
 function mark_got_value(own r: irtables.LowerResult, v: typeinfo.Type): irtables.LowerResult {
   if (routed_box(v)) {
     return counted_result(r);
@@ -5414,7 +4500,6 @@ function call_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
     return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
   }
   if (ins.str == "print") {
-    // The payload, then the newline, as the AST lowering writes it.
     r = emit(r, ir.op_print_str());
     r = emit(r, ir.op_drop());
     r = emit(r, ir.op_const_str("\n"));
@@ -5462,10 +4547,6 @@ function call_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
   return builtin_site(r, ins);
 }
 
-// The calls sempair writes around a paired return. The word a paired call
-// returned was stored as the call returned, so `__pair_word` reloads it; a
-// payload read off the word is the word; and a payload handed to
-// `__pair_set` waits in its own slot until the return sets it (terminator).
 function paired_op(name: string): boolean {
   return scalar_op(name) || name == sempair.pair_word_name() || util.str_has_prefix(name, sempair.word_as_prefix()) || util.str_has_prefix(name, sempair.pair_set_prefix());
 }
@@ -5485,8 +4566,6 @@ function pair_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
   return emit(r, ir.op_const_i32(0));
 }
 
-// Read the volatile lanes before cleanup, from the last scratch register
-// backwards. On x86 the bridge may use r11 while storing any other lane.
 function capture_scalar_words(own r: irtables.LowerResult, imm: i32): irtables.LowerResult {
   let base: i32 = semscalarreturn.capture_base(imm);
   let slot: i32 = semscalarreturn.capture_count(imm) - 1;
@@ -5543,7 +4622,6 @@ function scalar_conversion(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa
 }
 
 function return_scalar_words(own r: irtables.LowerResult, b: ssa.SBlock): irtables.LowerResult {
-  // Increasing order leaves the x86 scratch lane r11 set last.
   let slot: i32 = 0;
   while (slot < 3) {
     for ins in b.insts {
@@ -5558,9 +4636,6 @@ function return_scalar_words(own r: irtables.LowerResult, b: ssa.SBlock): irtabl
   return r;
 }
 
-// The payload a paired return sets beside its result: the operand of the
-// block's one `__pair_set`, -1 for none, or -2 where there are several, which
-// the terminator refuses rather than hand the caller either.
 function pair_payload(b: ssa.SBlock): i32 {
   let found: i32 = 0 - 1;
   for ins in b.insts {
@@ -5574,13 +4649,8 @@ function pair_payload(b: ssa.SBlock): i32 {
   return found;
 }
 
-// One half of the builtin dispatch below: the result with that builtin's op
-// emitted, or the result untouched when the name is not one of this half's.
 struct Lowered { found: boolean, r: irtables.LowerResult }
 
-// The directory handle: a Dir is its descriptor too, so `open_dir` and every
-// method is one Dir-family op with the receiver as its first operand. Close
-// is close(2) on that descriptor, the op a Reader closes with.
 function dir_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   let m: string = ins.str;
   if (m == "open_dir") {
@@ -5621,11 +4691,6 @@ function dir_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   return Lowered { found: false, r: r };
 }
 
-// The builtins whose result is an instantiated builtin union: each is the
-// stack IR op the AST lowering emits for the same call.
-// The stream handles: a handle IS its descriptor, so the three standard ones
-// are constants and every method is the free op with the receiver as its
-// first operand. Writer.close shares Reader.close's op.
 function handle_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "open_dir" || util.str_has_prefix(ins.str, "Dir.")) {
     return dir_site(r, ins);
@@ -5693,8 +4758,6 @@ function handle_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   return handle_metadata_site(r, ins);
 }
 
-// The handle metadata ops, each asked of the bare descriptor like close and
-// shared by the two handle types.
 function handle_metadata_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   let op: string = handle_method(ins.str);
   if (op == "stat") {
@@ -5718,8 +4781,6 @@ function handle_metadata_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowe
   if (op == "drop_cache") {
     return Lowered { found: true, r: emit(r, ir.op_fd_drop_cache()) };
   }
-  // A handle is its descriptor, so these are the free ops with the receiver
-  // as the first operand, as the AST lowering emits them.
   if (op == "isatty") {
     return Lowered { found: true, r: emit(r, ir.op_isatty()) };
   }
@@ -5744,8 +4805,6 @@ function handle_metadata_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowe
   return Lowered { found: false, r: r };
 }
 
-// handle_method is the method half of a `Reader.` or `Writer.` metadata
-// contract name, "" for any other name.
 function handle_method(name: string): string {
   if (!util.str_has_prefix(name, "Reader.") && !util.str_has_prefix(name, "Writer.")) {
     return "";
@@ -5794,7 +4853,6 @@ function union_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowere
   return outcome_builtin_site(r, ins);
 }
 
-// The builtins whose result is the outcome of a write: `Result[void, IoError]`.
 function outcome_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "write_file") {
     return Lowered { found: true, r: emit(r, ir.op_write_file()) };
@@ -5817,9 +4875,6 @@ function outcome_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowe
   return Lowered { found: false, r: r };
 }
 
-// The builtins whose result owns nothing. The over-release counter and the two
-// shared-append totals read a runtime word; the first of them is a runtime
-// call rather than an op.
 function value_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "args") {
     return Lowered { found: true, r: emit(r, ir.op_args()) };
@@ -5866,10 +4921,6 @@ function value_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowere
   return host_builtin_site(r, ins);
 }
 
-// The host itself: three clocks, the kernel's randomness, and the two sleeps.
-// Each is an op of its own rather than a call, the way the AST lowering emits
-// it — a contract alone would reach the backends as a call to a symbol no
-// runtime defines.
 function host_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "random_bytes") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_random_bytes())) };
@@ -5898,8 +4949,6 @@ function host_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered
   return os_query_site(r, ins);
 }
 
-// The process and host queries: each is the op the AST lowering emits, with
-// no operand but the ones the call names.
 function os_query_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "getcwd") {
     return Lowered { found: true, r: emit(r, ir.op_getcwd()) };
@@ -5973,7 +5022,6 @@ function os_query_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   return fs_op_site(r, ins);
 }
 
-// The directory, link and permission ops, each the op the AST lowering emits.
 function fs_op_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "temp_dir") {
     return Lowered { found: true, r: emit(r, ir.op_temp_dir()) };
@@ -6053,8 +5101,6 @@ function fs_op_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   return os_floor_site(r, ins);
 }
 
-// The rest of the OS floor (semsource.os_floor_contracts), each the op the
-// AST lowering emits; `sync` pushes the dummy every statement op pushes.
 function os_floor_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "set_file_times") {
     return Lowered { found: true, r: emit(r, ir.op_set_file_times()) };
@@ -6249,8 +5295,6 @@ function os_floor_process_site(own r: irtables.LowerResult, ins: ssa.SInst): Low
   return builder_builtin_site(r, ins);
 }
 
-// The string builder's ops: a handle is a value, and the statement ops push
-// the dummy a statement op pushes.
 function builder_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "buf_new") {
     return Lowered { found: true, r: emit(r, ir.op_buf_new()) };
@@ -6306,9 +5350,6 @@ function builder_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowe
   return Lowered { found: false, r: r };
 }
 
-// A lane builtin (docs/SIMD-GENERIC-KERNELS.md §6) is the lane op of its verb
-// over the operands on the stack. `lane` reads its index from the constant the
-// checker requires. `of` and the unfused `mul_add` reload their operands.
 function lane_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let w: i32 = typeinfo.lane_builtin_width(ins.str);
   let verb: string = typeinfo.lane_builtin_verb(ins.str);
@@ -6340,9 +5381,6 @@ function lane_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
   return r;
 }
 
-// The runtime intrinsics: each is the stack IR op the AST lowering emits for
-// the same call, so a contract here is only half the work — without the op the
-// name reaches the backends as a direct call to a symbol no runtime defines.
 function intrinsic_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   let kind: string = irtables.f64_math_builtin_kind(ins.str);
   if (kind != "") {
@@ -6361,7 +5399,6 @@ function intrinsic_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   return byte_scan_site(r, ins);
 }
 
-// One op per operand width, the width carried by the op rather than the name.
 function bit_count_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "__clz32") {
     return Lowered { found: true, r: emit(r, ir.op_clz(32)) };
@@ -6387,8 +5424,6 @@ function bit_count_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   return Lowered { found: false, r: r };
 }
 
-// __fern_str_dec(s): core/map releases one unit of a string it holds, which
-// is what __fern_str_free does to the box. Its dummy result is the store's.
 function str_release(own r: irtables.LowerResult): irtables.LowerResult {
   return emit(r, ir.op_call_direct("__fern_str_free", 1));
 }
@@ -6402,8 +5437,6 @@ function no_op_release(own r: irtables.LowerResult, operands: i32): irtables.Low
   return emit(r, ir.op_const_i32(0));
 }
 
-// __fern_box_free(data, size): the raw free of the rc'd block that starts 8
-// bytes before `data` and is `size + 8` long.
 function box_free(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   r = emit(r, ir.op_drop());
   r = emit(r, ir.op_drop());
@@ -6416,8 +5449,6 @@ function box_free(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerRe
   return emit(r, ir.op_free());
 }
 
-// __store_u8(addr, v): the raw byte store at a constant zero offset. Its
-// offset sits between the two operands, so they are re-read round it.
 function store_u8(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   r = emit(r, ir.op_drop());
   r = emit(r, ir.op_drop());
@@ -6427,9 +5458,6 @@ function store_u8(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerRe
   return emit(r, ir.op_raw_store8());
 }
 
-// __str_bytes(s, scratch): the address of the string's bytes, as __raw_data
-// reads it. A self-host string is never inline, so the scratch operand is
-// dropped unread.
 function str_bytes(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   r = emit(r, ir.op_drop());
   r = emit(r, ir.op_drop());
@@ -6437,9 +5465,6 @@ function str_bytes(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerR
   return emit(r, ir.op_str_data());
 }
 
-// __arr_set_len(a, n): the length is slot 0 of the box. `a` is stored back to
-// its own local after, so a decoded read of it (ssabytes.lower_reads, which
-// decodes at every store) takes the new length.
 function arr_set_len(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   r = emit(r, ir.op_drop());
   r = emit(r, ir.op_drop());
@@ -6460,9 +5485,6 @@ function word_bytes(name: string): i32 {
   return 4;
 }
 
-// The raw-memory escape hatches. The byte load has no op of its own: it is the
-// two-operand raw load at a constant zero offset, which is also what keeps the
-// address at full pointer width.
 function raw_memory_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == ssabytes.word_name(4) || ins.str == ssabytes.word_name(8)) {
     return Lowered { found: true, r: emit(r, ssabytes.read_word(ins.args[0], word_bytes(ins.str))) };
@@ -6491,8 +5513,6 @@ function raw_memory_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "__free") {
     return Lowered { found: true, r: emit(r, ir.op_free()) };
   }
-  // The task primitives (docs/NET-P3-SUSPENSION-PLAN.md §3.4) are runtime
-  // functions written in Fern, called with the user ABI under `__fern_`.
   if (util.str_has_prefix(ins.str, "__task_")) {
     return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_" + slice_unchecked(ins.str, 2, ins.str.len()), ins.args.len())) };
   }
@@ -6505,9 +5525,6 @@ function raw_memory_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "__map_hash_seed") {
     return Lowered { found: true, r: emit(r, ir.op_map_hash_seed()) };
   }
-  // core/map's array-value releases stay no-ops: the
-  // lent operands are dropped, nothing is released, and the dummy 0 a void
-  // call leaves is pushed. No routed map has an array column.
   if (ins.str == "__fern_str_dec") {
     return Lowered { found: true, r: str_release(r) };
   }
@@ -6566,9 +5583,6 @@ function raw_memory_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   return raw_floor_site(r, ins);
 }
 
-// The floor the runtime helpers are written on, and the two rc test hooks:
-// the ops the lowering emits for each. `__raw_array` and `__raw_arr_ptr` emit
-// nothing: the address already is the array.
 struct RawOps { name: string, ops: ir.Op[] }
 
 function raw_floor_ops(): RawOps[] {
@@ -6617,7 +5631,6 @@ function raw_floor_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   return Lowered { found: false, r: r };
 }
 
-// The byte scans over a lent string.
 function byte_scan_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "__inner_mul_add_f64") {
     return Lowered { found: true, r: emit(r, ir.op_inner_mul_add_f64()) };
@@ -6695,8 +5708,6 @@ function byte_scan_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   return Lowered { found: false, r: r };
 }
 
-// The string methods the AST lowering emits an op for, keyed by receiver the
-// way their contracts are.
 function string_method_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "string.to_ascii_upper") {
     return Lowered { found: true, r: emit(r, ir.op_str_to_upper()) };
@@ -6722,8 +5733,6 @@ function string_method_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowere
   return Lowered { found: false, r: r };
 }
 
-// A call of the string-equality runtime helper by name is the op that
-// helper backs.
 function runtime_helper_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "__fern_str_eq") {
     return Lowered { found: true, r: emit(r, ir.op_str_eq()) };
@@ -6731,8 +5740,6 @@ function runtime_helper_site(own r: irtables.LowerResult, ins: ssa.SInst): Lower
   return Lowered { found: false, r: r };
 }
 
-// A name no half owns is a runtime helper with a symbol of its own, which a
-// direct call reaches.
 function builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   let done: Lowered = handle_site(r, ins);
   if (!done.found) {
@@ -6774,17 +5781,11 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     if (ins.kind_tag != 6 && ins.kind_tag != 8) {
       let step: ssaunits.Step = at(p, idx, b.id, pos, 0 - 1);
       let held: Held = bracketed(f, step, ins, grows, links);
-      // One answer for both: the retain `supplies` holds back is the one
-      // `instruction` then takes, and two calls could drift apart with
-      // nothing to catch it.
       let defer0: boolean = ssaunits.deferred_retain(f, p, step, ins);
       let k: i32 = util.index_of_i32(keeps.start, pos);
       if (k >= 0) {
         r = keep_token(r, f, keeps.donors[k]);
       }
-      // Keeping a field in place stands in for the construction's retain of
-      // it alone: an earlier operation that takes a unit of the same value
-      // still needs its own.
       let kb: i32 = util.index_of_i32(keeps.built, pos);
       let built_kept: i32[] = [];
       if (kb >= 0) {
@@ -6792,12 +5793,6 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
       }
       r = supplies(r, f, p, step, defer0, built_kept, late);
       r = bracket_take(r, f, held);
-      // A box superseded by the construction at this same instruction is
-      // taken BEFORE it. An earlier drop's token was taken at the drop and
-      // waits in its donor's local, and moves to the slot here. Either way
-      // `reuse_construct` reads one token slot and the runtime decides. A
-      // kept donor's token was taken at its first kept read, and its drop
-      // is the construction's.
       if (pairs.selfs[pos] >= 0 && kb < 0) {
         r = self_token(r, f, pairs.selfs[pos], ssaunits.carry_held_for(carry, b.id, pos), known_fields(f, p, b, pairs.selfs[pos]));
       } else if (pairs.builds[pos] >= 0 && kb < 0) {
@@ -6841,17 +5836,6 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
   return r;
 }
 
-// Open stack-IR labels, innermost last: the first `depth` entries of
-// `labels`, the rest left from scopes already closed. A label is the layout
-// index control reaches by branching to it: a `block` ends before that
-// index, a `loop` starts at it. An `if` arm is a label of its own that no
-// branch targets.
-// `steps` is the plan's step index (ssaunits.step_index).
-// no_reuse is the #4350 §6.5 differential switch, which the AST path's reuse
-// layer answers too: with it set every construction allocates, so a program's
-// observable behaviour can be compared against its own reusing build.
-// `at` is each block's position in the block list and `ranks` its position in
-// the layout order, both by id.
 struct Emit { r: irtables.LowerResult, labels: i32[], depth: i32, why: string, steps: i32[][], links: i32[], no_reuse: boolean, maps: boolean[], carry: ssaunits.Carry, at: i32[], ranks: i32[] }
 
 function label_if(): i32 {
@@ -6869,8 +5853,6 @@ function pop(own e: Emit): Emit {
   return Emit { ...e, r: emit(e.r, ir.op_end()), depth: e.depth - 1 };
 }
 
-// A branch target without an open label is a layout defect; refuse the
-// function rather than emit a depth the backends would fault on.
 function depth(e: Emit, target: i32): i32 {
   let i: i32 = e.depth - 1;
   while (i >= 0 && e.labels[i] != target) {
@@ -6882,7 +5864,6 @@ function depth(e: Emit, target: i32): i32 {
   return e.depth - 1 - i;
 }
 
-// Each block's first position in `order`, by id, or -1 for one not in it.
 function order_ranks(f: ssa.SFunc, order: i32[], ids: i32): i32[] {
   let out: i32[] = [];
   while (out.len() < ids) {
@@ -6898,7 +5879,6 @@ function order_ranks(f: ssa.SFunc, order: i32[], ids: i32): i32[] {
 
 function jump(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], position: i32, target: i32): Emit {
   let from: i32 = f.graph.blocks[order[position]].id;
-  // A token freed here may be the target's phi, which the edge overwrites.
   for left in ssaunits.carry_exits(e.carry, from, target) {
     e = Emit { ...e, r: free_token(e.r, left) };
   }
@@ -6943,8 +5923,6 @@ function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[],
       e = Emit { ...e, r: take_owed(e.r, b.term.value, e.links[b.term.value]) };
     }
     e = Emit { ...e, r: drops(e.r, ret, f, p, e.links) };
-    // The unreachable end aborts as a failed bounds check does, then
-    // returns a zero the abort never lets the stack shape reach.
     if (b.term.kind_tag == 4) {
       e = Emit { ...e, r: emit(e.r, ir.op_const_i32(134)) };
       e = Emit { ...e, r: emit(e.r, ir.op_exit()) };
@@ -6975,10 +5953,6 @@ function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[],
   return pop(e);
 }
 
-// Blocks inside an inner loop get their labels when that loop is entered,
-// so a label never crosses the loop's own scope: nested marks, by offset from
-// `first`, each position of first..last a loop headed inside the region owns,
-// the region's own loop (when `looping`) aside.
 function nested(l: ssalayout.Layout, first: i32, last: i32, looping: boolean): boolean[] {
   let owned: boolean[] = __alloc_bool(last - first + 1);
   let i: i32 = first + 1;
@@ -7001,9 +5975,6 @@ function nested(l: ssalayout.Layout, first: i32, last: i32, looping: boolean): b
   return owned;
 }
 
-// Emit layout indices first..last. A looping region is one natural loop:
-// its `loop` label opens first, then a `block` per position inside that no
-// nested loop owns, each closed just before its position is reached.
 function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layout, first: i32, last: i32, looping: boolean, structs: irtables.StructTab, grows: ssaunits.GrowTable): Emit {
   if (looping) {
     e = push(e, ir.op_loop(0), first);
@@ -7043,8 +6014,6 @@ function built_record(f: ssasem.Func, plan: ssaunits.Plan): boolean {
   return false;
 }
 
-// Every return hands back a record this body constructed, and nothing but a
-// field read touches it on the way, so no other reference to the box exists.
 function built_result(f: ssasem.Func, plan: ssaunits.Plan): boolean {
   if (!plan.ok) {
     return false;
@@ -7070,8 +6039,6 @@ function built_result(f: ssasem.Func, plan: ssaunits.Plan): boolean {
   return true;
 }
 
-// The returned values and every copy or phi operand they merge, or nothing
-// when one of them is defined by anything but a record construction.
 function returned_records(f: ssasem.Func): i32[] {
   let out: i32[] = [];
   for b in f.graph.blocks {
@@ -7107,7 +6074,6 @@ function defining(f: ssasem.Func, v: i32): ssa.SInst {
   return ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
 }
 
-// A field read, or a copy or phi that stays inside the returned set.
 function box_use_ok(ins: ssa.SInst, boxes: i32[]): boolean {
   if (ins.kind_tag == ssasem.record_get()) {
     return true;
@@ -7123,9 +6089,6 @@ function box_use_ok(ins: ssa.SInst, boxes: i32[]): boolean {
   return true;
 }
 
-// A frame view's three words sit above every other slot, which is only known
-// once the body is lowered, so `instruction` marks the op and this gives each
-// its own words.
 function place_views(own r: irtables.LowerResult): irtables.LowerResult {
   let ops: ir.Op[] = r.ops;
   let next: i32 = r.n_locals;
@@ -7140,20 +6103,7 @@ function place_views(own r: irtables.LowerResult): irtables.LowerResult {
   return irtables.LowerResult { ...r, ops: ops, n_locals: next };
 }
 
-// `structs` is the declaration table the backends read a construction's field
-// store widths from; the physical lowering names a declaration by index, as
-// the AST lowering does.
-//
-// `grows` is the module's table of callee positions whose buffers a produced
-// callee may grow in place (ssaunits.grow_rows over every produced plan), read
-// by the caller-side bracket.
-// `pure` names the module's functions that reach no observable effect
-// (semlower.pure_rows), the element functions the in-place map may run.
-// `susp` names the module's suspendable rows (suspend.classify); one of them
-// is rewritten to its resumable form before the peepholes.
 pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irtables.StructTab, grows: ssaunits.GrowTable, pure: util.NameIndex, view: ssaunits.SchemaView, susp: suspend.Set): irtables.LowerResult {
-  // The reuse layer and the drop filter keep each step's block, point and
-  // target, so the plan's step index is the same before and after them.
   let steps: i32[][] = ssaunits.step_index(p);
   let dom: ssadeps.Dom = ssadeps.dominates(f.graph);
   p = ssaunits.with_reuse(f, p, steps, dom);
@@ -7190,11 +6140,6 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irta
   return irtables.LowerResult { ...e.r, ops: optimized.ops, n_locals: optimized.n_locals };
 }
 
-// A typed reference other than [u8] cannot carry its descriptor tag. Keep
-// that proof on direct value loads so native RC need not mask every ordinary
-// string, array and record. Raw pointers and scratch slots remain generic.
-// i64_imm == 4 on these two calls is an optional alignment proof; consumers
-// that do not use it retain the fully general runtime behavior.
 function aligned_rc(own r: irtables.LowerResult, f: ssasem.Func): irtables.LowerResult {
   let call_direct: i32 = ir.K_CALL_DIRECT;
   let load_local: i32 = ir.K_LOAD_LOCAL;

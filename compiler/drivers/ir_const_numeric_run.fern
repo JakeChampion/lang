@@ -1,17 +1,3 @@
-// compiler/ir_const_numeric_run.fern — compiles stdin through the
-// typed lowering with every i64 and f64 constant it produced as text rebuilt
-// from its value (ir.op_const_i64 / ir.op_const_f64), then emits it. The program
-// has to behave exactly as it does when compiled normally: a backend reading
-// only one of the two constant forms emits an empty immediate for the other
-// (#8996).
-//
-//   ir_const_numeric_run -target x86-64-linux < prog.fern > prog.s
-//   ir_const_numeric_run -target arm64-linux  < prog.fern > prog.s
-//   ir_const_numeric_run -target wasm32-wasi  < prog.fern > prog.wat
-//
-// stderr reports how many constants of each kind were rebuilt and how many
-// float constants already used the value form after lowering.
-
 import "../util";
 import "../parser";
 import "./rundriver";
@@ -51,7 +37,6 @@ function rebuild(cache: irtables.LowerResult[]): Rebuilt {
   return Rebuilt { cache: out, i64s: n64, f64s: nf, value_f64s: nvf };
 }
 
-// rebuilt is `sub` with the constants in its bodies rebuilt.
 function rebuilt(sub: ircore.Sub): ircore.Sub {
   let rb: Rebuilt = rebuild(sub.bodies);
   let rx: Rebuilt = rebuild(sub.extra);
@@ -59,8 +44,6 @@ function rebuilt(sub: ircore.Sub): ircore.Sub {
   return ircore.Sub { ...sub, bodies: rb.cache, extra: rx.cache };
 }
 
-// bits_round_trip checks the patterns no source literal spells: a NaN's
-// payload and sign, both infinities, and negative zero.
 function bits_round_trip(): boolean {
   let pats: i64[] = [0x7ff8000000000123i64, 0i64 - 0x0007fffffffffffdi64, 0x7ff0000000000000i64, 0i64 - 0x0010000000000000i64, 0i64 - 0x7fffffffffffffffi64 - 1i64, 1i64];
   for b in pats {

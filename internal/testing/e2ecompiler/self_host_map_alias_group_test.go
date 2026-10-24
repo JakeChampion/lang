@@ -5,17 +5,6 @@ import (
 	"testing"
 )
 
-// --- map alias groups: who owns the box a clone superseded (#7235) ----------
-//
-// A mapbox carries no rc word, so `let q: Map[..] = m` is an UNCOUNTED share and
-// the release of every box the pair reaches has to be decided statically: m, its
-// plain aliases and the local tuples holding it at an element form a group, and
-// each box the group reaches is freed exactly once. An insert clones only when an
-// alias can be live at it.
-//
-// Every want was confirmed against bin/fern -interp. Counts are the x86-64
-// leakcheck census at the row's round count, and every row balances.
-
 type mapAliasGroupCase struct {
 	name   string
 	src    string
@@ -40,20 +29,16 @@ function round(i: i32): i32 {
 }`
 	return []mapAliasGroupCase{
 		{
-			// #7235's repro: the alias holds the old box, m the clone.
 			name: "alias_before_insert",
 			src:  repro + mapAliasGroupMain("100"),
 			want: 64, allocs: 400, frees: 400,
 		},
 		{
-			// The same at 200 rounds — flat, not merely smaller.
 			name: "alias_before_insert_200",
 			src:  repro + mapAliasGroupMain("200"),
 			want: 43, allocs: 800, frees: 800,
 		},
 		{
-			// No alias is live at the insert, so it mutates in place and no clone
-			// exists: half the allocations of alias_before_insert.
 			name: "alias_after_insert",
 			src: `import "core/map";
 function round(i: i32): i32 {
@@ -65,8 +50,6 @@ function round(i: i32): i32 {
 			want: 17, allocs: 200, frees: 200,
 		},
 		{
-			// The clone happens on half the rounds: q holds the old box on those
-			// and m's box on the rest.
 			name: "alias_and_conditional_insert",
 			src: `import "core/map";
 function round(i: i32): i32 {
@@ -78,7 +61,6 @@ function round(i: i32): i32 {
 			want: 11, allocs: 300, frees: 300,
 		},
 		{
-			// Three inserts per round after the alias.
 			name: "alias_before_a_loop_of_inserts",
 			src: `import "core/map";
 function round(i: i32): i32 {
@@ -91,8 +73,6 @@ function round(i: i32): i32 {
 			want: 82, allocs: 400, frees: 400,
 		},
 		{
-			// Two aliases bound around two inserts: q keeps the first box, r the
-			// first clone, m the second.
 			name: "two_aliases_two_inserts",
 			src: `import "core/map";
 function round(i: i32): i32 {
@@ -106,11 +86,6 @@ function round(i: i32): i32 {
 			want: 26, allocs: 600, frees: 600,
 		},
 		{
-			// THE WRONG-ANSWER CASE for a positional alias scan. The alias is bound
-			// textually AFTER the insert, but the loop's back edge makes it live at
-			// the next iteration's insert, so every insert must clone and each
-			// snapshot keeps its own box: 0+1+2+3 = 6. In-place would hand all four
-			// the same box: 12.
 			name: "alias_in_enclosing_loop_snapshot",
 			src: `import "core/map";
 function main(): i32 {
@@ -131,9 +106,6 @@ function main(): i32 {
 			want: 6, allocs: 9, frees: 9,
 		},
 		{
-			// A string VALUE column shared between the clone and the alias. The
-			// numbers formatted here and below are 100 and up, as 0 to 99 come
-			// from a constant table and allocate nothing.
 			name: "string_values",
 			src: `import "core/map";
 import "std/i32";
@@ -147,7 +119,6 @@ function round(i: i32): i32 {
 			want: 8, allocs: 600, frees: 600,
 		},
 		{
-			// Fresh string KEYS as well, one insert before the alias and one after.
 			name: "string_keys",
 			src: `import "core/map";
 import "std/i32";
@@ -162,7 +133,6 @@ function round(i: i32): i32 {
 			want: 35, allocs: 1400, frees: 1400,
 		},
 		{
-			// The #7212 shape: a tuple holds the old box at an element.
 			name: "tuple_element",
 			src: `import "core/map";
 function round(i: i32): i32 {
@@ -174,7 +144,6 @@ function round(i: i32): i32 {
 			want: 17, allocs: 500, frees: 500,
 		},
 		{
-			// CONTROL: never aliased; the in-place insert and the plain release.
 			name: "never_aliased",
 			src: `import "core/map";
 function round(i: i32): i32 {
@@ -185,7 +154,6 @@ function round(i: i32): i32 {
 			want: 64, allocs: 200, frees: 200,
 		},
 		{
-			// An alias declared inside a loop body, re-bound every iteration.
 			name: "alias_declared_in_loop_refused",
 			src: `import "core/map";
 function round(i: i32): i32 {
@@ -198,7 +166,6 @@ function round(i: i32): i32 {
 			want: 26, allocs: 600, frees: 600,
 		},
 		{
-			// A chain: `let r = q` aliases the alias.
 			name: "alias_chain_refused",
 			src: `import "core/map";
 function round(i: i32): i32 {
@@ -213,9 +180,6 @@ function round(i: i32): i32 {
 	}
 }
 
-// TestSelfHostMapAliasGroupX86_64 — the census leg, plus a second build of each
-// row under FERN_SANITIZE=1: an identity guard that frees a box another holder
-// still reads is an over-release into a freelist, which the census cannot see.
 func TestSelfHostMapAliasGroupX86_64(t *testing.T) {
 	boxedProbes(t)
 	cli := newStrictCLI(t)
@@ -251,8 +215,6 @@ func TestSelfHostMapAliasGroupX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMapAliasGroupWasmIR — the wasm sibling. Exit codes only: the
-// answer is what proves each insert cloned exactly when an alias was live.
 func TestSelfHostMapAliasGroupWasmIR(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range mapAliasGroupCases() {
@@ -264,7 +226,6 @@ func TestSelfHostMapAliasGroupWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostMapAliasGroupIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostMapAliasGroupIRArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)

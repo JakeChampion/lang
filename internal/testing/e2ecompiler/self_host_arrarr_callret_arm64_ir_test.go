@@ -4,8 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrArrCallRetReclaimIRArm64 runs the shared call-result nested-array reclaim
-// cases on ARM64, exercising the typed release pipeline.
 func TestSelfHostArrArrCallRetReclaimIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -27,7 +25,6 @@ func TestSelfHostArrArrCallRetReclaimIRArm64(t *testing.T) {
 		}
 	}
 
-	// string[][] CALL-INIT churn — flat at detector zero.
 	run(t, `function mk(i: i32): string[][] {
     return [["a" + "b"], ["c" + "d", "e" + "f"]];
 }
@@ -53,7 +50,6 @@ function main(): i32 {
     return 0;
 }`, "arrarr-callret-str-flat-arm64", 0)
 
-	// PARAM-EMBEDDING exclusion pin.
 	run(t, `function mk2(s: string): string[][] {
     return [[s], ["c" + "d"]];
 }
@@ -72,7 +68,6 @@ function main(): i32 {
     return 0;
 }`, "arrarr-callret-param-embed-safe-arm64", 0)
 
-	// FN-SCOPE single-sweep pin (the slice-9 double-sweep fix on arm64).
 	run(t, `function work(n: i32): i32 {
     let g: string[][] = [["a" + "b"], ["c" + "d", "e" + "f"]];
     return g.len() + g[0][0].len() + n;

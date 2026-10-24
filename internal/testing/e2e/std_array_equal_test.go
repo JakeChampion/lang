@@ -2,18 +2,6 @@ package e2e
 
 import "testing"
 
-// TestStdArrayEqual pins the Eq-driven array-equality surface after #5348
-// consolidated the generic verbs into core/cmp:
-//   - `cmp.eq_arrays[T: Eq]` — structural array equality, called qualified
-//     through `import "core/cmp"` (the single home for the free function);
-//   - `xs.equal(other)` — the std/array method form, which delegates to
-//     `cmp.eq_arrays`, so an `import "std/array"` program still gets element-
-//     wise equality without importing core/cmp directly;
-//   - `array.index_of_last` — the reverse-scan Eq verb that stays in std/array.
-//
-// All are bound `[T: Eq]` and compare elements through the bound's `eq`, so
-// `i32` keeps the scalar compare and `string` dispatches byte equality, on
-// interp + x86-64 + wasm.
 func TestStdArrayEqual(t *testing.T) {
 	cases := []struct {
 		name string
@@ -85,9 +73,6 @@ function main(): i32 {
 	for _, c := range cases {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
-			// Each compiled backend gets its own sub-test so a missing
-			// toolchain skips that leg alone: a bare skip here would take
-			// the interp assertion down with it.
 			if got := runInterpByte(t, c.src); got != c.want {
 				t.Errorf("interp: got exit %d, want %d", got, c.want)
 			}

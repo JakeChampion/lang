@@ -1,17 +1,3 @@
-// Bounds-checking contract: an out-of-bounds array, slice or string
-// index aborts the process on every backend instead of returning
-// garbage. Before this, the natives (x86-64 / arm64) silently read
-// past the end and returned 0 while the interpreter errored and wasm
-// trapped — a three-way divergence the cross-area differential sweep
-// found. The codegen backends now abort with exit code 134 (the same
-// trap the string-slice helper uses and what wasm's `unreachable`
-// produces); both interpreters print the natives' cause line and exit 134.
-//
-// The string half arrived later (#8454) and is the reason these
-// cases index all three string forms: the SSO-inline form carries
-// its length in the value's tag byte rather than a heap prefix, so
-// a check that only understood the heap layout would pass the
-// inline case through.
 package e2e
 
 import (
@@ -19,14 +5,6 @@ import (
 	"testing"
 )
 
-// withoutAbortDiag drops the native backends' fatal-abort diagnostic from
-// combined output: the `fern: …` cause line #5538 writes to stderr before
-// exiting, plus the frame-pointer backtrace that follows it (`backtrace:` and
-// the `  0x…` frame lines). The abort block is contiguous and trailing — a
-// program VALUE reaches stdout before the aborting op — so everything from the
-// first `fern: ` line to the end is the diagnostic. This lets the "printed
-// nothing before aborting" check below test what it means to: that no value
-// was produced, not that the abort stayed silent.
 func withoutAbortDiag(out string) string {
 	if i := strings.Index(out, "fern: "); i >= 0 {
 		return out[:i]
@@ -34,11 +12,6 @@ func withoutAbortDiag(out string) string {
 	return out
 }
 
-// assertAborts compiles + runs src on every available codegen
-// backend and asserts each one aborts (non-zero exit) without
-// printing a value — i.e. the out-of-bounds access was caught
-// before it could yield one (the abort's own `fern: …` diagnostic
-// on stderr is expected and ignored).
 func assertAborts(t *testing.T, src string) {
 	t.Helper()
 	t.Run("x86_64", func(t *testing.T) {
@@ -92,11 +65,6 @@ function main(): i32 {
     print((s[5] as i32).to_string());
     return 0;
 }`},
-		// Slice CONSTRUCTION bounds (#5419): a[lo:hi] with hi > len,
-		// lo > hi, or lo < 0 traps at construction — before this,
-		// the compiled backends built the oversized view and the
-		// access check (against the view's own len) read past the
-		// source.
 		{"slice_construct_high_past_end", `import "std/i32";
 function main(): i32 {
     let xs: i32[] = [10, 20, 30];
@@ -151,8 +119,6 @@ function main(): i32 {
     print(s.len().to_string());
     return 0;
 }`},
-		// A lane group checks its last index as well as its first: the
-		// first index of each group below is in range.
 		{"lane_read_group_past_end", `import "std/f64";
 function at(xs: f64[], i: i32): f64x2 { return __f64x2_load(xs, i); }
 function main(): i32 { let xs: f64[] = [1.0, 2.0, 3.0]; print(__f64x2_lane(at(xs, 2), 0).to_string()); return 0; }`},
@@ -168,14 +134,10 @@ function main(): i32 { let xs: f32[] = [1.0, 2.0, 3.0, 4.0, 5.0]; print(put(xs, 
 	}
 }
 
-// TestStringIndexBoundsCheck covers `s[i]` for each string form.
-// The index comes from a function call so nothing can fold it to a
-// static value — the runtime check is what is under test.
 func TestStringIndexBoundsCheck(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping bounds-check e2e in -short mode")
 	}
-	// prog indexes one of the three string forms at a dynamic index.
 	prog := func(bind string, idx string) string {
 		return `import "std/i32";
 import "std/string";
@@ -187,8 +149,6 @@ function main(): i32 {
     return 0;
 }`
 	}
-	// "abc" is 3 bytes, so it is SSO-inline; the 24-byte literal is
-	// heap-allocated. Both forms and a view over the heap one.
 	inline := `let s: string = "abc";`
 	heap := `let s: string = "0123456789abcdefghijklmn";`
 	view := `let h: string = "0123456789abcdefghijklmn";
@@ -212,9 +172,6 @@ function main(): i32 {
 	}
 }
 
-// TestStringIndexInBoundsStillWorks is the other half of #8454: the
-// check must not reject a legal index in any string form, including
-// the last byte of each.
 func TestStringIndexInBoundsStillWorks(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping in -short mode")
@@ -265,8 +222,6 @@ function main(): i32 {
 	}
 }
 
-// TestArrayInBoundsStillWorks guards against the bounds check
-// breaking ordinary in-range indexing (reads, writes, every stride).
 func TestArrayInBoundsStillWorks(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping in -short mode")
@@ -301,8 +256,6 @@ function main(): i32 {
     print((s[2] as i32).to_string());
     return 0;
 }`},
-		// The length boundary stays legal: lo == hi == len constructs
-		// an empty slice, and a full-width xs[0:len] is unchanged.
 		{"slice_boundary_forms", `import "std/i32";
 function main(): i32 {
     let xs: i32[] = [10, 20, 30];

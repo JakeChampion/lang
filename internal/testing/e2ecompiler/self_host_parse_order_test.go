@@ -10,14 +10,8 @@ import (
 	"testing"
 )
 
-// diagLabel is the self-host's "at top level:" / "in fn '…':" label (#12762),
-// which is not part of the words compared.
 var diagLabel = regexp.MustCompile(`^(?:at top level: |in fn '[^']*': )`)
 
-// A program with several parse errors reports the earliest first, from both
-// front ends, in the same words at the same position (#12773). `-fmt` and the
-// language server report through the same gates as `-check`, so they lead with
-// the same finding.
 func TestSelfHostFirstParseErrorInSourceOrder(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	progs := []string{
@@ -48,15 +42,10 @@ func TestSelfHostFirstParseErrorInSourceOrder(t *testing.T) {
 		"function outer(): i32 { function f(x): i32 { return 0; } return 0; }",
 		"function use(): i32 { return 1; }\nfunction main(): i32 { return @; }",
 		"function f(x): i32 { return 0; }\nfunction main(): i32 { return @; }",
-		// A sentinel before a nameless function.
 		"function main(): i32 { return @; }\nfunction use(): i32 { return 1; }",
-		// A sentinel before an untyped parameter.
 		"function main(): i32 { return @; }\nfunction f(x): i32 { return 0; }",
-		// A sentinel in a later function, before a nameless one.
 		"function main(): i32 { return 0; }\nfunction f(): i32 { return @; }\nfunction type(): i32 { return 1; }",
-		// A malformed attribute, then the nameless struct its `struct` starts.
 		"@struct\nstruct S { a: i32 }",
-		// An unterminated string before a nameless function.
 		"function main(): i32 { let s = \"abc;\n  return 0;\n}\nfunction use(): i32 { return 1; }",
 	}
 	dir := t.TempDir()
@@ -95,8 +84,6 @@ func TestSelfHostFirstParseErrorInSourceOrder(t *testing.T) {
 		}
 	}
 
-	// A sentinel at the top level of a module declaring `main` is one parse
-	// error, not also a statement that never executes.
 	src := filepath.Join(dir, "sentinel.fern")
 	if err := os.WriteFile(src, []byte("@foo\nfunction main(): i32 { return 0; }\n"), 0o644); err != nil {
 		t.Fatal(err)

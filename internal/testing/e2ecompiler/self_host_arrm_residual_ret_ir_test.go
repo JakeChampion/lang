@@ -8,35 +8,6 @@ import (
 	"testing"
 )
 
-// `xs.map(f).reduce(g)` on the self-host IR path (#9743).
-//
-// `register_array_method_generics` folds an array-receiver method into a free
-// generic `__arrm_m[T]` whose `type_params` carries only the BOUNDED receiver
-// var — an unbounded param of the method's own, `map[U]`, is erased from it
-// while still appearing in the return spelling `U[]`. `mono_infer`'s
-// array-method arm substituted the receiver var alone, so a chained call
-// received the type VARIABLE `U[]` as though it were a type: a `reduce` hung
-// off it instantiated as `__arrm_reduce__U` with `ret_type = Option[U]`, the
-// match binding found no class for the payload tag `U` and took a default i32
-// slot, and the i64 return path then refused it — "did not lower: `return` of
-// ident `v`", refusing the whole module.
-//
-// The arm now finishes the job the way `call_ret_type` already does two
-// branches away: a type var still residual after the receiver substitution is
-// bound by unifying the whole parameter list against the arguments
-// (`resolve_residual_ret` / `full_ret_binds`), which recovers `U` from the
-// lambda's declared return.
-//
-// `reduce` is what broke because it is the one `std/array` method whose result
-// type comes solely from the bounded receiver var AND whose result binds a
-// payload. The neighbours below masked the same bad inference rather than
-// escaping it — `map(f).fold(z, g)` takes its width from the `init` argument,
-// `filter(p).reduce(h)` has nothing residual to lose — so they are controls:
-// they passed before and must still pass, or the repair moved the problem
-// instead of fixing it.
-//
-// Three binding shapes, because all three failed: what was wrong is the type
-// `mono_infer` returns, not how an annotation reaches a slot.
 var arrmResidualRetIRCases = []struct {
 	name string
 	src  string
@@ -61,9 +32,6 @@ function f(xs: i64[]): i64 {
     }
 }
 function main(): i32 { return f([1 as i64, 2 as i64]) as i32; }`},
-	// A payload that is not a scalar: the match binding reaches a string slot
-	// only if `U` resolved, so this failed the same way while exercising a
-	// different slot class.
 	{"string-payload", `import "std/array";
 import "std/string";
 function f(xs: i64[]): i32 {
@@ -71,8 +39,6 @@ function f(xs: i64[]): i32 {
     match (out) { Some(v) => { return v.len(); }, None => { return 0; } }
 }
 function main(): i32 { return f([1 as i64, 2 as i64, 3 as i64]); }`},
-	// Three stages, so the residual has to survive being carried through a
-	// second chained method rather than only out of the first.
 	{"filter-map-reduce", `import "std/array";
 function f(xs: i64[]): i64 {
     let out: Option[i64] = xs.filter((x: i64): boolean => x > (0 as i64))
@@ -131,9 +97,6 @@ func TestSelfHostArrmResidualRetIR(t *testing.T) {
 			}
 			_, want := runFixtureInterp(t, entry, "")
 
-			// `-decide` is the assertion this test exists for: the bug was a
-			// REFUSAL, so a regression shows up here as "refused" (or as an empty
-			// emit below) rather than as a wrong answer.
 			if out, _ := runDriver(entry, root, "-decide"); strings.TrimSpace(out) != "ir" {
 				t.Errorf("%s decide = %q, want \"ir\" — the IR path declined the module again", tc.name, strings.TrimSpace(out))
 			}

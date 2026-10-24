@@ -6,29 +6,6 @@ import (
 	"testing"
 )
 
-// A generic function whose `match` binds the SAME NAME in two arms, instantiated
-// more than once.
-//
-// `ast.CloneBlock` shallow-copied a MatchArm, so every monomorphised clone
-// shared one `Bindings` backing array while each got its own deep-copied body.
-// shadowrename then renamed the second arm's binding in the first instantiation
-// — writing through the shared array, and rewriting only that instantiation's
-// body — and every later clone's pattern said `p$1` while its body still said
-// `p`. The stale `p` resolved to the OTHER arm's binding of that name, so the
-// arm read a slot its own arm never stored.
-//
-// Both observable halves are covered, because they fail differently:
-//
-//   - `arm_binding_clone_shapes`: the two arms bind different struct types, so
-//     the wrong resolution is a type error and lowering aborts with
-//     `ir: struct Slice has no field "has_base"` — a build failure.
-//   - `arm_binding_clone_same_shape`: the two arms bind types of the same shape,
-//     so nothing objects and the arm dereferences an unwritten slot — a
-//     segfault, and on a different layout a silently wrong answer.
-//
-// The self-host compiler's `astwalk.fold_expr` is exactly this shape (its
-// `ExprSlice` and `ExprStructLit` arms both bind `sl`) and it is instantiated
-// three times, which is how this surfaced (#6993).
 const armBindingCloneShapes = `struct Slice { arr: i32 }
 struct Lit { has_base: boolean }
 type E = Slice | Lit;
@@ -57,8 +34,6 @@ function main(): i32 {
 }
 `
 
-// The same-shape half: both payloads are one-i32 structs, so the stale
-// reference type-checks and the arm reads a slot only the other arm writes.
 const armBindingCloneSameShape = `struct Lo { v: i32 }
 struct Hi { v: i32 }
 type E = Lo | Hi;
@@ -93,9 +68,6 @@ var armBindingCloneCases = []struct {
 	{"arm_binding_clone_same_shape", armBindingCloneSameShape, 21},
 }
 
-// TestNativeMonomorphArmBindingClone pins the clone on the native backends.
-// The interp leg is the oracle: it runs off the same monomorphised AST, so a
-// leg disagreeing with it is a lowering answer rather than a language question.
 func TestNativeMonomorphArmBindingClone(t *testing.T) {
 	for _, tc := range armBindingCloneCases {
 		t.Run(tc.name, func(t *testing.T) {

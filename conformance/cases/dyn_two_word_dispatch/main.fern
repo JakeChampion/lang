@@ -1,7 +1,7 @@
-// `dyn` dispatch with a string argument, and with a string result. Under the
-// two-word string ABI (wasm32, arm64) each is a (data, len) pair on the
-// operand stack, which the SSA lift has to count as the verifier does; the
-// two are separate calls so a miscount of one cannot cancel the other's.
+
+
+
+
 trait Named {
     function score(self: Self, prefix: string): i32;
     function tag(self: Self, n: i32): string;

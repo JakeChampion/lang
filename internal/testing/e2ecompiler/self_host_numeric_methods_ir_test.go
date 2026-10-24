@@ -6,31 +6,10 @@ import (
 	"testing"
 )
 
-// numericMethodsIRCases are self-contained programs exercising the i64 / u32
-// numeric-method LOGIC (abs / min / max / clamp + unsigned compare) that
-// std/i64 and std/u32 wrap, verified through the self-hosted compiler's x86-64
-// IR path. The single-program self-host driver resolves no imports, so the
-// method bodies are inlined — this verifies that the language constructs the
-// stdlib methods compile to (64-bit and unsigned arithmetic / compare / branch
-// across function calls) lower correctly on the IR path.
-//
-// The u32 case deliberately uses a value above 2^31 (signed-negative) so a
-// signed comparison would give the wrong answer — confirming the IR path
-// selects the unsigned compare. Each program's exit code is oracle-checked
-// against the reference interpreter rather than hardcoded, so a wrong-but-
-// stable result can't slip through (cf. the hardcoded-expectation gap in
-// #2908). Goal-1 self-host IR coverage; FEATURE-AUDIT std/i64 · std/u32 rows.
-//
-// Scope note: the wasm IR backend still lowers u32/u64 comparisons as SIGNED
-// (this test surfaced it) and a >2^63 u64 value built by addition is not yet
-// IR-eligible on x86 — both tracked as a follow-up, so this test stays on the
-// x86-64 IR path where the unsigned semantics are correct.
 var numericMethodsIRCases = []struct {
 	name string
 	src  string
 }{
-	// i64 abs / min / max / clamp, composed across helper calls.
-	// 7 + 5 + 9 = 21, then clamp(12,3,9)==9 adds 100 → 121.
 	{"i64-abs-min-max-clamp", `function i64_abs(n: i64): i64 { if (n < (0 as i64)) { return (0 as i64) - n; } return n; }
 function i64_min(a: i64, b: i64): i64 { if (a < b) { return a; } return b; }
 function i64_max(a: i64, b: i64): i64 { if (a > b) { return a; } return b; }
@@ -39,8 +18,6 @@ function main(): i32 {
     if (i64_max(i64_min(12 as i64, 9 as i64), 3 as i64) == 9 as i64) { r = r + 100 as i64; }
     return r as i32;
 }`},
-	// u32 min / max with a value above 2^31 (signed-negative): unsigned
-	// max(4e9, 1) == 4e9 and min == 1. A signed compare would invert both.
 	{"u32-unsigned-min-max", `function u32_min(a: u32, b: u32): u32 { if (a < b) { return a; } return b; }
 function u32_max(a: u32, b: u32): u32 { if (a > b) { return a; } return b; }
 function main(): i32 {
@@ -48,11 +25,6 @@ function main(): i32 {
     if (u32_max(big, one) == big && u32_min(big, one) == one) { return 42; }
     return 0;
 }`},
-	// i64 bit-op family (the std/i64 additions): count_zeros / leading_zeros /
-	// trailing_zeros / rotate_left / rotate_right, over u64 shifts & masks.
-	// Exercises 64-bit shift / and / or / compare across function calls on the
-	// IR path; oracle-checked, so the wide-shift logic must be correct, not just
-	// stable. count_zeros(7)=61, then four predicate hits → 65.
 	{"i64-bitops", `function count_ones(n: i64): i32 {
     let u: u64 = n as u64; let c: i32 = 0; let i: i32 = 0;
     while (i < 64) { if ((u & (1 as u64)) != (0 as u64)) { c = c + 1; } u = u >> (1 as u64); i = i + 1; }
@@ -91,10 +63,6 @@ function main(): i32 {
     if (rotr((1 as i64) << (63 as i64), 63) == (1 as i64)) { r = r + 1; }   // 65
     return r;
 }`},
-	// u32 bit-op family (the std/u32 additions): count_ones / leading_zeros /
-	// trailing_zeros / rotate over u32 shifts & masks. Only ==/!= compares
-	// (never signed </>) so the x86-64 IR path is exact for unsigned; oracle-
-	// checked. count_ones(255)=8, then four predicate hits → 12.
 	{"u32-bitops", `function count_ones(n: u32): i32 {
     let u: u32 = n; let c: i32 = 0; let i: i32 = 0;
     while (i < 32) { if ((u & (1 as u32)) != (0 as u32)) { c = c + 1; } u = u >> (1 as u32); i = i + 1; }
@@ -125,9 +93,6 @@ function main(): i32 {
     if (rotl((1 as u32) << (31 as u32), 1) == (1 as u32)) { r = r + 1; }   // 12
     return r;
 }`},
-	// byte_swap (the std/u32 · std/i64 · std/u64 additions): endianness
-	// reversal over unsigned shift/mask lanes. u32 swaps 4 bytes, u64 loops
-	// over 8; ==-only, oracle-checked. Four hits → 42.
 	{"int-byte-swap", `function u32_bswap(n: u32): u32 {
     let b0: u32 = n & (255 as u32);
     let b1: u32 = (n >> (8 as u32)) & (255 as u32);
@@ -148,9 +113,6 @@ function main(): i32 {
     if (u64_bswap(u64_bswap(123456789 as u64)) == (123456789 as u64)) { r = r + 12; }
     return r;
 }`},
-	// Single-bit accessors (the std/i64 · u32 · u64 additions): read / set /
-	// clear a bit via shift/mask over u64 lanes, incl. the top-bit path.
-	// ==/!=-only, oracle-checked. Four hits → 42.
 	{"int-bit-accessors", `function i64_bit(n: i64, i: i32): boolean {
     if (i < 0 || i >= 64) { return false; }
     let mask: u64 = (1 as u64) << (i as u64);
@@ -173,9 +135,6 @@ function main(): i32 {
     if (i64_clear(15 as i64, 1) == (13 as i64)) { r = r + 12; }
     return r;
 }`},
-	// checked_div (the std/i64 · u32 · u64 additions): guarded division with
-	// the divide-by-zero and i64::MIN / -1 overflow cases. Inlined with a -1
-	// sentinel standing in for None; oracle-checked. Four hits → 42.
 	{"int-checked-div", `function i64_cdiv(n: i64, other: i64): i64 {
     if (other == (0 as i64)) { return (0 as i64) - (1 as i64); }
     let min64: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
@@ -195,13 +154,6 @@ function main(): i32 {
     if (u32_cdiv(9 as u32, 3 as u32) == 3) { r = r + 12; }
     return r;
 }`},
-	// log10_floor (the std/i32 · i64 · u32 additions): floor(log10 n) by
-	// counting divisions by ten, with the -1 sentinel for n <= 0 (n == 0
-	// unsigned). Exercises i32/i64/u32 divide + unsigned compare + branch
-	// across function calls on the IR path; the u32 case uses a value above
-	// 2^31 so a signed compare/divide would truncate the loop early (the
-	// same unsigned-correctness the u32 min/max case guards). Oracle-checked,
-	// so the count must be right, not just stable. Five hits → 42.
 	{"int-log10-floor", `function i32_log10(n: i32): i32 {
     if (n <= 0) { return 0 - 1; }
     let r: i32 = 0; let m: i32 = n;
@@ -229,13 +181,6 @@ function main(): i32 {
     if (u32_log10(4000000000 as u32) == 9) { r = r + 6; }            // > 2^31, 10 digits
     return r;
 }`},
-	// checked_mul (the std/i32 · i64 additions): overflow-checked multiply.
-	// i32 widens to i64 and range-checks (a -1 sentinel stands in for None on
-	// overflow); i64 has no wider type so it detects overflow with the inverse
-	// division (p/n == other) and rejects the MIN * -1 wrap explicitly (a -2
-	// sentinel). Exercises i64 multiply + divide + compare across function
-	// calls on the IR path; oracle-checked, so the overflow verdict must be
-	// right, not just stable. Four hits → 42.
 	{"int-checked-mul", `function i32_cmul(n: i32, other: i32): i64 {
     let p: i64 = (n as i64) * (other as i64);
     let lo: i64 = (0 as i64) - (2147483647 as i64) - (1 as i64);
@@ -260,12 +205,6 @@ function main(): i32 {
     if (i64_cmul(3037000500 as i64, 3037000500 as i64) == ((0 as i64) - 2)) { r = r + 11; }  // ~9.22e18 overflows i64
     return r;
 }`},
-	// saturating_mul (the std/i32 · i64 additions): multiply clamped to the
-	// type range instead of wrapping. i32 reads the clamp off the i64-widened
-	// product; i64 detects overflow via inverse division and picks MAX/MIN by
-	// the product's sign. Exercises i64 multiply + divide + a boolean-equality
-	// sign test across function calls on the IR path; oracle-checked, so both
-	// the clamp direction and the in-range path must be right. Five hits → 42.
 	{"int-saturating-mul", `function i32_smul(n: i32, other: i32): i32 {
     let p: i64 = (n as i64) * (other as i64);
     if (p > (2147483647 as i64)) { return 2147483647; }
@@ -296,11 +235,6 @@ function main(): i32 {
     if (i64_smul((0 as i64) - 3037000500, 3037000500 as i64) == ((0 as i64) - 9223372036854775807 - 1)) { r = r + 9; }
     return r;
 }`},
-	// reverse_bits (the std/i32 · i64 additions): bit-order reversal over the
-	// unsigned twin's logical shifts (bit i -> bit width-1-i). The bit-level
-	// counterpart of byte_swap; exercises u32/u64 shift | & across function
-	// calls on the IR path (same shape as int-byte-swap), plus the involution.
-	// Oracle-checked. Five hits → 42.
 	{"int-reverse-bits", `function i32_rev(n: i32): i32 {
     let u: u32 = n as u32;
     let r: u32 = 0 as u32;
@@ -326,11 +260,6 @@ function main(): i32 {
     if (i64_rev(i64_rev(987654321 as i64)) == (987654321 as i64)) { r = r + 9; }
     return r;
 }`},
-	// div_euclid / rem_euclid (the std/i32 · i64 additions): Euclidean division
-	// with a remainder always in [0, |rhs|). Exercises i32/i64 divide + remainder
-	// + signed compare + branch across function calls on the IR path (i64 / is
-	// already covered by int-checked-div; this adds i64 %). Oracle-checked, so
-	// the negative-dividend rounding must be right. Five hits → 42.
 	{"int-euclid", `function i32_de(n: i32, rhs: i32): i32 {
     let q: i32 = n / rhs;
     if (n % rhs < 0) { if (rhs > 0) { return q - 1; } return q + 1; }
@@ -355,13 +284,6 @@ function main(): i32 {
     if (i64_re((0 as i64) - 1000000000001, 7 as i64) == (5 as i64)) { r = r + 9; }  // past i32 range
     return r;
 }`},
-	// checked_pow (the std/i32 · i64 · u32 · u64 additions): overflow-checked
-	// exponentiation by squaring. The inlined i32 form widens to i64 and
-	// range-checks each product (a -2 sentinel stands in for None on overflow,
-	// -1 for a negative exponent). Exercises the pow loop — i64 multiply +
-	// compare + branch over an i32 exponent halving — on the IR path.
-	// Oracle-checked, so the exact / overflow verdict must match the
-	// interpreter. Five hits → 42.
 	{"int-checked-pow", `function i32_cpow(n: i32, exp: i32): i64 {
     if (exp < 0) { return (0 as i64) - 1; }
     let result: i64 = 1 as i64;
@@ -391,12 +313,6 @@ function main(): i32 {
     if (i32_cpow(0 - 3, 3) == ((0 as i64) - 27)) { r = r + 9; }      // negative base
     return r;
 }`},
-	// overflowing_add / overflowing_mul (the std/i32 · i64 · u32 · u64
-	// additions): the (wrapped_result, did_overflow) pair. Exercises a
-	// tuple-returning function + tuple destructure of the call result on the
-	// IR path, plus i64-widened mul overflow detection. Oracle-checked, so
-	// both the wrapped value and the flag must match the interpreter. Four
-	// hits → 42.
 	{"int-overflowing", `function i32_oadd(n: i32, other: i32): (i32, boolean) {
     let r: i32 = n + other;
     return (r, (n > 0 && other > 0 && r < 0) || (n < 0 && other < 0 && r >= 0));
@@ -421,12 +337,6 @@ function main(): i32 {
     if (o4) { r = r + 11; }                                        // 10^10 overflows
     return r;
 }`},
-	// checked_neg / checked_abs / overflowing_neg (the std/i32 · i64
-	// additions): unary MIN-overflow safety. overflowing_neg returns the
-	// (wrapped, did_overflow) tuple; the inlined checked_abs uses an i64
-	// sentinel for the MIN case. Exercises the MIN == -2147483648 branch,
-	// a tuple return + destructure, and i64 widening on the IR path.
-	// Oracle-checked. Four hits → 42.
 	{"int-checked-neg", `function i32_oneg(n: i32): (i32, boolean) {
     if (n == (0 - 2147483647 - 1)) { return (n, true); }
     return (0 - n, false);
@@ -447,12 +357,6 @@ function main(): i32 {
     if (i32_cabs(min32) == ((0 as i64) - 2147483648)) { r = r + 11; }  // MIN sentinel
     return r;
 }`},
-	// The amount guard of checked_shl / checked_shr: a shift guarded to the
-	// amount range [0, width) — the bare << / >> mask the amount, so 1 << 32
-	// silently yields 1. The inlined i32 form returns an
-	// out-of-i32-range i64 sentinel for the None case. Exercises i32 << / >>
-	// (arithmetic shr) + i64 compare + branch on the IR path. Oracle-checked.
-	// Five hits → 42.
 	{"int-checked-shift", `function i32_cshl(n: i32, rhs: i32): i64 {
     if (rhs < 0 || rhs >= 32) { return (0 as i64) - 9999999999; }
     return (n << rhs) as i64;
@@ -470,11 +374,6 @@ function main(): i32 {
     if (i32_cshr(16, 2) == (4 as i64)) { r = r + 9; }
     return r;
 }`},
-	// checked_rem (the std/i32 · i64 · u32 · u64 additions): remainder guarded
-	// against divide-by-zero and MIN % -1. The inlined i32 form returns an
-	// out-of-i32-range i64 sentinel for the None cases. Exercises i32 % +
-	// compare + branch + i64 widening on the IR path. Oracle-checked. Five
-	// hits → 42.
 	{"int-checked-rem", `function i32_crem(n: i32, other: i32): i64 {
     if (other == 0) { return (0 as i64) - 9999999999; }
     if (n == (0 - 2147483647 - 1) && other == (0 - 1)) { return (0 as i64) - 9999999999; }
@@ -490,12 +389,6 @@ function main(): i32 {
     if (i32_crem(10, 3) == (1 as i64)) { r = r + 9; }
     return r;
 }`},
-	// overflowing_div / overflowing_rem (the std/i32 · i64 · u32 · u64
-	// additions): the (wrapped, did_overflow) quotient / remainder pair,
-	// completing the overflowing_ family for / and %. The one overflowing pair
-	// is MIN / -1 (quotient wraps to MIN, remainder is 0). Exercises i32 / +
-	// % + a tuple return + destructure + the MIN branch on the IR path.
-	// Oracle-checked. Four hits → 42.
 	{"int-overflowing-div", `function i32_odiv(n: i32, other: i32): (i32, boolean) {
     let min32: i32 = 0 - 2147483647 - 1;
     if (n == min32 && other == (0 - 1)) { return (min32, true); }
@@ -519,11 +412,6 @@ function main(): i32 {
     if (m2 == (0 - 2) && !p2) { r = r + 11; }                       // sign of dividend
     return r;
 }`},
-	// saturating_div / saturating_neg / saturating_abs (the std/i32 · i64 · u32 ·
-	// u64 additions): the clamping companions of checked_div / checked_neg /
-	// checked_abs. The one overflowing case — MIN / -1, -MIN, |MIN| — clamps to
-	// MAX instead of wrapping to MIN. Exercises i32 / + unary neg + the MIN
-	// branch + compare on the IR path. Oracle-checked. Five hits → 42.
 	{"int-saturating-div", `function i32_sdiv(n: i32, other: i32): i32 {
     if (n == (0 - 2147483647 - 1) && other == (0 - 1)) { return 2147483647; }
     return n / other;
@@ -548,11 +436,6 @@ function main(): i32 {
     if (i32_sabs(min32) == max32) { r = r + 9; }                   // |MIN| clamps to MAX
     return r;
 }`},
-	// unsigned_abs (the std/i32 · i64 additions): |n| as the same-width unsigned
-	// type, where the one magnitude the signed abs / checked_abs cannot hold —
-	// MIN, whose |n| is 2^(w-1) — fits exactly. Exercises the MIN branch + an
-	// i32 → u32 widening cast + u32 compare on the IR path. Oracle-checked. Four
-	// hits → 42.
 	{"int-unsigned-abs", `function i32_uabs(n: i32): u32 {
     if (n == (0 - 2147483647 - 1)) { return 2147483648 as u32; }
     if (n < 0) { return (0 - n) as u32; }
@@ -569,9 +452,6 @@ function main(): i32 {
 }`},
 }
 
-// TestSelfHostNumericMethodsIRX86_64 routes each case through the self-hosted
-// x86-64 driver (IR on), asserts the exit code matches the interpreter oracle,
-// AND probes the routing (asm_pathprobe_run) to pin each case to the "ir" path.
 func TestSelfHostNumericMethodsIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)

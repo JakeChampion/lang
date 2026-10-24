@@ -11,8 +11,6 @@ import (
 	"time"
 )
 
-// helperServeEnv makes the test binary, run as a child, serve "ok" on the
-// listener it inherits as descriptor 3 instead of running tests.
 const helperServeEnv = "FERN_E2EHARNESS_HELPER_SERVE"
 
 func TestMain(m *testing.M) {
@@ -57,7 +55,6 @@ func TestStartInheritedServerHandsOverItsListener(t *testing.T) {
 		t.Fatalf("read %q, %v; want the child's \"ok\"", b, err)
 	}
 
-	// The test's copy is closed, so once the child is gone nothing accepts.
 	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	_, _ = cmd.Process.Wait()
 	if c, err := net.DialTimeout("tcp", addr, time.Second); err == nil {
@@ -83,7 +80,6 @@ func TestReservedPortHoldsThePortForReusePortBinders(t *testing.T) {
 	if err := syscall.Listen(fd, 1); err != nil {
 		t.Fatal(err)
 	}
-	// The reservation never listens, so a connection reaches the listener.
 	c, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 5*time.Second)
 	if err != nil {
 		t.Fatalf("dial the SO_REUSEPORT listener: %v", err)

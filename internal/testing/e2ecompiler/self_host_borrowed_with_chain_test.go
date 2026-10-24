@@ -2,13 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A `.with` chain through a borrowed array parameter writes in place when the
-// caller is done with the array, and copies when a caller still holds it
-// (#12332). The receiver's retain is deferred as an append's is, so the count
-// test sees the caller's units rather than the frame's own: a unique update
-// chain allocates nothing, and a retained alias or a read of the parameter
-// after the update still sees the value it had.
-
 const borrowedWithHelpers = `function swap(xs: i32[]): i32[] {
     let first: i32 = xs[0];
     let last: i32 = xs[1];
@@ -43,8 +36,6 @@ function names(a: string, b: string): string[] {
 }
 `
 
-// Exits 42 when the unique chains allocate nothing, the shared ones copy
-// once, and every value read back is the one written.
 const borrowedWithAllocsSrc = borrowedWithHelpers + `function main(): i32 {
     let a: i32[] = pair(1, 2);
     let c0: i64 = __heap_alloc_count();
@@ -87,10 +78,6 @@ func TestSelfHostBorrowedWithChainAllocs(t *testing.T) {
 	}
 }
 
-// The same updates under the leak census and the sanitizer, with the callers
-// that must still see the old value: a retained alias, a wrapper handing the
-// array on, and a callee reading its parameter after updating it. Answers are
-// the interpreter's, and stay below 126 for wasmtime's exit status.
 var borrowedWithChainRows = []leakRow{
 	{"scalar_chain", borrowedWithHelpers + `function main(): i32 {
     let a: i32[] = pair(1, 2);

@@ -8,18 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostTupleEnumScrutineeIRX86_64 pins a tuple-element access used
-// DIRECTLY as a match scrutinee where the element is a generic enum:
-// `match (t.0) { Has(v) => …, Non => … }` with `t: (Opt[i32], i32)`. The
-// monomorphiser recovers a scrutinee's generic-enum instantiation from its
-// type (to rewrite the arm patterns to the concrete `Variant__<key>` names),
-// but me_scrutinee_type's ExprFieldAccess arm resolved only NAMED struct
-// fields — a tuple index `t.N` fell through to `me_field_type_of` (struct-only)
-// and resolved "", so the arms stayed un-mangled and the match read the wrong
-// variant (0 instead of 42). me_scrutinee_type now returns a tuple element's
-// type spelling (me_tuple_elem_type, depth-aware split), so these shapes lower
-// on the IR path (.Lssa_ witness) with the native value. Var-extracted tuple
-// elements and named-field scrutinees already worked; kept as regressions.
 func TestSelfHostTupleEnumScrutineeIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -37,27 +25,21 @@ func TestSelfHostTupleEnumScrutineeIRX86_64(t *testing.T) {
 		src  string
 		want int
 	}{
-		// Generic enum in tuple position 0, matched directly (the bug).
 		{"tuple-elem0-generic-enum-scrutinee",
 			`enum Opt[T] { Non, Has(T) } function main(): i32 { let t: (Opt[i32], i32) = (Has(40), 2); match (t.0) { Has(v) => { return v + t.1; }, Non => { return 0; } } }`,
 			42},
-		// Generic enum in tuple position 1.
 		{"tuple-elem1-generic-enum-scrutinee",
 			`enum Opt[T] { Non, Has(T) } function main(): i32 { let t: (i32, Opt[i32]) = (2, Has(40)); match (t.1) { Has(v) => { return v + t.0; }, Non => { return 0; } } }`,
 			42},
-		// Middle element of a three-element tuple.
 		{"tuple-elem-mid-of-three",
 			`enum Opt[T] { Non, Has(T) } function main(): i32 { let t: (i32, Opt[i32], i32) = (1, Has(39), 2); match (t.1) { Has(v) => { return v + t.0 + t.2; }, Non => { return 0; } } }`,
 			42},
-		// String-payload generic enum as a tuple element.
 		{"tuple-elem-string-payload",
 			`enum Opt[T] { Non, Has(T) } function main(): i32 { let t: (Opt[string], i32) = (Has("abcd"), 3); match (t.0) { Has(s) => { return s.len() + t.1 + 35; }, Non => { return 0; } } }`,
 			42},
-		// Regression: var-extract the tuple element then match.
 		{"tuple-elem-var-extracted",
 			`enum Opt[T] { Non, Has(T) } function main(): i32 { let t: (Opt[i32], i32) = (Has(40), 2); let e: Opt[i32] = t.0; match (e) { Has(v) => { return v + t.1; }, Non => { return 0; } } }`,
 			42},
-		// Regression: named struct-field generic-enum scrutinee.
 		{"struct-field-generic-enum-scrutinee",
 			`enum Opt[T] { Non, Has(T) } struct Box { o: Opt[i32] } function main(): i32 { let b: Box = Box { o: Has(42) }; match (b.o) { Has(v) => { return v; }, Non => { return 0; } } }`,
 			42},

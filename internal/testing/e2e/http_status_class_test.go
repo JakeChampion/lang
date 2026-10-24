@@ -2,11 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the std/http status-class predicates across
-// backends: each of the five RFC 9110 classes (1xx-5xx), the combined
-// http_is_error (4xx/5xx), the century boundaries, and out-of-range
-// codes belonging to no class. Returns 42 iff every check holds. Each
-// leg skips itself when its toolchain is absent.
 const httpStatusClassProg = `
 import "std/http" as http;
 function main(): i32 {

@@ -5,32 +5,9 @@ import (
 	"testing"
 )
 
-// The BUILTIN string[] producers — `s.split(sep)` and `s.lines()` — build an
-// array whose element boxes the runtime creates and stores nowhere else, so a
-// non-escaping split/lines local is released with its elements
-// (__fern_str_arr_free), not by a shallow buffer-only dec.
-//
-// Only the BUILTIN qualifies: a user method named `split` on some other type
-// answers to the same name, and its elements may be aliases of something the
-// receiver still owns. strArrBuiltinTypeGateSrc below is that shape — a
-// `(h: Holder) split` returning a fresh array of h.xs's element boxes —
-// and freeing them over-releases: rc underflow (99) on wasm, and on x86-64 a
-// churn string is handed the freed box and the read-back fails (97).
-//
-// What is left on wasm (67200 bytes for the 18-part split over 400 rounds) is
-// not the element boxes.
-//
-// The escape cases below are correctness gates, not fault witnesses: no probe
-// here faults when an escaping array is wrongly released, including with slice
-// decoys sized to the 24-byte class a freed element box lands in.
-
 const strArrBuiltinPrelude = "import \"std/string\";\n" + strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 `
 
-// strArrBuiltinHeap wraps a `round` body in the churn/heap-delta harness, with
-// the ceiling baked in per leg. The register legs sit at 0 and are gated tight;
-// the wasm ones carry a residue that is not the element boxes, so their ceilings
-// are set between the fixed number and the parent's.
 func strArrBuiltinHeap(body string, limit int) string {
 	return strArrBuiltinPrelude + `function round(pre: string): i32 {
     let base: string = w(pre);
@@ -56,32 +33,21 @@ var strArrBuiltinHeapCases = []struct {
 	regMax  int
 	wasmMax int
 }{
-	// 204800 -> 67200 on wasm. What is left is the buffer plus the boxes the
-	// per-element walk still declines; the elements themselves are gone.
 	{"strarr-builtin-split", `    let parts: string[] = base.split("-");
     return parts.len();`, 4096, 100000},
-	// 57600 -> 9600. One line, so one element — the smallest shape that shows the
-	// walk happening at all.
 	{"strarr-builtin-lines", `    let ls: string[] = base.lines();
     return ls.len();`, 4096, 16000},
-	// Reading the elements does not disturb the reclaim: an index READ is not
-	// an escape.
 	{"strarr-builtin-split-elements-read", `    let parts: string[] = base.split("-");
     let n: i32 = parts.len();
     if (parts[0] != "abcdefgh") { return 0 - 1; }
     if (parts[1] != "a") { return 0 - 2; }
     if (!has_prefix(parts[n - 1], "0123")) { return 0 - 3; }
     return n;`, 4096, 100000},
-	// Two builtin producers in one frame, so the sweep has to credit both slots
-	// rather than the first one it meets.
 	{"strarr-builtin-split-and-lines", `    let parts: string[] = base.split("-");
     let ls: string[] = base.lines();
     return parts.len() + ls.len();`, 4096, 110000},
 }
 
-// strArrBuiltinTypeGateSrc is the type gate's witness. `parts` never escapes
-// `round`, so the non-escape half of the proof holds and only the receiver's
-// type stands between the name `split` and a reclaim of boxes `keep` still owns.
 const strArrBuiltinTypeGateSrc = strArrBuiltinPrelude + `struct Holder { xs: string[] }
 function (h: Holder) split(sep: string): string[] {
     let out: string[] = [];
@@ -108,16 +74,11 @@ function main(): i32 {
     return 0;
 }`
 
-// The correctness set: every case must exit 0 on every backend. No heap ceiling —
-// the ESCAPE cases here are ones where the credit is correctly withheld, and
-// pinning their leak would make the register follow-up fail a gate for fixing it.
 var strArrBuiltinFaultCases = []struct {
 	name string
 	src  string
 }{
 	{"strarr-builtin-type-gate", strArrBuiltinTypeGateSrc},
-	// An element BOUND OUT of the array outlives it, so the box must survive
-	// the sweep.
 	{"strarr-builtin-element-bound-out", strArrBuiltinPrelude + `function round(pre: string): i32 {
     let base: string = w(pre);
     let parts: string[] = base.split("-");
@@ -128,10 +89,6 @@ var strArrBuiltinFaultCases = []struct {
     return parts.len();
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { if (round(pre) != 18) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
-	// The array itself escapes by return: not reclaimable, and the caller's read
-	// of the elements has to find them. The source string is the callee's PARAM,
-	// so it outlives the frame — a local source is a different (and on the
-	// register backends currently broken) shape, tracked separately.
 	{"strarr-builtin-array-returned", strArrBuiltinPrelude + `function parts_of(base: string): string[] {
     let parts: string[] = base.split("-");
     return parts;
@@ -146,11 +103,6 @@ function round(pre: string): i32 {
     return ps.len();
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { if (round(pre) != 18) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
-	// The SOURCE is a .rodata literal, so its element views point outside the
-	// arena and the view free's heap-range guard has to decline them; and the
-	// second half overwrites one view element with a fresh string, leaving a MIXED
-	// array the walk has to reclaim completely and exactly once
-	// (__fern_str_view_free tail-jumps to __fern_str_free for a non-immortal rc).
 	{"strarr-builtin-literal-source-and-mixed", strArrBuiltinPrelude + `function litround(): i32 {
     let parts: string[] = "alpha-beta-gamma-delta".split("-");
     let n: i32 = parts.len();
@@ -181,9 +133,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`},
-	// Separator absent: ONE part covering the whole source. If the runtime handed
-	// back the source's own box rather than a fresh view over it, freeing that box
-	// would destroy `base` and its scope-exit dec would double-free.
 	{"strarr-builtin-whole-source-single-part", strArrBuiltinPrelude + `function round(pre: string): i32 {
     let base: string = w(pre);
     let parts: string[] = base.split("|");
@@ -200,9 +149,6 @@ function main(): i32 {
     return n;
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { if (round(pre) != 1) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
-	// An ELEMENT outliving the array: the credit must be withheld, or the sweep
-	// frees the box the caller is holding. The decoys are slices, so they allocate
-	// from the same 24-byte class a freed element box lands in.
 	{"strarr-builtin-escaping-element", strArrBuiltinPrelude + `function first_of(base: string): string {
     let parts: string[] = base.split("-");
     return parts[0];
@@ -222,8 +168,6 @@ function round(pre: string): i32 {
     return head.len();
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { if (round(pre) != 8) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
-	// LIVENESS across both producers at once, with every element read after decoy
-	// allocations that would be handed a freed box if the sweep landed early.
 	{"strarr-builtin-elements-live", strArrBuiltinPrelude + `function round(pre: string): i32 {
     let base: string = w(pre);
     let parts: string[] = base.split("-");
@@ -250,7 +194,6 @@ function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 
 
 const strArrBuiltinExitHint = "98 = the element boxes were stranded; 99 = over-release; 97 = value corrupted; 96/95 = the probe's own guards"
 
-// strArrBuiltinSources pairs each case name with the source for one leg.
 func strArrBuiltinSources(wasm bool) []struct{ name, src string } {
 	var out []struct{ name, src string }
 	for _, tc := range strArrBuiltinHeapCases {
@@ -266,9 +209,6 @@ func strArrBuiltinSources(wasm bool) []struct{ name, src string } {
 	return out
 }
 
-// TestSelfHostStrArrBuiltinReclaimIRX86_64 is the x86-64 leg. It pins the
-// heap ceilings and the correctness set, and above all the type gate, which
-// faults here as a value corruption without it.
 func TestSelfHostStrArrBuiltinReclaimIRX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range strArrBuiltinSources(false) {
@@ -280,8 +220,6 @@ func TestSelfHostStrArrBuiltinReclaimIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrArrBuiltinReclaimIRArm64 is the arm64 leg, the register path's
-// twin and the project's default target.
 func TestSelfHostStrArrBuiltinReclaimIRArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)
@@ -294,7 +232,6 @@ func TestSelfHostStrArrBuiltinReclaimIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrArrBuiltinReclaimWasmIR is the wasm leg, with the wasm ceilings.
 func TestSelfHostStrArrBuiltinReclaimWasmIR(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range strArrBuiltinSources(true) {

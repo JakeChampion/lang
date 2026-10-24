@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostTupleStructFieldIRX86_64 verifies that a struct with a tuple field
-// (`t: (i32, i32)`) is admitted to the IR path and that `p.t.N` recovers the
-// element type from the field's tuple type string. use_pt builds Pt{t: (3,4), n:5}
-// and returns p.t.0 + p.t.1 + p.n = 3 + 4 + 5 = 12. Without tuple-field support Pt
-// is not leaf-safe and the driver refuses the module; the exit code proves the
-// element typing.
 func TestSelfHostTupleStructFieldIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

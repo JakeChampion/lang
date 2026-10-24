@@ -4,22 +4,6 @@ import (
 	"testing"
 )
 
-// --- An enum-array local at a COUNTED-STORE argument position -----------------
-//
-// `rd(keep, r)` where `rd` STORES the param in a struct literal. The store is
-// counted — the literal retains the array and the holder's field drop releases
-// it — so the caller's own claim is untouched across the call and its release
-// still owes the deep element walk, not the shallow __fern_arr_dec. Missed, the
-// one element box and its i32[] payload leak (104 allocs / 102 frees).
-//
-// The refused cases pin the guards that keep this narrow: an array result can
-// be the argument itself, and an element read or an element store hands a box
-// out of the array. Each stays refused — a leak, never a free of a box something
-// still references.
-//
-// Every want was confirmed against `bin/fern -interp`, never read off the
-// self-host run.
-
 const arrenumCountedDecl = `enum E { A(i32[]), B }
 struct P { f: E[], n: i32 }
 struct Q { e: E, n: i32 }
@@ -27,9 +11,6 @@ function mkv(i: i32): E[] { let o: E[] = []; o = o.append(E.A([i, i + 1])); retu
 function seed(): i32 { return 7; }
 `
 
-// arrenumCountedMain keeps `keep` genuinely live across the loop. The producer
-// argument is `seed()`, never a literal, so the local is not const-folded dead
-// (#7610).
 func arrenumCountedMain(use string) string {
 	return `
 function main(): i32 {
@@ -47,42 +28,24 @@ func arrenumCountedCases() []arrenumShareCase {
 	}
 	return []arrenumShareCase{
 		{
-			// The repro. The callee stores the whole array in a struct literal
-			// whose holder dies inside the callee, so the store's retain and
-			// the holder's field drop net to zero and the caller's claim is the
-			// only one left. 104/102 before, 104/104 now.
 			name: "counted_store",
 			src: mk(`function rd(src: E[], i: i32): i32 { let p: P = P { f: src, n: i }; return (p.f.len() + p.n) % 101; }`,
 				"rd(keep, r)"),
 			want: 6, balance: true,
 		},
 		{
-			// REFUSED before the tier is consulted: an array RESULT can BE the
-			// argument, and the caller's release fires immediately after the
-			// call. The tier requires a concrete scalar result for exactly this.
 			name: "callee_returns_param",
 			src: mk(`@noinline function rd(src: E[], i: i32): E[] { return src; }`,
 				"rd(keep, r).len()"),
 			want: 3,
 		},
 		{
-			// REFUSED by the use vocabulary: `src[0]` is an element read, and
-			// an array element may BE a reference handed out uncounted. Sound
-			// to admit in this exact shape — the extracted box dies inside the
-			// callee — but the floor is a leak either way and widening it needs
-			// the arm-binding analysis.
 			name: "callee_extracts_element",
 			src: mk(`function rd(src: E[], i: i32): i32 { let e: E = src[0]; return (match (e) { E.A(xs) => xs.len(), E.B => 0 }) + i; }`,
 				"rd(keep, r)"),
 			want: 9,
 		},
 		{
-			// The case that makes the element guard essential rather than
-			// decorative: the callee stores an ELEMENT — not the array — in a
-			// struct field. The store is counted for the ELEMENT, so a tier
-			// that asked only "is this a counted store?" would admit it, and
-			// the caller's element walk would then free a box the holder still
-			// references. Stays refused.
 			name: "callee_stores_element",
 			src: mk(`function rd(src: E[], i: i32): i32 { let q: Q = Q { e: src[0], n: i }; return (match (q.e) { E.A(xs) => xs.len(), E.B => 0 }) + q.n; }`,
 				"rd(keep, r)"),
@@ -91,9 +54,6 @@ func arrenumCountedCases() []arrenumShareCase {
 	}
 }
 
-// TestSelfHostArrEnumCountedParamX86_64 — an enum-array local handed to a callee
-// that stores it at a COUNTED position keeps its element walk, while every
-// callee that could let an element outlive the call keeps refusing it.
 func TestSelfHostArrEnumCountedParamX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

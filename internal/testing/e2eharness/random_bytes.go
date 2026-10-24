@@ -1,7 +1,5 @@
 package e2eharness
 
-// SeededRandomBytesProgram checks the public byte result against the PCG
-// draw API, including every tail length and the state after a discarded tail.
 const SeededRandomBytesProgram = `import "std/rand" as rand;
 import "std/array";
 import "std/utf8" as utf8;

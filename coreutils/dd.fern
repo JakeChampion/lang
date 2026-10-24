@@ -1,46 +1,3 @@
-// dd.fern — GNU-compatible `dd`.
-//
-//   dd [OPERAND]...
-//
-// dd takes OPERANDS rather than options: `name=value`, in any order,
-// and a repeat of a name replaces the earlier one. Nothing here is a
-// `-x` flag, so `dd -n` is an unrecognized operand rather than an
-// unknown option, and `--help` / `--version` are the only two arguments
-// that are not `name=value` at all.
-//
-// ## The numbers
-//
-// Every count is gnulib's `xstrtoumax` over the multiplier suffixes —
-// `1b` is 512, `1kB` is 1000, `1K` and `1KiB` are 1024 — with one
-// addition dd makes on top: an `x` between two of them MULTIPLIES, so
-// `bs=1kx2` is 2048 and `count=2x3x4` is 24. A malformed number is
-// `invalid number: 'NNN'` and exits 1 before anything is opened.
-//
-// ## What the report says
-//
-//     0+1 records in
-//     0+1 records out
-//     10 bytes copied, 6.3384e-05 s, 158 kB/s
-//
-// The first two lines are FULL+PARTIAL record counts: a read that
-// returned fewer bytes than `ibs` is a partial record in, and a write
-// of fewer than `obs` is a partial record out. `status=noxfer` drops
-// the third line, `status=none` drops all of them, and the third line
-// is the one no test can compare — it carries a duration and a rate.
-//
-// SIGUSR1 — SIGINFO on Darwin, which has one — writes the same report
-// mid-copy and the copy carries on, as GNU's does. GNU's handler interrupts
-// a read to print at once; here the handler raises a flag the loop reads on
-// each side of every read, and once more before the final report. A signal
-// that arrives during a read is reported when the read returns, before its
-// record is counted, so the numbers are the ones GNU prints and only the
-// moment differs.
-//
-// SIGINT writes the report too, and then dd dies of it, as GNU's does. Its
-// catch interrupts a blocked read or write, so ^C at an idle terminal or pipe
-// reports at once; the record that read was waiting for and the block that
-// write was writing are not counted, nor is a block still being assembled
-// written out. A SIGINT ignored when dd starts stays ignored.
 import "std/string";
 import "std/i32";
 import "std/i64";
@@ -51,21 +8,10 @@ import "std/errno";
 import "./lib/gnu";
 import "./lib/signals";
 
-// ---- the operand names -----------------------------------------------------
-// `iseek` and `oseek` are pure aliases for `skip` and `seek`, so a run
-// naming both takes the LAST of the pair as it does for any other
-// repeat: `skip=1 iseek=3` skips 3 and `iseek=3 skip=1` skips 1.
 function op_names(): string[] {
   return ["bs", "cbs", "conv", "count", "ibs", "if", "iflag", "iseek", "obs", "of", "oflag", "oseek", "seek", "skip", "status"];
 }
 
-// ---- conv= ------------------------------------------------------------------
-//
-// The flags are a SET: `conv=ucase,swab` is both, and a name that is
-// not one is `invalid conversion: 'NAME'`. A charset name carries the
-// record conversion it implies — `ascii` unblocks, `ebcdic` and `ibm`
-// block — so `conv=ascii,block` is the same refusal as
-// `conv=unblock,block`.
 function conv_names(): string[] {
   return ["block", "unblock", "lcase", "ucase", "swab", "sync", "excl", "nocreat", "notrunc", "noerror", "fdatasync", "fsync", "ascii", "ebcdic", "ibm", "sparse"];
 }
@@ -138,16 +84,6 @@ function conv_sparse(): i32 {
   return 32768;
 }
 
-// ---- iflag= / oflag= --------------------------------------------------------
-//
-// The three `_bytes` flags reinterpret `count`, `skip` and `seek` as
-// byte counts rather than block counts, and `fullblock` makes a short
-// read keep reading instead of counting as a partial record; GNU takes
-// it as an input flag only. The rest change the OPEN: `append` through
-// `open_appender`, the others as bits of `open_reader_with` /
-// `open_writer_with`'s flags word (open_flags). `nocache` is not an
-// open flag: it drops the cached pages of the copied range as it goes
-// (Cache).
 function iflag_names(): string[] {
   return ["append", "count_bytes", "fullblock", "nonblock", "seek_bytes", "skip_bytes", "direct", "directory", "dsync", "sync", "noatime", "noctty", "nofollow", "nocache"];
 }
@@ -164,11 +100,6 @@ function oflag_bits(): i32[] {
   return [1, 2, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, flag_nocache()];
 }
 
-// open_flags is the open-time part of an iflag/oflag word as
-// `open_reader_with` / `open_writer_with` spell it: non-blocking 2,
-// direct 8, directory 16, dsync 32, sync 64, noatime 128, noctty 256,
-// nofollow 512. A bit the target cannot honour comes back from the open
-// as Unsupported, which the caller reports like any other open failure.
 function open_flags(f: i32): i32 {
   let out: i32 = 0;
   if ((f & flag_nonblock()) != 0) {
@@ -206,7 +137,6 @@ function flag_nocache(): i32 {
   return 8192;
 }
 
-// ---- status= ----------------------------------------------------------------
 function status_default(): i32 {
   return 0;
 }
@@ -227,42 +157,14 @@ function status_names(): string[] {
   return ["none", "noxfer", "progress"];
 }
 
-// ---- settings ---------------------------------------------------------------
 struct Settings { in_name: string, out_name: string, have_in: boolean, have_out: boolean, ibs: i64, obs: i64, cbs: i64, count: i64, have_count: boolean, skip: i64, seek: i64, conv: i32, iflag: i32, oflag: i32, status: i32 }
 
 function settings_new(): Settings {
   return Settings { in_name: "", out_name: "", have_in: false, have_out: false, ibs: 512 as i64, obs: 512 as i64, cbs: 0 as i64, count: 0 as i64, have_count: false, skip: 0 as i64, seek: 0 as i64, conv: 0, iflag: 0, oflag: 0, status: status_default() };
 }
 
-// ---- the number grammar -----------------------------------------------------
-//
-// One number per `x`-separated piece, multiplied together: `1kx2` is
-// 2048 and `2x3x4` is 24. A piece is `xstrtoumax` over the block
-// suffixes plus the two dd adds of its own — `c` is 1 and `w` is 2, so
-// `3w` is 6 and a bare `c` is 1 — and neither of those two takes the
-// `iB` form or a second multiplier, so `1ciB` and `1kc` are refused.
-//
-// A piece that is not a number at all, an empty piece (`1x`, `x2`, ``),
-// or a value past INTMAX_MAX makes the WHOLE operand invalid, quoted as
-// it was given. The two refusals are different lines:
-// `invalid number: 'q'` against
-// `invalid number: '1e99': Value too large for defined data type`.
-//
-// `positive` is what separates `bs=0` (invalid) from `count=0` (a run
-// that copies nothing): a block size has to be a size.
-//
-// A piece ending in `B` counts BYTES rather than blocks — a no-op on a
-// block size, and the `count_bytes` / `skip_bytes` / `seek_bytes` flag
-// on the three counts. The letter is read off the piece's END, so the
-// multiplier grammar's own endings carry it (`1kB` is 1000 bytes and
-// `1KiB` is 1024) and a `B` left over after a number or a block suffix
-// is dropped (`2B` is 2, `1bB` is 512). One `B` anywhere in the product
-// makes the whole operand a byte count, so `1cx7Bx2` is 14 bytes.
 struct Num { value: i64, status: i32, bytes: boolean }
 
-// `num_bad` is a piece that is not a number, `num_over` one whose value
-// does not fit; they are the two diagnostics bad_number chooses
-// between.
 function num_bad(): i32 {
   return 1;
 }
@@ -311,11 +213,6 @@ function parse_num(v: string, positive: boolean): Num {
   while (i <= v.len()) {
     if (i == v.len() || v[i] == b'x') {
       let piece: string = slice_unchecked(v, start, i) + "";
-      // A single zero in front of an `x` reads as the start of a hex
-      // literal, which this grammar has no notion of, so GNU says what
-      // the value really is rather than refusing it. `00x3` is the
-      // spelling that means it. 9.5 says it ONCE per operand however
-      // many such factors there are, and only when the product is zero.
       if (piece == "0" && i < v.len()) {
         zero_multiplier = true;
       }
@@ -359,10 +256,6 @@ function parse_num(v: string, positive: boolean): Num {
   return Num { value: total as i64, status: 0, bytes: bytes };
 }
 
-// A `-` anywhere in the value is refused before the pieces are read:
-// strtoumax would take `-1` as a huge unsigned, and GNU's own check
-// rejects the sign first — `count=-1` is `invalid number: '-1'`, not
-// 18446744073709551615.
 function has_sign(v: string): boolean {
   let i: i32 = 0;
   while (i < v.len()) {
@@ -394,12 +287,6 @@ function number_operand(v: string, positive: boolean): Num {
   return got;
 }
 
-// ---- the comma-separated sets ----------------------------------------------
-//
-// `conv=`, `iflag=` and `oflag=` are each a comma-separated list of
-// names from their own vocabulary, and each has its own wording for a
-// name that is not in it. An empty list is one empty NAME, which is
-// how `conv=` reports `invalid conversion: ''`.
 function parse_set(v: string, names: string[], bits: i32[], wording: string): i32 {
   let out: i32 = 0;
   let start: i32 = 0;
@@ -431,23 +318,8 @@ function index_in(names: string[], name: string): i32 {
   return 0 - 1;
 }
 
-// ---- the operand scan -------------------------------------------------------
-//
-// `name=value`, and the FIRST `=` splits it: `of=a=b` writes to the
-// file called `a=b`. An argument with no `=` at all, or one whose name
-// is not an operand, is `unrecognized operand '<arg>'` — the whole
-// argument, not just the name. A repeated name replaces: the last
-// `if=` wins.
-//
-// `bs=` is not a third size beside `ibs` and `obs`: it SETS both, and
-// then also promises that a read and the write that follows it move in
-// one piece, which is what makes `bs=` differ from `ibs=N obs=N` on a
-// short read.
 struct Scan { s: Settings, bs_given: boolean }
 
-// A `B` on one of the three counts is the matching `*_bytes` flag, which
-// is also spellable as `iflag=count_bytes` and its two siblings. Both
-// reach the same bit, so a run naming both has named it once.
 function bytes_bit(n: Num, bit: i32): i32 {
   if (n.bytes) {
     return bit;
@@ -510,7 +382,6 @@ function scan_operands(argv: string[]): Scan {
     }
     i = i + 1;
   }
-  // `bs=` overrides `ibs=` and `obs=` wherever each appears.
   if (bs_given) {
     s = Settings { ...s, ibs: bs, obs: bs };
   }
@@ -537,34 +408,12 @@ function status_operand(v: string): i32 {
   return at + 1;
 }
 
-// ---- the counts the report prints ------------------------------------------
-//
-// A record IN is one read: full when it returned `ibs` bytes and
-// partial when it returned fewer. A record OUT is one write of `obs`
-// bytes, and the short flush at the end is the partial one. They are
-// counted separately because the two sizes need not match — `ibs=3
-// obs=4` over ten bytes is `3+1 records in` and `2+1 records out`.
 struct Counts { full_in: i64, part_in: i64, full_out: i64, part_out: i64, bytes: i64, truncated: i64 }
 
 function counts_new(): Counts {
   return Counts { full_in: 0 as i64, part_in: 0 as i64, full_out: 0 as i64, part_out: 0 as i64, bytes: 0 as i64, truncated: 0 as i64 };
 }
 
-// ---- the byte conversions ---------------------------------------------------
-//
-// `conv=lcase` and `conv=ucase` are C-locale `tolower` / `toupper`: the
-// twenty-six ASCII letters and NOTHING else. A byte over 0x7F is not a
-// letter in this locale and reaches the output as it stands, invalid
-// UTF-8 included — a Unicode case mapping would rewrite `é` and replace
-// a stray 0xFF with U+FFFD, and for a utility whose whole job is to copy
-// BYTES that is corruption.
-//
-// The charsets are byte-for-byte tables too, and compose with the case
-// as GNU fixes it whatever order the names were given in: `ascii`
-// translates EBCDIC to ASCII BEFORE the case, `ebcdic` and `ibm`
-// translate ASCII to EBCDIC AFTER it. So everything is one table, built
-// once per run, since a table per record is what made this the slowest
-// thing in the program.
 function translation_table(conv: i32): u8[] {
   let t: u8[] = __alloc_u8(256);
   let up: boolean = (conv & conv_ucase()) != 0;
@@ -609,10 +458,6 @@ function apply_translation(piece: u8[], tab: u8[], conv: i32): u8[] {
   return out;
 }
 
-// The ASCII-to-EBCDIC tables, indexed by the ASCII byte and measured
-// from GNU dd 9.4 over all 256 bytes (docs/COREUTILS.md, "Nothing is
-// copied from GNU"). `ibm` differs from `ebcdic` in five entries and is
-// not a permutation: two pairs of bytes share an EBCDIC code.
 function ebcdic_hex(): string {
   return "00010203372d2e2f1605250b0c0d0e0f101112133c3d322618193f271c1d1e1f"
     + "405a7f7b5b6c507d4d5d5c4e6b604b61f0f1f2f3f4f5f6f7f8f97a5e4c7e6e6f"
@@ -652,8 +497,6 @@ function decode_table(hex: string): u8[] {
   return t;
 }
 
-// The table `ebcdic` or `ibm` translates the output through, or an empty
-// one when the output stays ASCII.
 function output_charset(conv: i32): u8[] {
   if ((conv & conv_ebcdic()) != 0) {
     return decode_table(ebcdic_hex());
@@ -664,7 +507,6 @@ function output_charset(conv: i32): u8[] {
   return [];
 }
 
-// `ascii` is the exact inverse of `ebcdic`.
 function to_ascii_table(): u8[] {
   let e: u8[] = decode_table(ebcdic_hex());
   let t: u8[] = __alloc_u8(256);
@@ -676,22 +518,12 @@ function to_ascii_table(): u8[] {
   return t;
 }
 
-// conv=swab exchanges every pair of bytes, and it pairs them across the
-// whole STREAM rather than within a record: a record of odd length holds
-// its last byte over to the next one, which is why ten bytes read three
-// at a time still come out `badcfehgji` — the same answer a single
-// ten-byte read gives. The byte only reaches the output unpaired when
-// the input ends holding it.
 struct Swab { held: boolean, byte: u8 }
 
 function swab_new(): Swab {
   return Swab { held: false, byte: 0 as u8 };
 }
 
-// The output length is exact: one byte is carried over when the bytes
-// available — the record plus whatever was held — are an odd number and
-// this is not the last call. Eight bytes are swapped at a time, as one
-// word whose byte lanes trade places.
 function apply_swab(sw: Swab, data: u8[], last: boolean): (Swab, u8[]) {
   let n: i32 = data.len();
   let b: usize = buf_new(n + 1);
@@ -727,11 +559,6 @@ function apply_swab(sw: Swab, data: u8[], last: boolean): (Swab, u8[]) {
   return (out, bytes);
 }
 
-// conv=sync pads a short read out to `ibs`, with NULs normally and with
-// SPACES when a record conversion is in play — a block of spaces is a
-// short line there, where a block of NULs would be a line of them. The
-// flag without a `cbs` converts nothing, so it pads with NULs. The pad
-// is ASCII and goes through the translation like the bytes it follows.
 function apply_sync(piece: u8[], s: Settings): u8[] {
   if (piece.len() as i64 >= s.ibs) {
     return piece;
@@ -753,26 +580,6 @@ function apply_sync(piece: u8[], s: Settings): u8[] {
   return bytes;
 }
 
-// ---- the output side --------------------------------------------------------
-//
-// Without `bs=`, bytes are assembled into `obs`-sized blocks: the
-// records OUT are those writes, and whatever is left over at the end is
-// the one partial record. With `bs=` each input block is written as it
-// came, which is why a short read there is a short WRITE rather than a
-// byte or two held back for the next block.
-//
-// A short write is not an error and not a second record: the loop
-// finishes the block, exactly as GNU's does, and only a failing write
-// reports `error writing 'NAME': <strerror>`.
-//
-// Under `conv=sparse` a block that is all NULs is a seek past it rather
-// than a write, and still counts as a record out. A handle that cannot
-// seek turns sparse off for the rest of the run, without a word. `seeked`
-// says the LAST block was a seek, which `settle_holes` needs.
-//
-// `intr` is the SIGINT a write looks for before it starts and after it is
-// interrupted; `stopped` says it arrived, with the block it was writing
-// left uncounted, as GNU leaves it.
 struct Sink { w: Writer, buf: io_buffered.BufBlock, held: i32, obs: i32, name: string, c: Counts, ok: boolean, sparse: boolean, seeked: boolean, intr: i32, stopped: boolean }
 
 function sink_new(w: Writer, name: string, obs: i32, c: Counts, sparse: boolean, intr: i32): Sink {
@@ -836,9 +643,6 @@ function write_full(k0: Sink, data: u8[], partial: boolean): Sink {
   return count_out(k, data.len(), partial);
 }
 
-// A run whose last block was a seek has not set the file's length: the
-// hole only exists once something lies past it. On a regular file
-// shorter than the offset the seek reached, the file is extended to it.
 function settle_holes(k: Sink): boolean {
   if (!k.seeked) {
     return true;
@@ -870,8 +674,6 @@ function settle_holes(k: Sink): boolean {
   return true;
 }
 
-// `sink_direct` is the `bs=` path: one write per input block, counted
-// full when it was a whole block and partial when the read was short.
 function sink_direct(k: Sink, data: u8[]): Sink {
   if (data.len() == 0) {
     return k;
@@ -879,9 +681,6 @@ function sink_direct(k: Sink, data: u8[]): Sink {
   return write_full(k, data, data.len() < k.obs);
 }
 
-// `sink_push` is the assembling path: hold the bytes, and write every
-// time a whole `obs` block has accumulated. A whole block arriving with
-// nothing held is written as it came.
 function sink_push(k: Sink, data: u8[]): Sink {
   if (k.held == 0 && data.len() == k.obs) {
     return write_full(k, data, false);
@@ -909,8 +708,6 @@ function sink_push(k: Sink, data: u8[]): Sink {
   return out;
 }
 
-// The last, short block. Nothing held is nothing written — not a record
-// of zero bytes.
 function sink_flush(k: Sink): Sink {
   if (k.held == 0) {
     return k;
@@ -920,21 +717,8 @@ function sink_flush(k: Sink): Sink {
   return Sink { ...out, held: 0 };
 }
 
-// ---- the input side ---------------------------------------------------------
-//
-// One `read_chunk_bytes` is one record, however few bytes it returned — which
-// is what makes `0+2 records in` the correct answer for a pipe that
-// dribbled two bytes at a time into a 4-byte block. `iflag=fullblock`
-// asks for the other reading: keep reading until the block is full or
-// the input ends, so the same two dribbles become `1+0`.
-//
-// `stopped` says SIGINT arrived before a read or during one, and nothing of
-// that read is in the record.
 struct Take { data: u8[], ok: boolean, eof: boolean, stopped: boolean }
 
-// `read_some` is one read of up to `want` bytes, as GNU's iread is: SIGINT
-// is looked for before it, and a read a signal interrupts with nothing read
-// is tried again. The flag says SIGINT arrived, and then nothing was read.
 function read_some(r: Reader, want: i32, intr: i32): (Result[u8[], IoError], boolean) {
   while (true) {
     if (interrupt_taken(intr)) {
@@ -977,9 +761,6 @@ function read_record(r: Reader, s: Settings, want: i32, name: string, intr: i32)
   }
 }
 
-// `iflag=fullblock`: keep reading into the same record until it holds a
-// whole block. The end of the input stops it short, and that record is
-// the partial one.
 function fill_block(r: Reader, s: Settings, want: i32, name: string, first: u8[], intr: i32): Take {
   let h: usize = buf_new(want);
   buf_push_bytes_range(h, first, 0, first.len());
@@ -1011,15 +792,8 @@ function fill_block(r: Reader, s: Settings, want: i32, name: string, first: u8[]
   return Take { data: bytes, ok: true, eof: false, stopped: false };
 }
 
-// ---- the copy ---------------------------------------------------------------
-//
-// `count` is a number of RECORDS unless `iflag=count_bytes` makes it a
-// number of bytes, and the same pair of readings applies to `skip` and
-// `seek` through their own flags. `stopped` says the copy ended on SIGINT.
 struct Run { c: Counts, status: i32, progressed: boolean, stopped: boolean }
 
-// The run as it stands when the sink gave up: a write failed, or SIGINT
-// arrived, and then the report counts the truncated records too.
 function sink_gave_up(k: Sink, truncated: i64, progressed: boolean): Run {
   if (k.stopped) {
     return Run { c: Counts { ...k.c, truncated: truncated }, status: 1, progressed: progressed, stopped: true };
@@ -1027,17 +801,6 @@ function sink_gave_up(k: Sink, truncated: i64, progressed: boolean): Run {
   return Run { c: k.c, status: 1, progressed: progressed, stopped: false };
 }
 
-// One `\r`-prefixed transfer line per second of a `status=progress` run,
-// its seconds a whole number rather than the `%g` the final line prints.
-// GNU's tick is a one-second alarm whose handler only raises a flag, so
-// the line is written where the copy loop next looks at it; this one is
-// the same look at a block boundary, with no handler to install. A
-// record that takes longer than a second therefore produces ONE line
-// rather than one per second elapsed, on either implementation. No
-// newline: the next line overwrites this one, and the run's own report
-// writes the one that ends the last of them.
-// The seconds a progress line carries are ROUNDED, not truncated: an
-// elapsed 1.7 s reads `2 s` and 2.6 s reads `3 s`.
 function whole_seconds(ns: i64): i64 {
   return (ns + 500000000 as i64) / (1000000000 as i64);
 }
@@ -1047,13 +810,6 @@ function progress_line(bytes: i64, sec: i64): void {
   w.write("\r" + transfer_line(bytes, sec as f64));
 }
 
-// ---- nocache ----------------------------------------------------------------
-//
-// `iflag=nocache` / `oflag=nocache` drop the cached pages of what the copy
-// has read or written, as GNU's invalidate_cache does: in batches of 128
-// KiB from the offset the side started at, ignoring a failure, and over the
-// rest of the file once the copy ends. A side with no offset to name (a
-// pipe) is left alone.
 struct Cache { on: boolean, start: i64, pending: i64 }
 
 function cache_batch(): i64 {
@@ -1071,7 +827,6 @@ function cache_at(on: boolean, offset: Result[i64, IoError]): Cache {
   }
 }
 
-// cache_advance counts `n` more bytes, and answers whether a batch is due.
 function cache_advance(c: Cache, n: i64): (Cache, boolean) {
   let next: Cache = Cache { ...c, pending: c.pending + n };
   return (next, c.on && next.pending >= cache_batch());
@@ -1081,9 +836,6 @@ function cache_spent(c: Cache): Cache {
   return Cache { ...c, start: c.start + c.pending, pending: 0 as i64 };
 }
 
-// The signal that asks for a report mid-copy, 0 for none: the platform's
-// SIGINFO where it has one, and SIGUSR1 otherwise — unless POSIXLY_CORRECT
-// is set, since POSIX leaves SIGUSR1 its default action.
 function info_signal(): i32 {
   let info: i32 = signals.number("INFO");
   if (info > 0) {
@@ -1099,10 +851,6 @@ function info_signal(): i32 {
   }
 }
 
-// info_poll writes the report the info signal asks for when it has arrived
-// since the last look — the final report's lines as they stand, on a line of
-// their own if a progress line is showing — and answers whether a progress
-// line still is.
 function info_poll(info: i32, c: Counts, truncated: i64, s: Settings, started: i64, progressed: boolean): boolean {
   if (info <= 0 || !signal.taken(info)) {
     return progressed;
@@ -1114,9 +862,6 @@ function info_poll(info: i32, c: Counts, truncated: i64, s: Settings, started: i
   return false;
 }
 
-// The interrupt dd reports on and dies of: SIGINT, unless it was ignored
-// when dd started, which GNU leaves as it found it — a dd started in the
-// background of a shell without job control stays deaf to ^C. 0 for none.
 function interrupt_signal(): i32 {
   if (signal.disposition(signal.SIGINT) == signal.IGN) {
     return 0;
@@ -1128,12 +873,8 @@ function interrupt_taken(intr: i32): boolean {
   return intr > 0 && signal.taken(intr);
 }
 
-// What the SIGINT report needs beside the counts.
 struct Stop { intr: i32, s: Settings, started: i64 }
 
-// `stop_now` is GNU's answer to SIGINT: the report as the counts stand, on a
-// line of its own after a progress line, then death by the signal. A block
-// still being assembled for output is not written, and is not counted.
 function stop_now(st: Stop, c: Counts, progressed: boolean): void {
   if (progressed) {
     eprint("");
@@ -1231,16 +972,12 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
       }
     }
   }
-  // The byte a `conv=swab` is holding when the input ends has nothing
-  // to pair with, and reaches the record conversion as it stands.
   let rest: u8[] = [];
   if (sw.held) {
     let tailsw: (Swab, u8[]) = apply_swab(sw, [], true);
     sw = tailsw.0;
     rest = tailsw.1;
   }
-  // The line a record conversion is still holding when the input ends
-  // is a record too, so the flush comes before the last short write.
   if (records_wanted(s)) {
     let tail: (Rec, u8[]) = apply_records(st, rest, s, true);
     st = tail.0;
@@ -1267,10 +1004,6 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
   return Run { c: c, status: status, progressed: progressed, stopped: false };
 }
 
-// The conversions that rewrite a record's bytes, in GNU's order: the
-// padding that makes a short record a whole one, then the translation,
-// then the byte pairs — so `ibs=4 conv=swab,sync` over `abcde` pairs the
-// `e` with a pad byte, `badc` then `\0e\0\0`.
 function convert_record(sw: Swab, tab: u8[], data: u8[], s: Settings, last: boolean): (Swab, u8[]) {
   let out: u8[] = data;
   let state: Swab = sw;
@@ -1286,26 +1019,6 @@ function convert_record(sw: Swab, tab: u8[], data: u8[], s: Settings, last: bool
   return (state, out);
 }
 
-// ---- the record conversions -------------------------------------------------
-//
-// `conv=block` and `conv=unblock` convert between LINES and fixed-width
-// records of `cbs` bytes, and neither can be done a read at a time: a
-// line spans reads, so the state is carried across them.
-//
-//   block:   each newline-terminated line becomes one cbs-sized record,
-//            padded with spaces and with the newline dropped. A line
-//            LONGER than cbs is cut to it and counted as a truncated
-//            record. A last line with no newline is still a record.
-//
-//   unblock: each cbs-sized record loses its trailing spaces and gains
-//            a newline. A record of nothing but spaces becomes a bare
-//            newline, and only TRAILING spaces go — `a b ` is `a b`.
-//
-// Neither is on unless `cbs` was given: `conv=block` alone copies the
-// bytes through, which is what GNU does with it.
-//
-// Both run after the translation, so under `ebcdic` and `ibm` a line ends
-// at the EBCDIC newline and is padded with the EBCDIC space.
 struct Rec { pend: io_buffered.BufBlock, len: i32, drop: boolean, cbs: i32, trunc: i64, nl: u8, sp: u8, pad: u8[] }
 
 function rec_new(cbs: i32, conv: i32): Rec {
@@ -1328,7 +1041,6 @@ function rec_new(cbs: i32, conv: i32): Rec {
   return Rec { pend: io_buffered.BufBlock { h: buf_new(cbs + 1) }, len: 0, drop: false, cbs: cbs, trunc: 0 as i64, nl: nl, sp: sp, pad: pad };
 }
 
-// One line out: the bytes held, padded with spaces to `cbs`.
 function rec_emit_block(st: Rec, out: usize): Rec {
   let line: u8[] = buf_take_bytes(st.pend.h);
   buf_push_bytes_range(out, line, 0, line.len());
@@ -1336,8 +1048,6 @@ function rec_emit_block(st: Rec, out: usize): Rec {
   return Rec { ...st, len: 0, drop: false };
 }
 
-// A line that starts and ends inside `data` and fits a record goes straight
-// out; the rest is held in `pend` until its newline arrives.
 function conv_block_apply(rc: Rec, data: u8[], last: boolean): (Rec, u8[]) {
   let out: usize = buf_new(data.len() + rc.cbs + 1);
   let st: Rec = rc;
@@ -1376,8 +1086,6 @@ function conv_block_apply(rc: Rec, data: u8[], last: boolean): (Rec, u8[]) {
   return (st, bytes);
 }
 
-// One record out: the bytes held with their trailing spaces dropped,
-// and a newline.
 function rec_emit_unblock(st: Rec, out: usize): Rec {
   let record: u8[] = buf_take_bytes(st.pend.h);
   let end: i32 = record.len();
@@ -1389,8 +1097,6 @@ function rec_emit_unblock(st: Rec, out: usize): Rec {
   return Rec { ...st, len: 0 };
 }
 
-// A whole record inside `data` goes straight out; a record split across
-// reads is held in `pend` until it is complete.
 function conv_unblock_apply(rc: Rec, data: u8[], last: boolean): (Rec, u8[]) {
   let out: usize = buf_new(data.len() + data.len() / rc.cbs + rc.cbs + 1);
   let st: Rec = rc;
@@ -1425,21 +1131,11 @@ function conv_unblock_apply(rc: Rec, data: u8[], last: boolean): (Rec, u8[]) {
   return (st, bytes);
 }
 
-// Whether a conversion changes the LENGTH of a record, which is what
-// decides whether `bs=` still writes one block per read: swab holds a
-// byte back, sync pads one out, and the record conversions do both — so
-// the output goes through the obs assembly instead and the records OUT
-// stay obs-sized. That is why `bs=3 conv=swab` over ten bytes reports
-// `3+1 records out` rather than the `1+3` a per-record write gives. The
-// translations are NOT here: they rewrite bytes one for one, so a
-// per-record write gives the same counts and saves the assembly copy.
 function rewrites_bytes(s: Settings): boolean {
   let mask: i32 = conv_swab() | conv_sync() | conv_block() | conv_unblock();
   return (s.conv & mask) != 0;
 }
 
-// Whether a record conversion is in play at all. `main` has already
-// dropped the flags when there is no `cbs` to convert to.
 function records_wanted(s: Settings): boolean {
   return (s.conv & (conv_block() | conv_unblock())) != 0;
 }
@@ -1451,17 +1147,6 @@ function apply_records(st: Rec, data: u8[], s: Settings, last: boolean): (Rec, u
   return conv_unblock_apply(st, data, last);
 }
 
-// ---- the report -------------------------------------------------------------
-//
-// Two lines always, a third unless `status=noxfer`, and none at all
-// under `status=none`. Nothing here carries the `dd: ` prefix a
-// diagnostic does — these are the run's own summary, not a complaint.
-//
-// The third line is the one line of this utility that NO test can
-// compare: it carries the elapsed time and a rate derived from it. The
-// corpus therefore runs every case under `status=noxfer` or
-// `status=none`, and the shape of the third line is pinned by a test of
-// its own rather than against GNU's own answer.
 function report(c: Counts, s: Settings, secs: f64): void {
   if (s.status == status_none()) {
     return;
@@ -1481,9 +1166,6 @@ function report(c: Counts, s: Settings, secs: f64): void {
   eprint(transfer_line(c.bytes, secs));
 }
 
-// `N bytes copied, T s, R/s`, with the two human-readable spellings in
-// parentheses once the count reaches 1000 — GNU prints `10 bytes
-// copied` bare and `2048 bytes (2.0 kB, 2.0 KiB) copied`.
 function transfer_line(bytes: i64, secs: f64): string {
   let out: string = bytes.to_string() + " bytes";
   if (bytes >= 1000 as i64) {
@@ -1497,11 +1179,7 @@ function transfer_line(bytes: i64, secs: f64): string {
   return out + human_rate(rate) + "/s";
 }
 
-// One decimal place below ten, none at or above it, and the unit
-// letters in the order both scales use.
 function human(n: i64, base: i64, tail: string): string {
-  // The IEC prefix for 1024 is an uppercase K where the SI one for 1000
-  // is lower case: `2.0 kB, 2.0 KiB`.
   let units: string[] = ["k", "M", "G", "T", "P", "E"];
   if (base == 1024 as i64) {
     units = ["K", "M", "G", "T", "P", "E"];
@@ -1530,9 +1208,6 @@ function human_rate(rate: f64): string {
   return one_decimal(v) + " " + units[i];
 }
 
-// Below ten, one digit after the point; at or above it, none — and the
-// value is never rounded up into the next unit here, which is what
-// `999.95` would do with a naive round.
 function one_decimal(v: f64): string {
   if (v >= 100.0) {
     return (v.round() as i64).to_string();
@@ -1544,10 +1219,6 @@ function one_decimal(v: f64): string {
   return (scaled / (10 as i64)).to_string() + "." + (scaled % (10 as i64)).to_string();
 }
 
-// `%g` for the seconds: six significant digits, fixed while the
-// exponent is in [-4, 6) and scientific outside it, with the trailing
-// zeros of the fraction dropped either way. `0.0505787` and
-// `6.3384e-05` are both this.
 function fmt_g(v: f64): string {
   if (v == 0.0) {
     return "0";
@@ -1596,8 +1267,6 @@ function pow10(e: i32): f64 {
   return out;
 }
 
-// The exponent is always signed and always at least two digits, as C's
-// `%g` writes it: `6.3384e-05`, not `6.3384e-5`.
 function exp_text(e: i32): string {
   let sign: string = "+";
   let mag: i32 = e;
@@ -1626,7 +1295,6 @@ function trim_zeros(s: string): string {
   return slice_unchecked(s, 0, end) + "";
 }
 
-// ---- --help / --version -----------------------------------------------------
 function help_text(): string {
   let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPERAND]...\n";
@@ -1710,14 +1378,6 @@ function usage(status: i32): void {
   exit(status);
 }
 
-// ---- the operands that are options ----------------------------------------
-//
-// `--help` and `--version` are recognized ANYWHERE in the argument list
-// and answer before anything is opened, so `dd if=x --help` prints the
-// usage. Any other `--name` is an unrecognized OPTION — the one
-// diagnostic here that does not say "operand", since a leading `-` is
-// how GNU tells the two apart. A bare `-` is an operand, and an
-// unrecognized one.
 function scan_options(argv: string[]): void {
   let i: i32 = 1;
   while (i < argv.len()) {
@@ -1737,19 +1397,6 @@ function scan_options(argv: string[]): void {
   }
 }
 
-// ---- opening the two ends ---------------------------------------------------
-//
-// `if=` missing is standard input and `of=` missing is standard output,
-// and neither is opened by name — which is also why `if=-` is a file
-// called `-` rather than standard input, as GNU's own open shows.
-//
-// The output open is the interesting one. GNU opens it
-// `O_WRONLY|O_CREAT` and then decides what to do about the LENGTH:
-// with `seek=` and no `conv=notrunc` it truncates at the seek offset,
-// so the bytes before the seek survive and everything after it is cut;
-// with neither it truncates to nothing; with `conv=notrunc` it leaves
-// the file as it found it. `conv=excl` and `conv=nocreat` change the
-// open itself, and `oflag=append` makes every write land at the end.
 function open_input(s: Settings): (Reader, boolean) {
   if (!s.have_in) {
     return (stdin(), true);
@@ -1772,9 +1419,6 @@ function open_output(s: Settings): (Writer, boolean) {
   if ((s.oflag & flag_append()) != 0 && (s.conv & conv_excl()) == 0) {
     return open_out_appending(s);
   }
-  // `conv=excl` is the exclusive create at the mode every other `of=`
-  // gets, 0666 through the umask; `open_exclusive` fixes 0600 for the
-  // temporary file it exists for and is not this open (#9237).
   let flags: i32 = 1;
   if ((s.conv & conv_excl()) != 0) {
     flags = flags | 4;
@@ -1793,9 +1437,6 @@ function open_output(s: Settings): (Writer, boolean) {
   }
 }
 
-// `oflag=append` is O_APPEND, which `open_appender` is — plus the
-// O_CREAT `of=` wants anyway. Every write lands at the end whatever the
-// offset says, so `seek=` there moves nothing.
 function open_out_appending(s: Settings): (Writer, boolean) {
   match (open_appender(s.out_name)) {
     Err(e) => {
@@ -1808,15 +1449,6 @@ function open_out_appending(s: Settings): (Writer, boolean) {
   }
 }
 
-// ---- skip and seek ----------------------------------------------------------
-//
-// `skip=` moves the INPUT and `seek=` the output, both in blocks of
-// their own side's size unless the matching `_bytes` flag makes them
-// byte counts. A seekable input jumps; one that cannot seek — a pipe —
-// is read forward and the bytes thrown away, which is the only way to
-// skip a stream. When neither works the run says
-// `'NAME': cannot skip to specified offset` and carries on from where
-// it is, as GNU does, rather than failing.
 function skip_input(r: Reader, s: Settings, stop: Stop): boolean {
   let want: i64 = s.skip;
   if (want <= 0 as i64) {
@@ -1834,9 +1466,6 @@ function skip_input(r: Reader, s: Settings, stop: Stop): boolean {
   return drain(r, s, want, stop);
 }
 
-// A seek PAST the end of a regular file is not an error — lseek takes
-// any offset — so the warning has to come from the length: `skip=10` on
-// a ten-byte file is silent and `skip=11` is not.
 function past_end(r: Reader, s: Settings, want: i64): boolean {
   match (r.stat()) {
     Ok(st) => {
@@ -1849,9 +1478,6 @@ function past_end(r: Reader, s: Settings, want: i64): boolean {
   return true;
 }
 
-// The operand's own name, unquoted unless it needs it, and the PHRASE
-// GNU uses for the stream it was not given — which is quoted, because
-// it is not a file name.
 function cannot_skip(s: Settings): void {
   if (!s.have_in) {
     gnu.error(gnu.quote("standard input") + ": cannot skip to specified offset");
@@ -1860,9 +1486,6 @@ function cannot_skip(s: Settings): void {
   gnu.error(gnu.quotef(s.in_name) + ": cannot skip to specified offset");
 }
 
-// The forward read a pipe needs. A short read is fine; the end of the
-// input before the offset is what GNU warns about. SIGINT here reports the
-// empty counts, as GNU's does, since nothing has been copied yet.
 function drain(r: Reader, s: Settings, want: i64, stop: Stop): boolean {
   let left: i64 = want;
   while (left > 0 as i64) {
@@ -1891,11 +1514,6 @@ function drain(r: Reader, s: Settings, want: i64, stop: Stop): boolean {
   return true;
 }
 
-// The output side. `seek=` past the end of the file leaves a hole, and
-// without `conv=notrunc` the file is cut at the seek offset — so the
-// bytes BEFORE it survive and everything after is gone, which is what
-// separates `dd of=f seek=2` (a 5-byte file after three bytes are
-// written) from the same run with `conv=notrunc` (a 10-byte one).
 function seek_output(w: Writer, s: Settings, name: string): boolean {
   let want: i64 = s.seek;
   if ((s.oflag & flag_seek_bytes()) == 0) {
@@ -1920,8 +1538,6 @@ function seek_output(w: Writer, s: Settings, name: string): boolean {
   return true;
 }
 
-// A conv= set naming more than one flag of `group` exits 1, checked in
-// GNU's order so the first conflicting group is the one reported.
 function refuse_combined(conv: i32, group: i32, what: string): void {
   let both: i32 = conv & group;
   if ((both & both - 1) != 0) {
@@ -1930,8 +1546,6 @@ function refuse_combined(conv: i32, group: i32, what: string): void {
   }
 }
 
-// discard_all reports a failed whole-file drop under the side's name, or
-// what GNU calls it when it has none, and answers whether it succeeded.
 function discard_all(res: Result[void, IoError], name: string, unnamed: string): boolean {
   match (res) {
     Err(e) => {
@@ -1948,14 +1562,11 @@ function discard_all(res: Result[void, IoError], name: string, unnamed: string):
   }
 }
 
-// ---- main -------------------------------------------------------------------
 pub function main(): i32 {
   let argv: string[] = args();
   scan_options(argv);
   let scan: Scan = scan_operands(argv);
   let s: Settings = scan.s;
-  // Without a `cbs` the record conversions are not on at all, so
-  // `conv=block,unblock` alone is no conflict and copies the bytes.
   if (s.cbs == 0 as i64) {
     let records: i32 = conv_block() | conv_unblock();
     s = Settings { ...s, conv: s.conv - (s.conv & records) };
@@ -1974,10 +1585,6 @@ pub function main(): i32 {
   }
   let r: Reader = ri.0;
   let w: Writer = wo.0;
-  // GNU installs its handlers here, after the files are open and before the
-  // skip, and starts the clock. SIGINT has to end a read that may never
-  // return, a skip over an idle pipe among them, so its catch interrupts;
-  // the info report waits for the read to return.
   let info: i32 = info_signal();
   if (info > 0) {
     signal.catch(info);
@@ -2000,8 +1607,6 @@ pub function main(): i32 {
     stop_now(stop, run.c, run.progressed);
   }
   let status: i32 = run.status;
-  // `count=0` with `nocache` copies nothing and drops the whole file's
-  // cache instead, the one form whose failure GNU reports.
   if (s.have_count && s.count == 0 as i64) {
     if ((s.iflag & flag_nocache()) != 0 && !discard_all(r.drop_cache(0 as i64, 0 as i64), s.in_name, "standard input")) {
       status = 1;
@@ -2010,11 +1615,6 @@ pub function main(): i32 {
       status = 1;
     }
   }
-  // A `conv=fdatasync` the descriptor cannot answer becomes a full
-  // `fsync`: EINVAL there is the descriptor saying it has no data-only
-  // sync rather than a failure to report, which is why a run over
-  // /dev/null reports `fsync failed` and not `fdatasync failed`. Any
-  // other errno is the fdatasync's own.
   let want_fsync: boolean = (s.conv & conv_fsync()) != 0;
   if ((s.conv & conv_fdatasync()) != 0) {
     if let Err(e) = w.fdatasync() {

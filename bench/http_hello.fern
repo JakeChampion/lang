@@ -1,9 +1,3 @@
-// http_hello — the hello path of a request without the socket: one GET
-// framed and parsed into an HttpRequest, and a one-word 200 serialized
-// to the wire, per round. The serve loop's own cost per request is
-// mostly these two, so a change to the parser's rules or to the
-// response writer moves this count where the socket tests cannot see
-// it; the socket half is net-nightly.yml's.
 import "std/http";
 
 function main(): i32 {

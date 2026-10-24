@@ -5,15 +5,6 @@ import "std/hex";
 import "std/string";
 import "std/option";
 
-// tests/stdlib/http_h3_test.fern — std/http/h3: a client and a server
-// session joined in memory, each one's writes delivered to the other as
-// stream bytes (whole, or a byte at a time), and what each side reports.
-// Requests and responses with bodies, interim responses and trailers,
-// QPACK blocking, GOAWAY, and the stream and connection errors §4.1.2,
-// §6 and §7 require.
-
-// Link — the two sessions and what happened, as text; with `trickle`
-// every write is delivered a byte at a time.
 struct Link { c: h3.Session, s: h3.Session, log: string, trickle: boolean }
 
 function linked(): Link {
@@ -22,7 +13,6 @@ function linked(): Link {
   return flow(Link { c: c, s: s, log: "", trickle: false });
 }
 
-// flow moves each side's actions to the other until neither has any.
 function flow(p: Link): Link {
   let cur: Link = p;
   let rounds: i32 = 0;
@@ -73,7 +63,6 @@ function deliver(to: h3.Session, a: h3.Action, trickle: boolean): h3.Session {
   }
 }
 
-// acted notes the actions worth seeing: resets, STOP_SENDING and closes.
 function acted(who: string, a: h3.Action): string {
   match (a) {
     h3.Abort(id, code) => {
@@ -138,11 +127,6 @@ function post(length: string): qpack.Field[] {
   return [qpack.field(":method", "POST"), qpack.field(":scheme", "https"), qpack.field(":authority", "example.com"), qpack.field(":path", "/upload"), qpack.field("content-length", length)];
 }
 
-// A request stream whose id is below the window a sweep left behind is
-// still seen and answered. Thirty-two higher request streams complete and
-// are swept, which advances req_base past stream 0; stream 0 then arrives
-// (QUIC delivers streams independently, so a lower id can come last) and
-// must reach the handler, not be dropped as unindexed.
 function test_reordered_low_stream(): test.TestOutcome {
   let p: Link = linked();
   let k: i32 = 1;
@@ -160,7 +144,6 @@ function test_reordered_low_stream(): test.TestOutcome {
   return test.assert_eq(count(p.log, "client headers 0 [:status=200 "), "1");
 }
 
-// A GET and its response, with each side's SETTINGS read first.
 function test_request_response(): test.TestOutcome {
   let p: Link = linked();
   let settings: string = "-";
@@ -172,8 +155,6 @@ function test_request_response(): test.TestOutcome {
   return test.assert_eq(settings + " | " + p.log, "4096/16/65536 | server headers 0 [:method=GET :scheme=https :authority=example.com :path=/ ]; server end 0; client headers 0 [:status=200 content-type=text/plain ]; client data 0 hello; client end 0; ");
 }
 
-// A POST whose body and trailers arrive a byte at a time; a 103 before
-// the final response.
 function test_body_trailers_interim(): test.TestOutcome {
   let p: Link = linked();
   p = Link { ...p, trickle: true, log: "" };
@@ -184,7 +165,6 @@ function test_body_trailers_interim(): test.TestOutcome {
   return test.assert_eq(body + " | " + p.log, "6 | client headers 0 [:status=103 link=</a> ]; client headers 0 [:status=204 ]; client end 0; ");
 }
 
-// count is how many times `needle` is in `s`, as text.
 function count(s: string, needle: string): string {
   let n: i32 = 0;
   let rest: string = s;
@@ -198,8 +178,6 @@ function count(s: string, needle: string): string {
   return n.to_string();
 }
 
-// A response to HEAD, and a 304, carry a content-length but no body (RFC
-// 9110 §8.6); one with no content-length for a GET carries what it has.
 function test_bodiless(): test.TestOutcome {
   let p: Link = linked();
   let head: qpack.Field[] = [qpack.field(":method", "HEAD"), qpack.field(":scheme", "https"), qpack.field(":authority", "example.com"), qpack.field(":path", "/")];
@@ -208,8 +186,6 @@ function test_bodiless(): test.TestOutcome {
   return test.assert_eq(p.log, "client headers 0 [:status=200 content-length=12 ]; client end 0; client headers 4 [:status=304 content-length=40 ]; client end 4; ");
 }
 
-// Each malformed request is a stream error: the server resets it both
-// ways with H3_MESSAGE_ERROR and the connection carries on.
 function test_malformed(): test.TestOutcome {
   let cases: qpack.Field[][] = [
     [qpack.field(":method", "GET"), qpack.field(":scheme", "https"), qpack.field(":path", "/"), qpack.field("X-Upper", "1")],
@@ -238,11 +214,6 @@ function test_malformed(): test.TestOutcome {
   return test.assert_eq(out, want + "server headers 0 [:method=POST :scheme=https :authority=example.com :path=/upload content-length=5 ]; server data 0 abc; server aborted 0 270; server aborts 0 270; server stops 0 270; client aborted 0 270; ");
 }
 
-// Frames out of place close the connection (§7.2): DATA before HEADERS,
-// a control stream without SETTINGS first, a second control stream, an
-// HTTP/2 setting, a critical stream ending, a client's push stream. A
-// stream type no one knows is stopped; a frame type no one knows on a
-// request stream is skipped.
 function test_connection_errors(): test.TestOutcome {
   let p: Link = linked();
   let out: string = closes(p.s.on_stream(0 as i64, hex.hex_decode("000161"), false));
@@ -267,7 +238,6 @@ function test_connection_errors(): test.TestOutcome {
   return test.assert_eq(out + "| " + noted("server", evs), "261 DATA outside a message's body; 266 the control stream did not open with SETTINGS; 259 a second critical stream of one type; 265 a repeated setting, or one of HTTP/2's; 260 a critical stream ended; 259 a push stream from a client; stop 22 259; | server headers 4 [:method=GET :scheme=https :authority=example.com :path=/g ]; server end 4; ");
 }
 
-// closes is how a session ended, or the stream it stopped.
 function closes(s: h3.Session): string {
   let step5: h3.Session = s;
   let acts: h3.Action[] = step5.actions;
@@ -285,7 +255,6 @@ function closes(s: h3.Session): string {
   return "open; ";
 }
 
-// GOAWAY tells the client which of its requests will not be processed.
 function test_goaway(): test.TestOutcome {
   let p: Link = linked();
   p = flow(Link { ...p, log: "", c: p.c.send_headers(0 as i64, get("/a"), true).send_headers(4 as i64, get("/b"), true) });
@@ -293,9 +262,6 @@ function test_goaway(): test.TestOutcome {
   return test.assert_eq(p.log + p.c.goaway_received().to_string(), "client goaway 4; client aborted 4 267; 4");
 }
 
-// A request whose field section refers to inserts the encoder stream has
-// not yet delivered waits for them, then arrives whole; `waiting` reports
-// it meanwhile.
 function test_qpack_blocked(): test.TestOutcome {
   let s: h3.Session = h3.server(h3.config()).start(3 as i64, 7 as i64, 11 as i64);
   let step6: h3.Session = s;
@@ -320,11 +286,6 @@ function test_qpack_blocked(): test.TestOutcome {
   return test.assert_eq(waits + " | " + int_text(acts1.len()) + " " + int_text(evs1.len()) + " | " + noted("server", evs2) + "| " + written, "false true false | 0 0 | server headers 0 [:authority=www.example.com :path=/sample/path :method=GET :scheme=https ]; server end 0; | 11:02 11:80 ");
 }
 
-// Request streams share index slots with other stream IDs (id >> 2). A
-// stream that is not the request in its slot is not taken for it: no
-// unidirectional stream is `waiting`, so the encoder stream that unblocks
-// requests 0 and 4 is read; and a client ignores a stream the server
-// opened rather than read it as the response to the request in its slot.
 function test_slot_sharing(): test.TestOutcome {
   let headers: u8[] = hex.hex_decode("0106" + "03811011d1d7");
   let s: h3.Session = h3.server(h3.config()).start(3 as i64, 7 as i64, 11 as i64).taken();

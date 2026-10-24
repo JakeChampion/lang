@@ -6,11 +6,6 @@ func init() {
 	registerCorpus("[", bracketCases)
 }
 
-// TestBracketParity holds coreutils/[.fern to GNU [. The expression
-// corpus is test(1)'s with a `]` appended; the cases of its own are the
-// closing bracket and the two options it honours where `test` does not.
-// bracketCases is the corpus, shared by the GNU parity gate and the
-// self-host leg so neither can test something narrower than the other.
 func bracketCases(t *testing.T) []invocation {
 	t.Helper()
 	var cases []invocation
@@ -19,7 +14,6 @@ func bracketCases(t *testing.T) []invocation {
 		cases = append(cases, inv)
 	}
 	return append(cases,
-		// The closing bracket.
 		invocation{name: "no arguments at all"},
 		invocation{name: "close bracket alone", args: []string{"]"}},
 		invocation{name: "string without a close bracket", args: []string{"x"}},
@@ -39,9 +33,6 @@ func bracketCases(t *testing.T) []invocation {
 		invocation{name: "error without a close bracket", args: []string{"x", "y"}},
 		invocation{name: "missing bracket with stdout closed", args: []string{"x"}, stdout: stdoutClosed},
 
-		// --help / --version: honoured as the sole argument and nowhere
-		// else — with a `]` they are strings, with anything else they
-		// are a missing bracket.
 		invocation{name: "help then close bracket", args: []string{"--help", "]"}},
 		invocation{name: "version then close bracket", args: []string{"--version", "]"}},
 		invocation{name: "abbreviated help alone", args: []string{"--hel"}},
@@ -61,9 +52,6 @@ func bracketCases(t *testing.T) []invocation {
 		invocation{name: "dash z of help then close bracket", args: []string{"-z", "--help", "]"}},
 		invocation{name: "help under posix then close bracket", args: []string{"--help", "]"}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// The help and version text is ours, but a write failure is
-		// reported like GNU's: `[: write error: <strerror>`, and with
-		// test's own status of 2 rather than 1.
 		invocation{name: "help with stdout closed", args: []string{"--help"}, stdout: stdoutClosed},
 		invocation{name: "help with stdout full", args: []string{"--help"}, stdout: stdoutFull},
 		invocation{name: "version with stdout closed", args: []string{"--version"}, stdout: stdoutClosed},

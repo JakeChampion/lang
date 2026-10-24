@@ -1,7 +1,7 @@
-// A module destructuring its own struct, in a `let`, a parameter and a `for`
-// head. The struct is mangled once the module is imported, so the name the
-// pattern writes has to be resolved through the module the way an annotation
-// is (#12446).
+
+
+
+
 import "./geo";
 
 function main(): i32 {

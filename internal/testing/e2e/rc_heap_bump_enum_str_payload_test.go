@@ -4,25 +4,6 @@ import (
 	"testing"
 )
 
-// Enum string-payload reclamation (#6901) — the enum sibling of the tuple
-// gate in rc_heap_bump_tuple_test.go. The exit sweep's INLINE enum arm
-// released a native single-word string payload with a bare __fern_rc_dec,
-// which decrements and never frees, so the buffer's count went 1 -> 0 and it
-// was stranded — 64 B a round on x86-64 while arm64 and wasm (two-word ABIs,
-// __fern_str_dec) were already flat.
-//
-// The binding has to be in a CALLEE. A loop-scoped `let m` re-declared in the
-// body reclaims through emitVarReinitDropOld, which routes to the generated
-// __drop_enum_<E> — and that fn has always called __fern_str_dec, so the loop
-// spelling was flat throughout. Only the function-exit sweep was short.
-//
-// Both tiers of emitEnumSlotDrop are gated: `Msg` is non-uniform (variant-plan
-// tag switch -> dropStructField) and `Line` is uniform (branchless payload
-// decs -> decValueOnStack). Both measured 64 B/round pre-fix on x86-64.
-//
-// Each program reports the per-round bytes as its exit code (64 pre-fix on
-// x86-64, 0 after) rather than a bound, so a partial regression is legible.
-
 const enumStrPayloadChurnSrc = `import "std/i32";
 enum Msg { Text(string), Code(i32) }
 function wide(k: i32): string { return "a-value-well-past-the-inline-threshold-" + k.to_string(); }
@@ -75,12 +56,6 @@ function main(): i32 {
     return (per as i32);
 }`
 
-// enumStrPayloadAliasSrc is the over-release half of the same gate: the
-// payload aliases a live local that is read AFTER the enum's last reference,
-// is bound out of the match, and is handed to a callee. The freeing drop
-// short-circuits on rc > 1, so this must stay at exit 0 — a double free shows
-// up here (and as a sanitizer report under FERN_RC_UNDERFLOW_TRAP=1) rather
-// than as a byte count.
 const enumStrPayloadAliasSrc = `import "std/i32";
 enum Msg { Text(string), Code(i32) }
 function wide(k: i32): string { return "a-value-well-past-the-inline-threshold-" + k.to_string(); }

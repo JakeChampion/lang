@@ -1,8 +1,8 @@
-// std/array's dedup: collapse each run of consecutive equal elements to one.
-// A minimal inline body, so this pins the lowering of its shape rather than
-// the shipped module.
-//
-// [1,1,2,2,1] -> [1,2,1]; encode r[0]*100 + r[1]*10 + r[2] = 121 (in byte
-// range, and requires len >= 3 or the r[2] index traps).
+
+
+
+
+
+
 function dedup(xs: i32[]): i32[] { let out: i32[] = []; let i: i32 = 0; while (i < xs.len()) { if (i == 0 || !(xs[i] == xs[i - 1])) { out = out.append(xs[i]); } i = i + 1; } return out; }
 function main(): i32 { let r = dedup([1, 1, 2, 2, 1]); return r[0] * 100 + r[1] * 10 + r[2]; }

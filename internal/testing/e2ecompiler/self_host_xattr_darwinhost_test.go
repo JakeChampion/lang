@@ -10,8 +10,6 @@ import (
 
 const selfHostXattrAbsentText = "Attribute not found"
 
-// selfHostSetUserXattr is setxattr(2), BSD 236, which `syscall` does not bind
-// on Darwin.
 func selfHostSetUserXattr(t *testing.T, path, name, value string) {
 	t.Helper()
 	const sysSetxattr = 236

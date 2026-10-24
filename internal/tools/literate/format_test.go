@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// FormatCode rewrites fern chunk bodies via the supplied formatter while
-// leaving prose, fences, and headers untouched; bodies the formatter
-// declines are preserved verbatim.
 func TestFormatCode(t *testing.T) {
 	src := strings.Join([]string{
 		"# Title",
@@ -25,7 +22,6 @@ func TestFormatCode(t *testing.T) {
 		"```",
 	}, "\n")
 
-	// Formatter that upper-cases a body, but declines the `keep` chunk.
 	format := func(code string) (string, bool) {
 		if strings.Contains(code, "leave me") {
 			return "", false
@@ -44,14 +40,11 @@ func TestFormatCode(t *testing.T) {
 	if !strings.Contains(got, "<<keep>>=\nleave me") {
 		t.Errorf("declined body should be verbatim:\n%s", got)
 	}
-	// Fences are intact (four ```fern openers/closers → 2 of each).
 	if n := strings.Count(got, "```"); n != 4 {
 		t.Errorf("expected 4 fence delimiters, got %d:\n%s", n, got)
 	}
 }
 
-// A document with no formattable change round-trips byte-for-byte when
-// the formatter is the identity-decliner.
 func TestFormatCodePreservesUnchanged(t *testing.T) {
 	src := "intro\n\n```fern\n<<a>>=\nx\n```\n\noutro\n"
 	got := Parse(src).FormatCode(func(string) (string, bool) { return "", false })
@@ -60,7 +53,6 @@ func TestFormatCodePreservesUnchanged(t *testing.T) {
 	}
 }
 
-// File-root bodies (no `<<name>>=` header) are reformatted too.
 func TestFormatCodeFileRoot(t *testing.T) {
 	src := "```fern file=m.fern\nbody here\n```\n"
 	got := Parse(src).FormatCode(func(code string) (string, bool) {
@@ -71,8 +63,6 @@ func TestFormatCodeFileRoot(t *testing.T) {
 	}
 }
 
-// An unclosed fence runs to EOF; the document's final newline is not part of
-// the body, so reformatting the body keeps it.
 func TestFormatCodeUnclosedFenceKeepsFinalNewline(t *testing.T) {
 	src := "intro\n\n```fern\n<<a>>=\nbody\n"
 	got := Parse(src).FormatCode(func(code string) (string, bool) {

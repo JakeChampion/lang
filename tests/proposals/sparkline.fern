@@ -1,15 +1,3 @@
-// tests/proposals/sparkline.fern — proposal turn, drawn line 97:
-// "A sparkline renderer that compresses a numeric series into one line of
-// block characters."
-//
-// The blocks ▁▂▃▄▅▆▇█ are three bytes each in UTF-8, and Fern strings are
-// byte-indexed — so `.len()` on a rendered sparkline is three times the
-// number of bars. Every test here that talks about length says which unit
-// it means, because conflating the two is the whole trap of this app.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from
-// std/test, so the file is its own test suite.
-
 import "std/test";
 import "std/utf8";
 import "std/i32";
@@ -18,9 +6,6 @@ function blocks(): string[] {
   return ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
 }
 
-// Bucket v into 0..7 across [lo, hi]. A flat series (hi == lo) renders at
-// the LOWEST block rather than dividing by zero — "no variation" reads
-// better as a flat floor than as a flat ceiling.
 function bucket(v: i32, lo: i32, hi: i32): i32 {
   if (hi <= lo) {
     return 0;
@@ -69,11 +54,6 @@ function spark(xs: i32[]): string {
   return out;
 }
 
-// ---------------------------------------------------------------- tests
-
-// One bar per sample, counted in CODEPOINTS. The byte length is three
-// times that, and asserting both is the point: a renderer that silently
-// truncated a multi-byte block would still pass a byte-length check.
 function test_one_codepoint_per_sample(): test.TestOutcome {
   let series: i32[][] = [[1], [1, 2], [5, 3, 9, 1], [0, 0, 0, 0, 0, 0]];
   for i in 0..series.len() {
@@ -92,8 +72,6 @@ function test_one_codepoint_per_sample(): test.TestOutcome {
   return test.pass();
 }
 
-// Every byte emitted must be part of a valid UTF-8 sequence, and every
-// codepoint must be one of the eight blocks — nothing invented.
 function test_output_is_valid_utf8_blocks(): test.TestOutcome {
   let s: string = spark([3, 1, 4, 1, 5, 9, 2, 6]);
   if (!utf8.is_valid_utf8(s)) {
@@ -121,8 +99,6 @@ function test_output_is_valid_utf8_blocks(): test.TestOutcome {
   return test.pass();
 }
 
-// The extremes must land on the extreme blocks — a scale that never
-// reaches its own ends is the usual off-by-one here.
 function test_extremes_map_to_extreme_blocks(): test.TestOutcome {
   let xs: i32[] = [10, 50, 90];
   let s: string = spark(xs);
@@ -150,8 +126,6 @@ function test_extremes_map_to_extreme_blocks(): test.TestOutcome {
   return test.pass();
 }
 
-// Monotone input renders a monotone sparkline: bucket must be
-// order-preserving, or the rendering misstates the data.
 function test_rendering_is_order_preserving(): test.TestOutcome {
   let xs: i32[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
   let lo: i32 = min_of(xs);
@@ -168,8 +142,6 @@ function test_rendering_is_order_preserving(): test.TestOutcome {
   return test.pass();
 }
 
-// A flat series has no range to scale against. It must render, at one
-// bar per sample, rather than dividing by zero.
 function test_a_flat_series_renders_flat(): test.TestOutcome {
   let s: string = spark([7, 7, 7, 7]);
   if (utf8.codepoint_count(s) != 4) {
@@ -191,8 +163,6 @@ function test_a_flat_series_renders_flat(): test.TestOutcome {
   return test.pass();
 }
 
-// An empty series renders an empty string — zero bytes AND zero
-// codepoints, with no crash on the min/max of nothing.
 function test_empty_series(): test.TestOutcome {
   let s: string = spark([]);
   if (s.len() != 0) {
@@ -204,8 +174,6 @@ function test_empty_series(): test.TestOutcome {
   return test.pass();
 }
 
-// Shifting every sample by a constant must not change the picture: the
-// scale is relative to the series' own range.
 function test_rendering_is_shift_invariant(): test.TestOutcome {
   let a: i32[] = [3, 1, 4, 1, 5];
   let b: i32[] = [];
@@ -217,8 +185,6 @@ function test_rendering_is_shift_invariant(): test.TestOutcome {
   }
   return test.pass();
 }
-
-// ----------------------------------------------------------------- app
 
 function main(): i32 {
   eprint("sparkline — a numeric series in one line of blocks");

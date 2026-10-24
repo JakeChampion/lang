@@ -33,8 +33,6 @@ function main(): i32 {
 	if err != nil {
 		t.Fatalf("runtime emitter: %v\n%s", err, helper)
 	}
-	// The host stub writes an Err at the real create-socket return pointer.
-	// No socket is opened. Every call goes through the emitted tcp_listen body.
 	const prelude = `(module
   (memory 1)
   (global $code (mut i32) (i32.const 0))

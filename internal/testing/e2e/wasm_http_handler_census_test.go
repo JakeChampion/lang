@@ -6,9 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The Go compiler's twin of TestSelfHostWasmHTTPHandlerCensus: the bounded
-// accept loop against real wasi:sockets, on a port the guest picks, with
-// every response checked and the census balanced.
 func TestWasmHTTPHandlerCensus(t *testing.T) {
 	component := buildLeakCheckCLIComponent(t, e2eharness.WasiHTTPHandlerCensusSource(t, "../../..", 32), false)
 	out := e2eharness.RunWasiHTTPHandlerCensus(t, component, 32)

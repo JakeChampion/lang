@@ -1,45 +1,4 @@
-// std/http/router — a request routed to a handler by method and path, in
-// Go 1.22's shape: `"GET /users/{id}"`, `{name...}` for the rest of the
-// path, `{$}` for the end, no method for any, a trailing `/` for every path
-// below it. The most specific pattern takes precedence; a path some pattern
-// knows under another method is 405 with `Allow`, any other path 404; a GET
-// route answers HEAD. The parameters a pattern binds reach the handler as
-// `Params`, beside the request (docs/NET-P5-FRAMEWORK-PLAN.md).
-//
-//     let r: router.Router[platform.Host] = router.new()
-//       .get("/users/{id}", users_show)
-//       .post("/users", users_create);
-//     serve.run(8080, serve.config(), r.handler());
-//
-//     function users_show(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
-//       let id: i32 = params.int("id")?;
-//       return Ok(http.json_of(find(id)?));
-//     }
-//
-// A route handler answers `Result[HttpResponse, dyn http.ToResponse]`: it
-// fails with `?` on any error that answers for itself (an `HttpError`, a
-// `BodyError`, a form's or a cookie's), and the router turns the failure
-// into the reply through `http.respond`. A middleware, a function taking
-// the request, the platform and `next`, wraps one handler through `use`,
-// or every route through `wrap`, where it runs ahead of dispatch and so
-// sees a request no route admits: a CORS preflight is an OPTIONS the
-// routes do not register, answered by `cors.cors` from a `wrap` before
-// the router would answer 405.
-//
-//     router.new[platform.Host]().wrap(cross_origin).get("/users", users)
-//
-//     function cross_origin(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
-//       return cors.cors(req, API, next);
-//     }
-//
-// A pattern the router refuses, one malformed or one that could tie with a
-// registered pattern on some request, is kept rather than returned, so
-// registration chains: `check()` hands the first refusal back as a value,
-// `handler()` reports it and exits the program, and `handle` answers 500
-// until it is fixed, so a program learns at startup, never at a request.
-//
-// Routes are tried in a scan, which fits the tables programs write by
-// hand.
+// This module selects HTTP handlers by request method and path.
 
 import "std/http";
 import "std/string";
@@ -47,17 +6,12 @@ import "core/int";
 import "std/error";
 import "core/cmp";
 
-// Params — the path parameters a pattern bound, in the pattern's order, as
-// the request's path holds them: decoded once already, by the serve loop or
-// the wasi-http entry that read the request-target.
 pub struct Params { names: string[], values: string[] }
 
-// no_params is what a handler called outside the router gets.
 pub function no_params(): Params {
   return Params { names: [], values: [] };
 }
 
-// (p).get(name) — the parameter, when the pattern binds the name.
 pub function (p: Params) get(name: string): Option[string] {
   let i: i32 = 0;
   while (i < p.names.len()) {
@@ -69,8 +23,6 @@ pub function (p: Params) get(name: string): Option[string] {
   return None;
 }
 
-// (p).param(name) — the parameter, or a 500: a name the pattern does not
-// bind is the program's mistake, not the client's.
 pub function (p: Params) param(name: string): Result[string, http.HttpError] {
   match (p.get(name)) {
     Some(v) => {
@@ -83,7 +35,6 @@ pub function (p: Params) param(name: string): Result[string, http.HttpError] {
   return Err(http.fail(500, "the route binds no path parameter " + name));
 }
 
-// (p).int(name) — the parameter as an integer, or a 400 naming it.
 pub function (p: Params) int(name: string): Result[i32, http.HttpError] {
   let v: string = p.param(name)?;
   match (int.parse_int_radix(v, 10)) {
@@ -97,27 +48,16 @@ pub function (p: Params) int(name: string): Result[i32, http.HttpError] {
   return Err(http.fail(400, "path parameter " + name + " is not an integer: " + v));
 }
 
-// Segment — one segment of a pattern: a literal (`{$}` is the empty one),
-// a parameter matching one non-empty segment, or the rest of the path from
-// here, named or (a trailing `/`) not.
 pub enum Segment {
   PathLiteral(string),
   PathParam(string),
   PathRest(string),
 }
 
-// Route — a pattern as registered: its method ("" for any), its segments,
-// the parameters it binds (their names in order, no values yet) and the
-// handler it dispatches to.
 pub struct Route[P] { method: string, pattern: string, segments: Segment[], params: Params, handler: (HttpRequest, Params, P) => Result[HttpResponse, dyn http.ToResponse] }
 
-// Router — the routes, in registration order, the middleware wrapping
-// every route, outermost first, and the first pattern it refused, which
-// every registration after it leaves as it is.
 pub struct Router[P] { routes: Route[P][], wraps: ((HttpRequest, P, (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]) => Result[HttpResponse, dyn http.ToResponse])[], refused: Option[RouteError] }
 
-// RouteError — a pattern refused: malformed, or one a registered pattern
-// could tie with on some request.
 pub enum RouteError {
   BadPattern(string, string),
   PatternConflict(string, string),
@@ -143,14 +83,10 @@ pub function (e: RouteError) message(): string {
   return "";
 }
 
-// new() — a router with no routes.
 pub function new[P](): Router[P] {
   return Router { routes: [], wraps: [], refused: None };
 }
 
-// (r).route(pattern, handler) — the router with the pattern added, or
-// keeping the refusal: the pattern's own when it is malformed or could tie
-// with a registered one, an earlier pattern's otherwise.
 pub function (r: Router[P]) route(pattern: string, handler: (HttpRequest, Params, P) => Result[HttpResponse, dyn http.ToResponse]): Router[P] {
   if let Some(_) = r.refused {
     return r;
@@ -172,7 +108,6 @@ pub function (r: Router[P]) route(pattern: string, handler: (HttpRequest, Params
   return r;
 }
 
-// (r).get(path, handler) and the rest — `route` under one method.
 pub function (r: Router[P]) get(path: string, handler: (HttpRequest, Params, P) => Result[HttpResponse, dyn http.ToResponse]): Router[P] {
   return r.route("GET " + path, handler);
 }
@@ -193,16 +128,10 @@ pub function (r: Router[P]) delete(path: string, handler: (HttpRequest, Params, 
   return r.route("DELETE " + path, handler);
 }
 
-// (r).wrap(middleware) — the router with every route, and every request
-// no route admits, wrapped in `middleware`, outside the middleware
-// wrapped so far: the first `wrap` runs first on the request and last on
-// the response.
 pub function (r: Router[P]) wrap(middleware: (HttpRequest, P, (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]) => Result[HttpResponse, dyn http.ToResponse]): Router[P] {
   return Router { ...r, wraps: r.wraps.append(middleware) };
 }
 
-// (r).check() — the router, or the first pattern it refused, for a program
-// that would rather report the refusal itself than have `handler()` do it.
 pub function (r: Router[P]) check(): Result[Router[P], RouteError] {
   match (r.refused) {
     Some(e) => {
@@ -215,11 +144,6 @@ pub function (r: Router[P]) check(): Result[Router[P], RouteError] {
   return Ok(r);
 }
 
-// (r).handle(req, plat) — the request answered, through the middleware
-// wrapped around the router, by the most specific route matching its path
-// and method, its failure turned into the reply; by 405 when routes match
-// the path alone, by 404 when none matches it; by 500 naming the pattern
-// the router refused, while it has one.
 pub function (r: Router[P]) handle(req: HttpRequest, plat: P): HttpResponse {
   if let Some(e) = r.refused {
     return http.problem(500, "", e.message());
@@ -230,8 +154,6 @@ pub function (r: Router[P]) handle(req: HttpRequest, plat: P): HttpResponse {
   return http.respond(__wrapped(r, 0, req, plat));
 }
 
-// __wrapped runs the request through the middleware from `i` on, the
-// routes behind the last.
 function __wrapped[P](r: Router[P], i: i32, req: HttpRequest, plat: P): Result[HttpResponse, dyn http.ToResponse] {
   if (i >= r.wraps.len()) {
     return __dispatch(r, req, plat);
@@ -240,8 +162,6 @@ function __wrapped[P](r: Router[P], i: i32, req: HttpRequest, plat: P): Result[H
   return middleware(req, plat, (inner: HttpRequest): Result[HttpResponse, dyn http.ToResponse] => __wrapped(r, i + 1, inner, plat));
 }
 
-// __dispatch is the route's answer, or the 405 or 404 for a request no
-// route takes.
 function __dispatch[P](r: Router[P], req: HttpRequest, plat: P): Result[HttpResponse, dyn http.ToResponse] {
   let end: i32 = __path_end(req.path);
   let picked: i32 = __pick(r, req.path, end, req.method);
@@ -257,9 +177,6 @@ function __dispatch[P](r: Router[P], req: HttpRequest, plat: P): Result[HttpResp
   return Ok(http.not_found());
 }
 
-// (r).handler() — `handle` as the handler `serve.run` takes. A pattern the
-// router refused is reported on stderr and exits the program with status 2
-// here, before anything is served.
 pub function (r: Router[P]) handler(): (HttpRequest, P) => HttpResponse {
   if let Some(e) = r.refused {
     eprint(e.message());
@@ -268,9 +185,6 @@ pub function (r: Router[P]) handler(): (HttpRequest, P) => HttpResponse {
   return (req: HttpRequest, plat: P): HttpResponse => r.handle(req, plat);
 }
 
-// __pick is the index of the most specific route matching the path under
-// the method, -1 when none. The path is read in place, segment by segment,
-// so a request allocates nothing to be routed.
 function __pick[P](r: Router[P], path: string, end: i32, method: string): i32 {
   let best: i32 = -1;
   let i: i32 = 0;
@@ -286,8 +200,6 @@ function __pick[P](r: Router[P], path: string, end: i32, method: string): i32 {
   return best;
 }
 
-// __allowed is the methods the routes matching the path alone admit, for
-// the 405's Allow, HEAD beside GET.
 function __allowed[P](r: Router[P], path: string, end: i32, method: string): string[] {
   let allowed: string[] = [];
   for route in r.routes {
@@ -310,14 +222,10 @@ function __add_once(xs: string[], x: string): string[] {
   return xs.append(x);
 }
 
-// __method_allows: a route's method admits the request's; a GET route
-// admits HEAD, no method admits all.
 function __method_allows(route: string, method: string): boolean {
   return route == "" || route == method || route == "GET" && method == "HEAD";
 }
 
-// __path_end is where the request's path ends: at its query or fragment
-// when it carries one.
 function __path_end(path: string): i32 {
   let i: i32 = 0;
   while (i < path.len()) {
@@ -329,7 +237,6 @@ function __path_end(path: string): i32 {
   return path.len();
 }
 
-// __next_slash is the index of the first `/` at or after `from`, or `end`.
 function __next_slash(path: string, from: i32, end: i32): i32 {
   let i: i32 = from;
   while (i < end) {
@@ -341,7 +248,6 @@ function __next_slash(path: string, from: i32, end: i32): i32 {
   return end;
 }
 
-// __range_is: the path's bytes from `a` to `b` spell `s`.
 function __range_is(path: string, a: i32, b: i32, s: string): boolean {
   if (b - a != s.len()) {
     return false;
@@ -356,11 +262,6 @@ function __range_is(path: string, a: i32, b: i32, s: string): boolean {
   return true;
 }
 
-// __matches: the pattern's segments match the path's, read in place: the
-// i-th segment is what follows the i-th `/`, so a segment exists only
-// where that slash does. A literal matches its equal, a parameter any
-// non-empty segment, the rest everything from its slash on, and a pattern
-// that ends must end where the path does.
 function __matches(segs: Segment[], path: string, end: i32): boolean {
   let pos: i32 = 0;
   let i: i32 = 0;
@@ -392,7 +293,6 @@ function __matches(segs: Segment[], path: string, end: i32): boolean {
   return pos == end;
 }
 
-// __names is the parameters a pattern binds, in its order.
 function __names(segs: Segment[]): string[] {
   let names: string[] = [];
   for seg in segs {
@@ -404,9 +304,6 @@ function __names(segs: Segment[]): string[] {
   return names;
 }
 
-// __bind is the parameters a matching route takes from the path, each a
-// copy of its segment; a route binding none hands out the Params it was
-// registered with.
 function __bind[P](route: Route[P], path: string, end: i32): Params {
   if (route.params.names.len() == 0) {
     return route.params;
@@ -435,7 +332,6 @@ function __bind[P](route: Route[P], path: string, end: i32): Params {
   return Params { ...route.params, values: values };
 }
 
-// __parse reads `[METHOD ]/path` into the method and the segments.
 function __parse(pattern: string): Result[(string, Segment[]), RouteError] {
   let method: string = "";
   let path: string = pattern;
@@ -451,7 +347,6 @@ function __parse(pattern: string): Result[(string, Segment[]), RouteError] {
   return Ok((method, segs));
 }
 
-// __is_method: one or more capital letters.
 function __is_method(s: string): boolean {
   if (s.len() == 0) {
     return false;
@@ -464,7 +359,6 @@ function __is_method(s: string): boolean {
   return true;
 }
 
-// __segments reads the path's segments, refusing a name bound twice.
 function __segments(pattern: string, path: string): Result[Segment[], RouteError] {
   let raw: string[] = path.split("/");
   let out: Segment[] = [];
@@ -500,8 +394,6 @@ function __bound_name(seg: Segment): string {
   return "";
 }
 
-// __segment reads one segment of a pattern; `last` says it is the final
-// one, where alone `{$}`, `{name...}` and the trailing `/` may stand.
 function __segment(pattern: string, s: string, last: boolean): Result[Segment, RouteError] {
   if (s == "") {
     if (!last) {
@@ -521,9 +413,6 @@ function __segment(pattern: string, s: string, last: boolean): Result[Segment, R
   return __literal(pattern, s);
 }
 
-// __literal reads a literal segment, refusing a brace, which belongs to a
-// wildcard, and `?` or `#`, which end a request's path before it is
-// matched and so could never be met.
 function __literal(pattern: string, s: string): Result[Segment, RouteError] {
   if (s.contains("{") || s.contains("}")) {
     return Err(BadPattern(pattern, "a brace inside the segment " + s));
@@ -534,7 +423,6 @@ function __literal(pattern: string, s: string): Result[Segment, RouteError] {
   return Ok(PathLiteral(s));
 }
 
-// __wildcard reads the inside of `{...}`: a name, or a name and `...`.
 function __wildcard(pattern: string, inner: string, last: boolean): Result[Segment, RouteError] {
   if (inner.ends_with("...")) {
     if (!last) {
@@ -552,7 +440,6 @@ function __wildcard(pattern: string, inner: string, last: boolean): Result[Segme
   return Ok(PathParam(inner));
 }
 
-// __is_name: a letter or underscore, then letters, digits and underscores.
 function __is_name(s: string): boolean {
   if (s.len() == 0) {
     return false;
@@ -574,9 +461,6 @@ function __name_byte(c: i32, first: boolean): boolean {
   return !first && c >= 48 && c <= 57;
 }
 
-// How two patterns relate over the requests they match: the same set, the
-// first a strict subset (narrower) or superset (wider), none in common, or
-// some in common with neither containing the other, which is the conflict.
 const REL_SAME: i32 = 0;
 
 const REL_NARROWER: i32 = 1;
@@ -591,9 +475,6 @@ function __conflicts(rel: i32): boolean {
   return rel == REL_SAME || rel == REL_CROSSED;
 }
 
-// __combine folds the relation of one dimension into the whole: apart
-// anywhere is apart, the same anywhere changes nothing, and narrower one
-// way with wider the other is crossed.
 function __combine(acc: i32, r: i32): i32 {
   if (acc == REL_APART || r == REL_APART) {
     return REL_APART;
@@ -611,7 +492,6 @@ function __relation(method_a: string, a: Segment[], method_b: string, b: Segment
   return __combine(__method_relation(method_a, method_b), __path_relation(a, b));
 }
 
-// __method_relation: no method admits every method, GET admits HEAD too.
 function __method_relation(a: string, b: string): i32 {
   if (a == b) {
     return REL_SAME;
@@ -631,8 +511,6 @@ function __method_relation(a: string, b: string): i32 {
   return REL_APART;
 }
 
-// __path_relation walks the two patterns segment by segment; the rest of
-// the path, where either has it, settles everything after.
 function __path_relation(a: Segment[], b: Segment[]): i32 {
   let acc: i32 = REL_SAME;
   let i: i32 = 0;
@@ -665,9 +543,6 @@ function __is_rest(s: Segment): boolean {
   return false;
 }
 
-// __segment_relation compares one position: a literal is narrower than a
-// parameter (the empty literal of `{$}` apart from it, since a parameter
-// needs a non-empty segment), and the rest is wider than anything.
 function __segment_relation(a: Segment, b: Segment): i32 {
   match (a) {
     PathRest(_) => {

@@ -1,4 +1,4 @@
-// Nested while loops with a block-scoped inner counter. 7 * 6 = 42.
+
 function main(): i32 {
     let c: i32 = 0;
     let i: i32 = 0;

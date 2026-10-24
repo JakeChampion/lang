@@ -2,11 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A leading zero in a decimal literal is decimal in Fern, and octal to GNU as
-// and the LLVM assembler (#10530). The unsigned and wide literals reach the
-// assembler as text, through a static box's `.quad` (u_field), an immediate
-// (u_local, wide) and the arm64 literal pool, so each is read back here; hex
-// and binary keep their prefix and must still mean what they say.
 const decimalLiteralProgram = `struct U { x: u32 }
 @noinline function u_field(): U { return U { x: 010u32 }; }
 @noinline function u_local(k: u32): u32 { let v: u32 = 0010u32; return v + k; }

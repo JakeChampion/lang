@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Tuple-to-tuple alias, both live: `let t2 = t1` inc's the box
-// (needsRcIncOnAlias), so the two exit decs free it exactly once
-// (the first sees rc==2 and just dec's; the second sees rc==1 and
-// box_free's). Without the alias inc this double-frees.
-// t1.0 + t2.1 = 2*seed + 1; sum_{0..199} = 40000.
+
+
+
+
+
+
+
+
 import "core/int";
 function mk(seed: i32): i32 {
     let t1: (i32, i32) = (seed, seed + 1);

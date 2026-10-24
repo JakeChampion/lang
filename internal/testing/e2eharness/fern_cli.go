@@ -7,10 +7,6 @@ import (
 	"testing"
 )
 
-// FernCLI builds cmd/fern into a temp dir with SelfHostCLI beside it as
-// fern-selfhost, stamped with the sources key the built fern embeds, so the
-// launcher compiles with it rather than building its own, and a `-target`
-// compile through it runs the tree's current self-host.
 func FernCLI(t testing.TB) string {
 	t.Helper()
 	dir := t.TempDir()

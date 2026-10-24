@@ -5,25 +5,6 @@ import (
 	"testing"
 )
 
-// A struct local bound from a BORROWED param records that param's box as the
-// snapshot its rebinds must not free. `x = y` then stores a SECOND borrow the
-// snapshot cannot name, and the next rebind released it.
-//
-// gcd is the shape that found it, in coreutils/factor.fern:
-//
-//	let x: BigInt = a;
-//	let y: BigInt = b;
-//	while (!y.is_zero()) { let t = bi_mod(x, y); x = y; y = t; }
-//
-// The second iteration's `x = y` freed the CALLER's number under it, so factor
-// printed a 2 for an odd input and its rho search never converged — twelve
-// rows of TestSelfHostCoreutilsParity/factor, including the ones that read as
-// hangs.
-
-// borrowedParamAliasSrc is that loop over a scalar struct, so the answer is
-// readable: `walk` threads two borrowed params through `x = y`, and the
-// caller's `n` has to survive it. 3*10 + 1 + 7 = 38; a released `n` reads 0 out
-// of the block the next allocation hands out and the sum collapses to 8.
 const borrowedParamAliasSrc = `struct Box { v: i32, tag: string }
 function step(b: Box): Box { return Box { v: b.v - 1, tag: "s" }; }
 function walk(a: Box, b: Box): Box {
@@ -43,8 +24,6 @@ function main(): i32 {
     return n.v * 10 + r.v + filler.v;
 }`
 
-// runStrictIRExit compiles `src` through the self-host IR driver for the host
-// and returns the program's exit code.
 func runStrictIRExit(t *testing.T, src, name string) int {
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
@@ -63,7 +42,6 @@ func runStrictIRExit(t *testing.T, src, name string) int {
 	return cmd.ProcessState.ExitCode()
 }
 
-// runStrictIRExitArm64 is the same program on the arm64 IR path, under qemu.
 func runStrictIRExitArm64(t *testing.T, src, name string) int {
 	t.Helper()
 	arm64gcc, qemu := arm64Tooling(t)

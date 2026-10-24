@@ -8,24 +8,6 @@ import (
 	"testing"
 )
 
-// --- The string[] credit, keyed on the binding rather than the name (#7253) ----
-//
-// Two `let v: string[]` in sibling `if` arms are two slots that share a source
-// name. The arm that binds a FRESH array owns its buffer; the arm that binds a
-// bare ALIAS must not hand its buffer to __fern_str_arr_free — a buffer someone
-// else still owns. Getting that wrong exits 99 (rc underflow) where the interp
-// answers 34, with `allocs=255 frees=255 live_bytes=0`: a doubly-released block
-// goes back to the freelist, so the byte count is clean and only
-// `__rc_underflow_count()` reports it. #7272 and #7292 are the tuple and "STR:"
-// classes of the same defect.
-//
-// `param_rename` is `param_alias` with the second local called `u`, and nothing
-// else changed. The x86-64 runner asserts the two measure identically: the
-// colliding program is indistinguishable from the one that never collided.
-//
-// Every want was confirmed against bin/fern -interp, never read off the
-// self-host run under test.
-
 type strarrKeyCase struct {
 	name string
 	src  string
@@ -42,8 +24,6 @@ const strarrMain = "\nfunction main(): i32 { let b: string[] = [w(\"a\"), w(\"b\
 func strarrKeyCases() []strarrKeyCase {
 	return []strarrKeyCase{
 		{
-			// The repro, with the alias taken from a PARAMETER so the shape carries
-			// nothing but this bug.
 			name: "param_alias",
 			src: strarrW + `function round(base: string[], i: i32): i32 {
     let t: i32 = 0;
@@ -54,9 +34,6 @@ func strarrKeyCases() []strarrKeyCase {
 			want: 34,
 		},
 		{
-			// The same program under a one-word rename: no shared key, so it was
-			// correct before the fix and pins that the fix did not get its result by
-			// denying the credit outright.
 			name: "param_rename",
 			src: strarrW + `function round(base: string[], i: i32): i32 {
     let t: i32 = 0;
@@ -67,8 +44,6 @@ func strarrKeyCases() []strarrKeyCase {
 			want: 34,
 		},
 		{
-			// The alias read off a STRUCT FIELD instead of a parameter — the shape
-			// the bug was found in, and a different collector path to the same key.
 			name: "struct_field_alias",
 			src: `struct H { xs: string[] }
 ` + strarrW + `function round(h: H, i: i32): i32 {
@@ -81,9 +56,6 @@ function main(): i32 { let h: H = H { xs: [w("a"), w("b")] }; let t: i32 = 0; le
 			want: 34,
 		},
 		{
-			// Only the FRESH arm. The credit must still be granted — a site key that
-			// resolved to nothing would leak here rather than over-release, and this
-			// is the case that catches it: it balances exactly.
 			name: "fresh_only",
 			src: strarrW + `function round(base: string[], i: i32): i32 {
     let t: i32 = 0;
@@ -93,8 +65,6 @@ function main(): i32 { let h: H = H { xs: [w("a"), w("b")] }; let t: i32 = 0; le
 			want: 17,
 		},
 		{
-			// Only the ALIAS arm — no fresh binding anywhere, so no credit exists to
-			// inherit and nothing may be released.
 			name: "alias_only",
 			src: strarrW + `function round(base: string[], i: i32): i32 {
     let t: i32 = 0;
@@ -104,9 +74,6 @@ function main(): i32 { let h: H = H { xs: [w("a"), w("b")] }; let t: i32 = 0; le
 			want: 17,
 		},
 		{
-			// The scalar-array control: i32[] takes a different predicate entirely
-			// and was correct throughout, so a change that disturbed the shared
-			// machinery instead of this one credit would show here.
 			name: "scalar_arr_unaffected",
 			src: `function mkI(n: i32): i32[] { let a: i32[] = [n, n + 1, n + 2]; return a; }
 function round(base: i32[], i: i32): i32 {
@@ -121,14 +88,6 @@ function main(): i32 { let b: i32[] = [7, 8, 9]; let t: i32 = 0; let i: i32 = 0;
 	}
 }
 
-// TestSelfHostStrArrSlotKeyX86_64 — each string[] binding resolves the credit its
-// own binding earned.
-//
-// The exit code is the essential assertion: an over-release does not move
-// live_bytes, so `__rc_underflow_count()` is the only thing that separates a correct
-// compiler from one that frees a live buffer. `fresh_only` carries the opposite
-// direction — it balances exactly, so a site key resolving to no credit fails
-// there instead of passing quietly.
 func TestSelfHostStrArrSlotKeyX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -168,9 +127,6 @@ func TestSelfHostStrArrSlotKeyX86_64(t *testing.T) {
 		})
 	}
 
-	// The rename is the proof. param_rename never collided (distinct names) and was
-	// correct before this change; param_alias differs from it by one identifier. If
-	// the fix is right they are now indistinguishable.
 	if a, b := summaries["param_alias"], summaries["param_rename"]; a != "" && b != "" && a != b {
 		t.Errorf("param_alias and param_rename must measure identically once the credit "+
 			"is keyed on the binding — the programs differ only by one identifier:\n"+
@@ -178,8 +134,6 @@ func TestSelfHostStrArrSlotKeyX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrArrSlotKeyWasmIR — the wasm sibling. Exit codes only: an
-// over-release moves no byte count on any backend, so the code is the whole signal.
 func TestSelfHostStrArrSlotKeyWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping string[] slot-key wasm IR e2e")
@@ -218,7 +172,6 @@ func TestSelfHostStrArrSlotKeyWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrArrSlotKeyIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostStrArrSlotKeyIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

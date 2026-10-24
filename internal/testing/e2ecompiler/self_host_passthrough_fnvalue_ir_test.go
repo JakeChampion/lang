@@ -8,23 +8,6 @@ import (
 	"testing"
 )
 
-// passthroughFnValueCases exercise a fn value handed to a generic PASSTHROUGH
-// — a function that declares a parameter with its own return type, so it gives
-// the value straight back (`id[T](x: T): T`, `pick[T](c: boolean, a: T, b: T): T`).
-//
-// The lift boxes a fn value at such a parameter unconditionally: the callee's
-// type is erased, so it cannot call the value, and boxing is what lets the
-// result be dispatched env-first. The CALL's result is therefore a box too, and
-// the read side must treat it as one. An array holding `id(<lambda>)` beside a
-// plain lambda element must not end up with two representations under one
-// binding — a bare fn pointer and an env box — or `xs[i](…)` SIGSEGVs.
-//
-// nocapture-array shows capture is not the discriminator: no lambda in it
-// captures anything, and the boxing at the passthrough parameter does not
-// depend on captures either.
-//
-// tuple-elem-passthrough is a guard: the tuple path boxes EVERY fn-valued
-// element.
 var passthroughFnValueCases = []struct {
 	name string
 	src  string
@@ -32,16 +15,12 @@ var passthroughFnValueCases = []struct {
 }{
 	{"array-elem-pick-capturing", `function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; } function main(): i32 { let p: i32 = 5i32; let xs: ((i32) => i32)[] = [((z: i32) => z), pick(true, ((x: i32) => (x + p)), ((y: i32) => y))]; return xs[1i32](1i32) & 63i32; }`, 6},
 	{"array-elem-id-capturing", `function id[T](x: T): T { return x; } function main(): i32 { let p: i32 = 5i32; let xs: ((i32) => i32)[] = [((z: i32) => z), id(((x: i32) => (x + p)))]; return xs[1i32](1i32) & 63i32; }`, 6},
-	// The passthrough element FIRST: the array's classification reads element 0,
-	// so this is the path through the new marker rather than through a boxed
-	// sibling.
 	{"array-elem-pick-first", `function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; } function main(): i32 { let p: i32 = 5i32; let xs: ((i32) => i32)[] = [pick(true, ((x: i32) => (x + p)), ((y: i32) => y)), ((z: i32) => z)]; return (xs[0i32](1i32) + xs[1i32](2i32)) & 63i32; }`, 8},
 	{"array-elem-id-nocapture", `function id[T](x: T): T { return x; } function main(): i32 { let xs: ((i32) => i32)[] = [((z: i32) => (z + 1i32)), id(((x: i32) => (x + 2i32)))]; return (xs[0i32](1i32) + xs[1i32](1i32)) & 63i32; }`, 5},
 	{"struct-field-id-capturing", `function id[T](x: T): T { return x; } struct H { f: (i32) => i32 } function main(): i32 { let p: i32 = 5i32; let h: H = H { f: id(((x: i32) => (x + p))) }; return h.f(1i32) & 63i32; }`, 6},
 	{"tuple-elem-passthrough", `function id[T](x: T): T { return x; } function main(): i32 { let p: i32 = 5i32; let t: ((i32) => i32, i32) = (id(((x: i32) => (x + p))), 2i32); return t.0(1i32) & 63i32; }`, 6},
 }
 
-// TestSelfHostPassthroughFnValueIRX86_64 — the x86-64 IR path (asm_ir_run).
 func TestSelfHostPassthroughFnValueIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -69,8 +48,6 @@ func TestSelfHostPassthroughFnValueIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostPassthroughFnValueIRArm64 — the arm64 IR path, the one where the
-// self-host compiler produces the finished binary itself.
 func TestSelfHostPassthroughFnValueIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -94,8 +71,6 @@ func TestSelfHostPassthroughFnValueIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostPassthroughFnValueWasmIR — the wasm leg. The lift and the marker
-// live in the lowering, which every backend shares.
 func TestSelfHostPassthroughFnValueWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host passthrough fn-value wasm IR e2e")

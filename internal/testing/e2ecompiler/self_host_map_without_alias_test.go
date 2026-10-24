@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// `m.remove(k)` on a map an alias still reads deletes from a copy, so the
-// alias keeps every entry, as on native and the interpreter (#9835). The alias
-// may be bound before the delete, through either name, or later in an
-// enclosing loop.
 var mapWithoutAliasCases = []struct {
 	name string
 	src  string
@@ -100,8 +96,6 @@ function main(): i32 {
 `, 74},
 }
 
-// mapWithoutUnaliased deletes from a map nothing else names, which stays in
-// place: the delete allocates nothing.
 const mapWithoutUnaliased = `import "core/map";
 function main(): i32 {
     let m: Map[i32, i32] = map_new(8);
@@ -169,9 +163,6 @@ func TestSelfHostMapWithoutAliasWasm(t *testing.T) {
 	})
 }
 
-// assertRemoveAllocatesNothing compares mapWithoutUnaliased against the same
-// program with the delete taken out: a copy of the map would add its box and
-// columns.
 func assertRemoveAllocatesNothing(t *testing.T, allocs func(string, int) int64) {
 	t.Helper()
 	const removal = "let rest = m.remove(2);"
@@ -186,7 +177,6 @@ func assertRemoveAllocatesNothing(t *testing.T, allocs func(string, int) int64) 
 	}
 }
 
-// assertNoSanitizerFault fails on any sanitizer report but a leak.
 func assertNoSanitizerFault(t *testing.T, stderr string) {
 	t.Helper()
 	for _, line := range strings.Split(stderr, "\n") {
@@ -196,7 +186,6 @@ func assertNoSanitizerFault(t *testing.T, stderr string) {
 	}
 }
 
-// censusAllocs reads the allocation count off a run's leakcheck summary.
 func censusAllocs(t *testing.T, stderr string) int64 {
 	t.Helper()
 	var allocs, frees, live int64

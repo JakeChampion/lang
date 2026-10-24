@@ -2,16 +2,6 @@ package e2e
 
 import "testing"
 
-// A consuming match over an `own` enum parameter moves each pointer payload
-// into its arm binding and frees the box shallow, so the binding is the
-// payload's owner (#10872). Before, nothing released it, so the array `len`
-// and `len_guarded` bind and the struct `keep` returns leaked per call, and
-// so did the array of a box the caller still shares. `inc` is the
-// reuse-paired traversal, whose bindings move into the rebuilt list.
-// `len_guarded` runs both ways round: a guard that fails falls through to the
-// next arm, and one that holds left the box and its array unreleased by any
-// path (#10943) — returning, handing the binding back, or falling out of the
-// match.
 const ownParamPayloadSrc = `enum Box { Arr(i32[]), Nil }
 enum List { Cons(i32, List), Nil2 }
 struct P { xs: i32[], n: i32 }

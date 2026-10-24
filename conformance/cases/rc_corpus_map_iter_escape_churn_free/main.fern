@@ -1,17 +1,17 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Map iteration (for (k,v) in m / m.iter()) borrows entries from
-// the live buffer rather than snapshotting — __mapiter_key/value
-// hand out the raw stored pointer (value retained only for
-// array-valued maps). The regression-prone surface is a borrowed
-// key/value ESCAPING the loop into a container that outlives the
-// map: the rc pass must retain it at the store site, else the
-// container holds a borrowed ref the map's drop double-frees.
-// Exercises string keys + scalar values escaping via for-kv, and
-// array values escaping via the explicit iterator. Per iter:
-// keys_acc.len()=2 + vsum(10+20)=30 + outer[0][0]=100 = 132;
-// 500x → 66000.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 import "std/string";

@@ -7,18 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/tables/strerror"
 )
 
-// NetAddrProbe exercises std/net's address and error layer: IPv4 and IPv6
-// parsing against RFC 4291 text, RFC 5952 canonical rendering, the
-// bracketed socket-address form, the range predicates, IPv4-mapped
-// unwrapping, and the errno translation on every target: a `NetError`
-// answers in Linux numbering whatever the target numbers its errnos. Each
-// check prints its index and exits 1 on the first failure; 42 means every
-// check held.
-//
-// `NetError.Interrupted` and `NetError.Other` share their names with
-// `IoError`'s variants and user code has no spelling that names the
-// `std/net` ones (#10430), so the probe reaches them through
-// `error_from_host` and matches them unqualified on a typed scrutinee.
 func NetAddrProbe() string {
 	var src strings.Builder
 	src.WriteString(`import "std/net";
@@ -110,7 +98,6 @@ function main(): i32 {
 		index++
 		fmt.Fprintf(&src, "    if (!(%s)) { print(%q); return 1; }\n", cond, fmt.Sprint(index))
 	}
-	// IPv4.
 	check(`net.ipv4(1, 2, 3, 4).to_string() == "1.2.3.4"`)
 	check(`net.ipv4(256, 511, -1, 0).to_string() == "0.255.255.0"`)
 	check(`v4rt("192.168.0.1", "192.168.0.1")`)
@@ -121,7 +108,6 @@ function main(): i32 {
 	for _, bad := range []string{"", "1.2.3", "1.2.3.4.5", "01.2.3.4", "1.2.3.04", "256.1.1.1", "1.2.3.a", "1..2.3", ".1.2.3", "1.2.3.4.", "+1.2.3.4", "1.2.3.4 ", "0x1.2.3.4", "1.2.3.1000", "1.2.3.", "...", "1.2.3.00", "1.2.3.0001", "1.2.3.299", "1.2.3.-1", "1.2.3.4/8"} {
 		check(fmt.Sprintf("v4bad(%q)", bad))
 	}
-	// IPv6 text in, RFC 5952 text out.
 	for _, rt := range [][2]string{
 		{"::1", "::1"},
 		{"::", "::"},
@@ -156,7 +142,6 @@ function main(): i32 {
 	check(`ip("1.2.3.4").packed_v4().unwrap_or(0) == 1 + (2 << 8) + (3 << 16) + (4 << 24)`)
 	check(`ip("127.0.0.1").packed_v4().unwrap_or(0) == 127 + (1 << 24)`)
 	check(`ip("::1").packed_v4().is_none()`)
-	// Socket addresses.
 	for _, rt := range [][2]string{
 		{"127.0.0.1:8080", "127.0.0.1:8080"},
 		{"0.0.0.0:0", "0.0.0.0:0"},
@@ -175,7 +160,6 @@ function main(): i32 {
 	check(`net.socket_addr(net.ipv4_unspecified(), 80).eq(net.socket_addr_parse("0.0.0.0:80").unwrap_or(net.socket_addr(net.ipv6_unspecified(), 80)))`)
 	check(`!net.socket_addr(net.ipv4_loopback(), 80).eq(net.socket_addr(net.ipv4_loopback(), 81))`)
 	check(`!net.socket_addr(net.ipv4_loopback(), 80).eq(net.socket_addr(net.ipv6_loopback(), 80))`)
-	// Predicates.
 	check(`net.ipv4_unspecified().is_unspecified() && net.ipv6_unspecified().is_unspecified()`)
 	check(`!ip("0.0.0.1").is_unspecified() && !ip("::1").is_unspecified()`)
 	check(`net.ipv4_loopback().is_loopback() && net.ipv6_loopback().is_loopback()`)
@@ -193,7 +177,6 @@ function main(): i32 {
 	check(`ip("::ffff:127.0.0.1").to_canonical().is_loopback()`)
 	check(`ip("2001:db8::1").to_canonical().to_string() == "2001:db8::1"`)
 	check(`ip("10.0.0.1").to_canonical().to_string() == "10.0.0.1"`)
-	// Equality and the trait adoptions.
 	check(`net.ipv4(1, 2, 3, 4).eq(ip("1.2.3.4"))`)
 	check(`!net.ipv4(1, 2, 3, 4).eq(ip("1.2.3.5"))`)
 	check(`!ip("::ffff:1.2.3.4").eq(ip("1.2.3.4"))`)
@@ -204,16 +187,12 @@ function main(): i32 {
 	check(`net.ipv6([0 as u8, 1 as u8]).is_none()`)
 	check(`net.ipv6(net.ipv6_loopback().bytes()).is_some()`)
 	check(`net.ipv6_loopback().bytes().len() == 16 && net.ipv4_loopback().bytes().len() == 4`)
-	// Errors: every named variant round-trips through the errno this target
-	// numbers it, in both signs.
 	for _, v := range []string{"addr_in_use", "addr_not_available", "refused", "reset", "aborted", "timed_out", "would_block", "in_progress", "net_unreach", "host_unreach"} {
 		check(fmt.Sprintf("roundtrips(%s)", v))
 	}
 	check(`is_interrupted(intr()) && roundtrips(intr())`)
 	check(`!is_other(addr_in_use, 12345) && !is_interrupted(addr_in_use)`)
 	check(`net.error_from_host(0).errno() == 0`)
-	// An errno the strerror table does not name keeps its number where the
-	// target numbers as Linux does, and carries 0 elsewhere.
 	check(`!linux_numbered() || (is_other(other_a, 12345) && is_other(other_b, 12345) && !is_other(other_c, 12345))`)
 	check(`!linux_numbered() || (other_b.errno() == 12345 && show(other_a) == "Network error (errno 12345)")`)
 	check(`!linux_numbered() || (is_other(net.error_from_host(0 - 2147483647 - 1), 2147483647) && roundtrips(net.error_from_host(0 - 2147483647 - 1)))`)
@@ -226,11 +205,8 @@ function main(): i32 {
 	check(`describe(host_unreach) == "No route to host"`)
 	check(`intr().message() == "Interrupted system call"`)
 	check(`same(timed_out, timed_out)`)
-	// The numbering is Linux's on every target, so std/errno's constants
-	// compare equal.
 	check(`addr_in_use.errno() == errno.EADDRINUSE && would_block.errno() == errno.EAGAIN && intr().errno() == errno.EINTR && refused.errno() == errno.ECONNREFUSED`)
 	check(`addr_in_use.errno() == 98 && would_block.errno() == 11 && intr().errno() == 4 && reset.errno() == 104`)
-	// errno.from_host reads every row of the table as this target numbers it.
 	for _, e := range strerror.Table {
 		if e.Linux == 0 {
 			continue

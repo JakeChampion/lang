@@ -15,70 +15,6 @@ import (
 	"testing"
 )
 
-// cp(1) writes almost nothing to stdout, so nearly every case here is
-// about the TREE the two implementations leave behind: which names exist,
-// what mode each carries, which of them share an inode, what a symbolic
-// link holds, and — for the sparse cases — how many blocks a file
-// actually occupies. `seedTree` gives each side its own freshly built
-// working directory and compares everything under it, so a stray
-// temporary name fails as loudly as a file that was never copied.
-//
-// Six things this corpus is mostly about, each one a behaviour the
-// documentation does not give and a differential against the reference
-// binary does:
-//
-//   - `-r` implies `-P` for the COMMAND LINE too, not just for the tree.
-//     `cp sl out` follows a symbolic link and `cp -r sl out` copies the
-//     link itself; `-H` is how the command-line-only reading is asked
-//     for outright. cpLinks covers all four spellings both ways.
-//   - the entry list is snapshotted BEFORE the destination is created.
-//     `cp -r d d` makes `d/d` inside the directory being walked, and a
-//     list read afterwards would hand the walk its own destination.
-//   - copying a directory into itself REPORTS and CONTINUES: exit 1,
-//     with `d/d` created and filled from that snapshot.
-//   - a fresh destination takes the source's mode through the umask; an
-//     EXISTING one keeps its own, because the file is truncated in place
-//     rather than recreated. `-p` sets the source's mode verbatim on
-//     both. cpModes is the fixture where the two differ visibly.
-//   - `--strip-trailing-slashes` reaches only the forms that derive a
-//     name from the source's basename: the direct two-operand form keeps
-//     `ff/` and still reports `cannot stat 'ff/'`.
-//   - `-b` with `-n` is not a conflict here, unlike `mv`: only the `-n`
-//     warning appears and the status stays 0.
-//
-// Two traps this corpus is shaped around:
-//
-//   - `cp FIFO dest` with no writer BLOCKS FOREVER, on both sides. Every
-//     case with a FIFO source is under `-r`/`-R`, which recreates the
-//     FIFO instead of reading it. `--copy-contents` reads it even under
-//     `-r`, so that option has no FIFO case at all — a `timeout` would
-//     make it a comparison of two killed processes rather than of two
-//     answers.
-//   - the suite runs as root here, so every permission-denied path (`-f`
-//     over a mode-000 file, an unreadable source, an unwritable
-//     directory) succeeds on both sides and proves nothing. There are no
-//     such cases: one would look like coverage while testing nothing.
-//
-//     `-f`'s unlink-and-retry is the casualty. It IS implemented and it
-//     was verified by hand against GNU 9.4 on an immutable file (`chattr
-//     +i`), the one unopenable-but-present destination a root-run suite
-//     can build: without `-f` the answer is `cannot create regular file
-//     'im': Operation not permitted` and with it the answer moves to
-//     `cannot remove 'im': Operation not permitted`. That is left OUT of
-//     the corpus rather than in it, because `chattr` needs both
-//     CAP_LINUX_IMMUTABLE and a filesystem that supports the flag, and a
-//     case that quietly does something else on overlayfs is worse than
-//     an absent one. The dangling-symlink destination below is the part
-//     of the family that IS reachable, so it is covered.
-//
-// `--debug`'s report line names GNU's own copy_file_range offload, which
-// this copy does not use, so no corpus case copies under `--debug`:
-// TestCpDebug holds the rest of the output to GNU's and pins the report
-// line to ours. docs/COREUTILS.md has the reasoning.
-
-// cpBasic is the main fixture: two plain files with different modes, a
-// directory with a nested one inside it, an empty directory to copy
-// into, a symbolic link to a file, a dangling one, and a hard-link pair.
 func cpBasic(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "f1", "hello\n")
@@ -95,17 +31,11 @@ func cpBasic(t *testing.T, dir string) {
 	seedHardlink(t, dir, "f1", "hard")
 }
 
-// cpOne is one file and nothing else — the fixture for the operand-count
-// diagnostics, where anything more would be noise.
 func cpOne(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "f1", "hello\n")
 }
 
-// cpSelf is the copy-a-directory-into-itself fixture, in the three
-// shapes that answer differently: an empty directory, one holding a
-// file, and one that already holds a `d` of its own. What separates them
-// is the entry list, which is read before the destination exists.
 func cpSelf(t *testing.T, dir string) {
 	t.Helper()
 	seedMkdir(t, dir, "empty")
@@ -114,9 +44,6 @@ func cpSelf(t *testing.T, dir string) {
 	seedMkdir(t, dir, "taken/taken")
 }
 
-// cpLinks is the dereference fixture: a link to a file and a link to a
-// directory, both named on the command line, plus links INSIDE a tree so
-// the command-line rule and the recursion rule can be told apart.
 func cpLinks(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "f1", "hello\n")
@@ -129,10 +56,6 @@ func cpLinks(t *testing.T, dir string) {
 	seedSymlink(t, dir, "tree", "dl")
 }
 
-// cpModes is the mode fixture. `src` is 0777 so the umask has something
-// to filter, `plain` is the fresh destination's name, and `taken` is an
-// existing destination at 0700 — which keeps its own mode unless `-p`
-// says otherwise. The directory is 0777 for the same reason.
 func cpModes(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "src", "S\n")
@@ -148,8 +71,6 @@ func cpModes(t *testing.T, dir string) {
 	if err := os.Chmod(filepath.Join(dir, "sd"), 0o777); err != nil {
 		t.Fatalf("chmod sd: %v", err)
 	}
-	// An EXISTING directory destination, at a mode the source's would
-	// overwrite if the copy wrongly chmodded it.
 	seedMkdir(t, dir, "sdtaken")
 	if err := os.Chmod(filepath.Join(dir, "sdtaken"), 0o700); err != nil {
 		t.Fatalf("chmod sdtaken: %v", err)
@@ -157,10 +78,6 @@ func cpModes(t *testing.T, dir string) {
 	seedTouch(t, dir, "src", 1400000000, 123456789)
 }
 
-// cpUpdate is the -u / --update fixture: `old` is a day older than
-// `dest`, `new` a day newer, and `same` shares its timestamp to the
-// nanosecond — which is the resolution the comparison actually runs at,
-// so `same` is what separates "not newer" from "older".
 func cpUpdate(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "old", "OLD\n")
@@ -173,8 +90,6 @@ func cpUpdate(t *testing.T, dir string) {
 	seedTouch(t, dir, "same", 1500000000, 200000000)
 }
 
-// cpBackup is the backup fixture: a source, an occupied destination, and
-// the neighbours the control picks between.
 func cpBackup(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "a", "A\n")
@@ -189,11 +104,6 @@ func cpBackupTaken(t *testing.T, dir string) {
 	seedWrite(t, dir, "b.~2~", "TWO\n")
 }
 
-// cpSparse is the hole fixture: a 1 MiB file whose only data is three
-// bytes at the very end, so the whole of it but the last block is a
-// hole. It is the shape that separates the three `--sparse` modes, and
-// the one that caught a copy punching holes at the READ size rather than
-// the filesystem's block size: 256 blocks where GNU's costs 8.
 func cpSparse(t *testing.T, dir string) {
 	t.Helper()
 	path := filepath.Join(dir, "sp")
@@ -210,12 +120,7 @@ func cpSparse(t *testing.T, dir string) {
 	if err := f.Close(); err != nil {
 		t.Fatalf("close sp: %v", err)
 	}
-	// A dense file of the same length, so a copy that made everything
-	// sparse would fail here rather than pass everywhere.
 	seedWrite(t, dir, "dense", "abcdefghij")
-	// Zeros that were WRITTEN, between two blocks of data and ahead of a
-	// hole: `--sparse=auto` copies a data run as it stands, so only
-	// `always` turns those zeros into a hole.
 	mixed, err := os.Create(filepath.Join(dir, "mixed"))
 	if err != nil {
 		t.Fatalf("create mixed: %v", err)
@@ -235,9 +140,6 @@ func cpSparse(t *testing.T, dir string) {
 	}
 }
 
-// cpGroup is the hard-link fixture: one inode under two names inside a
-// directory, which is what `--preserve=links` reproduces and what its
-// absence splits into two files.
 func cpGroup(t *testing.T, dir string) {
 	t.Helper()
 	seedMkdir(t, dir, "lk")
@@ -248,9 +150,6 @@ func cpGroup(t *testing.T, dir string) {
 	seedMkdir(t, dir, "d2")
 }
 
-// cpFifo is the special-file fixture. Every case using it passes -r or
-// -R: a plain `cp fifo out` blocks forever on both sides, with no writer
-// to end the read.
 func cpFifo(t *testing.T, dir string) {
 	t.Helper()
 	seedFifo(t, filepath.Join(dir, "fifo"))
@@ -260,8 +159,6 @@ func cpFifo(t *testing.T, dir string) {
 	seedWrite(t, dir, "hold/plain", "P\n")
 }
 
-// cpSlash is the trailing-slash fixture: a directory and a plain file, so
-// the same `x/` reads as a directory on one and as ENOTDIR on the other.
 func cpSlash(t *testing.T, dir string) {
 	t.Helper()
 	seedMkdir(t, dir, "d1/sub")
@@ -275,32 +172,11 @@ func init() {
 	registerCorpus("cp", cpCases)
 }
 
-// cpWalk is the fixture for the destination-inside-the-source shapes and
-// for the rule that a directory's `-v` line belongs to its CREATION.
-//
-// Every directory in it holds at most ONE entry, and that is the whole
-// design. A recursive copy visits entries in ascending inode order, which
-// two fresh working directories do not reproduce, so a case whose source
-// directory holds two entries is not well posed: `cp -r full full` copies
-// `full/x` when the destination it just made sorts after it and copies
-// nothing when it sorts before, and GNU is no more reproducible about that
-// than this implementation. With one entry per directory there is no order
-// to disagree about.
-//
-// The order rule itself, and the abort shapes that need a populated tree,
-// are pinned by TestCpWalkOrder and TestCpIntoItself, which run both
-// implementations against one source tree and account for the destination
-// inode allocated by each run.
 func cpWalk(t *testing.T, dir string) {
 	t.Helper()
-	// A chain: one entry per level, so the walk order is forced.
 	seedMkdir(t, dir, "chain/sub")
 	seedWrite(t, dir, "chain/sub/leaf", "l\n")
-	// An EMPTY directory to copy into: the destination made inside it is
-	// then the only entry its walk sees, so the abort lands in one place.
 	seedMkdir(t, dir, "nest/hole")
-	// Two `-T` destinations: one empty, so every directory under it is
-	// created, and one already holding `sub`, so that one is not.
 	seedMkdir(t, dir, "empty")
 	seedMkdir(t, dir, "part/sub")
 	seedWrite(t, dir, "part/sub/old", "o\n")
@@ -310,7 +186,6 @@ func cpCases(t *testing.T) []invocation {
 	t.Helper()
 	var out []invocation
 
-	// The operand-count and shape diagnostics.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -328,9 +203,6 @@ func cpCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpOne})
 	}
 
-	// The getopt surface: the ambiguity lists, which print their
-	// candidates in the option table's declaration order, plus the
-	// unknown spellings.
 	for _, pre := range []string{"--a", "--c", "--co", "--d", "--n", "--no", "--p", "--r", "--re", "--s", "--v", "--ver", "--zzz", "--x", "--Z"} {
 		out = append(out, invocation{name: "prefix" + pre, args: []string{pre, "f1", "out"}, seedTree: cpBasic})
 	}
@@ -341,10 +213,6 @@ func cpCases(t *testing.T) []invocation {
 		invocation{name: "prefix-unique-strip", args: []string{"--st", "f1", "out"}, seedTree: cpBasic},
 	)
 
-	// The rejected argument lists, each printed in its own order —
-	// `--reflink`'s is auto/always/never where `--sparse`'s is
-	// never/auto/always, and the backup control's names itself
-	// `backup type` rather than the option.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -364,7 +232,6 @@ func cpCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpBasic})
 	}
 
-	// The plain copies, and the three operand shapes.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -402,9 +269,6 @@ func cpCases(t *testing.T) []invocation {
 		{"attributes-only-new", []string{"--attributes-only", "f1", "out"}},
 		{"attributes-only-existing", []string{"--attributes-only", "f1", "f2"}},
 		{"remove-destination", []string{"--remove-destination", "f1", "f2"}},
-		// `-v` is the point of these two: the removal ANNOUNCES itself,
-		// and `-f`'s does not. Without them the corpus sees the same
-		// tree either way and the line is invisible.
 		{"remove-destination-verbose", []string{"-v", "--remove-destination", "f1", "f2"}},
 		{"remove-destination-verbose-new", []string{"-v", "--remove-destination", "f1", "out"}},
 		{"force-verbose", []string{"-v", "-f", "f1", "f2"}},
@@ -416,14 +280,6 @@ func cpCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpBasic})
 	}
 
-	// Copying a directory into itself: reported, and still copied.
-	//
-	// Only the shapes whose walk has nothing to disagree about. `-r full
-	// full`, where `full` holds a file AND the destination just made
-	// beside it, is not one: whether `full/x` is copied depends on which
-	// of the two got the lower inode, and GNU is no more reproducible
-	// about that than this implementation. TestCpIntoItself covers the
-	// populated shapes by running both sides against one tree.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -437,7 +293,6 @@ func cpCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpSelf})
 	}
 
-	// The dereference rules, in every spelling and both positions.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -466,32 +321,18 @@ func cpCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpLinks})
 	}
 
-	// Modes and timestamps. A fresh destination takes the source's mode
-	// through the umask; an existing one keeps its own.
 	for _, c := range []struct {
 		name string
 		args []string
 	}{
 		{"mode-fresh", []string{"src", "plain"}},
 		{"mode-existing", []string{"src", "taken"}},
-		// The EXISTING-destination half of each --preserve. These are the
-		// shape that caught an unconditional chmod: a caller that had just
-		// decided not to preserve the mode still passed the source's bits
-		// to apply_attrs, so `--preserve=timestamps src taken` re-moded
-		// `taken` from 0700 to the source's 0644. Every case above this
-		// used the fresh destination, which is why a green run missed it.
 		{"mode-existing-preserve-timestamps", []string{"--preserve=timestamps", "src", "taken"}},
 		{"mode-existing-preserve-ownership", []string{"--preserve=ownership", "src", "taken"}},
 		{"mode-existing-preserve-mode", []string{"--preserve=mode", "src", "taken"}},
 		{"mode-existing-preserve-all", []string{"--preserve=all", "src", "taken"}},
 		{"mode-existing-attributes-only", []string{"--attributes-only", "src", "taken"}},
 		{"mode-existing-attributes-only-p", []string{"--attributes-only", "-p", "src", "taken"}},
-		// -T is what makes the existing DIRECTORY the destination rather
-		// than its parent: without it `cp -r sd sdtaken` is the
-		// into-a-directory form and never reaches copy_dir's
-		// existing-destination branch at all. Measured — GNU leaves
-		// `sdtaken` at 0700 under both plain and --preserve=timestamps,
-		// and moves it to the source's 0777 only under -p.
 		{"mode-dir-existing-timestamps", []string{"-rT", "--preserve=timestamps", "sd", "sdtaken"}},
 		{"mode-dir-existing-plain", []string{"-rT", "sd", "sdtaken"}},
 		{"mode-dir-existing-p", []string{"-rT", "-p", "sd", "sdtaken"}},
@@ -513,8 +354,6 @@ func cpCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpModes})
 	}
 
-	// -i, -n and --update. The answers are fed on stdin; declining an
-	// -i prompt exits 1, which is the case the corpus is here to pin.
 	for _, c := range []struct {
 		name  string
 		args  []string
@@ -563,7 +402,6 @@ func cpCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpUpdate})
 	}
 
-	// Backups, and the environment that names the control.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -603,9 +441,6 @@ func cpCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpBackupTaken})
 	}
 
-	// Sparse files. These are the only cases that put the block count
-	// into the comparison, and without it the three modes are
-	// indistinguishable.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -632,7 +467,6 @@ func cpCases(t *testing.T) []invocation {
 		out = append(out, inv)
 	}
 
-	// Hard-link structure, with and without --preserve=links.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -648,8 +482,6 @@ func cpCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpGroup})
 	}
 
-	// Special files. Every case is recursive: a plain copy of a FIFO
-	// never returns.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -663,7 +495,6 @@ func cpCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpFifo})
 	}
 
-	// --parents, and the trailing-slash rules.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -688,10 +519,6 @@ func cpCases(t *testing.T) []invocation {
 		{"strip-target-directory", []string{"--strip-trailing-slashes", "-t", "dst", "ff/"}},
 		{"no-strip-target-directory", []string{"-t", "dst", "ff/"}},
 		{"slash-missing-source", []string{"-r", "nosuch/", "dst"}},
-		// A destination that is a symlink to something missing is its own
-		// refusal — `not writing through dangling symlink` — and `-f` does
-		// NOT override it. Reachable as root, unlike the rest of the
-		// unopenable-destination family.
 		{"dangling-dest", []string{"ff", "dangledest"}},
 		{"dangling-dest-force", []string{"-f", "ff", "dangledest"}},
 		{"dangling-dest-remove-destination", []string{"--remove-destination", "ff", "dangledest"}},
@@ -700,9 +527,6 @@ func cpCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpSlash})
 	}
 
-	// --reflink. Both sides clone where the filesystem can (APFS, btrfs,
-	// XFS) and report the same failure under `always` where it cannot
-	// (ext4, overlayfs).
 	for _, c := range []struct {
 		name string
 		args []string
@@ -716,11 +540,6 @@ func cpCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpBasic})
 	}
 
-	// Every recursive row that names MORE THAN ONE entry of a directory
-	// on either stream — the `-v` lines, and the per-entry refusals of a
-	// `--reflink=always` that cannot clone or a `-s` whose relative
-	// target does not resolve. Their lines are the comparison and their
-	// order is the filesystem's. See invocation.unordered.
 	for _, c := range []struct {
 		name    string
 		args    []string
@@ -736,9 +555,6 @@ func cpCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: c.fixture, unordered: true})
 	}
 
-	// The destination inside the source, and the rule that a directory's
-	// `-v` line is its creation's. One entry per directory throughout, so
-	// nothing here depends on the walk order — see cpWalk.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -755,16 +571,6 @@ func cpCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpWalk})
 	}
 
-	// The ORDER of the two streams, which every case above is blind to:
-	// they compare stdout and stderr separately, so a `-v` line and a
-	// diagnostic can be individually right and still reach a terminal the
-	// wrong way round. gnulib's error() flushes stdout first, so the line
-	// describing a copy always precedes a later failure; a utility that
-	// buffered its own stdout and flushed at exit prints them inverted.
-	//
-	// `merged` is what sees it. The failure-then-success row is here on
-	// purpose: without it the whole block would pass on an implementation
-	// that simply wrote every verbose line before every diagnostic.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -778,12 +584,6 @@ func cpCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpBasic, merged: true})
 	}
 
-	// The same question for a recursive copy and for the into-itself
-	// diagnostic, which arrives after the whole operand rather than
-	// before it. On cpWalk rather than cpBasic: `unordered` is no help to
-	// a merged stream — sorting its lines destroys the very order the
-	// case is about — so these need a tree with nothing to disagree
-	// about, which is one entry per directory.
 	for _, c := range []struct {
 		name string
 		args []string
@@ -814,9 +614,6 @@ func TestCpHelpVersion(t *testing.T) {
 	requireVersion(t, "cp", []string{"-p", "--version", "-r"}, 0)
 }
 
-// runCpIn runs one cp invocation in `dir` with its two streams merged, and
-// returns what it printed. argv[0] is spelled `cp` for both binaries, so a
-// diagnostic's program-name prefix compares directly.
 func runCpIn(t *testing.T, bin, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
@@ -835,8 +632,6 @@ func runCpIn(t *testing.T, bin, dir string, args ...string) string {
 	return fmt.Sprintf("exit %d\n%s", exit, out)
 }
 
-// cp of a /proc file carries what reading it gives, though its size is 0 and
-// an older kernel's copy_file_range answers 0 for it.
 func TestCpProcFile(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("/proc is Linux's")
@@ -858,10 +653,6 @@ func TestCpProcFile(t *testing.T) {
 	}
 }
 
-// inodeOrder lists the entries of `dir` by ascending inode, which is the
-// order a recursive copy visits them in. Read from the tree itself rather
-// than assumed from the seeding order: an inode is reused after a delete,
-// so "created later" does not mean "numbered higher".
 func inodeOrder(t *testing.T, dir string) []string {
 	t.Helper()
 	des, err := os.ReadDir(dir)
@@ -892,11 +683,6 @@ func inodeOrder(t *testing.T, dir string) []string {
 	return names
 }
 
-// readdirOrder lists the entries of `dir` as the filesystem hands them
-// back, which is the order the removal half of a cross-device move walks
-// in. Reproducible between two directories holding the same names — the
-// filesystem derives it from the names and its own seed — and, on a tree
-// built to make it so, NOT the ascending-inode order the copy half uses.
 func readdirOrder(t *testing.T, dir string) []string {
 	t.Helper()
 	f, err := os.Open(dir)
@@ -911,25 +697,6 @@ func readdirOrder(t *testing.T, dir string) []string {
 	return names
 }
 
-// seedWalkOrderTree builds a directory whose ascending-INODE order is
-// none of the orders it could be confused with: not the names sorted, not
-// the filesystem's readdir order, and not the order the entries were
-// created in.
-//
-// That last one is why it recycles inodes rather than just scrambling
-// names. A filesystem that indexes directories hashes readdir order away
-// from creation order on its own, but one that does not — ext4 with
-// dir_index off, and whatever pullfrog's runner gave a five-entry
-// directory on #9319 — hands back creation order, and there inode order
-// and readdir order coincide however the names are chosen. Making a
-// batch, deleting half of it and then creating the replacements puts the
-// LATE entries on the freed low inodes, so inode order disagrees with
-// creation order by construction and the two walks stay distinguishable
-// either way. APFS never recycles an inode, so there the replacements come
-// LAST in inode order instead; their names alternate between sorting before
-// the survivors and after them, so the inode order is unsorted either way.
-//
-// Returns the names it left behind, all of them directly under `dir`.
 func seedWalkOrderTree(t *testing.T, dir string) []string {
 	t.Helper()
 	var filler []string
@@ -937,8 +704,6 @@ func seedWalkOrderTree(t *testing.T, dir string) []string {
 		filler = append(filler, fmt.Sprintf("f%02d", i))
 	}
 	for i, n := range filler {
-		// Two of them are directories, so "directories first" is ruled
-		// out as well — one early in the batch and one late.
 		if i == 2 || i == 9 {
 			seedMkdir(t, dir, n)
 			seedWrite(t, dir, n+"/inner", "i\n")
@@ -968,11 +733,6 @@ func seedWalkOrderTree(t *testing.T, dir string) []string {
 	return kept
 }
 
-// requireDistinctOrders fails when the tree cannot tell the two walks
-// apart. A filesystem that returned its entries in inode order would
-// leave an implementation that walked either way passing, so this is a
-// fault in the fixture's reach on that host rather than something to
-// skip past.
 func requireDistinctOrders(t *testing.T, dir string, byInode, byReaddir []string) {
 	t.Helper()
 	if strings.Join(byInode, "\x00") == strings.Join(byReaddir, "\x00") {
@@ -983,17 +743,6 @@ func requireDistinctOrders(t *testing.T, dir string, byInode, byReaddir []string
 	}
 }
 
-// TestCpWalkOrder pins the order a recursive copy visits a directory's
-// entries in: ascending INODE, which is neither readdir order nor the
-// names sorted nor directories first.
-//
-// It is not a corpus case because a corpus case cannot see it. The two
-// sides there each get their own working directory and inode numbers are
-// not reproducible between two of them, so a `cp -rv` naming several
-// entries compares unequal for reasons that are not the utility's. Here
-// both binaries run against ONE source tree — GNU first, then its output
-// removed, then ours — so they see the same inodes, and the expected
-// order is computed from that tree rather than assumed.
 func TestCpWalkOrder(t *testing.T) {
 	gnu := referenceBin(t, "cp")
 	ours := fernBin(t, "cp")
@@ -1004,10 +753,6 @@ func TestCpWalkOrder(t *testing.T) {
 
 	srcDir := filepath.Join(dir, "src")
 	want := inodeOrder(t, srcDir)
-	// Ruling out readdir order matters as much as ruling out sorted
-	// names: a readdir-order walk is the implementation this replaced,
-	// and on a filesystem handing entries back in creation order the two
-	// coincide and the case would pass on either.
 	requireDistinctOrders(t, srcDir, want, readdirOrder(t, srcDir))
 
 	var lines []string
@@ -1023,12 +768,6 @@ func TestCpWalkOrder(t *testing.T) {
 			t.Fatalf("clear out: %v", err)
 		}
 		got := runCpIn(t, side.bin, dir, "-v", "-r", "src", "out")
-		// Only the top-level entries are checked: a subdirectory's own
-		// lines follow its creation line, and interleaving them here
-		// would say nothing more about the rule. A line is kept when
-		// the name on its SOURCE side is one of them — the destination
-		// side carries a slash of its own, so the whole line cannot be
-		// tested for one.
 		top := map[string]bool{}
 		for _, name := range want {
 			top["'src/"+name+"'"] = true
@@ -1046,14 +785,6 @@ func TestCpWalkOrder(t *testing.T) {
 	}
 }
 
-// TestCpIntoItself pins the destination-inside-the-source shapes on a
-// POPULATED tree, which the corpus cannot: where the walk meets the
-// destination decides which entries were copied before it stopped, and
-// that depends on inode numbers. The source tree is shared, but deleting
-// the first run's destination does not guarantee the next mkdir reuses its
-// inode. Each run is checked against the prefix implied by its own newly
-// allocated destination inode. The same expectation is checked against GNU,
-// so the fixture's model must agree with the reference as well as Fern.
 func TestCpIntoItself(t *testing.T) {
 	gnu := referenceBin(t, "cp")
 	ours := fernBin(t, "cp")
@@ -1061,8 +792,6 @@ func TestCpIntoItself(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		args []string
-		// made is what a run adds and the restore removes, so the
-		// second side meets the tree the first one did.
 		made []string
 	}{
 		{"flat", []string{"-v", "-r", "src", "src"}, []string{"src/src"}},
@@ -1169,9 +898,6 @@ type cpOracleEntry struct {
 
 type cpOracleCopy struct{ src, dest string }
 
-// The expected observable prefix is an inode-ordered preorder, ending before
-// the newly created destination. Only the original tree and that one inode
-// participate: generated descendants are never visited after the stop.
 func cpOraclePrefix(entries map[string]cpOracleEntry, source, destination string) ([]cpOracleCopy, bool) {
 	var out []cpOracleCopy
 	var visit func(string, string) bool
@@ -1221,8 +947,6 @@ func TestCpOraclePrefixUsesAllocatedDestinationInode(t *testing.T) {
 	}
 }
 
-// treePaths lists every path under root, relative and sorted, so two runs
-// can be compared without caring which order the walk found them in.
 func treePaths(t *testing.T, root string) []string {
 	t.Helper()
 	var out []string
@@ -1246,14 +970,6 @@ func treePaths(t *testing.T, root string) []string {
 	return out
 }
 
-// `--debug` on a real copy: the exit status and the `-v` line it implies
-// are GNU's, and the report line is ours: the kernel copies the data runs
-// (copy_file_range) on Linux, and it names the sparse detection the copy
-// used — SEEK_HOLE for a source the filesystem stored with a hole, none
-// otherwise. Whether the fixture's hole survives is the filesystem's
-// call (APFS on the macOS runner allocates it), so the expectation is read
-// off the seeded source rather than assumed. On Darwin the default
-// `--reflink=auto` clones on APFS, and the line says so instead.
 func TestCpDebug(t *testing.T) {
 	for _, src := range []string{"dense", "sp"} {
 		t.Run(src, func(t *testing.T) {

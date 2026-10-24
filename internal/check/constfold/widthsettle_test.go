@@ -7,17 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// TestConstDeclaredWidthAccepted pins that a const's DECLARED numeric type
-// settles its literal instead of being compared for exact equality against
-// litType's default reading of that literal.
-//
-// litType reports NumberType{} (i32) for any integer literal and FloatType{}
-// (f32) for any float one, and Fold used to reject the const unless
-// ast.Equal(declared, that) held. So every non-i32 numeric const was rejected —
-// not just the eye-catching `const B: i64 = 5000000000` ("declared type i64
-// does not match initialiser type i32") but the entirely ordinary
-// `const B: i64 = 5`, and `const H: f64 = 3.5` ("does not match initialiser
-// type f32"). #5477.
 func TestConstDeclaredWidthAccepted(t *testing.T) {
 	cases := []struct {
 		name string
@@ -44,11 +33,6 @@ func TestConstDeclaredWidthAccepted(t *testing.T) {
 	}
 }
 
-// TestConstWidthStampedOnSubstitution pins that the declared width reaches
-// every substitution site. settleConstLit stamps Width on the const's literal,
-// but cloneLit dropped it when copying the literal into each reference, so an
-// i64 const still arrived at the checker as a width-0 (i32-default) literal and
-// failed E047 "literal 5000000000 does not fit in i32" at its first use. #5477.
 func TestConstWidthStampedOnSubstitution(t *testing.T) {
 	prog := fold(t, `const B: i64 = 5000000000; function main(): i32 { return B; }`)
 	lit, ok := returnLit(t, prog).(*ast.NumberLit)
@@ -63,12 +47,6 @@ func TestConstWidthStampedOnSubstitution(t *testing.T) {
 	}
 }
 
-// TestConstSubstitutedInsideCompoundExprs pins the substituter walking every
-// compound expression form. It had no case for casts, slices, tuple/map
-// literals, enum payloads, f-strings or lambda bodies, so a const referenced
-// inside any of them was left as a bare Ident and reached the checker as
-// "E001: undefined identifier" for a const plainly in scope — `N as i32` being
-// the common one. #5477.
 func TestConstSubstitutedInsideCompoundExprs(t *testing.T) {
 	cases := []struct {
 		name string

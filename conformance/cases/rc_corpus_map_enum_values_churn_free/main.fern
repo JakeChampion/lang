@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Map with ENUM values (valKind 4, generalized from struct). A
-// union value reclaims through __drop_map_via___drop_enum_Value
-// (deep-dropping each value's box + payload via the tag-dispatched
-// __drop_enum_Value) at the map's last reference, with set/get
-// retains balancing it. Churned 200x. got = a.v[1] = seed+1;
-// sum_{0..199}(k+1) = 20100.
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 struct VI { v: i32[] }

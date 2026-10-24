@@ -1,10 +1,3 @@
-// `signal_raise` (#11698) end to end: kill(2) of the program's own process.
-//
-// A caught signal raised is recorded as one sent from outside is. One at its
-// default disposition ends the process inside the raise, so the program dies
-// OF the signal: the parent's wait reports it signalled, and nothing after
-// the raise runs. Given an argument, the program stops before that and
-// exits 0, which is the leg the leak census can read.
 package e2e
 
 import (
@@ -19,7 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Each failing step returns its own code.
 const signalRaiseSource = `function wait_taken(sig: i32): boolean {
     let n: i32 = 0;
     while (n < 5000) {
@@ -51,8 +43,6 @@ function main(): i32 {
 }
 `
 
-// checkRaised runs cmd without an argument and checks it died of SIGTERM
-// with only the line before the raise written.
 func checkRaised(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
@@ -68,8 +58,6 @@ func checkRaised(t *testing.T, cmd *exec.Cmd) {
 	}
 }
 
-// checkCensusLeg checks the run given an argument: exit 0 and a balanced
-// census.
 func checkCensusLeg(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
 	stdout, stderr, code := runSplit(t, cmd)
@@ -89,8 +77,6 @@ func TestX86_64SignalRaise(t *testing.T) {
 	checkRaised(t, runX86_64Bin(runner, bin))
 }
 
-// Under qemu-user the guest's kill reaches the emulator's own pid, and a
-// signal the guest left at its default kills the emulator with it.
 func TestArm64SignalRaise(t *testing.T) {
 	qemu := e2eharness.Arm64Runner(t)
 	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetArm64Linux, signalRaiseSource, []string{"FERN_LEAKCHECK=1"})
@@ -114,8 +100,6 @@ func TestInterpSignalRaise(t *testing.T) {
 	checkRaised(t, exec.Command(bin, "-interp", p))
 }
 
-// Only an Apple Silicon host can run the Mach-O build; anywhere else the
-// build is what is checked.
 func TestArm64DarwinSignalRaise(t *testing.T) {
 	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetArm64Darwin, signalRaiseSource, nil)
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
@@ -124,8 +108,6 @@ func TestArm64DarwinSignalRaise(t *testing.T) {
 	checkRaised(t, exec.Command(bin))
 }
 
-// wasm: nothing can deliver a signal, so a raise answers -ENOTSUP (58 in
-// WASI's numbering) and the program carries on.
 func TestWASMSignalRaiseUnsupported(t *testing.T) {
 	src := `function main(): i32 {
     let n: i32 = 40;

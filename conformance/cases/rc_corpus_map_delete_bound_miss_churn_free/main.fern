@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Delete MISS. Worth its own case because it leaks identically to a
-// hit — nothing about what the delete did to the table matters, which
-// is what ruled the deleted entry out as the cause (#8434).
-// Per iter: surviving "other" 3; 500x → 1500.
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 import "std/string";

@@ -5,18 +5,6 @@ import (
 	"testing"
 )
 
-// --- Call-bound scalar enum locals reclaim (#6360) --------------------------
-//
-// `let v: Option[i32] = mk(i)`, where `mk` is a free function whose every
-// return is a direct constructor, must release its box exactly as the
-// byte-identical shape with the constructor written inline does; missing it
-// leaks one box per iteration.
-//
-// A non-scalar ERROR payload does not change that: `Result[T, string]` — the
-// idiomatic error type, and so the common case — reclaims its box too. The
-// Err-path cases below take the Err arm on half their iterations and assert
-// that every box is released, and with it every allocated payload.
-
 const cbeOptCallSrc = `function mk(i: i32): Option[i32] {
     if (i < 0) { return None; }
     return Some(i);
@@ -59,7 +47,6 @@ function main(): i32 {
     return x % 83;
 }`
 
-// The direct-ctor form, beside which the call-bound forms reclaim.
 const cbeDirectSrc = `function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -77,8 +64,6 @@ function main(): i32 {
     return x % 83;
 }`
 
-// Err carries a string, so the variant a call returns is not statically known.
-// On this source the Err arm is never taken, so nothing is stranded at all.
 const cbeMixedResultSrc = `function mk(i: i32): Result[i32, string] {
     if (i < 0) { return Err("neg"); }
     return Ok(i);
@@ -100,8 +85,6 @@ function main(): i32 {
     return x % 83;
 }`
 
-// The Err arm actually TAKEN, on the even `i`s: every box must be freed
-// whichever arm ran.
 const cbeMixedErrPathSrc = `function mk(i: i32): Result[i32, string] {
     if (i % 2 == 0) { return Err("neg"); }
     return Ok(i);
@@ -123,9 +106,6 @@ function main(): i32 {
     return x % 83;
 }`
 
-// cbeMixedErrFreshPathSrc is cbeMixedErrPathSrc with the Err payload COMPUTED
-// rather than written as a literal: a string literal is static data (#7080) and
-// allocates nothing, so only this twin makes the payload's release observable.
 const cbeMixedErrFreshPathSrc = `function mk(i: i32): Result[i32, string] {
     if (i % 2 == 0) { return Err("neg" + "!"); }
     return Ok(i);
@@ -147,11 +127,6 @@ function main(): i32 {
     return x % 83;
 }`
 
-// --- rc-PAYLOAD Option/Result: reclaimed with or without a match -------------
-//
-// An rc-payload Option/Result local is released whether or not a match
-// consumes it, and whether it is bound from a constructor or a call. A shape
-// that misses its release strands 35200 bytes over 100 rounds x 4 iterations.
 const cbeRcPayloadDirectMatchSrc = `function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -207,10 +182,6 @@ function main(): i32 {
     return x % 83;
 }`
 
-// --- the Option half: a flat-array payload no match consumes ----------------
-//
-// `Option[<flat scalar array>]`, non-reassigned, no consuming match.
-// Function-scoped, single bind: 200/200, 0.
 const cbeOptArrFnScopeSrc = `function round(r: i32): i32 {
     let v: Option[i32[]] = Some([r, r + 1, r + 2]);
     let acc: i32 = 0;
@@ -225,8 +196,6 @@ function main(): i32 {
     return x % 83;
 }`
 
-// The same function-scoped shape bound from a CALL rather than an inline
-// constructor.
 const cbeOptArrCallNoMatchSrc = `function mk(i: i32): Result[i32[], string] {
     if (i < 0) { return Err("neg"); }
     return Ok([i, i + 1, i + 2]);
@@ -245,11 +214,6 @@ function main(): i32 {
     return x % 83;
 }`
 
-// A fresh producer whose Ok payload is its own PARAMETER, so the payload dec
-// lands on a buffer the caller also holds. This is the case that would
-// double-free if the two releases collided, so it asserts an exact balance
-// rather than just live_bytes==0. Function-scoped on purpose, so the
-// block-scope release cannot mask the direction of any imbalance here.
 const cbeOptArrAliasedPayloadSrc = `function mk(xs: i32[]): Result[i32[], string] {
     if (xs.len() == 0) { return Err("empty"); }
     return Ok(xs);
@@ -269,10 +233,6 @@ function main(): i32 {
     return x % 83;
 }`
 
-// The same shape declared INSIDE the loop: the FINAL iteration's pair must be
-// released by the exit sweep after its block retires the slot. That is the
-// block-scoped-slot class that segfaulted gen1 when over-released (#6285 /
-// #6375).
 const cbeOptArrLoopScopeSrc = `function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -332,13 +292,9 @@ func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
 		{"option_scalar_from_call", cbeOptCallSrc, 72},
 		{"result_all_scalar_from_call", cbeResultScalarSrc, 72},
 		{"result_direct_ctor", cbeDirectSrc, 72},
-		// The control for the rc-payload family: the same payload kind that
-		// leaks in the two cases below reclaims fully when a match consumes it.
 		{"rcpayload_direct_with_match", cbeRcPayloadDirectMatchSrc, 72},
 		{"optarr_fnscope_no_match", cbeOptArrFnScopeSrc, 38},
-		// A call-bound rc payload with a non-scalar Err, consumed by a match.
 		{"rcpayload_from_call_with_match", cbeRcPayloadCallMatchSrc, 72},
-		// A call-bound rc payload that no match consumes.
 		{"optarr_from_call_no_match", cbeOptArrCallNoMatchSrc, 38},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -350,8 +306,6 @@ func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
 		})
 	}
 
-	// A mixed Result whose Err arm is never taken: the box is reclaimed and there
-	// is no payload to strand, so this balances exactly like the all-scalar case.
 	t.Run("mixed_result_from_call_reclaims_the_box", func(t *testing.T) {
 		allocs, frees, live := counts(t, "mixed_result_from_call", cbeMixedResultSrc, 72)
 		if live != 0 || allocs != frees {
@@ -360,18 +314,12 @@ func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
 		}
 	})
 
-	// The Err arm TAKEN, on half the iterations: 100 rounds x 4 iterations
-	// allocates 400 boxes. Every box must be freed. The exit code, which is
-	// `fern -interp`'s, must not move: a wrong answer means a free reached a
-	// payload still in use.
 	t.Run("mixed_result_err_path_strands_only_the_payload", func(t *testing.T) {
 		allocs, frees, live := counts(t, "mixed_result_err_path", cbeMixedErrPathSrc, 72)
 		if frees != 400 {
 			t.Errorf("frees=%d, want 400 — every box must be released regardless of which arm ran "+
 				"(allocs=%d live=%d)", frees, allocs, live)
 		}
-		// The `Err("neg")` payload is a literal, which is static data, so the
-		// balance is exact.
 		if allocs != frees {
 			t.Errorf("allocs=%d frees=%d live=%d — want an exact balance. The Err payload is a literal, "+
 				"so it allocates nothing and there is nothing for the shallow free to leave behind",
@@ -379,9 +327,6 @@ func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
 		}
 	})
 
-	// The same shape on an Err payload the compiler must actually allocate. The
-	// typed lowering releases every Result box and its computed payload; an exit
-	// code that moves means a release reached a payload still in use.
 	t.Run("mixed_result_fresh_err_path_strands_only_the_payload", func(t *testing.T) {
 		allocs, frees, live := counts(t, "mixed_result_fresh_err_path", cbeMixedErrFreshPathSrc, 72)
 		if allocs != 600 || frees != 600 || live != 0 {
@@ -390,9 +335,6 @@ func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
 		}
 	})
 
-	// The aliased-payload producer. An imbalance in EITHER direction is a real
-	// defect: frees > allocs means the payload dec collided with a caller-side
-	// credit, frees < allocs means the widening lost the box.
 	t.Run("optarr_aliased_payload_balances", func(t *testing.T) {
 		allocs, frees, live := counts(t, "optarr_aliased_payload", cbeOptArrAliasedPayloadSrc, 39)
 		if allocs != frees || live != 0 {
@@ -402,13 +344,6 @@ func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
 		}
 	})
 
-	// The same two shapes declared INSIDE the loop. The FINAL iteration's
-	// box+payload is the pair at risk: the exit release has to reach a
-	// block-scoped slot after its block has retired it.
-	//
-	// These assert an exact balance rather than live_bytes==0 alone: this is the
-	// operation that segfaulted gen1 twice (#6285 / #6375), so an over-release
-	// here matters as much as a leak.
 	for _, tc := range []struct {
 		name string
 		src  string

@@ -1,27 +1,7 @@
 package e2e
 
-// Differential + stability coverage for core/cmp's adaptive sort.
-//
-// `cmp.sort` / `cmp.sort_desc` are a natural-run merge sort in Timsort's
-// shape: insertion sort below MIN_RUN, natural ascending/descending run
-// detection (descending runs reversed in place), short runs extended to
-// MIN_RUN, then balanced merge rounds. The previous revision was a fixed
-// bottom-up merge sort that copied the whole array on every pass regardless
-// of the input.
-//
-// Two things need pinning, and neither was covered before: that the result
-// still agrees with a naive sort across the sizes that straddle MIN_RUN and
-// the merge rounds, and that the sort is STABLE through the merge path. The
-// pre-existing Ord-sort cases in cmp_ord_sort_test.go define their own inline
-// insertion sort, so they exercise the trait machinery, not this code.
-//
-// The stability half is mutation-checked: flipping the merge's tie-break to
-// take from the right run makes `stable` fail with a tag inversion.
-
 import "testing"
 
-// Random arrays with dense ties, plus the shapes run detection exists to
-// exploit, checked against a naive selection sort in the same program.
 const cmpAdaptiveSortProg = `
 import "core/cmp";
 
@@ -133,9 +113,6 @@ function main(): i32 {
 }
 `
 
-// Stability through the merge path: `key` alone orders, `tag` witnesses input
-// order. 100 elements over 5 keys means every equal-key group spans several
-// runs and survives multiple merges.
 const cmpAdaptiveSortStableProg = `
 import "core/cmp";
 

@@ -1,12 +1,6 @@
 import "std/test";
 import "core/cmp" as cmp;
 
-// tests/stdlib/cmp_helpers_test.fern — pure-Fern coverage of core/cmp's
-// generic free helpers over the primitive `Ord` / `Eq` impls: min / max /
-// clamp / lt / gte / sort / is_sorted (Ord) and contains / index_of /
-// distinct / eq_arrays (Eq). `derive_test.fern` covers `@derive`; this covers
-// the free functions, driven through the std/test runner (migration-shaped).
-
 function test_min(): test.TestOutcome {
   return test.assert_eq(cmp.min(8, 3), 3);
 }
@@ -91,14 +85,11 @@ function test_eq_arrays_false(): test.TestOutcome {
   return test.assert_false(cmp.eq_arrays([1, 2], [1]));
 }
 
-// String works too (lexicographic Ord + Eq).
 function test_string_sort(): test.TestOutcome {
   let s = cmp.sort(["b", "a", "c"]);
   return test.assert_true(s[0] == "a" && s[2] == "c");
 }
 
-// Debug for string escapes the ASCII specials and passes multibyte
-// content through byte-exact.
 function test_string_debug_multibyte(): test.TestOutcome {
   let s: string = "a\"é\nb";
   return test.assert_eq(s.to_debug(), "\"a\\\"é\\nb\"");

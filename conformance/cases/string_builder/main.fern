@@ -1,4 +1,4 @@
-// Repeated string concatenation in a loop (heap-allocated growth).
+
 function main(): i32 {
     let s: string = "";
     let i: i32 = 0;

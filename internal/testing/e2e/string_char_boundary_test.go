@@ -2,18 +2,6 @@ package e2e
 
 import "testing"
 
-// charBoundaryProgram pins std/utf8's byte-boundary layer — the
-// is_char_boundary / floor_char_boundary / ceil_char_boundary trio
-// (#5634, decision D9, slice 1) — on every backend.
-//
-// These are the primitives a caller needs to snap a byte offset to a
-// safe slice endpoint without hand-rolling the continuation-byte check.
-// The test string is A + e-acute + euro + grinning-face: 10 bytes, four
-// characters of width 1/2/3/4, so its boundary set is exactly
-// {0, 1, 3, 6, 10} and every other index in range sits inside an
-// encoding.
-//
-// Exits 0 on success, a distinct code per failed step.
 const charBoundaryProgram = `
 import "std/utf8" as utf8;
 

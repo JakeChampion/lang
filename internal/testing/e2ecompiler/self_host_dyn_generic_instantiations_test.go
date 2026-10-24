@@ -6,15 +6,6 @@ import (
 	"testing"
 )
 
-// A dyn over one instantiation of a generic trait dispatches to the impls of
-// that instantiation only. Two impls of Pair at different arguments give their
-// methods different signatures, and taking both as arms of either dyn made the
-// typed lowering refuse the program as disagreeing implementations (#10596).
-// The same holds for a dyn that pins an associated type, alone or beside the
-// positional arguments.
-
-// dynGenericTwoInstantiationsSrc: the smallest shape, a method whose result is
-// the trait's second argument.
 const dynGenericTwoInstantiationsSrc = `import "std/i32";
 trait Pair[A, B] { function snd(self: Self): B; }
 struct P { s: string }
@@ -29,8 +20,6 @@ function main(): i32 {
 }
 `
 
-// dynGenericTwoInstantiationsMapsSrc: both dyn types held in routed maps,
-// iterated, and in a dyn array beside a bool array.
 const dynGenericTwoInstantiationsMapsSrc = `import "core/map";
 import "std/i32";
 trait Pair[A, B] { function fst(self: Self): A; function snd(self: Self): B; }
@@ -58,7 +47,6 @@ function main(): i32 {
 }
 `
 
-// dynMixedPinSrc: a trait pinned by position and by associated type at once.
 const dynMixedPinSrc = `import "std/i32";
 trait Conv[A] { type Out; function conv(self: Self, x: A): Self::Out; }
 struct P { }
@@ -72,8 +60,6 @@ function main(): i32 {
 }
 `
 
-// dynAssocPinSrc: a non-generic trait whose impls bind its associated type
-// differently, pinned by that type alone.
 const dynAssocPinSrc = `import "std/i32";
 trait Holder { type Item; function get(self: Self): Self::Item; }
 struct A { v: i32 }
@@ -87,9 +73,6 @@ function main(): i32 {
 }
 `
 
-// dynAssocPinArraySrc: the pinned dyn as an array ELEMENT, in a local, a
-// parameter and a return type. The self-host read the `[]` suffix as the pin
-// list and refused each as unpinned (E021, #11848).
 const dynAssocPinArraySrc = `import "std/i32";
 trait Holder { type Item; function get(self: Self): Self::Item; }
 struct B { v: i32 }

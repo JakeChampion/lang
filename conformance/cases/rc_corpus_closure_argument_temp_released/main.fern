@@ -1,15 +1,15 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A lambda in argument position is a fresh pair plus env that the
-// callee only borrows (a function value is never owned-by-default),
-// so the caller is its only owner. freshOwnedRcTempType declined the
-// MakeClosure shape outright and both blocks leaked per call —
-// `m.update(k, (v: i32) => v + i)` in a loop, one pair and one env
-// per iteration (#8057). The scalar-returning `apply` takes the
-// call-level admission; the Box-returning `update` needs the
-// per-position one, which credits a function-typed parameter that
-// is only ever CALLED.
+
+
+
+
+
+
+
+
+
+
+
+
 enum Node { Tip, Bin(Node, i32, i32, Node, i32) }
 struct Box { root: Node }
 

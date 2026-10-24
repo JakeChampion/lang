@@ -11,21 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/fernsmith"
 )
 
-// TestFernsmithShrinksAPlantedMiscompile is #6073's last acceptance item: a
-// compiler with a planted closure miscompile is caught by the generator, and
-// fernsmith.ShrinkMainBytes reduces the failing corpus to a small repro.
-//
-// The mutant is built by scripts/fernsmith-mutant, which plants the bug in a
-// scratch copy of compiler/: a closure's first parameter and first capture
-// trade places when they have the same type, on both the lifted and the boxed
-// closure path, the environment/argument mix-up the #5001/#5007/#5009/#5026
-// cluster was made of. FERN_FERNSMITH_MUTANT names the mutant; without it the
-// test skips, as the other opt-in differential legs do.
-//
-// A corpus diverges when the mutant's program does not exit with the
-// interpreter's byte (a wrong byte, a crash or a hang). The shrunk repro must
-// also compile correctly with the unplanted compiler, so what it shows is the
-// plant and not some other bug, and must be within mutantReproBytes.
 func TestFernsmithShrinksAPlantedMiscompile(t *testing.T) {
 	mutant := os.Getenv("FERN_FERNSMITH_MUTANT")
 	if mutant == "" {
@@ -56,8 +41,6 @@ func TestFernsmithShrinksAPlantedMiscompile(t *testing.T) {
 		}
 		return "exit " + strconv.Itoa(r.exit)
 	}
-	// diverges reports whether the mutant gets data's program wrong, and the
-	// verdicts that say so.
 	diverges := func(data []byte) (bool, string, string) {
 		src := fernsmith.GenMainBytes(data)
 		want, err := interpRunExit(t, src)
@@ -106,15 +89,10 @@ func TestFernsmithShrinksAPlantedMiscompile(t *testing.T) {
 	}
 }
 
-// mutantCorpusBytes reaches main: a shorter stream runs out on the helper
-// functions generated ahead of it, and main then returns a constant.
 const mutantCorpusBytes = 8192
 
-// mutantReproBytes bounds the shrunk repro past the preamble; the plant
-// shrinks to 708 bytes.
 const mutantReproBytes = 1024
 
-// mutantCorpus is corpus `seed`'s bytes, the same for every run.
 func mutantCorpus(seed uint64) []byte {
 	r := rand.New(rand.NewPCG(seed, 6073))
 	out := make([]byte, mutantCorpusBytes)
@@ -124,8 +102,6 @@ func mutantCorpus(seed uint64) []byte {
 	return out
 }
 
-// programBytes is the size of src past the preamble every GenMainBytes
-// program opens with, the imports, types and helpers that do not vary.
 func programBytes(src string) int {
 	if at := strings.Index(src, "\nfunction gen_f"); at >= 0 {
 		return len(src) - at - 1

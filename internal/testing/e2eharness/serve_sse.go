@@ -9,12 +9,6 @@ import (
 	"time"
 )
 
-// SSEServerSource is a one-worker server streaming server-sent events
-// (std/http/sse): /events answers three events, the producer sleeping
-// 250 ms through the platform before each, under a 100 ms keep-alive, so
-// the stream carries a comment line between events when the producer
-// parks and the loop writes the filler; /plain is the same producer with
-// no keep-alive; /ok is the hello.
 func SSEServerSource() string {
 	return `import "std/http";
 import "std/serve";
@@ -38,8 +32,6 @@ function main(): i32 {
 `
 }
 
-// sseEvents reads the response to GET path whole and answers its status
-// line, the data lines in order, and how many comment lines came between.
 func sseEvents(t *testing.T, addr, path string) (status string, data []string, comments int) {
 	t.Helper()
 	c := dialRaw(t, addr)
@@ -53,8 +45,6 @@ func sseEvents(t *testing.T, addr, path string) (status string, data []string, c
 		t.Fatalf("read the status line of %s: %v", path, err)
 	}
 	status = strings.TrimSpace(status)
-	// Past the header block, the chunked body: the chunk framing is read
-	// off and the lines inside examined.
 	for {
 		line, err := r.ReadString('\n')
 		if err != nil {
@@ -95,13 +85,6 @@ func sseEvents(t *testing.T, addr, path string) (status string, data []string, c
 	}
 }
 
-// CheckSSEOverlap drives SSEServerSource as a client whose stream is
-// quiet while the producer waits: /ok on another connection is answered
-// meanwhile, since the producer parks the connection and not the worker,
-// and the stream carries keep-alive comments between its events, since
-// the wrapper ticks while the producer is parked. Only a server whose
-// producers park passes this; the Go compiler's blocking fallback is
-// checked by CheckSSESequential.
 func CheckSSEOverlap(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -110,8 +93,6 @@ func CheckSSEOverlap(t *testing.T, addr string) {
 	if _, err := fmt.Fprintf(c, "GET /events HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n"); err != nil {
 		t.Fatal(err)
 	}
-	// Give the worker time to answer the head and park the producer on
-	// its timer before the second connection arrives.
 	time.Sleep(50 * time.Millisecond)
 	started := time.Now()
 	if resp := HTTPRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
@@ -124,15 +105,11 @@ func CheckSSEOverlap(t *testing.T, addr string) {
 	if status != "HTTP/1.1 200 OK" || strings.Join(data, ",") != "tick 0,tick 1,tick 2" {
 		t.Fatalf("/events: want 200 with three ticks, got %s %v", status, data)
 	}
-	// Three 250 ms waits under a 100 ms keep-alive: two comments each.
 	if comments < 3 {
 		t.Fatalf("/events carried %d keep-alive comments, want at least 3 over three 250 ms waits", comments)
 	}
 }
 
-// CheckSSESequential drives SSEServerSource one client at a time, the
-// checks that hold whether or not the producer parks: both streams carry
-// their three events in order, and a connection is served after them.
 func CheckSSESequential(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)

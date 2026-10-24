@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A Map reached through an enum payload is counted like any other
-// payload and released through the map's own chain when the enum
-// dies — here an Option[Map] field carried through fifty spread
-// updates (#8854).
+
+
+
+
+
+
+
 import "core/map";
 struct H { buf: string, m: Option[Map[string, i32]], n: i32 }
 function (h: H) grow(s: string): H {

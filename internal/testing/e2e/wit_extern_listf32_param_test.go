@@ -12,16 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternListF32ParamCustomProvider is the P4c composite-parameter gate for
-// a 32-bit float array (docs/WIT-BRING-YOUR-OWN.md): a Fern program passes an
-// `f32[]` to an `@import` extern, lowered to a canonical `list<f32>`
-// (ptr, len). It rounds out the ≤4-byte scalar-array support (the gate accepts
-// any ≤4-byte numeric element, integer or f32); the param wrapper forwards
-// `(elemPtr, load(elemPtr-4))` unchanged, and f32 elements are packed at the
-// same 4-byte stride as i32, so the payload is already canonical.
-//
-// The provider exports `sum-f32: func(data: list<f32>) -> f32` summing the
-// elements; the Fern side passes [1.5, 2.5, 4.0] (sum 8.0).
 func TestExternListF32ParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -39,7 +29,6 @@ func TestExternListF32ParamCustomProvider(t *testing.T) {
 		}
 	}
 
-	// --- Provider component exporting local:test/sink@0.1.0 sum-f32. ---
 	provWit := filepath.Join(dir, "provwit")
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -48,8 +37,6 @@ func TestExternListF32ParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\ninterface sink { sum-f32: func(data: list<f32>) -> f32; }\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// sum-f32 receives the lowered (ptr, len) and returns the f32 sum. Elements
-	// are read at 4-byte stride via f32.load.
 	provCoreWat := filepath.Join(dir, "prov_core.wat")
 	if err := os.WriteFile(provCoreWat, []byte(`(module
   (memory (export "memory") 1)
@@ -77,7 +64,6 @@ func TestExternListF32ParamCustomProvider(t *testing.T) {
 	run(wasmtools, "component", "embed", provWit, "-w", "provider", provCore, "-o", provEmbed)
 	run(wasmtools, "component", "new", provEmbed, "-o", provider)
 
-	// --- User world: custom sink iface + wasi stdout. ---
 	userWit := filepath.Join(dir, "userwit")
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps")).CombinedOutput(); err != nil {
 		_ = os.MkdirAll(userWit, 0o755)
@@ -112,7 +98,6 @@ func TestExternListF32ParamCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// --- User program: pass [1.5, 2.5, 4.0] (sum 8.0) to the extern. ---
 	const want = "sumf-ok"
 	src := `@import("local:test/sink@0.1.0", "sum-f32")
 function sum_f32(data: f32[]): f32;

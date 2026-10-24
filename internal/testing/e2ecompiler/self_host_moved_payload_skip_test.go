@@ -8,20 +8,6 @@ import (
 	"testing"
 )
 
-// --- A payload bound out of a match arm, by store, call or return ----------
-//
-// Each row binds an rc enum payload to a name that escapes the arm, by a store
-// to an outer local, a borrow-only call or a return, and reads it back. On the
-// typed lowering every row reclaims all it allocates. The exit codes are the
-// guards: 99 is an rc underflow (the drop released a payload its escapee still
-// owns), a wrong value is a use-after-free, and 139 a segfault. Every want was
-// confirmed against the native x86-64 backend.
-//
-// The churn arrays the *_read_back_after_churn rows build are constant and not
-// heap-allocated, so their counts cover only the payload. A constant payload
-// reaches its box through `id`, which hides the constant from the static-box plan, so the box is
-// allocated rather than placed as a static one.
-
 type movedSkipCase struct {
 	name   string
 	src    string
@@ -52,7 +38,6 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 `
 	return []movedSkipCase{
 		{
-			// `keep = xs` retains, so the payload has two counted owners.
 			name: "array_payload_stored_out",
 			src: decls + `function round(i: i32): i32 {
     let v: E = mkv(i);
@@ -64,9 +49,6 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			want: 5, allocs: 200, frees: 200,
 		},
 		{
-			// The same shape read back as a VALUE with three fresh arrays after
-			// the match, so a payload freed too early would be reused before the
-			// read. Counts cannot see a use-after-READ. Native returns 9.
 			name: "stored_out_read_back_after_churn",
 			src: `enum E { A(i32[]), B }
 @noinline function id(xs: i32[]): i32[] { return xs; }
@@ -84,8 +66,6 @@ function round(i: i32): i32 {
 			want: 9, allocs: 20, frees: 20,
 		},
 		{
-			// A borrow-only callee takes no claim, so the box is the payload's
-			// sole owner.
 			name: "array_payload_borrowed_by_callee",
 			src: decls + `function sink(a: i32[]): i32 { return a.len() + a[0]; }
 function round(i: i32): i32 {
@@ -98,7 +78,6 @@ function round(i: i32): i32 {
 			want: 5, allocs: 200, frees: 200,
 		},
 		{
-			// The call-argument row as a VALUE with churn. Native returns 9.
 			name: "borrowed_by_callee_read_back_after_churn",
 			src: `enum E { A(i32[]), B }
 @noinline function id(xs: i32[]): i32[] { return xs; }
@@ -117,7 +96,6 @@ function round(i: i32): i32 {
 			want: 9, allocs: 20, frees: 20,
 		},
 		{
-			// A guarded arm whose payload is stored out.
 			name: "guarded_arm_store_now_reclaimed",
 			src: decls + `function round(i: i32): i32 {
     let v: E = mkv(i);
@@ -129,8 +107,6 @@ function round(i: i32): i32 {
 			want: 81, allocs: 250, frees: 250,
 		},
 		{
-			// The guarded row as a VALUE with churn — both arms are exercised
-			// (the guard keys on the round index). Native returns 96.
 			name: "guarded_arm_read_back_after_churn",
 			src: `enum E { A(i32[]), B }
 @noinline function id(xs: i32[]): i32[] { return xs; }
@@ -148,8 +124,6 @@ function round(i: i32): i32 {
 			want: 96, allocs: 30, frees: 30,
 		},
 		{
-			// The return escape hands the reference over. A drop that also
-			// released the payload would underflow: exit 99.
 			name: "return_escape_keeps_the_skip",
 			src: decls + `function take(i: i32): i32[] {
     let v: E = mkv(i);
@@ -164,8 +138,6 @@ function round(i: i32): i32 {
 			want: 5, allocs: 200, frees: 200,
 		},
 		{
-			// The return path moves the payload out; the fallthrough path
-			// releases it.
 			name: "conditional_return_balances_both_paths",
 			src: decls + `function take(i: i32): i32[] {
     let v: E = mkv(i);
@@ -180,8 +152,6 @@ function round(i: i32): i32 {
 			want: 40, allocs: 200, frees: 200,
 		},
 		{
-			// A string payload stored out. A release at the match would free what
-			// `keep` still reads, and the value would come back 33.
 			name: "string_payload_keeps_the_skip",
 			src: `enum T { W(string), N }
 function round(i: i32): i32 {
@@ -196,8 +166,6 @@ function round(i: i32): i32 {
 			want: 24, allocs: 80, frees: 80,
 		},
 		{
-			// A nested struct payload stored out. Releasing it at the match
-			// segfaults (exit 139).
 			name: "struct_payload_keeps_the_skip",
 			src: `struct P { xs: i32[] }
 enum S { V(P), N }
@@ -215,10 +183,6 @@ function round(i: i32): i32 {
 			want: 9, allocs: 60, frees: 60,
 		},
 		{
-			// A 16-element payload, which is what established that the block the
-			// old behaviour stranded was the PAYLOAD and not keep's initial array:
-			// the leak scaled with the element count (152 bytes/round) rather than
-			// staying at a one-element array's size.
 			name: "large_payload_stored_out",
 			src: `enum E { A(i32[]), B }
 @noinline function id(xs: i32[]): i32[] { return xs; }
@@ -235,7 +199,6 @@ function round(i: i32): i32 {
 	}
 }
 
-// TestSelfHostMovedPayloadSkipX86_64 is the leak-accounting leg.
 func TestSelfHostMovedPayloadSkipX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -270,8 +233,6 @@ func TestSelfHostMovedPayloadSkipX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMovedPayloadSkipWasmIR — exit codes only, so what this leg catches
-// is a release that frees a LIVE box on wasm, the 99 included.
 func TestSelfHostMovedPayloadSkipWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping moved-payload skip wasm IR e2e")
@@ -310,7 +271,6 @@ func TestSelfHostMovedPayloadSkipWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostMovedPayloadSkipIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostMovedPayloadSkipIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

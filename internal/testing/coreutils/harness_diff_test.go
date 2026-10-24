@@ -6,10 +6,6 @@ import (
 	"testing"
 )
 
-// diffBody is what every parity failure in this package prints, so its two
-// jobs are worth pinning: a short difference must still come out whole, and
-// a long one must not. The second is why it exists — quoting two multi-
-// kilobyte streams on one line wedged the macOS lane twice (#9703).
 func TestDiffBodyPrintsShortStreamsWhole(t *testing.T) {
 	got := diffBody("gnu", "fern", []byte("abc\n"), []byte("abd\n"))
 	for _, want := range []string{`gnu: "abc\n"`, `fern: "abd\n"`} {
@@ -44,9 +40,6 @@ func TestDiffBodyBoundsLongStreams(t *testing.T) {
 	}
 }
 
-// A difference at the end of the shorter stream is the one case where the two
-// agree everywhere they overlap, so firstDiff has to answer the shorter length
-// rather than walking off it.
 func TestDiffBodyHandlesOneStreamBeingAPrefix(t *testing.T) {
 	left := repeatByte('x', 600)
 	right := append(repeatByte('x', 600), 'y')
@@ -59,11 +52,6 @@ func TestDiffBodyHandlesOneStreamBeingAPrefix(t *testing.T) {
 	}
 }
 
-// The window has to be chosen BEFORE either side is quoted, which a test
-// reading the message cannot tell: quoting first and discarding the result
-// returns the same string and allocates the whole stream anyway. So this
-// measures instead. The real case is Darwin's `printf "%.99999999999d" 1`,
-// which answers 1.2 GB of zeros.
 func TestDiffBodyDoesNotQuoteWhatItWindowsAway(t *testing.T) {
 	const size = 64 << 20
 	left := repeatByte('a', size)

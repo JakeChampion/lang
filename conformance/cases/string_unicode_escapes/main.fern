@@ -1,6 +1,6 @@
-// `\u{...}` in a string and an f-string literal (#12666): the scalar is
-// written as its UTF-8, so the bytes the program reads back are the encoding
-// and the value prints as the character. `\xNN` covers ASCII beside it.
+
+
+
 
 import "std/i32";
 

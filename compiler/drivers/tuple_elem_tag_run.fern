@@ -1,22 +1,6 @@
-// compiler/tuple_elem_tag_run.fern — byte-identity guard for the
-// tuple element-tag decoder (irtables.fern's tuple_type_elem_tag, SH-021 slice —
-// docs/SELF-HOST-AUDIT.md T2).
-//
-// tuple_type_elem_tag now extracts element n of a tuple type spelling
-// "(t0, t1, …)" via the structured TypeRef (parser.parse_type_ref) instead of a
-// hand-rolled depth-tracking top-level-comma scan. This driver runs the REAL
-// (imported) function AND a frozen copy of the FORMER scan over a corpus spanning
-// every branch — plain tuples, tuples with nested-generic / nested-tuple / array
-// elements (the inner commas the depth scan must not split on), single-element
-// tuples, out-of-range and negative indices, non-tuples, and a tuple-array
-// ("(a, b)[]") — for each element index, and asserts the new decode equals the old
-// for every (type, n). Exits with the mismatch count (0 = byte-identical), so a
-// regression in the TypeRef decode (or in parse_type_ref feeding it) fails here.
-
 import "../irtables";
 import "../util";
 
-// --- frozen reference: the exact depth-tracking scan tuple_type_elem_tag replaced ---
 function ref_trim(s: string): string {
   let a: i32 = 0;
   let b: i32 = s.len();
@@ -79,7 +63,6 @@ function main(): i32 {
   let i: i32 = 0;
   while (i < corpus.len()) {
     let t: string = corpus[i];
-    // Probe indices -1..4 to cover in-range, out-of-range, and negative.
     let n: i32 = 0 - 1;
     while (n <= 4) {
       let real: string = irtables.tuple_type_elem_tag(t, n);

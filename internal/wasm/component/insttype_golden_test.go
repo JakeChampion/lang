@@ -7,20 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/component"
 )
 
-// The wasi:filesystem/types instance-type bodies, pinned BYTE FOR BYTE.
-//
-// These bytes are a wire format: a composed component's imports are matched
-// against them, so a change here is a change to what the runtime will accept,
-// not an internal detail. The bodies were hand-numbered — each decl's typeidx
-// worked out by hand, with comments like "the read functype is typeidx 17, not
-// 18" tracking the fact that a func export does not consume an index where a
-// type export does — and only their VALIDITY was covered. Validity is much
-// weaker than identity: a body can encode cleanly and still declare the wrong
-// method set or renumber a signature's operands.
-//
-// That gap is what let the bodies be moved onto instTypeBuilder (#6208 part 2
-// step 0) with confidence: these goldens were captured from the hand-numbered
-// code first, and the builder reproduces all nine exactly.
 func TestWasiFilesystemTypesInstanceTypeBodies_Golden(t *testing.T) {
 	cases := []struct {
 		name string

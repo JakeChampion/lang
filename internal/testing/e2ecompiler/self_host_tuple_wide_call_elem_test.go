@@ -6,24 +6,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostTupleWideCallElem pins a tuple element that comes from a call
-// returning i64 or f64 to the IR path (#5902).
-//
-// A wide LOCAL or wide ARITHMETIC tuple element lowers; the CALL form must
-// too, storing each element at its own width (an i64 or f64 result is still a
-// one-slot scalar).
-//
-// Each case asserts BOTH halves of what the fix has to deliver:
-//
-//   - path: the module must lower on the IR path (the coverage half — goal 1).
-//     A change that merely produced the right answer by some other route
-//     would satisfy the value check while losing exactly what this is for.
-//   - value: the tuple element must read back correctly, checked against the
-//     same computation spelled without the tuple, so it asserts agreement
-//     rather than a hard-coded constant.
-//
-// The i32 / string / local / arithmetic rows are controls that must keep
-// lowering on the IR path.
 func TestSelfHostTupleWideCallElem(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -46,18 +28,12 @@ func TestSelfHostTupleWideCallElem(t *testing.T) {
 			 function main(): i32 { let a: i32 = 2; let t: (f64, i32) = (fr(a), 1); if (f64_bits(t.0) == f64_bits(fr(a)) && t.1 == 1) { return 7; } return 9; }`,
 		},
 		{
-			// Both elements wide, and of different widths, so the per-element
-			// kind string has to carry each one independently.
 			"mixed-i64-f64-call-elems",
 			`function a1(n: i32): i64 { return (n as i64) * 3000000000; }
 			 function a2(n: i32): f64 { return (n as f64) / 3.0; }
 			 function main(): i32 { let t: (i64, f64) = (a1(2), a2(2)); if (t.0 == a1(2) && f64_bits(t.1) == f64_bits(a2(2))) { return 7; } return 9; }`,
 		},
 		{
-			// The callee spelled as a METHOD rather than a free function. The
-			// element itself is one i32 slot; what made it bail was the callee
-			// form, so the wide sibling in the tuple is what keeps the case on
-			// this suite's subject.
 			"method-i32-call-elem",
 			`struct P { x: i32, y: i32 }
 			 function (p: P) sum(): i32 { return p.x + p.y; }
@@ -76,12 +52,9 @@ func TestSelfHostTupleWideCallElem(t *testing.T) {
 			 function main(): i32 { let p: P = P { x: 2 }; let t: (f64, i32) = (p.frac(), 1); if (f64_bits(t.0) == f64_bits(p.frac()) && t.1 == 1) { return 7; } return 9; }`,
 		},
 		{
-			// A builtin receiver, which the struct/enum method registry cannot
-			// answer for — the length is an i32 whatever it measures.
 			"len-call-elem",
 			`function main(): i32 { let s: string = "xyz"; let t: (i32, i64) = (s.len(), 165i64); if (t.0 == 3 && t.1 == 165) { return 7; } return 9; }`,
 		},
-		// Controls — already on the IR path before this change.
 		{
 			"i64-local-elem-control",
 			`function main(): i32 { let w: i64 = 6000000000; let t: (i64, i32) = (w, 1); if (t.0 == w && t.1 == 1) { return 7; } return 9; }`,

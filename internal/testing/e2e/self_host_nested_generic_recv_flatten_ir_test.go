@@ -6,21 +6,6 @@ import (
 	"testing"
 )
 
-// Nested-generic receiver-method dispatch (#4878). A method whose receiver
-// type is itself a generic-over-a-generic — `(o: Option[Option[T]]) flatten()`
-// and `(r: Result[Result[T, E], E]) flatten()` — must register under its base
-// namespace ("Option" / "Result") and dispatch at a call site the same as a
-// single-generic receiver (`Option[T]`). #4878 reported an E043 ("field access
-// on non-struct value") for the *imported* form; that turned out to be a
-// stale-embedded-stdlib artifact (the freshly-added combinator wasn't in the
-// not-yet-rebuilt binary's `go:embed`ded stdlib), not a dispatch bug — the
-// nested receiver resolves fine on every backend once the stdlib is rebuilt.
-// These tests pin that: the shipped `std/option` / `std/result` `flatten`
-// combinators run end-to-end on the native backends, and an inline nested
-// receiver lowers through the self-host IR path.
-
-// stdFlattenSrc imports the shipped combinators and exercises both the present
-// (Some/Ok) and short-circuit (None/Err) arms. 7 + 100 + 30 + 5 = 142.
 const stdFlattenSrc = `import "std/option";
 import "std/result";
 function main(): i32 {
@@ -36,8 +21,6 @@ function main(): i32 {
 }
 `
 
-// TestStdFlattenNative runs the shipped std/option + std/result `flatten`
-// combinators on the native interp / x86-64 / wasm backends.
 func TestStdFlattenNative(t *testing.T) {
 	p := writeIterProg(t, stdFlattenSrc)
 	if _, code := runFixtureInterp(t, p, ""); code != 142 {
@@ -51,7 +34,6 @@ func TestStdFlattenNative(t *testing.T) {
 	}
 }
 
-// TestStdFlattenArm64 is the arm64 leg (CI-gated; qemu).
 func TestStdFlattenArm64(t *testing.T) {
 	p := writeIterProg(t, stdFlattenSrc)
 	if _, code := runFixtureArm64(t, p, ""); code != 142 {
@@ -59,9 +41,6 @@ func TestStdFlattenArm64(t *testing.T) {
 	}
 }
 
-// nestedRecvFlattenPrelude defines flatten inline (local, not imported) so the
-// self-host driver — which resolves no stdlib — can compile it. The receiver
-// types are the same nested generics as the shipped combinators.
 const nestedRecvFlattenPrelude = `pub function (o: Option[Option[T]]) flatten(): Option[T] {
     match (o) { Some(inner) => { return inner; }, None => { return None; } }
 }
@@ -70,23 +49,14 @@ pub function (r: Result[Result[T, E], E]) flatten(): Result[T, E] {
 }
 `
 
-// The main bodies use match *statements* (each arm `return`s), not a match
-// *expression* — value-position `match` currently routes the enclosing
-// function to the legacy AST backend, which would make the "ir" routing
-// assertion below spuriously fail. Statement-style keeps the whole program on
-// the IR path so the assertion actually exercises the nested receiver there.
 var nestedRecvFlattenCases = []struct {
 	name string
 	main string
 	want int
 }{
-	// Some(Some(7)).flatten() -> Some(7) -> 7.
 	{"opt-some", `function main(): i32 { let x: Option[Option[i32]] = Some(Some(7)); match (x.flatten()) { Some(v) => { return v; }, None => { return 0; } } }`, 7},
-	// None.flatten() -> None -> 100.
 	{"opt-none", `function main(): i32 { let x: Option[Option[i32]] = None; match (x.flatten()) { Some(v) => { return v; }, None => { return 100; } } }`, 100},
-	// Ok(Ok(30)).flatten() -> Ok(30) -> 30.
 	{"res-ok", `function main(): i32 { let r: Result[Result[i32, i32], i32] = Ok(Ok(30)); match (r.flatten()) { Ok(v) => { return v; }, Err(e) => { return e; } } }`, 30},
-	// Err(5).flatten() -> Err(5) -> 5.
 	{"res-err", `function main(): i32 { let r: Result[Result[i32, i32], i32] = Err(5); match (r.flatten()) { Ok(v) => { return v; }, Err(e) => { return e; } } }`, 5},
 }
 
@@ -94,8 +64,6 @@ func nestedRecvFlattenProg(mainBody string) string {
 	return nestedRecvFlattenPrelude + mainBody + "\n"
 }
 
-// TestNestedRecvFlattenNative runs the inline nested-receiver flatten programs
-// on the native interp / x86-64 / wasm backends, oracle-checked.
 func TestNestedRecvFlattenNative(t *testing.T) {
 	for _, tc := range nestedRecvFlattenCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -113,10 +81,6 @@ func TestNestedRecvFlattenNative(t *testing.T) {
 	}
 }
 
-// TestSelfHostNestedRecvFlattenIRX86_64 routes each inline case through the
-// self-hosted x86-64 IR driver, pins routing to "ir", and oracle-checks the
-// compiled binary — proving the self-host compiler both dispatches a
-// nested-generic receiver method and lowers it through the IR path.
 func TestSelfHostNestedRecvFlattenIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

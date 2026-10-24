@@ -1,7 +1,7 @@
-// `for` walks anything implementing core/iter's Iterator: it pulls `next()`
-// until None. A destructuring header binds each yielded tuple, `continue`
-// and a labelled `break` behave as over an array, a `return` leaves the
-// loop, and a generic body walks a type parameter bounded by Iterator.
+
+
+
+
 import "core/iter";
 
 function total[I: iter.Iterator[i32]](it: I): i32 {

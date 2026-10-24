@@ -1,25 +1,3 @@
-// json_pretty.fern — read JSON from stdin, pretty-print to
-// stdout with 2-space indents.
-//
-// Showcases: std/json's JsonValue enum, recursive
-// match (over JNull / JBool / JNumber / JString / JArray /
-// JObject), an object's members in document order, the
-// `s.repeat(n)` indentation helper, build-once-print-once.
-// The parser's intermediate allocations are reclaimed by
-// reference counting as they fall out of scope; for CLI mode
-// the OS reaps the heap on exit anyway (main runs once).
-//
-//   $ echo '{"a":1,"b":[true,null,3.14]}' | wasmtime json_pretty.wasm
-//   {
-//     "a": 1,
-//     "b": [
-//       true,
-//       null,
-//       3.14
-//     ]
-//   }
-// json.json_parse / json.json_encode for the read/write halves;
-// std/string for (string).repeat used by the indent helper.
 import "std/io";
 import "std/json";
 import "std/string";
@@ -41,8 +19,6 @@ function pretty(v: json.JsonValue, depth: i32): string {
       return n;
     },
     JString(s) => {
-      // Round-trip via json_encode so escapes are
-      // re-applied identically to the parser's input.
       return json.json_encode(JString(s));
     },
     JArray(elems) => {
@@ -79,7 +55,7 @@ function pretty(v: json.JsonValue, depth: i32): string {
       return obj_out + "\n" + pad + "}";
     }
   }
-  return "";  // unreachable
+  return "";
 }
 
 function main(): i32 {
@@ -103,5 +79,5 @@ function main(): i32 {
       return 1;
     }
   }
-  return 0;  // unreachable
+  return 0;
 }

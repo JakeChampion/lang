@@ -1,6 +1,6 @@
-// An imported union's members and an imported enum matched through a nested
-// sub-pattern are named as the source spells them (`Ring`, `shapes.Outer`),
-// not by the module-mangled names the loader gives them.
+
+
+
 import "./shapes";
 
 function f(s: shapes.Shape): i32 {

@@ -8,28 +8,10 @@ import (
 	"testing"
 )
 
-// A reclaimable map with a struct- or enum-KEY column must release the key
-// boxes, not just the buffer that holds them. The key column had exactly one
-// deep release before #9966 — "MAPKS:" for a fresh-string column — so a
-// struct-keyed map fell to the shallow `arr_dec` in the kfree position and
-// stranded every key box. `Map[Coord, i32]` measured 2304 bytes over four
-// rounds of twelve inserts against 0 for the same program keyed by i32.
-//
-// The assert is ABSOLUTE rather than differential: a credited map reclaims
-// everything, so the heap bump across 2000 build-and-drop rounds is flat. The
-// programs import core/map and core/cmp — a derived Eq/Hash is what makes a
-// struct usable as a key at all — so they are compiled through a project
-// directory with the stdlib root rather than fed to a driver on stdin, which
-// cannot resolve an import.
-//
-// Every case also reads __rc_underflow_count(): a per-key dec that ran on a key the
-// map did not solely own would read non-zero here, which is the direction a
-// wrong credit fails in.
 var mapBoxKeyReclaimPrograms = []struct {
 	name string
 	src  string
 }{
-	// An all-scalar struct key: one dec per key is its whole release.
 	{"struct-key-flat", `import "core/map";
 import "core/cmp";
 
@@ -59,8 +41,6 @@ function main(): i32 {
     if (acc != 17600) { return 88; }
     return 0;
 }`},
-	// An all-scalar ENUM key: the variants carry scalar payloads, so one dec
-	// releases a key box exactly as it does a struct's.
 	{"enum-key-flat", `import "core/map";
 import "core/cmp";
 
@@ -90,8 +70,6 @@ function main(): i32 {
     if (acc != 17600) { return 88; }
     return 0;
 }`},
-	// A struct KEY column over a string VALUE column:
-	// both columns are counted, and the two credits are independent.
 	{"struct-key-string-value-flat", `import "core/map";
 import "core/cmp";
 
@@ -121,8 +99,6 @@ function main(): i32 {
     if (acc != 17600) { return 88; }
     return 0;
 }`},
-	// Correctness through the churn: the keys the map still holds read back,
-	// which is the direction a per-key dec that ran too early fails in.
 	{"struct-key-reads-back", `import "core/map";
 import "core/cmp";
 
@@ -149,15 +125,6 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`},
-	// A key whose NAME shadows a unit variant is a read of the BINDING, not a
-	// construction — a shadow the checker allows (checker.fern's ctor_shadowed)
-	// — so the frame still owns that box and the credit must be declined. The
-	// freshness predicate answers variant names out of the struct table with no
-	// shadow test of its own; what makes that safe is lexical.resolve_func,
-	// which rewrites every binding use to `$binding$N$TagNil` before lowering
-	// sees it, so the name never reaches the table. This pins that: were the
-	// credit issued, the map would deep-release a key the frame releases again
-	// and __rc_underflow_count() would read non-zero (exit 99).
 	{"shadowed-variant-name-excluded", `import "core/map";
 import "core/cmp";
 
@@ -178,8 +145,6 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`},
-	// An ALIASED key: the key comes from a local the frame still owns, so the
-	// map must not free it. The local must survive the map.
 	{"aliased-key-excluded", `import "core/map";
 import "core/cmp";
 
@@ -214,10 +179,6 @@ func TestSelfHostMapBoxKeyReclaimArm64(t *testing.T) {
 	runMapBoxKeyReclaim(t, []string{qemu}, "arm64-linux")
 }
 
-// runMapBoxKeyReclaim builds the self-host compiler once, then compiles and
-// runs each program for `target`. The compiler is always the x86-64 build — it
-// is what this host executes; `target` selects what it emits, and it links its
-// own output, so no separate assembler step is involved.
 func runMapBoxKeyReclaim(t *testing.T, runner []string, target string) {
 	hostGcc, _ := x86_64Tooling(t)
 	stdlibRoot, err := filepath.Abs("../../stdlib")

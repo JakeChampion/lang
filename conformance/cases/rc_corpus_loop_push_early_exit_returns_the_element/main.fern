@@ -1,9 +1,9 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// An early exit that carries the element OUT. The push is no longer the
-// element's last use, so it must retain — a move would let the buffer's
-// drop free the value the caller is handed. kind 2 + kids[0] 2 = 4.
+
+
+
+
+
+
 import "core/int";
 struct Val { kind: i32, kids: i32[] }
 function build(n: i32): Val {

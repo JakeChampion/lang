@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for core/cmp.sort / sort_desc over an f64[] — bottom-up
-// merge sort, the floating-point exercise of the generic `Ord` sorts (the
-// retired per-width `sort_f64_asc` / `sort_f64_desc`, #5397). f64 arrays are
-// scalar-payload, so this lowers on all four backends. Checks ascending /
-// descending order, the single / empty edge cases, and negatives. Returns 42
-// iff every check holds across interp / x86-64 / wasm / arm64; each leg skips
-// itself when its toolchain is absent.
 const sortF64Prog = `
 import "core/cmp" as cmp;
 function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }

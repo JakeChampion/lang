@@ -4,11 +4,6 @@ import "std/http/auth";
 import "std/base64";
 import "std/option";
 
-// tests/stdlib/http_auth_test.fern — std/http/auth: a bearer token read,
-// checked and handed on, the 401 and 400 answers with their challenges, a
-// basic credential decoded and split at its first colon, the realm quoted
-// in the challenge, and token_eq.
-
 function header(resp: HttpResponse, name: string): string {
   return resp.headers.get(name).unwrap_or("-");
 }

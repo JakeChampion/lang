@@ -10,41 +10,10 @@ import (
 	"time"
 )
 
-// The randomized differential over `expr SUBJ : PATTERN`.
-//
-// The hand-written corpus in expr_test.go is a list of cases someone
-// thought of, and a disambiguation rule is exactly the thing nobody
-// thinks of: `\(\|a\)a*` over `aa` reports `a` for the group under
-// glibc and reported the empty first branch here (#9051), and no case
-// in the corpus came near it. A sweep of random patterns over random
-// subjects, both sides asked the same question, finds that class
-// without anyone naming it first.
-//
-// Every run is SEEDED, so a failure is reproducible: FERN_EXPR_FUZZ_SEED
-// picks another one and FERN_EXPR_FUZZ_CASES another count. A failure is
-// not reported as the seed, though — a seed is a way back to a 30-byte
-// pattern nobody can read. It is shrunk against the same oracle, one
-// simplification at a time, until nothing smaller still diverges, and
-// what the failure names is that.
-//
-// The seed below is green. Others are not: sweeping 1-20 at 4000 cases
-// against GNU 9.12 leaves six seeds red (7, 12, 15, 16, 17, 20), every
-// one on a GNU defect #9092 records with a minimal input — a SIGSEGV in
-// GNU expr, a match GNU never returns from, and four patterns glibc
-// declares unmatched though they match. A failure naming one of those
-// inputs is that, not a regression.
 const (
-	exprFuzzSeed  = 0x9051
-	exprFuzzCases = 3000
-	// How many distinct divergences to shrink and report before
-	// stopping. More than one because a sweep that only ever reports
-	// its first failure hides every other one behind it.
-	exprFuzzReports = 5
-	// What either side gets to answer one invocation in. Generously
-	// above the milliseconds an answer takes, because the bound is not
-	// a performance assertion: it is there because GNU expr sometimes
-	// never answers at all (#9092), and a run that outlasts it is
-	// reported as the divergence it is.
+	exprFuzzSeed     = 0x9051
+	exprFuzzCases    = 3000
+	exprFuzzReports  = 5
 	exprFuzzRunLimit = 5 * time.Second
 )
 
@@ -100,13 +69,6 @@ func TestExprRegexDifferential(t *testing.T) {
 	}
 }
 
-// ---- the generated pattern -------------------------------------------------
-//
-// A tree rather than a string, because the shrinker has to hand back
-// patterns that still PARSE: dropping a byte from `\(ab\|c\)*` reaches
-// `\(ab\|c\*` far more often than it reaches anything meaningful, and a
-// corpus of syntax errors is not what diverged.
-
 type patKind int
 
 const (
@@ -120,18 +82,15 @@ const (
 	pkGroup
 	pkRep
 	pkBackref
-	pkNothing // an empty alternation branch
+	pkNothing
 )
 
 type patNode struct {
 	kind patKind
-	// lit is the byte for pkLit and the bracket body for pkClass.
 	lit  string
 	kids []*patNode
-	// rep is the operator text for pkRep — `*`, `\?`, `\+`, `\{m,n\}`.
-	rep string
-	// ref is the 1-based group for pkBackref.
-	ref int
+	rep  string
+	ref  int
 }
 
 func (p *patNode) render() string {
@@ -140,10 +99,6 @@ func (p *patNode) render() string {
 	return b.String()
 }
 
-// write appends this node's text, numbering groups in the order their
-// `\(` is written — which is how a backreference finds the group it
-// names, so the numbering happens here rather than when the tree was
-// built, where a shrink can still move a group.
 func (p *patNode) write(b *strings.Builder, groups *int) {
 	switch p.kind {
 	case pkLit:
@@ -177,10 +132,6 @@ func (p *patNode) write(b *strings.Builder, groups *int) {
 		p.kids[0].write(b, groups)
 		b.WriteString(p.rep)
 	case pkBackref:
-		// A reference past the groups actually written is a compile
-		// error on both sides rather than a match, which proves
-		// nothing about disambiguation; clamp it to a group that
-		// exists, and drop it when none does.
 		ref := p.ref
 		if ref > *groups {
 			ref = *groups
@@ -200,10 +151,6 @@ func (p *patNode) clone() *patNode {
 	return &c
 }
 
-// genSubject draws a short string over a two-letter alphabet. Short and
-// narrow on purpose: a divergence needs the pattern to have more than
-// one way to reach the same match, and over `abcdef…` a random pattern
-// almost never matches at all.
 func genSubject(r *rand.Rand) string {
 	n := r.IntN(6)
 	b := make([]byte, n)
@@ -213,12 +160,6 @@ func genSubject(r *rand.Rand) string {
 	return string(b)
 }
 
-// genTop shapes the whole pattern around what the oracle can be read
-// through: `expr :` reports GROUP 1 and nothing else, so a draw whose
-// first group is not where the ambiguity sits proves only the overall
-// match length. Two thirds of them are therefore `\(X\)Y`, which is
-// also the shape expr is used in; the rest are unconstrained, so the
-// sweep still covers patterns with no group at all.
 func genTop(r *rand.Rand) *patNode {
 	if r.IntN(3) == 0 {
 		return genPat(r, 4)
@@ -244,9 +185,6 @@ func genPat(r *rand.Rand, depth int) *patNode {
 	case 3, 4, 5:
 		kids := make([]*patNode, 2+r.IntN(2))
 		for i := range kids {
-			// An empty branch is drawn deliberately often: it is the
-			// shape #9051 turned on, and a generator that reaches it
-			// only by accident reaches it never.
 			if r.IntN(4) == 0 {
 				kids[i] = &patNode{kind: pkNothing}
 			} else {
@@ -296,13 +234,6 @@ func genAtom(r *rand.Rand) *patNode {
 	}
 }
 
-// ---- shrinking -------------------------------------------------------------
-
-// shrinkExprCase reduces a diverging (subject, pattern) to one nothing
-// smaller still diverges at, asking the same oracle at every step. Each
-// pass walks the subject first and the tree second, adopts the first
-// candidate that still diverges, and starts over; it stops when a whole
-// pass finds none.
 func shrinkExprCase(subj string, p *patNode, agree func(subj, pat string) bool) (string, *patNode) {
 	diverges := func(s string, n *patNode) bool { return !agree(s, n.render()) }
 	for round := 0; round < 200; round++ {
@@ -342,9 +273,6 @@ func shrinkSubject(s string) []string {
 	return out
 }
 
-// shrinkPat lists the patterns one simplification away from p, simplest
-// first: this node replaced by something smaller, then each child
-// replaced by one of its own candidates.
 func shrinkPat(p *patNode) []*patNode {
 	out := shrinkNode(p)
 	for i, k := range p.kids {
@@ -357,8 +285,6 @@ func shrinkPat(p *patNode) []*patNode {
 	return out
 }
 
-// shrinkNode lists the replacements for one node alone, leaving its
-// children's own shrinks to shrinkPat.
 func shrinkNode(p *patNode) []*patNode {
 	var out []*patNode
 	switch p.kind {

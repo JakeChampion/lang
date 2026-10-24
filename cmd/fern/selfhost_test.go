@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// TestCompileArgsSize: -size reaches the self-host either way it is given,
-// so -size=false overrides FERN_SIZE=1, and nothing is passed without it,
-// leaving the self-host to read FERN_SIZE.
 func TestCompileArgsSize(t *testing.T) {
 	on, off := true, false
 	for _, c := range []struct {

@@ -5,18 +5,6 @@ import (
 	"testing"
 )
 
-// A consuming `match` one block deeper than the local's own statement list —
-// inside an `if` branch or a `while` body — reclaims the same as the flat
-// spelling (#6319's class): the box and payload are freed after the ENCLOSING
-// top-level statement rather than leaked every iteration.
-//
-// The arm analyses must look at the match itself, not at the enclosing `if`.
-// An analysis that answers "nothing escapes" for a statement it cannot see
-// into turns a blind spot into a use-after-free; `nested_escape_churn` pins
-// that. Every source below is a producer call; a second release of one box is
-// what TestSelfHostNestedMatchBorrowNoUnderflowX86_64 catches as
-// `__rc_underflow_count() == -1`.
-
 const nmFlatArrSrc = `import "core/int";
 function make(i: i32): Result[i32[], string] {
     if (i < 0) { return Err("neg"); }
@@ -105,8 +93,6 @@ function main(): i32 {
 }
 `
 
-// The match runs N times against ONE box and the free lands once, after the
-// loop — the reason the `while` body is admitted alongside the `if` branches.
 const nmWhileStrSrc = `import "core/int";
 function mk(i: i32): Option[string] {
     if (i < 0) { return None; }
@@ -128,10 +114,6 @@ function main(): i32 {
 }
 `
 
-// THE ESSENTIAL NEGATIVE. The arm binding escapes to an outer local, so the
-// payload must not be released. It needs the churn loop: with the box wrongly
-// freed the shape still exits correctly unless same-shaped strings recycle it in
-// between, which is why this class survived earlier passes (#6467).
 const nmEscapeChurnSrc = `import "core/int";
 function mk(i: i32): Option[string] {
     if (i < 0) { return None; }
@@ -155,8 +137,6 @@ function main(): i32 {
 }
 `
 
-// The sibling branch mentions the local, so a release inside the match arm
-// would free it under that mention.
 const nmElseMentionsSrc = `import "core/int";
 function mk(i: i32): Option[string] {
     if (i < 0) { return None; }
@@ -229,8 +209,6 @@ func TestSelfHostNestedMatchReclaimX86_64(t *testing.T) {
 
 	counts := func(t *testing.T, name, src string) (int64, int64, int64) {
 		t.Helper()
-		// The oracle, not a constant. A released-but-live payload shows up as a
-		// wrong answer, and that matters more than any byte count below.
 		want := interpExit(t, interpBin, src)
 		asm := hevCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1"})
 		progBin := buildBin(t, gcc, dir, name, asm)
@@ -258,12 +236,6 @@ func TestSelfHostNestedMatchReclaimX86_64(t *testing.T) {
 		return allocs, frees, live
 	}
 
-	// An exact balance, not just live_bytes == 0: the free lands after a
-	// statement the local outlives, so an over-release matters as much as a leak
-	// and only allocs == frees catches both. The *_mentions and used_after rows
-	// reach the local outside the match, and nested_escape_churn binds the arm's
-	// payload to an outer local; for those the exit agreement inside counts() is
-	// what says nothing was freed under a live reference.
 	for _, tc := range []struct{ name, src string }{
 		{"flat_arr_control", nmFlatArrSrc},
 		{"if_nested_arr", nmIfArrSrc},

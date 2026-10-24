@@ -2,11 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A pointer-element array rebound through a threader (#10420): `acc = walk(n,
-// acc)` where every return of walk is its parameter, grown only by fresh
-// elements. A struct array's or a string[]'s elements must still be released
-// at exit. Answers are the interpreter's.
-
 const threadInst = "struct Inst { name: string, depth: i32 }\n"
 
 const threadHolder = threadInst + "struct Holder { x: Inst }\n"
@@ -55,7 +50,6 @@ function main(): i32 {
     return pending.len() % 256;
 }
 `, true},
-	// Enough appends to outgrow the buffer, read after the loop.
 	{"grow", threadInst + `function walk(n: i32, acc: Inst[]): Inst[] {
     if (n % 3 == 0) { return acc; }
     return acc.append(Inst { name: "w" + "", depth: n });
@@ -69,8 +63,6 @@ function main(): i32 {
     return t % 100;
 }
 `, true},
-	// A local alias rebuilt through threaders, a recursive threader, and a
-	// literal seed.
 	{"alias_recursive", threadInst + `function rec(n: i32, acc: Inst[]): Inst[] {
     if (n == 0) { return acc; }
     let next: Inst[] = acc.append(Inst { name: "r" + "", depth: n });
@@ -114,7 +106,6 @@ function main(): i32 {
     return (t + pending.len()) % 100;
 }
 `, true},
-	// The element walk that also drops each element's array field.
 	{"array_field_elem", `struct Node { name: string, kids: i32[] }
 function walk(n: i32, acc: Node[]): Node[] {
     if (n % 2 == 0) { return acc.append(Node { name: "n" + "", kids: [n, n + 1] }); }
@@ -127,9 +118,6 @@ function main(): i32 {
     return pending.len();
 }
 `, true},
-	// Appended elements whose string field comes from a caller's string and
-	// whose scalar comes from an existing element: the string must be counted,
-	// not shared.
 	{"shared_fields", threadInst + `function walk(n: i32, tag: string, acc: Inst[]): Inst[] {
     if (n % 4 == 0 && acc.len() > 0) {
         return acc.append(Inst { name: tag, depth: acc[0].depth + acc[acc.len() - 1].depth + n });
@@ -147,8 +135,6 @@ function main(): i32 {
     return (t + tag.len()) % 100;
 }
 `, true},
-	// A parameter named like a strict-fresh producer: the call reaches the
-	// caller's closure, so walk threads nothing.
 	{"value_block_read", threadInst + `function walk(n: i32, acc: Inst[]): Inst[] {
     if (acc.len() > 0) { let d: i32 = { acc[0].depth }; return acc.append(Inst { name: "w" + "", depth: d + n }); }
     return acc.append(Inst { name: "w" + "", depth: n });
@@ -169,10 +155,6 @@ function main(): i32 {
     return (t + pending.len() + mk(1).depth) % 256;
 }
 `, true},
-	// The rows below are not threaders: each may leak, and must never free an
-	// element early.
-	//
-	// The callee keeps the array in a struct, so it threads nothing.
 	{"callee_keeps", threadInst + `struct Holder { xs: Inst[] }
 function walk(n: i32, acc: Inst[], h: Holder): Holder {
     if (n % 4 == 0) { return Holder { xs: acc.append(Inst { name: "w" + "", depth: n }) }; }
@@ -191,7 +173,6 @@ function main(): i32 {
     return (t + pending.len()) % 256;
 }
 `, false},
-	// The caller keeps the superseded array.
 	{"caller_keeps", threadInst + `function walk(n: i32, acc: Inst[]): Inst[] {
     if (n % 4 == 0) { return acc.append(Inst { name: "w" + "", depth: n }); }
     return acc;
@@ -207,9 +188,6 @@ function main(): i32 {
     return (t + pending.len() + old.len()) % 256;
 }
 `, false},
-	// The callee hands an element to a keeping sink: a struct field, a
-	// holder built by another function, another array, a loop variable kept
-	// past its iteration, or an element's string field.
 	{"elem_struct_field", threadHolder + `function walk(n: i32, acc: Inst[]): Inst[] {
     if (acc.len() > 0) { let h: Holder = Holder { x: acc[0] }; return acc.append(Inst { name: "w" + "", depth: h.x.depth + n }); }
     return acc.append(Inst { name: "w" + "", depth: n });
@@ -243,7 +221,6 @@ function walk(n: i32, acc: Inst[]): Inst[] {
     return acc.append(Inst { name: "w" + "", depth: n });
 }
 ` + threadInstMain, false},
-	// An existing element handed back a second time.
 	{"elem_returned", threadInst + `function walk(n: i32, acc: Inst[]): Inst[] {
     if (acc.len() > 0) { return acc.append(acc[acc.len() - 1]); }
     return acc.append(Inst { name: "w" + "", depth: n });
@@ -270,7 +247,6 @@ function walk(n: i32, acc: string[]): string[] {
     return acc.append("w" + ys.len().to_string());
 }
 ` + threadStrMain, false},
-	// A loop variable rebinding the threaded name returns another array's row.
 	{"loop_var_shadows", threadInst + `function walk(qs: Inst[][], acc: Inst[]): Inst[] {
     for acc in qs { if (acc.len() > 1) { return acc; } }
     return acc;

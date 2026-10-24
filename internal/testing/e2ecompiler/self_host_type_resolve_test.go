@@ -4,37 +4,16 @@ import (
 	"testing"
 )
 
-// TestSelfHostTypeResolve pins the self-hosted checker's structured type-name
-// resolver (compiler/checker.fern's type_from_name_with_structs_unions — SH-021
-// slice 4, docs/SELF-HOST-AUDIT.md T2). The resolver maps a type STRING to the
-// checker's Type against a struct/union context by decoding the structured
-// TypeRef (parser.parse_type_ref + pattern-match).
-//
-// The type_resolve_run driver resolves a corpus spanning every branch (scalars,
-// struct / union / unknown names, multi-depth arrays of struct/union/unknown
-// elements, tuples incl. nested + single-element/empty fallthrough, Map incl.
-// nested value + single-arg fallthrough, array-of-map / array-of-tuple, non-Map
-// generics, qualified name) against fixed fixtures, printing type_debug of each.
-// The golden below is the EXACT output of the byte-scan resolver the TypeRef
-// decode replaced, so this is the byte-identical guard: a shifted resolved
-// Type — or a differing `unrecognised type name` reason — fails here rather than
-// silently mis-typing a param / field / return in the checker.
-//
-// The driver is built by the pinned stage0 compiler; its stdout is the map.
 func TestSelfHostTypeResolve(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/type_resolve_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/type_resolve_run.fern", "type_resolve_run")
 
-	// Golden — the exact type_from_name_with_structs_unions resolution for a
-	// corpus spanning every decode branch.
 	const want = "i32 => i32\n" +
 		"i64 => i64\n" +
 		"u32 => u32\n" +
 		"u64 => u64\n" +
-		// `bool` is not a Fern type name — only `boolean` is, matching native,
-		// which has no synonym either. The row pins the rejection.
 		"bool => unknown(unrecognised type name: bool)\n" +
 		"boolean => bool\n" +
 		"string => string\n" +
@@ -64,18 +43,7 @@ func TestSelfHostTypeResolve(t *testing.T) {
 		"Map[string] => unknown(unrecognised type name: Map[string])\n" +
 		"Map[string, i32][] => array<map<string, i32>>\n" +
 		"(i32, string)[] => array<tuple<i32, string>>\n" +
-		// Option[i32] resolves since the self-host checker learned to
-		// instantiate a generic enum's type args (#4346 piece 2) —
-		// updated from the pre-#4913 `unknown(...)` capture.
 		"Option[i32] => union:Option\n" +
-		// Vec[T] (an UNDECLARED generic base) resolves to a name-only
-		// union since the E023 port: the Go checker's resolveType keeps
-		// the shape as an unknown EnumType, and matching on it draws
-		// E023 — the self-host mirrors that with a union whose
-		// lookup_union misses. A DECLARED generic-struct base (Foo[T])
-		// now resolves NAME-ONLY to that struct (#4346 piece 2, generic-
-		// struct instantiations) — dropping the args, exactly as a bare
-		// `Foo` does and as `Option[i32] => union:Option` does above.
 		"Vec[T] => union:Vec\n" +
 		"Foo[T] => struct:Foo\n" +
 		"Bogus[] => array<unknown(unrecognised type name: Bogus)>\n" +

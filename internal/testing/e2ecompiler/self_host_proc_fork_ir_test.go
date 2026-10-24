@@ -6,17 +6,6 @@ import (
 	"testing"
 )
 
-// procForkPrograms are the two shapes that pin `proc_fork()` / `proc_waitpid(pid)`
-// on the self-host IR path (#5686). Both carry their expected exit code rather
-// than asking the interpreter: its `proc_fork` never forks (it answers -ENOSYS
-// so `serve.supervise` degrades to single-process serving), so it cannot
-// judge a real fork.
-//
-//   - normal-exit: the child exits 17, the parent reaps it and checks the
-//     decoded status — the `(status >> 8) & 0xff` arm of the wait4 decode.
-//   - signal-death: the child trips the array-bounds abort, so the parent must
-//     see 128 + SIGABRT = 134 — the other arm, and the reason the decode exists
-//     (a crashing worker has to surface as its shell-convention code).
 var procForkPrograms = []struct {
 	name string
 	src  string
@@ -51,13 +40,6 @@ function main(): i32 {
 	},
 }
 
-// TestSelfHostProcForkIRX86_64 pins #5686: the crash-only supervision pair
-// lowers on the self-host x86-64 IR path. Before this they had no IR op and no
-// emitter interception at all, so a call fell through to the generic user-call
-// path and emitted `call __fn_proc_fork` against a symbol nothing defines —
-// which is why `std/serve` (whose `serve.supervise` calls both) could not be
-// self-host compiled. Because they are real ops now, a fork-using module is
-// IR-ELIGIBLE rather than bailing.
 func TestSelfHostProcForkIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -91,11 +73,6 @@ func TestSelfHostProcForkIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostProcForkIRArm64 is the arm64 half. arm64 Linux has no bare
-// fork(2): proc_fork is `clone(SIGCHLD, 0, 0, 0, 0)` (asm-generic 220), whose
-// return shape is already the builtin's contract. The asm-content checks pin
-// that dispatch and that real body, so a regression to a stubbed or
-// mis-numbered syscall fails here rather than hanging under qemu.
 func TestSelfHostProcForkIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -109,11 +86,6 @@ func TestSelfHostProcForkIRArm64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}
-			// Both are Fern since #2649, so both carry the stack-ABI prefix and
-			// both syscall numbers arrive as ordinary pushed operands popped into
-			// x8 — hence a MOVZ into a register of the allocator's choosing rather
-			// than `mov x8, #N`. clone is the five-argument __syscall5 form; wait4
-			// is __syscall4.
 			for _, want := range []string{"bl __fn___fern_proc_fork", "bl __fn___fern_proc_waitpid"} {
 				if !strings.Contains(asm, want) {
 					t.Errorf("emitted arm64 asm missing %q", want)
@@ -133,11 +105,6 @@ func TestSelfHostProcForkIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostProcForkWasmRejected pins the wasm half: a component has no
-// process model, so fork/reap are error ENDPOINTS (like subprocess / timer_fd),
-// not deferrals — deferring them emitted a call against nothing and
-// surface as an opaque `unknown func` from the loader instead of a diagnostic
-// naming the feature.
 func TestSelfHostProcForkWasmRejected(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

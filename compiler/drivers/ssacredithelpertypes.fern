@@ -1,5 +1,3 @@
-// Construction provenance stays positional through incremental collection.
-// No descriptor is an ownership certificate or a selected ABI contract.
 import "../lexer";
 import "../parser";
 import "../semlower";
@@ -64,8 +62,6 @@ function collect(h: ssarc.Helpers, f: ssasem.Func): ssarc.Helpers {
   let next = ssarc.with_drop_helpers(h, f);
   validate(next);
   require(same(next, ssarc.with_drop_helpers(next, f)), 228);
-  // Suppress one actual generated body before collection. The remaining
-  // role must keep its own row and type, even when it is the first row.
   if (fresh.types.len() > 0) {
     let first = fresh.types[0];
     let empty = ssarc.no_helpers();
@@ -109,7 +105,6 @@ pub function run(target: string): void {
   pair(helpers, typeinfo.TypeStruct { name: "Box__List", args: [] });
   require(helpers.types.len() > 0 && helpers.types[0].row >= prefix_len, 235);
   let original = helpers;
-  // Reverse encounter order after all schemas were seen changes nothing.
   let i = built.decls.len();
   while (i > 0) {
     i = i - 1;

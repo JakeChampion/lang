@@ -1,6 +1,6 @@
-// `e?` is the success payload, so a binding of it needs no annotation, and
-// an unsuffixed literal in a variant literal settles at its default width:
-// `Some(3.25)?` with no destination is an f64.
+
+
+
 function annotated(): Option[f64] {
     let a: f64 = Some(3.25)?;
     return Some(a);

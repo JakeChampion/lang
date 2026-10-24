@@ -2,12 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A `[u8]` view inside a composite type: a struct field, a tuple component
-// and an array element (#10926). The parser used to erase `[T]` to `T[]` and
-// keep the view only as a flag on a `let` or parameter, so a view spelled
-// inside another type resolved to an owned array (E043 at the struct literal,
-// E034 at the array literal) and `[u8][]` did not parse at all. The view now
-// stays in the spelling, which the checker resolves and the lowering folds.
 const viewCompositeSrc = `import "std/i32";
 struct View { v: [u8], n: i32 }
 function first(v: View): i32 { return v.v[0] as i32; }

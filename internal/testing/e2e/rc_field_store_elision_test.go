@@ -4,20 +4,6 @@ import (
 	"testing"
 )
 
-// Field-store elision (Perceus reuse specialization) on the struct
-// self-overwrite reuse path. A field carried over UNCHANGED (`f: p.f`) keeps
-// its value in the reused box, so on the reuse branch its store + retain +
-// old-value release are elided (the box already holds it, rc unchanged). The
-// store + retain are still emitted on the fresh-alloc path. This is Fern's
-// dominant record-update idiom: E048 forbids field assignment, so updating
-// one field is written `p = T{ changed: ..., rest: p.rest }`.
-//
-// The soundness-critical case is a carried POINTER field: eliding its
-// retain+release must leave the array/box reference intact (not freed, not
-// over-released) across many reuses, and an aliased struct must still copy.
-
-// fieldElisionPtrCarriedSrc: a struct with a carried i32[] field, updated in
-// a loop. The carried `items` buffer must survive every reuse untouched.
 const fieldElisionPtrCarriedSrc = `struct Box { id: i32, items: i32[] }
 function main(): i32 {
     let b: Box = Box { id: 0, items: [1, 2, 3] };
@@ -33,9 +19,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// fieldElisionAliasedSrc: an aliased struct (let b2 = b) must still COW —
-// updating b leaves b2 intact, and the carried-field elision must not corrupt
-// the shared box. Returns 0 iff value-correct AND 0 over-releases.
 const fieldElisionAliasedSrc = `struct Box { id: i32, items: i32[] }
 function main(): i32 {
     let acc: i32 = 0;

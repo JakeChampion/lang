@@ -2,15 +2,15 @@ import "std/stream";
 import "std/i32";
 import "core/int";
 
-// Exercises the std/stream in-memory byte Stream (data: u8[] + pos cursor)
-// across all four native backends: the value-threaded CURSOR IDIOM
-// (read returns (value, advancedStream); caller rebinds), read_line's
-// CRLF/LF handling + unterminated final line, read_byte's Option payload,
-// read_n, remaining, and read_all_string. FEATURE-AUDIT std/stream row.
+
+
+
+
+
 function main(): i32 {
-    // line reader over "ab\r\ncd\nef": CRLF line, LF line, unterminated tail.
+
     let s: Stream = stream.stream_from_string("ab\r\ncd\nef");
-    print(s.len().to_string());            // 9 backing bytes
+    print(s.len().to_string());
     let cur: Stream = s;
     let done: boolean = false;
     while (!done) {
@@ -21,19 +21,19 @@ function main(): i32 {
         }
     }
 
-    // read_byte -> read_n -> remaining -> read_all_string over "XYZ123".
+
     let b: Stream = stream.stream_from_string("XYZ123");
     let (ob, b2) = b.read_byte();
     match (ob) {
-        Some(v) => { print(v.to_string()); },   // 'X' = 88
+        Some(v) => { print(v.to_string()); },
         None => { print("none"); },
     }
-    let (chunk, b3) = b2.read_n(2);             // "YZ"
+    let (chunk, b3) = b2.read_n(2);
     print(string_from_bytes_unchecked(chunk));
-    print(b3.remaining().to_string());          // 3 left: "123"
+    print(b3.remaining().to_string());
     let (rest, b4) = b3.read_all_string();
     match (rest) {
-        Some(text) => { print(text); },         // "123"
+        Some(text) => { print(text); },
         None => { return 1; },
     }
     return 0;

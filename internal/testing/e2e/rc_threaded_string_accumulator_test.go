@@ -4,24 +4,6 @@ import (
 	"testing"
 )
 
-// #8836 — `acc = put(acc, piece)` on a string LOCAL: the callee hands a
-// string back that may or may not be the buffer it was given, and the
-// caller's overwrite of `acc` must release the superseded buffer exactly
-// when one was superseded. Measured at 8 KB live per 1 000 iterations and
-// OOM at 100k when filed; both callee shapes are balanced now, and this pins
-// them. Rounds-based: the accumulator is built and dies each round, so a
-// correct runtime is flat in the round count.
-//
-// The first two callees are the two answers a callee can give: `put` appends
-// to its parameter and hands the SAME buffer back (grown in place when it is
-// unique), `fresh` builds a new string and hands THAT back, so the caller's
-// old buffer is superseded on every iteration.
-// The third callee takes the accumulator as an `own` parameter. That moves
-// the caller's reference in, and the caller's binding then holds only what
-// the callee handed back; on x86-64 the single-word string argument taint
-// still read the move as a possible retention and kept the binding out of
-// the exit sweep, so the final accumulator of every frame was stranded —
-// balanced only when the frame returned it.
 const threadedStringAccumulatorCallees = `@noinline
 function put(a: string, s: string): string { a = a + s; return a; }
 @noinline

@@ -10,19 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/modload"
 )
 
-// Cross-module variant-pattern matching: a sibling module declares
-// a public union, and the entry module's `match` arms reference its
-// variants with a `mod.` qualifier (`tokens.TokA(x) => …`). Until
-// this PR the parser bailed at the `.` and modload had no machinery
-// to mangle the variant name or the union/enum decl. The fix spans
-// parser (accept the qualifier), ast (record VariantModule), modload
-// (mangle EnumDecl / UnionDecl names + variant patterns + export
-// visibility), and checker (validate the qualifier against the
-// scrutinee enum's SourceModule).
-//
-// The project is two files on disk so import resolution is exercised
-// end-to-end rather than through a single-source helper.
-
 const crossModuleVariantTokens = `pub struct TokA { x: i32 }
 pub struct TokB { y: i32 }
 pub type Tok = TokA | TokB;
@@ -77,17 +64,6 @@ func TestCrossModuleVariantPatternArm64(t *testing.T) {
 	}
 }
 
-// Mismatched module qualifier: declaring `lexer.TokA(_)` when the
-// scrutinee enum lives in `tokens` should be a checker-time error,
-// not silently accepted. Confirms the SourceModule comparison in
-// checker.go fires.
-// Once import aliases landed, a module can be referred to by both an
-// alias and its basename, and a variant pattern qualified with either
-// name resolves to the same module. (Before aliases this shape was
-// rejected — `import ... as lexer;` was a parse error — and this test
-// guarded against silently accepting a genuine qualifier mismatch.)
-// The aliased qualifier `lexer.TokA` and the basename `tokens.Tok` now
-// both denote ./tokens, so the program is valid and type-checks.
 func TestCrossModuleVariantPatternAliasQualifier(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "tokens.fern"), []byte(crossModuleVariantTokens), 0o644); err != nil {

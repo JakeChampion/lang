@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A closure whose result IS a scalar — so the reclaim fires — called
-// with an argument that is a live LOCAL rather than a fresh temp. Only
-// a freshly-allocating shape is stashed and released; an aliased local
-// must be left alone, or the binding it is still read through is freed
-// underneath it.
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/i32";
 function main(): i32 {

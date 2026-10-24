@@ -10,8 +10,6 @@ import (
 	"unsafe"
 )
 
-// Exec from a locked thread so the deliberately inherited signal mask is
-// unambiguous. This helper process never returns to the Go runtime.
 func TestSelfHostCPUProfileMaskHelper(t *testing.T) {
 	if len(os.Args) < 3 || os.Args[len(os.Args)-2] != "fern-profile-mask-exec" {
 		return
@@ -22,7 +20,7 @@ func TestSelfHostCPUProfileMaskHelper(t *testing.T) {
 	}
 	runtime.LockOSThread()
 	mask := uint64(1 << (syscall.SIGPROF - 1))
-	nr := uintptr(14) // Linux x86-64 rt_sigprocmask
+	nr := uintptr(14)
 	if runtime.GOARCH == "arm64" {
 		nr = 135
 	}

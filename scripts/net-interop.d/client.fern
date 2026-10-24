@@ -1,9 +1,5 @@
-// The Fern client scripts/net-interop runs against Go net/http, nginx and
-// h2o: one line per case, the same lines whichever origin answers, so
-// the script compares them with one expected text.
 import "std/fetch";
 
-// The body every origin's /gzip codes.
 function gzip_text(): string {
   let out: string = "";
   let i: i32 = 0;
@@ -26,7 +22,6 @@ function base(): string {
   return "";
 }
 
-// The status and body of `answer`, or the error.
 function line(answer: Result[HttpResponse, fetch.FetchError]): string {
   match (answer) {
     Ok(resp) => {
@@ -55,8 +50,6 @@ function main(): i32 {
   } else {
     print("gzip: " + coded);
   }
-  // A held transport keeps the connection, so the origin sees both
-  // requests from one source port.
   let kept: fetch.Sockets = fetch.sockets();
   let open: fetch.Policy = fetch.Policy { public_only: false, proxies: fetch.proxy_env(), roots: None, jar: None, allow: None };
   let first: string = line(fetch.send_on(kept, fetch.get(base() + "/port"), open));

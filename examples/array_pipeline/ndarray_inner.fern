@@ -1,5 +1,3 @@
-// Native probe: rows, contracted extent, columns, rounds, mode (0 stdlib,
-// 1 packed scalar probe, 2 SIMD kernel). Check outputs and inputs outside timing.
 import "std/ndarray";
 import "std/array";
 import "std/string";

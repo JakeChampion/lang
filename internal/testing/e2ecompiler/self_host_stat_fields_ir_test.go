@@ -10,15 +10,8 @@ import (
 	"time"
 )
 
-// The mtime the probes below pin. A fixed instant is what makes a WRONG
-// timestamp field visible: the self-host reads all three from one per-target
-// offset table, and on Darwin st_birthtimespec sits between st_ctimespec and
-// st_size, so an off-by-one row still produces a plausible number.
 const selfHostProbeMtime int64 = 1_600_000_000
 
-// selfHostStatProbeTree writes the file the probes read: 0640, five bytes, a
-// pinned mtime, and a hard link beside it so (dev, ino) and nlink have
-// something to say.
 func selfHostStatProbeTree(t *testing.T, dir string) (file, link string) {
 	t.Helper()
 	file = filepath.Join(dir, "fields_target.txt")
@@ -39,8 +32,6 @@ func selfHostStatProbeTree(t *testing.T, dir string) (file, link string) {
 	return file, link
 }
 
-// selfHostStatFieldsSource asserts the fields the self-host reads out of the
-// kernel's `struct stat`. Each failure returns its own exit code.
 func selfHostStatFieldsSource(file, link string, euid, egid int) string {
 	return fmt.Sprintf(`function main(): i32 {
     match (stat(%[1]q)) {
@@ -74,15 +65,6 @@ func selfHostStatFieldsSource(file, link string, euid, egid int) string {
 `, file, link, selfHostProbeMtime, euid, egid)
 }
 
-// TestSelfHostStatFieldsIR reads a known file through the whole `stat(2)`
-// record.
-//
-// The self-host builds FileStat from a generated Fern body
-// (`asmcore.rt_src_stat`): `struct statx` read by `statx_project_src` on Linux,
-// Darwin's `struct stat` by `statoff` / `statkind`. A wrong offset there is
-// silent: every one is inside a buffer the kernel filled, so it reads a real
-// number out of the wrong field. Only values a test can arrange — a chmod, a
-// chtimes, a hard link — catch it.
 func TestSelfHostStatFieldsIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -109,16 +91,6 @@ func TestSelfHostStatFieldsIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostAccessAndIdsIR pins the three primitives that answer a shell
-// test's permission and ownership questions on the self-host x86-64 IR path.
-//
-// `access` has to ask about the EFFECTIVE ids, so the emitted call carries
-// AT_EACCESS — and the flag's value differs between Linux (0x200) and Darwin
-// (0x10), which is the kind of constant that silently asks a different
-// question. What this can prove without a set-uid binary is that the flags word
-// is one the kernel accepts at all: without it the syscall answers EINVAL or
-// ENOSYS and every case fails at once. The X_OK cases carry signal whatever uid
-// the suite runs as, since the execute bit is checked even for root.
 func TestSelfHostAccessAndIdsIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -181,12 +153,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostStatFieldsWasmIR is the preview-1 half: the self-host's wasm
-// emitter writes the FileStat slots by hand, and preview 1 answers only some of
-// them. The fields it has no record for read ZERO, which is the checker's
-// documented contract, so the zeros are the assertion — a body that left the
-// tail of the struct as whatever the allocator handed back would fail this
-// exactly as a wrong value would.
 func TestSelfHostStatFieldsWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host stat-fields wasm IR e2e")

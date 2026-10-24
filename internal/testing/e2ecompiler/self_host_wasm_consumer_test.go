@@ -7,10 +7,6 @@ import (
 	"testing"
 )
 
-// selfHostRunIOCore compiles src through the wasm_runio_run driver, the
-// self-host emitter of a run-io core (WAT out, wasi:cli/stdout imported, the
-// program's @imports surfaced as core imports), and assembles it with
-// wasm-tools into the core-module bytes the Go composer takes.
 func selfHostRunIOCore(t *testing.T, runner []string, driverBin, wasmtools, dir string, src []byte) []byte {
 	t.Helper()
 	wat := runCapture(t, "", runner, driverBin, src)

@@ -9,28 +9,6 @@ import (
 	"testing"
 )
 
-// The data-driven PARITY CORPUS (#4398 part 2). Every .fern under
-// testdata/parity/ is a self-contained program (no imports, no stdin) that is
-// run on the native interpreter (the ORACLE) and through each self-hosted IR
-// backend — x86-64, arm64, wasm — asserting identical stdout + exit code.
-// "Every feature ships with tests on every backend" is thereby a one-file
-// cost: drop a program into testdata/parity/ and all three backend legs (plus
-// the native oracle) pick it up. This replaces the old pattern of three
-// near-identical Go files per feature (X_ir_test.go + X_arm64_ir_test.go +
-// X_wasm_ir_test.go); the putchar (#2839), mut-capture (#2850 / SH-057), and
-// u64-unsigned (#2904) triples were the first migrations.
-//
-// Corpus contract:
-//   - native-valid: the program runs under `fern -interp` (that run IS the
-//     expected behaviour — no expectations are hardcoded here);
-//   - IR-eligible: every self-host driver takes the IR path rather than
-//     refusing the module. The x86-64 leg enforces this per fixture via the
-//     driver's `-ir-probe` report ("module: IR"), so an eligibility regression
-//     fails loudly;
-//   - deterministic stdout and an exit code <= 125 (WASI proc_exit range);
-//   - no stdin, no argv, no filesystem/network.
-
-// parityFixtures returns the corpus programs, sorted for stable subtest order.
 func parityFixtures(t *testing.T) []string {
 	t.Helper()
 	paths, err := filepath.Glob(filepath.Join("testdata", "parity", "*.fern"))
@@ -44,9 +22,6 @@ func parityFixtures(t *testing.T) []string {
 	return paths
 }
 
-// runParityDriver pipes src into a self-host driver (wrapped in the host
-// runner when cross-executing) and returns its stdout, failing the test on a
-// non-zero exit or empty output.
 func runParityDriver(t *testing.T, runner []string, driver, src string, args ...string) string {
 	t.Helper()
 	argv := append([]string{driver}, args...)
@@ -64,14 +39,11 @@ func runParityDriver(t *testing.T, runner []string, driver, src string, args ...
 	return string(out)
 }
 
-// parityCase is one fixture plus its oracle verdict (the native interpreter's
-// stdout + exit code).
 type parityCase struct {
 	name, src, wantOut string
 	wantExit           int
 }
 
-// parityCases loads every fixture and runs the native-interp oracle on it.
 func parityCases(t *testing.T) []parityCase {
 	t.Helper()
 	var cases []parityCase
@@ -91,10 +63,6 @@ func parityCases(t *testing.T) []parityCase {
 	return cases
 }
 
-// TestSelfHostParityCorpusX86_64IR is the x86-64 leg: asm_ir_run emits each
-// fixture via the IR path, the binary's stdout + exit code must match the
-// interp oracle. This leg also gates ROUTING for the whole corpus:
-// `-ir-probe` must report "module: IR" for every fixture.
 func TestSelfHostParityCorpusX86_64IR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
@@ -124,10 +92,6 @@ func TestSelfHostParityCorpusX86_64IR(t *testing.T) {
 	}
 }
 
-// TestSelfHostParityCorpusArm64IR is the arm64 leg: asm_ir_run with
-// `-target arm64-linux` (built with the Go x86-64 backend, running on the host)
-// emits each fixture via the IR path; the aarch64-assembled binary runs
-// under qemu and must match the native-interp oracle.
 func TestSelfHostParityCorpusArm64IR(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -148,9 +112,6 @@ func TestSelfHostParityCorpusArm64IR(t *testing.T) {
 	}
 }
 
-// TestSelfHostParityCorpusWasmIR is the wasm leg: wasm_ir_run emits each
-// fixture via the IR path; the wat runs under wasmtime and must match the
-// native-interp oracle.
 func TestSelfHostParityCorpusWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wasm parity corpus e2e")

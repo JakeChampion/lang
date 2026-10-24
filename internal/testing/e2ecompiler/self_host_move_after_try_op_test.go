@@ -2,16 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A `?` leaves the function on its Err arm through the same owned-local dec
-// sweep an explicit `return` runs, and that sweep must release a local whose
-// alias sits textually AFTER the `?` — the scan that claims such an alias as
-// a move stops at the first statement that can leave the function, and the
-// `?` is one (#8442).
-//
-// The program drives the Err path (c == 0) so the leak would be on the path
-// taken; the Ok path is clean either way. aliased(0) is Err(7), so 50 rounds
-// leave main returning 350 - 350 = 0. `c + 1` keeps `x` off the static data a
-// constant array is, so the sweep has a block to release.
 const moveAfterTryOpSrc = `
 @noinline
 function g(c: i32): Result[i32, i32] {

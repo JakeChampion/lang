@@ -4,21 +4,6 @@ import (
 	"testing"
 )
 
-// Move-and-rebind of an `own` STRUCT parameter — `s = f(.., s, ..)` where `f`
-// takes `s` by `own` — in a loop. `s` is MOVED into `f` (which deep-drops it at
-// its own exit); the assignment overwrite must NOT also deep-drop the old `s`,
-// or the box is freed twice. That double-free (latent — own-struct-by-value
-// threading was untested) corrupted the heap after a couple of calls and
-// crashed. Fixed by `callConsumesIdent`: the overwrite skips the drop when the
-// RHS consumes the target, mirroring the existing `constructionMovesIdent` skip
-// for `x = Ctor(.., x, ..)`. (Own ARRAY rebind already worked via the rc-gated
-// `__fern_arr_dec` overwrite — #2524/#2533; this is the struct case.)
-//
-// Two shapes, both pinned: a fully-dead `s` (no carry — the minimal double-free)
-// and a field-carrying return (`St{ keep: s.keep, drop: fresh }` — the BState
-// threading shape). The carried field is balanced by the construction alias-inc,
-// so the exit deep-drop frees only the orphaned field; the carried one survives
-// (verified intact) and there is no over-release (`__rc_underflow_count()==0`).
 const ownStructRebindSrc = `struct St { keep: i32[], drop: i32[] }
 function fresh(own s: St): St { return St { keep: [7], drop: [8] }; }
 function carry(own s: St): St {

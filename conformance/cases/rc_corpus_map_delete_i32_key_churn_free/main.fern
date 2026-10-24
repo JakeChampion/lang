@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The i32-KEY half, hit and miss. No key column to walk, so it
-// separates what the delete shapes cost from what the string key
-// column costs — the split that showed the leak is ABI-independent.
-// Per iter: hit 2 + surviving 2-entry 6 = 8; 500x → 4000.
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 function mk(): i32 {

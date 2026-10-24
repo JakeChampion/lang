@@ -8,19 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/tools/tty"
 )
 
-// selfHostSetWindowSizeSource drives `set_window_size(fd, rows, cols)` through
-// the self-host's lowering: the op, its three-operand stack marshalling, and
-// the Fern runtime leaf behind it, which is one TIOCGWINSZ — so the pixel pair
-// nothing surrenders survives — and one TIOCSWINSZ back.
-//
-// Every failure returns its own exit code and nothing is printed, so the
-// program can run with a terminal on fd 0 where a pipe would answer ENOTTY to
-// everything.
-//
-// The last case is the one the three-operand marshalling gets wrong when the
-// operands arrive reversed: 65536 rows has to reach the kernel as 0 rather
-// than be refused, and reading it back proves which number landed in which
-// field.
 const selfHostSetWindowSizeSource = `function main(): i32 {
     match (set_window_size(0, 40, 100)) { Err(_) => { return 10; }, Ok(_) => {} }
     match (window_size(0)) {
@@ -37,9 +24,6 @@ const selfHostSetWindowSizeSource = `function main(): i32 {
 }
 `
 
-// setWindowSizeOnPty is runOnPty with the pixel pair planted first and checked
-// after: the read-modify-write is the whole reason the helper makes two
-// ioctls, and a one-ioctl version zeroes what it never read.
 func setWindowSizeOnPty(t *testing.T, cmd *exec.Cmd) (string, int) {
 	t.Helper()
 	master, slave, err := tty.OpenPTY()
@@ -58,8 +42,6 @@ func setWindowSizeOnPty(t *testing.T, cmd *exec.Cmd) (string, int) {
 		slave.Close()
 		t.Fatalf("start: %v", err)
 	}
-	// The parent's copy goes as soon as the child holds it, or a read of the
-	// master would never see the end of the output.
 	slave.Close()
 	done := make(chan struct{})
 	go func() {
@@ -87,9 +69,6 @@ func setWindowSizeOnPty(t *testing.T, cmd *exec.Cmd) (string, int) {
 	return out.String(), cmd.ProcessState.ExitCode()
 }
 
-// TestSelfHostSetWindowSizeIR is the x86-64 IR leg: the op lowers to a call
-// into the Fern-compiled __fern_set_window_size, with the three operands
-// re-pushed so param[0] is lowest.
 func TestSelfHostSetWindowSizeIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -113,8 +92,6 @@ func TestSelfHostSetWindowSizeIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostSetWindowSizeArm64IR is the arm64 leg of the same programme,
-// through asm_ir_run -target arm64-linux under qemu.
 func TestSelfHostSetWindowSizeArm64IR(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

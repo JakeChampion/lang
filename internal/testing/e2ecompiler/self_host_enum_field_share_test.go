@@ -8,20 +8,6 @@ import (
 	"testing"
 )
 
-// --- An enum local handed to a struct FIELD is a counted share ---------------
-//
-// `let src: E = E.A([..]); let p: P = P { e: src, … }`: the construction
-// retains the value, so the source keeps its own claim and must release it.
-// Both owners walk the payload under __fern_rc_is_unique, so whichever drops
-// LAST finds rc 1 and does the deep work, in either order, and neither order
-// double-frees. The rows pin both orders: `local_then_match` releases the
-// source first (its consuming match runs before the holder dies),
-// `local_no_match` releases the holder first.
-//
-// The over-release direction is what the exit codes pin: every probe returns 99
-// from __rc_underflow_count() if any dec ran past zero — including a
-// construction that MOVED the local (#6726) and must not be swept as well.
-
 type enumFieldShareCase struct {
 	name   string
 	src    string
@@ -30,9 +16,6 @@ type enumFieldShareCase struct {
 	frees  int64
 }
 
-// efsMain is the shared 100-round driver: it returns 99 if anything
-// over-released, so an exit of 99 fails the row on the dangling direction
-// rather than the leaking one.
 const efsMain = `function main(): i32 {
     let t: i32 = 0;
     let r: i32 = 0;
@@ -48,9 +31,6 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 `
 	return []enumFieldShareCase{
 		{
-			// THE REPRO. A fresh ctor bound to a local, shared into a field,
-			// nothing else. Base: allocs=300 frees=100 — the enum box and its
-			// payload stranded every round, only the holder's box came back.
 			name: "local_no_match",
 			src: decls + `function round(i: i32): i32 {
     let src: E = E.A([i, i + 5]);
@@ -61,10 +41,6 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			want: 3, allocs: 300, frees: 300,
 		},
 		{
-			// The source is CONSUMED by its own match before the holder dies, so
-			// the source's release runs first and finds the box shared (rc 2):
-			// it takes the shallow path and the holder's is_unique-gated drop
-			// does the payload. Base: allocs=300 frees=100.
 			name: "local_then_match",
 			src: decls + `function round(i: i32): i32 {
     let src: E = E.A([i, i + 5]);
@@ -77,8 +53,6 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			want: 5, allocs: 300, frees: 300,
 		},
 		{
-			// Bound from a strict-fresh PRODUCER rather than an inline ctor —
-			// the "RCE:" registry's admission, sharing the same field position.
 			name: "call_bound_local",
 			src: decls + `function round(i: i32): i32 {
     let src: E = mkv(i);
@@ -89,10 +63,6 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			want: 3, allocs: 300, frees: 300,
 		},
 		{
-			// The share happens in a CONDITIONAL block, so on half the rounds the
-			// construction never runs and the source's own release is the only
-			// one. Both paths have to balance, which is what makes a static
-			// ownership hand-off (rather than the runtime gate) wrong here.
 			name: "conditional_share",
 			src: decls + `function round(i: i32): i32 {
     let src: E = mkv(i);
@@ -107,14 +77,6 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			want: 28, allocs: 250, frees: 250,
 		},
 		{
-			// The source reaches a call ARGUMENT as well as the field. This row
-			// was written as a correct REFUSAL and pinned at 100 frees; it was
-			// not correct, it was a leak — native is 300/300 on this exact
-			// program. `sink` only READS its param, through a match expression,
-			// so the param is borrowable and the source keeps its claim; what
-			// refused it was the value-block walk losing the match-borrow
-			// reading on the way through `+`. See
-			// docs/rc-log/2026-08-25-enum-value-block-borrow.md.
 			name: "call_arg_borrowed_by_callee",
 			src: decls + `function sink(e: E, k: i32): i32 {
     return (match (e) { E.A(xs) => xs.len(), E.B => 0 }) + k;
@@ -130,8 +92,6 @@ function round(i: i32): i32 {
 	}
 }
 
-// TestSelfHostEnumFieldShareX86_64 is the leak-accounting leg: alloc/free counts
-// per row, with 99 reserved for an over-release.
 func TestSelfHostEnumFieldShareX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -171,9 +131,6 @@ func TestSelfHostEnumFieldShareX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostEnumFieldShareWasmIR — the wasm sibling. Exit codes only (the leak
-// rows do not move one), so what this leg catches is a release that frees a LIVE
-// box on wasm, including the 99 the underflow guard reports.
 func TestSelfHostEnumFieldShareWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping enum field-share wasm IR e2e")
@@ -212,7 +169,6 @@ func TestSelfHostEnumFieldShareWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostEnumFieldShareIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostEnumFieldShareIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

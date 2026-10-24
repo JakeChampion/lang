@@ -1,49 +1,3 @@
-// shred.fern — GNU-compatible `shred`.
-//
-//   shred [OPTION]... FILE...
-//
-// The utility overwrites each operand in place: open for writing WITHOUT
-// truncating, learn the length, then write the length over and over,
-// rewinding between passes. That rewind is the whole reason this waited
-// on a primitive — `w.seek(0, 0)` (#9216) — because reopening the name
-// per pass is a different operation: the mode may refuse a fresh open,
-// and the entry could be replaced between passes.
-//
-// ## What is deterministic here, and what GNU itself is not
-//
-// The pass schedule is RANDOM in GNU: three runs of `-n 10` over
-// identical files give three different orders AND three different
-// pattern sets, so no implementation can match its `-v` output
-// byte-for-byte past the point where every pass is random. What does
-// match, and is what the corpus gates:
-//
-//   - `-n 0` through `-n 3` (the default is 3), where every pass is
-//     `random` and so every line is fixed;
-//   - `-z`, whose zero pass is always last and prints `(000000)`;
-//   - the removal chain, which is fully determined by the name;
-//   - every diagnostic and exit status.
-//
-// Our schedule is therefore our own, and randomised as GNU's is: the
-// first and last passes are random, one more is random in the middle of
-// a long run, and the rest walk a shuffled vocabulary.
-//
-// ## The pattern vocabulary, measured
-//
-// A pattern prints as six hex digits and is a THREE-byte cycle:
-// `249249` writes 0x24 0x92 0x49 over and over. The vocabulary is the
-// sixteen nibble repeats (`000000`, `111111` … `ffffff`) and the six
-// three-bit rotations (`249249`, `492492`, `6db6db`, `924924`,
-// `b6db6d`, `db6db6`), each also with the TOP BIT of its first byte
-// flipped — `800000` beside `000000`, `a49249` beside `249249` — which
-// is 44 in all, and exactly the set a long `-v` run prints.
-//
-// ## Sizes
-//
-// The overwrite rounds the length UP to a multiple of the file's own
-// block size, so an 11-byte file becomes 4096 bytes and stays that
-// length; `-x` writes the length as it stands, and `-s N` writes N
-// bytes whatever the file holds. A non-regular operand is exact
-// whether or not `-x` was asked for: there is no length to round.
 import "std/string";
 import "std/i32";
 import "std/i64";
@@ -87,8 +41,6 @@ function opt_zero(): i32 {
   return 9;
 }
 
-// The three ways `--remove=HOW` deletes the entry, in the order the
-// diagnostic lists them.
 function how_unlink(): i32 {
   return 0;
 }
@@ -127,12 +79,6 @@ function help_text(): string {
   return out;
 }
 
-// ---- patterns --------------------------------------------------------------
-//
-// Each entry is one three-byte cycle packed into an i32, high byte
-// first: `249249` is 0x249249. The flipped half of the vocabulary is
-// the same list with the top bit of the first byte set, which is what
-// `flip_first` adds, so only the 22 bases are written down.
 function base_patterns(): i32[] {
   let out: i32[] = [];
   let n: i32 = 0;
@@ -154,8 +100,6 @@ function flip_first(p: i32): i32 {
   return p ^ 0x800000;
 }
 
-// `random_pass()` — the schedule entry that means "random bytes", which
-// no pattern can collide with because every pattern fits in 24 bits.
 function random_pass(): i32 {
   return 0 - 1;
 }
@@ -167,7 +111,6 @@ function hex_digit(v: i32): u8 {
   return (87 + v) as u8;
 }
 
-// `pattern_name(p)` — the six hex digits `-v` prints, or `random`.
 function pattern_name(p: i32): string {
   if (p == random_pass()) {
     return "random";
@@ -191,13 +134,6 @@ function pow16(shift: i32): i32 {
   return v;
 }
 
-// `schedule(passes, zero)` — the pass list. Up to three passes every
-// one is random, which is the whole of the default and the only part
-// of `-v` that reproduces. Past that GNU's schedule is shuffled per
-// run and so is this: the first and last passes are random, a long run
-// takes one more in the middle, and the rest are drawn from the
-// vocabulary in a random order. A `-z` zero pass is appended and counts
-// toward the total `-v` prints.
 function schedule(passes: i32, zero: boolean): i32[] {
   let out: i32[] = [];
   if (passes <= 3) {
@@ -245,8 +181,6 @@ function all_random(passes: i32, zero: boolean): i32[] {
   return out;
 }
 
-// The 44 patterns in a random order: the bases and their flipped
-// halves, shuffled by a Fisher-Yates walk over `random_bytes`.
 function shuffled_vocab(): i32[] {
   let all: i32[] = [];
   let bases: i32[] = base_patterns();
@@ -268,22 +202,6 @@ function shuffled_vocab(): i32[] {
   return all;
 }
 
-// ---- the random source -----------------------------------------------------
-//
-// `--random-source=FILE` replaces the CSPRNG with that file's bytes, so
-// `--random-source=/dev/zero` makes a "random" pass write zeros while
-// `-v` still calls the pass random. A source that cannot be opened is
-// reported by NAME alone, which is GNU's wording: `shred: /nonexistent:
-// No such file or directory`.
-// With no source named, the bytes come from a generator seeded once from
-// the platform CSPRNG, which is where GNU's come from too and for the same
-// reason: `getrandom(2)` runs at about 320 MB/s here, less than half what
-// the write path can take, so a syscall per block makes the kernel the
-// bottleneck of a program whose whole job is writing bytes (#9221). The
-// generator's state sits in a Cell because a source HAS a position: the
-// file-backed arm advances an fd's offset through its handle, and this arm
-// advances a word counter the same way, so neither is threaded through six
-// call frames to say so.
 struct Rand { from_file: boolean, r: Reader, name: string, st: Cell[i64], block: usize }
 
 function rand_none(): Rand {
@@ -305,15 +223,6 @@ function rand_open(s: Settings): Option[Rand] {
   }
 }
 
-// `rand_block(rnd, n)` — `n` random bytes, from the source when one was
-// named, and whether the block came out FULL. The read repeats until it
-// is, because a source that is a pipe or a device answers with what it
-// has rather than with what was asked for.
-//
-// A source that runs dry ends the run: GNU reports `'NAME': end of
-// file`, writes nothing of the block it could not fill, and abandons
-// the operands it had not reached. So a source is exhausted by exactly
-// the bytes written — there is no read-ahead to account for.
 function rand_block(rnd: Rand, n: i32): (u8[], boolean) {
   if (!rnd.from_file) {
     rnd.st.set(rand.rng_fill(rnd.st.get(), rnd.block, n));
@@ -360,8 +269,6 @@ function copy_bytes(bytes: u8[], lo: i32, hi: i32): u8[] {
   return out;
 }
 
-// Build the three-byte pattern by doubling byte ranges. The total bytes
-// copied grow linearly, and each copy uses the runtime range operation.
 function pattern_block(p: i32, n: i32): u8[] {
   let out: u8[] = [(p / 65536 % 256) as u8, (p / 256 % 256) as u8, (p % 256) as u8];
   if (n <= 3) {
@@ -381,12 +288,6 @@ function pattern_block(p: i32, n: i32): u8[] {
   return out;
 }
 
-// ---- one pass --------------------------------------------------------------
-//
-// A pass is one write per block, the last one short when the length does
-// not divide. Three-byte patterns use 60 KiB so every block starts at the
-// same point in the cycle. Random and constant-byte passes use GNU's 64 KiB
-// boundary, which also determines what is written before source exhaustion.
 function block_bytes(code: i32): i32 {
   if (code == random_pass()) {
     return 65536;
@@ -398,15 +299,8 @@ function block_bytes(code: i32): i32 {
   return 61440;
 }
 
-// A pass that does not finish either failed on the FILE, which costs
-// that operand alone, or exhausted the random source, which ends the
-// program with the operands after it untouched.
 struct PassFail { msg: string, fatal: boolean }
 
-// `pass_chunk(code, n, full, rnd)` — the `n` bytes of one block, and
-// whether the random source had them. `full` is the pattern's own block,
-// laid down once per pass and handed back untouched for every block but
-// a short last one.
 function pass_chunk(code: i32, n: i32, full: u8[], rnd: Rand): (u8[], boolean) {
   if (code == random_pass()) {
     return rand_block(rnd, n);
@@ -433,12 +327,6 @@ function write_pass(w: Writer, path: string, len: i64, code: i32, rnd: Rand): Op
   return sync_pass(w, path);
 }
 
-// A pass is not done until the bytes are on the device, and a device
-// that cannot be told to flush is not a failure: `fdatasync` on
-// /dev/null answers EINVAL, and GNU then asks for a full `fsync` and
-// carries on when that is refused the same way. It re-asks every pass
-// rather than remembering, so a handle that starts answering does get
-// synced.
 function sync_pass(w: Writer, path: string): Option[PassFail] {
   match (w.fdatasync()) {
     Ok(_) => {
@@ -455,16 +343,6 @@ function sync_pass(w: Writer, path: string): Option[PassFail] {
   return None;
 }
 
-// One block, however many writes it takes: `write_some` reports what
-// each one moved, so a SHORT write finishes from where it stopped and
-// a failure knows the exact byte it stopped at — which is what GNU's
-// diagnostic names, and for ENOSPC that byte lands inside a block rather
-// than on its edge (#9231). The pair is (the offset reached, the
-// failure if there was one).
-//
-// A write that moves nothing without failing is a standstill, not an
-// error: the pass stops there, which is what the native `w.write` loop
-// does with the same answer.
 function write_block(w: Writer, path: string, block: u8[], at: i64): (i64, Option[PassFail]) {
   let n: i32 = block.len();
   let off: i32 = 0;
@@ -489,7 +367,6 @@ function write_block(w: Writer, path: string, block: u8[], at: i64): (i64, Optio
   return (at + n as i64, None);
 }
 
-// The blocks of one pass, from wherever the handle stands.
 function write_blocks(w: Writer, path: string, len: i64, code: i32, rnd: Rand): Option[PassFail] {
   let full: u8[] = [];
   let block_size: i32 = block_bytes(code);
@@ -521,32 +398,10 @@ function write_blocks(w: Writer, path: string, len: i64, code: i32, rnd: Rand): 
   return None;
 }
 
-// ---- removal ---------------------------------------------------------------
-//
-// `--remove=unlink` just unlinks. `wipe` and `wipesync` first obscure
-// the NAME, which is a chain of renames in the entry's own directory:
-// the first candidate is as long as the name it replaces and every one
-// after it is a character shorter, so the length the directory recorded
-// is gone too. Every line names the path as the operand gave it.
-//
-//     shred: sub/deep: removing
-//     shred: sub/deep: renamed to sub/0000
-//     shred: sub/0000: renamed to sub/000
-//     shred: sub/000: renamed to sub/00
-//     shred: sub/00: renamed to sub/0
-//     shred: sub/deep: removed
-//
-// A candidate that is taken is stepped through `0`-`9` then `a`-`z` in
-// its LAST position first — with `00` through `09` present the next one
-// is `0a` — so a directory full of short names does not stop the wipe.
 function name_chars(): string {
   return "0123456789abcdefghijklmnopqrstuvwxyz";
 }
 
-// The operand's directory part with its slash, or "" when it has none.
-// NOT `gnu.dir_name`, which answers `.` for a bare name: these strings
-// are pasted back in front of a sibling's name and printed, and GNU
-// prints `renamed to 0` rather than `renamed to ./0`.
 function dir_prefix(path: string): string {
   let Some(cut) = path.last_index_of("/") else {
     return "";
@@ -554,8 +409,6 @@ function dir_prefix(path: string): string {
   return slice_unchecked(path, 0, cut + 1) + "";
 }
 
-// `next_free(prefix, len)` — the first name of `len` characters beside
-// `prefix` that nothing holds, stepping the last position first.
 function next_free(prefix: string, len: i32): string {
   let chars: string = name_chars();
   let idx: i32[] = [];
@@ -589,8 +442,6 @@ function index_name(idx: i32[], chars: string): string {
   return string_from_bytes_unchecked(cand);
 }
 
-// One step of the candidate counter: the last position moves first and
-// carries into the one before it.
 function step_index(idx: i32[], base: i32): i32[] {
   let out: i32[] = idx;
   let k: i32 = out.len() - 1;
@@ -604,9 +455,6 @@ function step_index(idx: i32[], base: i32): i32[] {
   return out;
 }
 
-// `wipe_names(path, s)` — the whole rename chain, from a candidate as
-// long as the name down to one character, reporting each step; the
-// path the entry ends up under comes back.
 function wipe_names(path: string, s: Settings): string {
   let prefix: string = dir_prefix(path);
   let current: string = path;
@@ -652,11 +500,6 @@ function remove_entry(path: string, s: Settings): boolean {
   return true;
 }
 
-// ---- one operand -----------------------------------------------------------
-//
-// The open is `O_WRONLY` with no `O_TRUNC` and no `O_CREAT`: the data
-// has to still be there to overwrite, so a name that is not there is
-// `failed to open for writing` rather than a fresh empty file.
 function shred_one(path: string, s: Settings, rnd: Rand): (boolean, boolean) {
   if (path == "-") {
     let d: (Writer, boolean) = dash_handle();
@@ -676,17 +519,6 @@ function shred_one(path: string, s: Settings, rnd: Rand): (boolean, boolean) {
   }
 }
 
-// `-` is standard output, and which of GNU's answers is right depends on
-// how fd 1 was OPENED. The questions go in GNU's order: the FLAGS first,
-// whose failure it reports as `fcntl failed: <errno>` — the shape its own
-// fcntl(F_GETFL) gives, and what a closed fd 1 answers with — and then
-// the file TYPE, where a FIFO or a socket is refused outright while a
-// DEVICE is overwritten like a file, which is shred's classic use.
-//
-// An append-only descriptor is refused rather than appended to: its
-// writes land at the end whatever the offset says, so overwriting in
-// place is not something it can be asked to do. #9219 is the primitive
-// this waited on.
 function dash_handle(): (Writer, boolean) {
   let w: Writer = stdout();
   match (w.flags()) {
@@ -704,17 +536,6 @@ function dash_handle(): (Writer, boolean) {
   return (w, true);
 }
 
-// The types with nothing to overwrite in place, which GNU refuses before
-// it writes anything: a FIFO and a socket carry no length to rewind
-// over, and a terminal is a stream rather than storage. Everything else
-// is fair game — a block device is what shred was written for, and
-// /dev/null is a character device it overwrites happily. S_IFMT is the
-// top four bits of the mode, 0o010000 FIFO and 0o140000 socket.
-//
-// The terminal is the one of the three that a mode cannot answer:
-// /dev/null and /dev/ptmx are both character devices and only one is
-// refused, so the question goes to the HANDLE (#9229) rather than to a
-// name — `-` has a descriptor number but an opened operand does not.
 function unshreddable(mode: u32, tty: boolean): boolean {
   if (tty) {
     return true;
@@ -723,8 +544,6 @@ function unshreddable(mode: u32, tty: boolean): boolean {
   return kind == 4096 as u32 || kind == 49152 as u32;
 }
 
-// A failing fstat is not decided here: `-s` supplies a length the
-// operand itself could not, so shred_length owns that case.
 function shred_type_ok(w: Writer, path: string): boolean {
   match (w.stat()) {
     Err(_) => {
@@ -740,11 +559,6 @@ function shred_type_ok(w: Writer, path: string): boolean {
   return true;
 }
 
-// The passes over one open handle, and then what standing in for removal
-// means for it: a named operand is renamed and unlinked, while standard
-// output has no name to wipe and is TRUNCATED to nothing instead, which
-// is as far as `-u` reaches there. A stdio handle is not closed either —
-// the process still needs fd 1.
 function shred_handle(w: Writer, path: string, s: Settings, rnd: Rand, is_dash: boolean): (boolean, boolean) {
   if (!shred_type_ok(w, path)) {
     if (!is_dash) {
@@ -788,15 +602,6 @@ function dash_remove(w: Writer, s: Settings): boolean {
   return true;
 }
 
-// `open_for_shred(path, s)` — the write handle, and `-f`'s retry.
-//
-// `-f` is not an eager chmod: GNU opens first and only then, if the
-// open was refused, makes the entry writable and tries again. The mode
-// it sets is 0200 — write for the owner and nothing else — and it is
-// NOT put back afterwards, so a shredded file is left write-only. When
-// the chmod is the thing that fails, ITS errno is what the open-shaped
-// diagnostic carries: a 444 file owned by someone else reports
-// `Operation not permitted`, not `Permission denied`.
 function open_for_shred(path: string, s: Settings): Result[Writer, IoError] {
   let first: Result[Writer, IoError] = open_writer_with(path, 0);
   match (first) {
@@ -824,28 +629,6 @@ function open_for_shred(path: string, s: Settings): Result[Writer, IoError] {
   }
 }
 
-// `shred_length(w, s)` — the lengths a run writes.
-//
-// `total` is `-s` when it was given, else the file's own length rounded
-// UP to its block size, which is what grows an 11-byte file to 4096.
-// `-x` writes the length as it stands.
-//
-// A DEVICE has no length in its stat — `st_size` is 0 for a block
-// device — so where GNU asks is `lseek(0, SEEK_END)`, and that is what
-// makes `shred /dev/sdb` write the whole device rather than nothing.
-// When even that answers 0 the length is unknown, and GNU writes until
-// a write FAILS: on a real device that is ENOSPC at the end of it, and
-// on /dev/null it never comes, so the run does not stop. Asking for
-// every byte an offset can address is the same behaviour and needs no
-// second kind of loop.
-//
-// `first` is the length of a SILENT sweep that comes before it. A file
-// that is about to GROW and is smaller than one block is overwritten at
-// its own length first — every pass of the schedule, each with its own
-// sync — and only then at the full length, where the pass lines are.
-// So an 11-byte file under `-n 2` is written 11, 11, 4096, 4096, and a
-// file already a block long or longer is written once per pass. Zero
-// means there is no such sweep.
 struct Lengths { first: i64, total: i64 }
 
 function shred_length(w: Writer, s: Settings): (Lengths, boolean) {
@@ -874,9 +657,6 @@ function shred_length(w: Writer, s: Settings): (Lengths, boolean) {
   }
 }
 
-// The end of a handle that stat could not measure. The seek leaves the
-// offset there; every pass rewinds before it writes, so nothing has to
-// put it back.
 function device_length(w: Writer): i64 {
   match (w.seek(0 as i64, 2)) {
     Ok(end) => {
@@ -900,10 +680,6 @@ function round_up(size: i64, block: i64): i64 {
   return size + block - rem;
 }
 
-// One sweep of the schedule at one length. `announce` is what `-v`
-// reports — `pass K/N (PATTERN)...`, whose total counts a `-z` pass, so
-// `-n 2 -z` says 1/3, 2/3, 3/3 — and the sweep at the file's own length
-// is silent.
 function write_sweep(w: Writer, path: string, len: i64, codes: i32[], announce: boolean, rnd: Rand): Option[PassFail] {
   let i: i32 = 0;
   while (i < codes.len()) {
@@ -921,10 +697,7 @@ function write_sweep(w: Writer, path: string, len: i64, codes: i32[], announce: 
   return None;
 }
 
-// Every pass of one operand: `(went well, ended the run)`.
 function write_passes(w: Writer, path: string, span: Lengths, s: Settings, rnd: Rand): (boolean, boolean) {
-  // Nothing to overwrite is nothing to report: GNU prints no pass line
-  // for a zero-length file, not even under `-v`.
   if (span.total <= 0 as i64) {
     return (true, false);
   }
@@ -948,7 +721,6 @@ function write_passes(w: Writer, path: string, span: Lengths, s: Settings, rnd: 
   return (true, false);
 }
 
-// ---- options ---------------------------------------------------------------
 function settings_new(): Settings {
   return Settings { force: false, passes: 3, size: 0 as i64, size_given: false, remove: false, how: how_wipesync(), verbose: false, exact: false, zero: false, source: "", source_given: false };
 }
@@ -1010,9 +782,6 @@ function apply_option(s: Settings, m: gnu.OptMatch): Settings {
   return Settings { ...s, zero: true };
 }
 
-// `-n` and `-s` share gnulib's suffixed parse, and neither takes the
-// `x` multiplier `dd` does: `shred -n 1x2` is `invalid number of
-// passes: '1x2'`.
 function passes_of(v: string): i32 {
   let r: (u64, i32) = gnu.parse_units(v);
   if (r.1 != 0) {
@@ -1031,8 +800,6 @@ function size_of(v: string): i64 {
   return r.0 as i64;
 }
 
-// `--remove=HOW` takes the three names in this order, and ARGMATCH
-// prints them in it when the value is not one of them.
 function how_of(v: string): i32 {
   if (v.len() == 0) {
     return how_wipesync();
@@ -1059,8 +826,6 @@ pub function main(): i32 {
   return 1;
 }
 
-// shred_all shreds every operand from one random source and closes it:
-// the exit status.
 function shred_all(operands: string[], s: Settings, rnd: Rand): i32 {
   let ok: boolean = true;
   let i: i32 = 0;
@@ -1069,8 +834,6 @@ function shred_all(operands: string[], s: Settings, rnd: Rand): i32 {
     if (!done.0) {
       ok = false;
     }
-    // An exhausted random source is the run's end, not this operand's:
-    // the operands after it are left as they were.
     if (done.1) {
       rand_close(rnd);
       return 1;
@@ -1084,8 +847,6 @@ function shred_all(operands: string[], s: Settings, rnd: Rand): i32 {
   return 1;
 }
 
-// A builder is not refcounted and has no drop, so the generator's block is
-// released by hand, as an fd is closed.
 function rand_close(rnd: Rand): void {
   if (!rnd.from_file) {
     buf_free(rnd.block);

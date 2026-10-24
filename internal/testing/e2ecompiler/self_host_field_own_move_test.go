@@ -9,18 +9,6 @@ import (
 	"testing"
 )
 
-// fieldOwnMoveCases pin the self-host lowering of the superseded-field move
-// (#8186): `a = Asm { ...a, cfi: record(a.cfi, v) }` with `record(own s: Cfi,
-// …)` hands `a.cfi` to the callee as a MOVE out of a's box. The call site
-// tests __fern_rc_is_unique(a): a unique box has its slot emptied, so every
-// later release of it meets a null; a shared box keeps its field and the
-// callee is retained into. Both branches run here — the loop is the unique
-// one, `shared` aliases the box first — on the rebind form, the return form,
-// an own-param base and a local base.
-//
-// The exit code folds a value check (each mismatch its own bit) with
-// __rc_underflow_count(), so a wrong value, an over-release and a crash each
-// read as their own non-zero.
 var fieldOwnMoveCases = []struct {
 	name string
 	src  string
@@ -84,9 +72,6 @@ func TestSelfHostFieldOwnMoveIRX86_64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
-			// The value check passes on the retain fallback too, so pin the
-			// move itself: inside `step`, the uniqueness test precedes the
-			// call that consumes the field.
 			if !uniqueTestBeforeCallInFn(string(asm), "__fn_step:", "call __fn_record") {
 				t.Errorf("%s: `step` passes a.cfi to record's own parameter without the is_unique-gated move", tc.name)
 			}
@@ -105,9 +90,6 @@ func TestSelfHostFieldOwnMoveIRX86_64(t *testing.T) {
 	}
 }
 
-// uniqueTestBeforeCallInFn reports whether, in the asm text of the function
-// starting at `label`, a __fern_rc_is_unique call appears before the first
-// `callLine` and after any earlier non-runtime call.
 func uniqueTestBeforeCallInFn(asm, label, callLine string) bool {
 	start := strings.Index(asm, "\n"+label)
 	if start < 0 {

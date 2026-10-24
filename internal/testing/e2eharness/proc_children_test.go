@@ -29,7 +29,6 @@ func TestChildrenByPPid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 13 exited between the listing and the read; self is not a pid.
 	if want := []string{"9", "100"}; !slices.Equal(got, want) {
 		t.Errorf("children of 7: %q, want %q", got, want)
 	}
@@ -47,7 +46,6 @@ func TestChildrenByPPidRefusesBadRecords(t *testing.T) {
 	}
 }
 
-// unreadable fails every status read the way a permission error does.
 type unreadable struct{ fstest.MapFS }
 
 func (u unreadable) ReadFile(name string) ([]byte, error) {
@@ -61,8 +59,6 @@ func (u unreadable) Open(name string) (fs.File, error) {
 	return nil, &fs.PathError{Op: "open", Path: name, Err: errors.New("permission denied")}
 }
 
-// The PPid scan finds this process's real children on the running kernel,
-// and so does ChildPIDs, whichever of the test binary's threads forked them.
 func TestChildPIDsOnTheKernel(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("reads /proc")

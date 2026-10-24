@@ -1,13 +1,13 @@
-// Process-lifetime state in a cell whose element is a composite (#2679): the
-// shape a long-running server keeps across requests. E057 admits any element
-// built from scalars, strings, arrays, tuples, maps, structs and enums, since
-// none of those can hold a reference back to a cell; diag_e057 is the half
-// that is refused.
-//
-// `serve` stands in for an accept loop: one handler closure, built once,
-// captures the cells and is called per request, so every request reads the
-// state the previous ones left. Each `get()` is a snapshot: the `before`
-// read below must not see the writes that follow it.
+
+
+
+
+
+
+
+
+
+
 import "core/map";
 import "std/i32";
 

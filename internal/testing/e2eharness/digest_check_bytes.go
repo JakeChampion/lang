@@ -16,8 +16,6 @@ import (
 
 var DigestCheckUtilities = []string{"md5sum", "sha1sum", "sha224sum", "sha256sum", "sha384sum", "sha512sum", "b2sum", "cksum"}
 
-// RunDigestCheckByteCases compares byte grammar with GNU, and separately pins
-// D10's filename boundary errors. The latter require no raw filesystem names.
 func RunDigestCheckByteCases(t *testing.T, utility, bin string, runner []string, census func(*testing.T, string)) {
 	t.Helper()
 	name := utility
@@ -150,7 +148,6 @@ func RunDigestCheckByteCases(t *testing.T, utility, bin string, runner []string,
 			checkCase{name: "detect nul tail", body: strings.TrimSuffix(tagged, "\n") + "\x00\xff\n", detect: true},
 		)
 	}
-	// Both input channels must apply the same grammar and validation policy.
 	for _, original := range append([]checkCase{}, cases...) {
 		original.name += " stdin"
 		original.stdin = true

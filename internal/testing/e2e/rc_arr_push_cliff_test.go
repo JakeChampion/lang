@@ -1,40 +1,9 @@
-// __fern_arr_push_grow's in-place fast path requires rc == 1. That threshold
-// is a performance CORRECTNESS boundary, and until now it had no diagnostic:
-// one stray retain anywhere upstream — a return-transfer inc on an `own`
-// param, a consumed-param entry retain, a caller-side alias inc — makes every
-// append in a threaded accumulator copy the whole buffer, and the program
-// stays CORRECT while going quadratic. Three regressions of exactly that shape
-// landed in a single PR's history and were each discovered somewhere else
-// entirely, as an arena exhaustion or a CI OOM, days after the commit that
-// caused them.
-//
-// __arr_push_shared_count() reports it directly: the number of appends that
-// copied a buffer which still had SPARE CAPACITY, so the copy was bought by an
-// extra reference rather than by a full buffer. Zero on a healthy run — which
-// is what makes it usable as an assertion rather than a profiling curiosity.
-//
-// Both halves are pinned here. A counter that never fires would pass the
-// healthy case forever.
-//
-// POINTER AND STRING ELEMENTS COUNT TOO, and until #6888 §4d.6 they did not:
-// the tally lived only in `__fern_arr_push_grow`, the SCALAR-element helper,
-// so every `T[]` / `string[]` append went through `_ptr` / `_str` (or their
-// `_move_` siblings) and crossed the cliff without bumping anything. That is
-// the whole of a compiler's own accumulators — the self-host's `ir.Op[]` and
-// `string[]` threading read 988 bytes on the gate while a gdb breakpoint
-// census of the same module found 267 MB. Every case below therefore exists in
-// three element flavours; the scalar ones alone are what let the blind spot
-// stand.
 package e2e
 
 import (
 	"testing"
 )
 
-// arrPushCliffHealthySrc threads an accumulator through a borrowed param and
-// hands it back — the shape every byte-emitter in the self-host compiler is
-// built from. Nothing else holds the buffer, so every append after the first
-// grow must mutate in place: the cliff is never crossed.
 const arrPushCliffHealthySrc = `function step(acc: i32[], v: i32): i32[] { return acc.append(v); }
 function main(): i32 {
     let acc: i32[] = [];
@@ -45,12 +14,6 @@ function main(): i32 {
     return __arr_push_shared_count();
 }`
 
-// arrPushCliffSharedSrc crosses the cliff exactly once, deliberately. The
-// first loop grows the buffer to cap 8 / len 5, so it has room to spare; `b`
-// then takes a second reference; the append that follows therefore CANNOT
-// mutate in place despite the spare capacity, and must copy. Reading b and c
-// afterwards keeps both live and proves the copy actually happened — if the
-// append had mutated in place, b would see length 6.
 const arrPushCliffSharedSrc = `function main(): i32 {
     let a: i32[] = [];
     let i: i32 = 0;
@@ -62,13 +25,6 @@ const arrPushCliffSharedSrc = `function main(): i32 {
     return __arr_push_shared_count();
 }`
 
-// arrPushCliffFieldBorrowSrc threads a struct-held accumulator and consults the
-// container through a SCALAR-returning call each step — the shape the x86
-// assembler is built from (`x86_label_off(a, name)` before the queue append).
-// The call gives back an i32, so nothing that outlives it can name the
-// container, and the append must still grow in place. Treating that read as a
-// capture forced a full clone per append and made the self-host compiler's own
-// assembly quadratic (#6911).
 const arrPushCliffFieldBorrowSrc = `struct Asm { code: i32[], labels: i32[] }
 function label_off(a: Asm, want: i32): i32 {
     let i: i32 = 0;
@@ -89,16 +45,6 @@ function main(): i32 {
     return __arr_push_shared_count();
 }`
 
-// arrPushCliffFieldAliasSrc is the same loop with the container bound to a name
-// that OUTLIVES the append, so the in-place grow would be observable through
-// `keep` and the copy is mandatory. The paired case: the relaxation above must
-// not reach a binding that can hold the container.
-//
-// The read of `keep` after the append indexes with a value the append
-// produced. The planner moves a read the append does not feed before the
-// append. It then drops a name with no read left (semdead). The alias dies
-// before the append and the copy is gone. The same holds for the shared twins
-// below.
 const arrPushCliffFieldAliasSrc = `struct Asm { code: i32[], labels: i32[] }
 function grown(): i32[] {
     let c: i32[] = [];
@@ -117,9 +63,6 @@ function main(): i32 {
     return __arr_push_shared_count();
 }`
 
-// arrPushCliffPtrHealthySrc is arrPushCliffHealthySrc with POINTER elements, so
-// it routes through `__fern_arr_push_grow_ptr` / `_move_ptr` instead of the
-// scalar helper. Nothing else holds the buffer, so it must never cross.
 const arrPushCliffPtrHealthySrc = `struct Item { v: i32 }
 function step(acc: Item[], v: i32): Item[] { return acc.append(Item { v: v }); }
 function main(): i32 {
@@ -131,17 +74,6 @@ function main(): i32 {
     return __arr_push_shared_count();
 }`
 
-// arrPushCliffPtrSharedSrc copies on EVERY append: `with_tag` builds a second
-// BOX holding the same element buffer, and it stays live across the append, so
-// the in-place grow would be observable through it. Only a copy made while the
-// buffer had spare capacity crosses the cliff. Five of the fifty appends find
-// it full (the first, at cap 0, and four whose previous copy filled its size
-// class), so the count is 45, not 50 — which is also what makes this a test of
-// the tally's capacity check and not just of the rc check.
-//
-// This is the deleted AST lowering's `LowerState` shape reduced: a struct threaded by
-// functional update whose OTHER methods hand back a fresh box sharing the same
-// accumulator field.
 const arrPushCliffPtrSharedSrc = `struct Item { v: i32 }
 struct Bld { xs: Item[], tag: i32 }
 function step(b: Bld, v: i32): Bld { return Bld { xs: b.xs.append(Item { v: v }), tag: b.tag }; }
@@ -162,9 +94,6 @@ function main(): i32 {
     return __arr_push_shared_count();
 }`
 
-// The string-element twins. On a two-word-string target these route through
-// `__fern_arr_push_grow_str` / `_move_str`, a separate emitter from the pointer
-// pair on every backend.
 const arrPushCliffStrHealthySrc = `function step(acc: string[], v: i32): string[] { return acc.append("item"); }
 function main(): i32 {
     let acc: string[] = [];

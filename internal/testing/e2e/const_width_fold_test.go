@@ -5,24 +5,10 @@ import (
 	"testing"
 )
 
-// A const initialiser and the identical expression written as code gave
-// different values: `internal/check/constfold` evaluated in int64 and stamped the
-// declared width only afterwards, so an INTERMEDIATE overflow was carried in
-// 64 bits and, when the final value happened to land back in range, nothing
-// caught it (#8444).
-//
-// `docs/INTEGER-SEMANTICS.md` makes wrapping the defined behaviour and masks
-// shift counts to the operand width, so the two forms have to agree. This is
-// not a backend divergence — every backend agreed, and all four were right;
-// the const was the odd one out — so each case computes the expression twice
-// in ONE program, once as a const and once from a `let` seeded with the same
-// literal, and exits 7 when they disagree.
 func TestConstFoldMatchesRuntimeAtDeclaredWidth(t *testing.T) {
 	cases := []struct {
 		name string
 		ty   string
-		// expr is instantiated twice: with the literal seed for the const,
-		// with `s` for the runtime form.
 		expr string
 		seed string
 	}{
@@ -49,14 +35,6 @@ func TestConstFoldMatchesRuntimeAtDeclaredWidth(t *testing.T) {
 	}
 }
 
-// assertExitsZeroEverywhere runs src on every available backend and requires
-// exit 0; the program reports a mismatch it found itself as a non-zero status.
-// Exit code rather than stdout because the wasm runner returns only a status,
-// and wasm is one of the engines these cases have to cover.
-//
-// The interp leg goes through the DRIVER rather than the numeric-property
-// harness's interpStdout: that one calls modload → checker directly and never
-// folds consts, so a const never reaches it.
 func assertExitsZeroEverywhere(t *testing.T, src string) {
 	t.Helper()
 	if code := runInterpExit(t, src); code != 0 {

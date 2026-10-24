@@ -1,83 +1,15 @@
-// std/ordmap — a persistent, ordered map with structural sharing.
-//
-// `OrdMap[K, V]` is a weight-balanced binary tree (Adams's bounded-
-// balance trees, the shape behind Haskell's Data.Map) keyed by any
-// `core/cmp.Ord` type. Every operation is value-returning:
-//
-//   import "std/ordmap";
-//   let m: ordmap.OrdMap[string, i32] = ordmap.ordmap_new();
-//   m = m.insert("b", 2);
-//   m = m.insert("a", 1);
-//   let snapshot: ordmap.OrdMap[string, i32] = m;   // O(1), shares every node
-//   m = m.insert("c", 3);                           // snapshot is unchanged
-//   m.get("a");          // Some(1)
-//   m.keys();            // ["a", "b", "c"]  (always in key order)
-//   snapshot.len();      // 2
-//
-// # Two paths, one API
-//
-// An update rebuilds the O(log n) nodes on the path to the key and
-// shares everything else with the input. Which of two things happens
-// to those path nodes is decided by the compiler, not by this module:
-//
-//   - **Shared** (another binding still holds the input, as `snapshot`
-//     above): the path nodes are freshly allocated and the input is
-//     left intact — the classic persistent structure, O(log n) per
-//     update, O(1) snapshot.
-//   - **Unique** (the input's binding dies at the call, as in
-//     `m = m.insert(k, v)`): the reference-counting reuse pass writes
-//     the new nodes into the old nodes' boxes in place, so the same
-//     source line allocates nothing at all.
-//
-// So `m = m.insert(k, v)` in a loop costs what a mutable balanced tree
-// costs, and taking a snapshot first costs one pointer copy. Neither
-// path needs a transient/builder API, and there is no `own` on the
-// receiver: an `own` receiver would forbid `let m2 = m.insert(k, v)`
-// (E051), which is the whole point of a persistent map.
-//
-// # Ordering and equality
-//
-// Keys are ordered by the bound's `cmp` method, never the `<` operator
-// (which resolves through a `Type.cmp` lookup not visible from this
-// module, #6846), so a `@derive(cmp.Ord)` struct or enum works as a
-// key. Two keys are the same key when `cmp` returns 0. Iteration —
-// `for (k, v) in m`, `keys()`, `values()`, `fold`, `for_each` — is always
-// in ascending key order, and `key_at(i)` / `index_of(k)` give O(log n) rank access
-// because every node stores the size of its subtree.
-//
-// # Complexity
-//
-//   insert / get / contains / remove / min / max / key_at / index_of
-//     O(log n)
-//   union / intersection / difference        O(m log(n/m + 1))
-//     (split-and-join, Blelloch et al. "Just Join for Parallel
-//      Ordered Sets"), so merging a small map into a large one is
-//      O(m log n) rather than O(n + m).
-//   keys / values / fold / for_each / filter / map_values   O(n)
-//   iter                                                     O(n)
-//   from                                                     O(n log n)
-//
-// The balance parameters are delta = 3, ratio = 2 (Hirai & Yamamoto,
-// "Balancing weight-balanced trees", 2011), the pair proven correct
-// for every rebalancing shape join-based union produces.
+// This module provides persistent ordered maps.
+
 import "core/cmp";
 import "core/iter";
 
-// The map is the tree. `Bin` is (left, key, value, right, size); `Tip`
-// is the empty tree. The size field makes `len()` O(1) and rank queries
-// O(log n). Construct one only through `ordmap_new` / `from`.
 pub enum OrdMap[K, V] { Tip, Bin(OrdMap[K, V], K, V, OrdMap[K, V], i32) }
 
-// `ordmap_new()` — the empty map. The key and value types are fixed by
-// the annotation at the binding (`let m: OrdMap[string, i32] =
-// ordmap_new();`).
 pub function ordmap_new[K, V](): OrdMap[K, V] {
   let e: OrdMap[K, V] = Tip;
   return e;
 }
 
-// `from(pairs)` — the map holding each `(k, v)`. A key repeated in
-// `pairs` takes its LAST value.
 pub function from[K: cmp.Ord, V](pairs: (K, V)[]): OrdMap[K, V] {
   let m: OrdMap[K, V] = ordmap_new();
   for p in pairs {
@@ -86,7 +18,6 @@ pub function from[K: cmp.Ord, V](pairs: (K, V)[]): OrdMap[K, V] {
   return m;
 }
 
-// ---- node helpers ---------------------------------------------------
 function node_size[K, V](t: OrdMap[K, V]): i32 {
   match (t) {
     Tip => {
@@ -98,7 +29,6 @@ function node_size[K, V](t: OrdMap[K, V]): i32 {
   }
 }
 
-// node_bin builds a node from already-balanced children.
 function node_bin[K, V](l: OrdMap[K, V], k: K, v: V, r: OrdMap[K, V]): OrdMap[K, V] {
   return Bin(l, k, v, r, node_size(l) + node_size(r) + 1);
 }
@@ -108,8 +38,6 @@ function node_single[K, V](k: K, v: V): OrdMap[K, V] {
   return Bin(e, k, v, e, 1);
 }
 
-// node_rotate_l: the right subtree is too heavy. A single rotation when
-// its inner child is light, a double rotation otherwise.
 function node_rotate_l[K, V](l: OrdMap[K, V], k: K, v: V, r: OrdMap[K, V]): OrdMap[K, V] {
   match (r) {
     Tip => {
@@ -135,7 +63,6 @@ function node_rotate_l[K, V](l: OrdMap[K, V], k: K, v: V, r: OrdMap[K, V]): OrdM
   }
 }
 
-// node_rotate_r: mirror of node_rotate_l for a too-heavy left subtree.
 function node_rotate_r[K, V](l: OrdMap[K, V], k: K, v: V, r: OrdMap[K, V]): OrdMap[K, V] {
   match (l) {
     Tip => {
@@ -161,9 +88,6 @@ function node_rotate_r[K, V](l: OrdMap[K, V], k: K, v: V, r: OrdMap[K, V]): OrdM
   }
 }
 
-// node_balance restores the weight invariant after one child changed
-// size by at most one element (insert / delete) — the precondition for
-// a single (possibly double) rotation to suffice.
 function node_balance[K, V](l: OrdMap[K, V], k: K, v: V, r: OrdMap[K, V]): OrdMap[K, V] {
   let sl: i32 = node_size(l);
   let sr: i32 = node_size(r);
@@ -199,8 +123,6 @@ function node_insert[K: cmp.Ord, V](t: OrdMap[K, V], k: K, v: V): OrdMap[K, V] {
   }
 }
 
-// node_find returns the node holding `k`, or Tip. Iterative, so a
-// lookup never recurses.
 function node_find[K: cmp.Ord, V](t: OrdMap[K, V], k: K): OrdMap[K, V] {
   let cur: OrdMap[K, V] = t;
   let searching: boolean = true;
@@ -225,8 +147,6 @@ function node_find[K: cmp.Ord, V](t: OrdMap[K, V], k: K): OrdMap[K, V] {
   return cur;
 }
 
-// node_min_node / node_max_node return the leftmost / rightmost node
-// (Tip for an empty tree).
 function node_min_node[K, V](t: OrdMap[K, V]): OrdMap[K, V] {
   let cur: OrdMap[K, V] = t;
   let walking: boolean = true;
@@ -311,10 +231,6 @@ function node_delete_max[K, V](t: OrdMap[K, V]): OrdMap[K, V] {
   }
 }
 
-// node_glue joins two trees whose sizes differ by at most a constant
-// factor and whose keys are already separated (every key of `l` is
-// below every key of `r`), by lifting the larger side's extreme
-// element to the root.
 function node_glue[K, V](l: OrdMap[K, V], r: OrdMap[K, V]): OrdMap[K, V] {
   match (l) {
     Tip => {
@@ -372,7 +288,6 @@ function node_delete[K: cmp.Ord, V](t: OrdMap[K, V], k: K): OrdMap[K, V] {
   }
 }
 
-// ---- join / split (the set-algebra core) ----------------------------
 function node_insert_min[K, V](k: K, v: V, t: OrdMap[K, V]): OrdMap[K, V] {
   match (t) {
     Tip => {
@@ -397,9 +312,6 @@ function node_insert_max[K, V](k: K, v: V, t: OrdMap[K, V]): OrdMap[K, V] {
   }
 }
 
-// node_join builds the tree (l, k, v, r) for ARBITRARY sizes of `l` and
-// `r` (every key of `l` below `k`, every key of `r` above): descend the
-// heavier side until the two are within the balance bound, then rebuild.
 function node_join[K, V](l: OrdMap[K, V], k: K, v: V, r: OrdMap[K, V]): OrdMap[K, V] {
   match (l) {
     Tip => {
@@ -426,8 +338,6 @@ function node_join[K, V](l: OrdMap[K, V], k: K, v: V, r: OrdMap[K, V]): OrdMap[K
   }
 }
 
-// node_merge concatenates two key-separated trees of arbitrary size
-// (the keyless node_join).
 function node_merge[K, V](l: OrdMap[K, V], r: OrdMap[K, V]): OrdMap[K, V] {
   match (l) {
     Tip => {
@@ -454,8 +364,6 @@ function node_merge[K, V](l: OrdMap[K, V], r: OrdMap[K, V]): OrdMap[K, V] {
   }
 }
 
-// A split of a tree around a key: the entries below it, the node
-// holding it (Tip when absent), and the entries above it.
 struct OrdSplit[K, V] { lt: OrdMap[K, V], hit: OrdMap[K, V], gt: OrdMap[K, V] }
 
 function node_split[K: cmp.Ord, V](t: OrdMap[K, V], k: K): OrdSplit[K, V] {
@@ -480,7 +388,6 @@ function node_split[K: cmp.Ord, V](t: OrdMap[K, V], k: K): OrdSplit[K, V] {
   }
 }
 
-// node_union is left-biased: a key in both keeps `a`'s value.
 function node_union[K: cmp.Ord, V](a: OrdMap[K, V], b: OrdMap[K, V]): OrdMap[K, V] {
   match (a) {
     Tip => {
@@ -502,7 +409,6 @@ function node_union[K: cmp.Ord, V](a: OrdMap[K, V], b: OrdMap[K, V]): OrdMap[K, 
   }
 }
 
-// node_intersection keeps `a`'s values for the keys present in both.
 function node_intersection[K: cmp.Ord, V](a: OrdMap[K, V], b: OrdMap[K, V]): OrdMap[K, V] {
   match (a) {
     Tip => {
@@ -531,7 +437,6 @@ function node_intersection[K: cmp.Ord, V](a: OrdMap[K, V], b: OrdMap[K, V]): Ord
   }
 }
 
-// node_difference drops from `a` every key present in `b`.
 function node_difference[K: cmp.Ord, V](a: OrdMap[K, V], b: OrdMap[K, V]): OrdMap[K, V] {
   match (a) {
     Tip => {
@@ -553,12 +458,6 @@ function node_difference[K: cmp.Ord, V](a: OrdMap[K, V], b: OrdMap[K, V]): OrdMa
   }
 }
 
-// ---- traversals -------------------------------------------------------
-//
-// The accumulator-threading helpers take their array as `own` and are
-// called in the self-reassigning form `acc = f(t, acc)`, so the append
-// runs on a uniquely-held buffer and grows it in place rather than
-// copying it at every node.
 function node_keys_into[K, V](t: OrdMap[K, V], own acc: K[]): K[] {
   match (t) {
     Tip => {
@@ -627,8 +526,6 @@ function node_for_each[K, V](t: OrdMap[K, V], f: (K, V) => void): void {
   }
 }
 
-// node_map_values rebuilds the tree with every value transformed; the
-// shape (and so the balance) is unchanged.
 function node_map_values[K, V, W](t: OrdMap[K, V], f: (V) => W): OrdMap[K, W] {
   match (t) {
     Tip => {
@@ -643,8 +540,6 @@ function node_map_values[K, V, W](t: OrdMap[K, V], f: (V) => W): OrdMap[K, W] {
   }
 }
 
-// node_filter keeps the entries the predicate accepts, joining the
-// surviving halves around each kept key.
 function node_filter[K, V](t: OrdMap[K, V], pred: (K, V) => boolean): OrdMap[K, V] {
   match (t) {
     Tip => {
@@ -661,8 +556,6 @@ function node_filter[K, V](t: OrdMap[K, V], pred: (K, V) => boolean): OrdMap[K, 
   }
 }
 
-// node_at returns the node of rank `i` (0-based, in key order), Tip
-// when out of range.
 function node_at[K, V](t: OrdMap[K, V], i: i32): OrdMap[K, V] {
   let cur: OrdMap[K, V] = t;
   let want: i32 = i;
@@ -692,7 +585,6 @@ function node_at[K, V](t: OrdMap[K, V], i: i32): OrdMap[K, V] {
   return cur;
 }
 
-// node_index_of returns the rank of `k`, or -1 when absent.
 function node_index_of[K: cmp.Ord, V](t: OrdMap[K, V], k: K): i32 {
   let cur: OrdMap[K, V] = t;
   let below: i32 = 0;
@@ -719,9 +611,6 @@ function node_index_of[K: cmp.Ord, V](t: OrdMap[K, V], k: K): i32 {
   return 0 - 1;
 }
 
-// node_ordered: every key of `l` is below `k` and every key of `r` above
-// it (checked at the extremes, which is enough once the children are
-// themselves valid).
 function node_ordered[K: cmp.Ord, V](l: OrdMap[K, V], k: K, r: OrdMap[K, V]): boolean {
   match (node_max_node(l)) {
     Tip => {},
@@ -742,8 +631,6 @@ function node_ordered[K: cmp.Ord, V](l: OrdMap[K, V], k: K, r: OrdMap[K, V]): bo
   return true;
 }
 
-// node_valid checks the ordering, size, and balance invariants over the
-// whole tree — the test hook behind `is_valid()`.
 function node_valid[K: cmp.Ord, V](t: OrdMap[K, V]): boolean {
   match (t) {
     Tip => {
@@ -766,31 +653,22 @@ function node_valid[K: cmp.Ord, V](t: OrdMap[K, V]): boolean {
   }
 }
 
-// ---- public surface ---------------------------------------------------
-// `len()` — the number of entries. O(1).
 pub function (m: OrdMap[K, V]) len(): i32 {
   return node_size(m);
 }
 
-// `is_empty()` — true when there are no entries.
 pub function (m: OrdMap[K, V]) is_empty(): boolean {
   return node_size(m) == 0;
 }
 
-// `insert(k, v)` — the map with `k -> v`; an existing `k` takes the new
-// value. Never touches the receiver's nodes, so a snapshot taken
-// before the call is unchanged after it.
 pub function (m: OrdMap[K, V]) insert[K: cmp.Ord, V](k: K, v: V): OrdMap[K, V] {
   return node_insert(m, k, v);
 }
 
-// `remove(k)` — the map without `k`; the receiver unchanged when `k`
-// is absent.
 pub function (m: OrdMap[K, V]) remove[K: cmp.Ord, V](k: K): OrdMap[K, V] {
   return node_delete(m, k);
 }
 
-// `get(k)` — `Some(value)` when `k` is present.
 pub function (m: OrdMap[K, V]) get[K: cmp.Ord, V](k: K): Option[V] {
   match (node_find(m, k)) {
     Tip => {
@@ -802,7 +680,6 @@ pub function (m: OrdMap[K, V]) get[K: cmp.Ord, V](k: K): Option[V] {
   }
 }
 
-// `get_or(k, fallback)` — the value at `k`, or `fallback`.
 pub function (m: OrdMap[K, V]) get_or[K: cmp.Ord, V](k: K, fallback: V): V {
   match (node_find(m, k)) {
     Tip => {
@@ -814,7 +691,6 @@ pub function (m: OrdMap[K, V]) get_or[K: cmp.Ord, V](k: K, fallback: V): V {
   }
 }
 
-// `contains(k)` — is `k` a key?
 pub function (m: OrdMap[K, V]) contains[K: cmp.Ord, V](k: K): boolean {
   match (node_find(m, k)) {
     Tip => {
@@ -826,8 +702,6 @@ pub function (m: OrdMap[K, V]) contains[K: cmp.Ord, V](k: K): boolean {
   }
 }
 
-// `update(k, init, f)` — the map with `k -> f(old)`, or `k -> f(init)`
-// when `k` is absent.
 pub function (m: OrdMap[K, V]) update[K: cmp.Ord, V](k: K, init: V, f: (V) => V): OrdMap[K, V] {
   match (node_find(m, k)) {
     Tip => {
@@ -839,7 +713,6 @@ pub function (m: OrdMap[K, V]) update[K: cmp.Ord, V](k: K, init: V, f: (V) => V)
   }
 }
 
-// `min_key()` / `max_key()` — the smallest / largest key. O(log n).
 pub function (m: OrdMap[K, V]) min_key(): Option[K] {
   match (node_min_node(m)) {
     Tip => {
@@ -862,8 +735,6 @@ pub function (m: OrdMap[K, V]) max_key(): Option[K] {
   }
 }
 
-// `remove_min()` / `remove_max()` — the map without its smallest /
-// largest entry (unchanged when empty).
 pub function (m: OrdMap[K, V]) remove_min(): OrdMap[K, V] {
   return node_delete_min(m);
 }
@@ -872,8 +743,6 @@ pub function (m: OrdMap[K, V]) remove_max(): OrdMap[K, V] {
   return node_delete_max(m);
 }
 
-// `key_at(i)` / `value_at(i)` — the entry of rank `i` (0-based, in key
-// order); `None` when out of range. O(log n).
 pub function (m: OrdMap[K, V]) key_at(i: i32): Option[K] {
   match (node_at(m, i)) {
     Tip => {
@@ -896,7 +765,6 @@ pub function (m: OrdMap[K, V]) value_at(i: i32): Option[V] {
   }
 }
 
-// `index_of(k)` — the rank of `k` in key order, or None when absent.
 pub function (m: OrdMap[K, V]) index_of[K: cmp.Ord, V](k: K): Option[i32] {
   let i: i32 = node_index_of(m, k);
   if (i < 0) {
@@ -905,7 +773,6 @@ pub function (m: OrdMap[K, V]) index_of[K: cmp.Ord, V](k: K): Option[i32] {
   return Some(i);
 }
 
-// `keys()` / `values()` — the entries in ascending key order.
 pub function (m: OrdMap[K, V]) keys(): K[] {
   let acc: K[] = [];
   acc = node_keys_into(m, acc);
@@ -918,42 +785,32 @@ pub function (m: OrdMap[K, V]) values(): V[] {
   return acc;
 }
 
-// `iter()` — an Iterator over the `(key, value)` entries in key order,
-// which is what `for (k, v) in m` walks.
 pub function (m: OrdMap[K, V]) iter(): iter.ArrayIter[(K, V)] {
   let acc: (K, V)[] = [];
   acc = node_entries_into(m, acc);
   return iter.of(acc);
 }
 
-// `fold(init, f)` — `f(f(f(init, k0, v0), k1, v1), …)` in key order.
 pub function (m: OrdMap[K, V]) fold[K, V, A](init: A, f: (A, K, V) => A): A {
   return node_fold(m, init, f);
 }
 
-// `for_each(f)` — call `f(k, v)` on every entry in key order.
 pub function (m: OrdMap[K, V]) for_each(f: (K, V) => void): void {
   node_for_each(m, f);
 }
 
-// `map_values(f)` — the map with every value replaced by `f(value)`;
-// keys and shape are unchanged, so this is O(n) with no rebalancing.
 pub function (m: OrdMap[K, V]) map_values[K, V, W](f: (V) => W): OrdMap[K, W] {
   return node_map_values(m, f);
 }
 
-// `filter(pred)` — the map of the entries `pred(k, v)` accepts.
 pub function (m: OrdMap[K, V]) filter(pred: (K, V) => boolean): OrdMap[K, V] {
   return node_filter(m, pred);
 }
 
-// `merge(other)` — every entry of both; a key in both takes `other`'s
-// value. O(m log(n/m + 1)).
 pub function (m: OrdMap[K, V]) merge[K: cmp.Ord, V](other: OrdMap[K, V]): OrdMap[K, V] {
   return node_union(other, m);
 }
 
-// `entries()` — every `(key, value)` pair, in key order.
 pub function (m: OrdMap[K, V]) entries(): (K, V)[] {
   let out: (K, V)[] = [];
   let ks: K[] = m.keys();
@@ -966,32 +823,24 @@ pub function (m: OrdMap[K, V]) entries(): (K, V)[] {
   return out;
 }
 
-// `intersection(other)` — the entries whose key is in both, with THIS
-// map's values.
 pub function (m: OrdMap[K, V]) intersection[K: cmp.Ord, V](other: OrdMap[K, V]): OrdMap[K, V] {
   return node_intersection(m, other);
 }
 
-// `difference(other)` — this map's entries whose key is NOT in `other`.
 pub function (m: OrdMap[K, V]) difference[K: cmp.Ord, V](other: OrdMap[K, V]): OrdMap[K, V] {
   return node_difference(m, other);
 }
 
-// split_lt returns the entries below k, excluding an entry at k. O(log n).
 pub function (m: OrdMap[K, V]) split_lt[K: cmp.Ord, V](k: K): OrdMap[K, V] {
   let sp: OrdSplit[K, V] = node_split(m, k);
   return sp.lt;
 }
 
-// split_gt returns the entries above k, excluding an entry at k. O(log n).
 pub function (m: OrdMap[K, V]) split_gt[K: cmp.Ord, V](k: K): OrdMap[K, V] {
   let sp: OrdSplit[K, V] = node_split(m, k);
   return sp.gt;
 }
 
-// `is_valid()` — do the ordering, size, and balance invariants hold
-// over every node? Always true for a map built through this module;
-// exposed for tests and for anyone porting the balance rules.
 pub function (m: OrdMap[K, V]) is_valid[K: cmp.Ord, V](): boolean {
   return node_valid(m);
 }

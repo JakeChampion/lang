@@ -1,37 +1,11 @@
-// tests/proposals/units.fern — proposal turn, drawn line 96:
-// "A units converter with a small dimensional-analysis check."
-//
-// Every quantity carries a dimension: a vector of exponents over the SI
-// base quantities (here length, mass, time). Conversion is only defined
-// between units of the SAME dimension, and that check is the point of the
-// app — a converter that silently turns kilograms into seconds because
-// both are "just numbers" is the failure mode worth testing against.
-//
-// Multiplication ADDS exponents and division SUBTRACTS them, so the
-// derived units fall out of arithmetic rather than being tabulated:
-// speed = length/time, force = mass*acceleration, energy = force*length,
-// power = energy/time. `test_derived_dimensions_fall_out_of_arithmetic`
-// checks each against its textbook exponent vector — an oracle that owes
-// nothing to this implementation.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from
-// std/test, so the file is its own test suite.
-
 import "std/test";
 import "std/f64";
 import "std/i32";
 
-// Exponents over (length, mass, time). Dimensionless is all zeroes.
 struct Dim { l: i32, m: i32, t: i32 }
 
-// `factor` is how many SI base units make one of this unit, so a
-// quantity's SI value is always `value * factor`. Storing the conversion
-// this way makes every unit independent — there is no chain of
-// conversions to get wrong.
 struct Unit { name: string, dim: Dim, factor: f64 }
 
-// A quantity is ALWAYS held in SI base units. The unit a user typed is a
-// presentation detail, not part of the value.
 struct Quantity { si: f64, dim: Dim }
 
 function dim_len(): Dim {
@@ -96,10 +70,6 @@ function dim_str(d: Dim): string {
   return out;
 }
 
-// The unit table. The exact ones are exact by international definition:
-// the inch is 25.4 mm, hence the foot, yard and mile; the pound is
-// 0.45359237 kg. Those exactness facts are what
-// `test_exact_definitions_are_exact` leans on.
 function units(): Unit[] {
   return [
     Unit { name: "m", dim: dim_len(), factor: 1.0 },
@@ -137,9 +107,6 @@ function quantity(value: f64, u: Unit): Quantity {
   return Quantity { si: value * u.factor, dim: u.dim };
 }
 
-// The dimensional-analysis check, in one place. A conversion between
-// different dimensions is not a rounding problem or a missing table row —
-// it is meaningless, and the error says so in both dimensions' terms.
 function convert(q: Quantity, u: Unit): Result[f64, string] {
   if (!dim_eq(q.dim, u.dim)) {
     return Err("cannot convert " + dim_str(q.dim) + " to " + u.name
@@ -148,8 +115,6 @@ function convert(q: Quantity, u: Unit): Result[f64, string] {
   return Ok(q.si / u.factor);
 }
 
-// Addition needs matching dimensions too — adding a length to a time is
-// the classic bug this whole apparatus exists to refuse.
 function add(a: Quantity, b: Quantity): Result[Quantity, string] {
   if (!dim_eq(a.dim, b.dim)) {
     return Err("cannot add " + dim_str(a.dim) + " to " + dim_str(b.dim));
@@ -157,8 +122,6 @@ function add(a: Quantity, b: Quantity): Result[Quantity, string] {
   return Ok(Quantity { si: a.si + b.si, dim: a.dim });
 }
 
-// Multiplication and division are always defined: they BUILD dimensions
-// rather than requiring them to match.
 function mul(a: Quantity, b: Quantity): Quantity {
   return Quantity { si: a.si * b.si, dim: dim_add(a.dim, b.dim) };
 }
@@ -175,11 +138,6 @@ function render(q: Quantity): string {
   return q.si.to_string_prec(6) + " " + dim_str(q.dim);
 }
 
-// ---------------------------------------------------------------- tests
-
-// Round-tripping through SI must return what went in, for every unit in
-// the table. This catches a factor that is wrong in one direction — the
-// bug a one-way spot check misses.
 function test_every_unit_round_trips(): test.TestOutcome {
   let us: Unit[] = units();
   let samples: f64[] = [0.0, 1.0, 2.5, 1000.0, 0.001];
@@ -205,9 +163,6 @@ function test_every_unit_round_trips(): test.TestOutcome {
   return test.pass();
 }
 
-// THE test. Conversion across dimensions must be refused, not
-// approximated — and the message must name both sides, since "invalid
-// conversion" alone tells the caller nothing about which pair is wrong.
 function test_cross_dimension_conversion_is_refused(): test.TestOutcome {
   let metre: Unit = unit_or_die("m");
   let kilo: Unit = unit_or_die("kg");
@@ -267,8 +222,6 @@ function unit_or_die(name: string): Unit {
   }
 }
 
-// Adding across dimensions is refused; adding within one is exact in SI
-// regardless of the units the two operands were written in.
 function test_addition_respects_dimensions(): test.TestOutcome {
   let a: Quantity = quantity(1.0, unit_or_die("km"));
   let b: Quantity = quantity(500.0, unit_or_die("m"));
@@ -296,9 +249,6 @@ function test_addition_respects_dimensions(): test.TestOutcome {
   return test.pass();
 }
 
-// Derived dimensions come out of arithmetic, checked against the textbook
-// exponent vectors. Speed is m/s, acceleration m/s^2, force kg·m/s^2,
-// energy kg·m^2/s^2, power kg·m^2/s^3.
 function test_derived_dimensions_fall_out_of_arithmetic(): test.TestOutcome {
   let d: Quantity = quantity(100.0, unit_or_die("m"));
   let t: Quantity = quantity(10.0, unit_or_die("s"));
@@ -334,8 +284,6 @@ function test_derived_dimensions_fall_out_of_arithmetic(): test.TestOutcome {
   return test.pass();
 }
 
-// A quantity divided by itself is dimensionless and equal to one — the
-// simplest statement that exponents cancel rather than accumulate.
 function test_like_over_like_is_dimensionless(): test.TestOutcome {
   let us: Unit[] = units();
   for i in 0..us.len() {
@@ -357,9 +305,6 @@ function test_like_over_like_is_dimensionless(): test.TestOutcome {
   return test.pass();
 }
 
-// The international definitions are exact, so these conversions must come
-// out exact too: 1 mi = 1609.344 m by definition, 1 lb = 0.45359237 kg,
-// and 60 mph is therefore exactly 26.8224 m/s.
 function test_exact_definitions_are_exact(): test.TestOutcome {
   match (convert(quantity(1.0, unit_or_die("mi")), unit_or_die("m"))) {
     Err(e) => {
@@ -391,7 +336,6 @@ function test_exact_definitions_are_exact(): test.TestOutcome {
       }
     }
   }
-  // 60 mph, built by division rather than looked up.
   let mph60: Quantity = div(
     quantity(60.0, unit_or_die("mi")),
     quantity(1.0, unit_or_die("h")),
@@ -402,9 +346,6 @@ function test_exact_definitions_are_exact(): test.TestOutcome {
   return test.pass();
 }
 
-// Conversion is transitive: going m -> km -> cm must agree with m -> cm.
-// A converter that pivots through a wrong intermediate would pass a
-// single hop and fail here.
 function test_conversion_is_transitive(): test.TestOutcome {
   let q: Quantity = quantity(1234.5, unit_or_die("m"));
   let direct: f64 = 0.0;
@@ -440,7 +381,6 @@ function test_conversion_is_transitive(): test.TestOutcome {
   return test.pass();
 }
 
-// Unknown unit names are reported, not silently treated as SI base units.
 function test_unknown_units_are_not_invented(): test.TestOutcome {
   let names: string[] = ["furlong", "", "M", "mi ", "kgs"];
   for i in 0..names.len() {
@@ -460,8 +400,6 @@ function test_unknown_units_are_not_invented(): test.TestOutcome {
   }
   return test.pass();
 }
-
-// ----------------------------------------------------------------- app
 
 function show_convert(v: f64, from: string, to: string): void {
   let q: Quantity = quantity(v, unit_or_die(from));

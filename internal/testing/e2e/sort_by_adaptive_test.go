@@ -1,30 +1,5 @@
 package e2e
 
-// Differential + stability coverage for core/cmp's `sort_by`, the
-// comparator-closure sibling of `sort`: insertion sort below 32, natural
-// ascending/descending run detection with descending runs reversed in place,
-// then balanced merge rounds.
-//
-// Note the existing sort_by_test.go cases do NOT cover this. Each of them
-// defines its own inline `sort_by` in the test program — they exercise closure
-// lowering on a bounded-generic body, not the shipped stdlib function. Nothing
-// checked the real one across sizes.
-//
-// Two things need pinning:
-//
-//  1. The result agrees with a naive sort across the sizes that straddle the
-//     insertion threshold (32) and the merge rounds, and across the shapes run
-//     detection exists to exploit: random, sorted, reverse-sorted, all-equal,
-//     and a two-run concatenation.
-//  2. The sort is STABLE through the merge and reversal paths. Stability is the
-//     documented contract and the easiest thing to lose: a descending run
-//     detected with a non-strict compare would swap equal neighbours past each
-//     other, and a merge tie-break taking from the right run would invert
-//     equal keys.
-//
-// The stability half is mutation-checked — flipping the merge's `> 0` to
-// `>= 0` makes the `stable` case fail with a tag inversion.
-
 import "testing"
 
 const sortByAdaptiveProg = `

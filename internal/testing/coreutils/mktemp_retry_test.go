@@ -13,11 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Darwin's full bound exceeds 300 million filesystem attempts. GNU keeps
-// its actual retry loop and gets EEXIST/EIO at its libc boundary. Fern keeps
-// its actual retry loop and command handling and gets the same outcomes at
-// its candidate expression. Neither implementation's retry bound is replaced.
-// Ordinary candidate IO and entropy remain covered by the live corpus.
 type mktempRetryFault struct {
 	lib, fern string
 }
@@ -97,7 +92,7 @@ func (f *mktempRetryFault) run(t *testing.T, inv invocation, stop int) (outcome,
 	if string(got.stdout) != marker {
 		t.Fatalf("Fern attempt report: got %q, want %q", got.stdout, marker)
 	}
-	got.stdout = nil // The sole instrumentation line, checked exactly above.
+	got.stdout = nil
 	if len(want.stdout) != 0 || want.how() != got.how() || string(want.stderr) != string(got.stderr) {
 		t.Fatalf("retry parity: GNU %s stdout=%q stderr=%q; Fern %s stderr=%q", want.how(), want.stdout, want.stderr, got.how(), got.stderr)
 	}

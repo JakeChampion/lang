@@ -9,9 +9,6 @@ import (
 	"time"
 )
 
-// BinaryBodyServerSource is a server whose handler answers
-// BinaryBodyContent, which is not UTF-8, as a byte body on /bytes, as a
-// stream body on /stream, and in two chunks from a producer on /chunks.
 func BinaryBodyServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/stream";
@@ -38,13 +35,8 @@ function main(): i32 {
 `)
 }
 
-// BinaryBodyContent is the body BinaryBodyServerSource answers.
 var BinaryBodyContent = []byte{0x00, 0xFF, 0x80, 0x0A, 0x41}
 
-// CheckBinaryBody drives BinaryBodyServerSource: /bytes and /stream answer
-// the body byte for byte under its own length, /chunks answers it byte for
-// byte under chunked coding, and HEAD /bytes answers that length with no
-// body.
 func CheckBinaryBody(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)

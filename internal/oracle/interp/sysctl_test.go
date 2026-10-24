@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// sysctl takes its MIB as an i32[], which reaches a builtin as an Array value;
-// asking for a *Array stopped every call with "expected i32[] arg" (#12662).
-// Darwin answers the kernel's bytes, every other host ENOSYS.
 func TestSysctlTakesItsMib(t *testing.T) {
 	src := `function main(): i32 {
     match (sysctl([1, 1])) {

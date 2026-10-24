@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostUnknownStdlibModule pins #12690 on the CLI: a `std/` or `core/`
-// import resolves under the stdlib root and nowhere else, so a typo that names
-// no stdlib module is an error at the import, worded as native words it, even
-// when a file of the same basename sits beside the importer. Stdlib and
-// relative imports that do resolve load as before.
 func TestSelfHostUnknownStdlibModule(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -41,8 +36,7 @@ func TestSelfHostUnknownStdlibModule(t *testing.T) {
 		name  string
 		args  []string
 		entry string
-		// want is the first line of stderr.
-		want string
+		want  string
 	}{
 		{"typo-check", []string{"-check"}, typo, typo + ":2:1: error[E086]: unknown stdlib module \"std/json2\""},
 		{"typo-build", []string{"-o", filepath.Join(dir, "a.out")}, typo, typo + ":2:1: error[E086]: unknown stdlib module \"std/json2\""},

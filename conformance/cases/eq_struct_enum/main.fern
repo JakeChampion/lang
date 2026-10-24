@@ -1,5 +1,5 @@
-// Composite `==` / `!=` is STRUCTURAL equality via the type's `Eq`
-// impl (it desugars to `a.eq(b)`), not heap-pointer identity.
+
+
 trait Eq { function eq(self: Self, other: Self): boolean; }
 impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } }
 
@@ -8,14 +8,14 @@ impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self ==
 
 function main(): i32 {
     let a: Point = Point { x: 3, y: 4 };
-    let b: Point = Point { x: 3, y: 4 };   // distinct heap object, equal value
+    let b: Point = Point { x: 3, y: 4 };
     let c: Point = Point { x: 3, y: 9 };
     let r: i32 = 0;
-    if (a == b) { r = r + 1; }              // structural: equal
-    if (a != c) { r = r + 2; }              // structural: differ
+    if (a == b) { r = r + 1; }
+    if (a != c) { r = r + 2; }
     if (Dot == Dot) { r = r + 4; }
     if (Line(7) == Line(7)) { r = r + 8; }
     if (Line(7) != Box(1, 2)) { r = r + 16; }
     if (Box(1, 2) == Box(1, 2)) { r = r + 32; }
-    return r;                                // 63
+    return r;
 }

@@ -1,6 +1,6 @@
-// Cleanup follows the final child of an owned recursive array in a loop.
-// Earlier children, empty arrays, shared arrays, and shared nodes keep their
-// usual reference counts.
+
+
+
 enum Tree { Leaf(i32), Branch(Tree[]) }
 
 @noinline

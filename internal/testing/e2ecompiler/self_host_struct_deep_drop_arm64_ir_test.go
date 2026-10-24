@@ -4,19 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructDeepDropIRArm64 is the arm64 port of the struct deep-drop
-// cases (the x86 sibling is TestSelfHostStructDeepDropIRX86_64): a direct
-// nested-struct field (`Outer { inner: Inner }`) whose inner carries its OWN
-// rc-array field is released deeply. When the inner box is uniquely owned,
-// Inner's drop releases its array buffer before the inner box is freed.
-//
-// CYCLE SAFETY: a type that reaches itself (a tree) releases its children
-// through calls to its own drop helper rather than an inline expansion, so the
-// drop terminates.
-//
-// Under qemu the reclaim is proven by CORRECTNESS (a wrong free of a live buffer
-// corrupts the read-back) plus the arm64 census balancing at live_bytes 0. Heavy
-// 150M-iteration churn is left to the x86 path (too slow under qemu).
 func TestSelfHostStructDeepDropIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -31,11 +18,6 @@ func TestSelfHostStructDeepDropIRArm64(t *testing.T) {
 		}
 	}
 
-	// DEEP-DROP shape + value: `o.inner` is a fresh struct LITERAL (sole-owned, rc 1),
-	// so when `o` dies Inner's drop releases `inner.items` before the inner box is
-	// freed. The inner is read back before the drop; a wrong free of the live buffer
-	// would corrupt it. items[0..15] sum to 136, + tag 7 = 143.
-	// A runtime element keeps the array and enclosing boxes on the heap.
 	run(t, `struct Inner { items: i32[] }
 struct Outer { inner: Inner, tag: i32 }
 @noinline function runtime(n: i32): i32 { return n; }
@@ -46,12 +28,6 @@ function main(): i32 {
     return sum + o.tag;
 }`, "struct_deep_drop_arm64_value", 143)
 
-	// CYCLE SAFETY: a tree (`Node { kids: Node[] }`) must NOT infinitely recurse.
-	// `kids` is an array-of-struct (the k_box element walk, shallow per element);
-	// Node has no direct nested-struct field, so no deep-drop edge is created. A
-	// churn building a 2-node tree each iteration stays correct + terminating. The
-	// leaf reads v off the heap so the tree is built on the heap rather than placed as
-	// a constant.
 	run(t, `struct Node { kids: Node[], v: i32 }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 function mk(): i32 {

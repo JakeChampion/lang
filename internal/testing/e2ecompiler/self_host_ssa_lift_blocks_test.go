@@ -6,23 +6,6 @@ import (
 	"testing"
 )
 
-// The SSA lift (compiler/ssa_lift.fern) hands each emitter a block
-// list, and the emitters write one `.Lssa_<fn>_<id>:` label per entry — so two
-// entries carrying one id spell one label twice and the assembler rejects the
-// module, naming neither the function nor the pass (#9688).
-//
-// A loop nothing leaves alive is where that happened: the loop's `end` appends
-// the body's tail block, and the lift then stayed on that block's id, so the
-// function's own tail appended it a second time. The driver lifts that op
-// stream directly rather than going through a source program, because no loop
-// anybody WRITES ends that way: it is the shape of a self-tail-call loop, a
-// whole function body wrapped in `loop { … } end` so a self tail call jumps to
-// the header, and a function body ends in a return
-// (docs/ssa-log/2026-09-18-where-the-lifts-duplicate-loop-came-from.md).
-//
-// A source program reaches it through tail recursion (#9692):
-// TestSelfHostSSALoopTailBlockEmittedOnce compiles one and assembles the
-// listing.
 const ssaLiftBlockIDProg = `// Assert the lift never returns two blocks with one id.
 import "./ir";
 import "./ssa";
@@ -93,9 +76,6 @@ func TestSelfHostSSALiftGivesEachBlockOneID(t *testing.T) {
 	}
 }
 
-// A refusal names the op it refused on, even for a kind tag no op can carry,
-// so the strict-SSA diagnostics can report the site instead of emitting a
-// partial function.
 const ssaLiftNegativeKindProg = `import "./ir";
 import "./ssa_lift";
 

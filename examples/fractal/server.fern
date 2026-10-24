@@ -1,6 +1,3 @@
-// Serve Mandelbrot tiles over HTTP and WebSocket.
-// The CDN caches HTTP tiles. WebSocket responses include render times.
-// Browser assets live in web/.
 import "std/http";
 import "std/http/router";
 import "std/http/static";
@@ -19,7 +16,6 @@ import "./source";
 
 const PORT: i32 = 8080;
 
-// Each server instance tracks its own counters.
 pub struct Stats {
   instance: string,
   started_ms: i64,
@@ -163,9 +159,6 @@ function tile(state: Stats, req: HttpRequest, params: router.Params): Result[Htt
   return Ok(response.with_header("X-Fern-Iterations", rendered.tile.iterations.to_string()));
 }
 
-// The client sends "id z x y" as text.
-// Each binary response contains a 32-byte header followed by the PNG.
-// The session opens with this container's stats as JSON.
 function session(state: Stats, session_id: string): websocket.Handlers {
   return websocket.Handlers {
     open: (connection: websocket.Conn): void => {
@@ -232,7 +225,6 @@ pub function parse_request(request: string): Result[TileRequest, RequestError] {
   return Ok(TileRequest { id: id as u32, z: z as i32, x: x, y: y });
 }
 
-// Check the wider integers before narrowing the protocol fields.
 fip function request_range(id: i64, z: i64): boolean {
   return id >= 1 && id <= 4294967295 && z >= 0 && z <= fractal.MAX_ZOOM as i64;
 }
@@ -242,7 +234,6 @@ function answer(state: Stats, session_id: string, request: string): Result[u8[],
   let key: string = request_key(session_id, tile.id.to_string()).map_err((error: TokenError): RequestError => InvalidToken(error))?;
   let rendered: Rendered = state.render(tile.z, tile.x, tile.y, Some(key)).map_err((error: fractal.RenderError): RequestError => Rendering(error))?;
   let response: u8[] = binary.append_u32_be([], tile.id);
-  // Versioned sessions use a 32-byte header. Stage times are microseconds.
   response = binary.append_u32_be(response, (rendered.elapsed_ns / 1000) as u32);
   response = binary.append_u64_be(response, rendered.tile.iterations as u64);
   response = binary.append_u32_be(response, state.tiles.get() as u32);
@@ -277,7 +268,6 @@ function coordinate(params: router.Params, name: string): Result[i64, http.HttpE
 
 pub enum TokenError { InvalidSession, InvalidID(parse.IntError), InvalidIDRange }
 
-// Tokens are bounded and contain only URL-safe session characters and a u32 id.
 pub function request_key(session_id: string, id: string): Result[string, TokenError] {
   if (session_id.len() < 16 || session_id.len() > 64) {
     return Err(InvalidSession);
@@ -337,7 +327,6 @@ function timing(rendered: Rendered): string {
     + ", color;dur=" + millis(rendered.tile.color_ns) + ", png;dur=" + millis(rendered.tile.png_ns);
 }
 
-// Format nanoseconds as milliseconds with three decimal places.
 function millis(nanoseconds: i64): string {
   let microseconds: i64 = nanoseconds / 1000;
   let fraction: string = (1000 + microseconds % 1000).to_string();
@@ -356,8 +345,6 @@ function hex6(value: i32): string {
   return result;
 }
 
-// The binary includes the renderer, palette, libraries, and compiler output.
-// Its digest changes whenever the deployed rendering implementation changes.
 function own_binary(): (i64, string) {
   let paths: string[] = ["/proc/self/exe"];
   if (args().len() > 0) {
@@ -380,8 +367,6 @@ function own_binary(): (i64, string) {
       Err(_) => {}
     }
   }
-  // Without the executable, the source digest identifies the session only.
-  // Such a response does not receive an immutable cache policy.
   return (0, crypto.sha256_hex(text).take(24));
 }
 

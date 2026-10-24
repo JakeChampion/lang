@@ -6,22 +6,9 @@ func init() {
 	registerCorpus("expr", exprCases)
 }
 
-// TestExprParity holds coreutils/expr.fern to GNU expr.
-//
-// The corpus is in the shape of the utility: the option rule, then the
-// grammar and its diagnostics, then each precedence level, then the
-// arbitrary-precision arithmetic, then the POSIX basic regular
-// expressions `:` compiles — which are the bulk of it, because the
-// regexp dialect is where an implementation written from the manual
-// diverges from glibc's.
-// exprCases is the corpus, shared by the GNU parity gate and the
-// self-host leg so neither can test something narrower than the other.
 func exprCases(t *testing.T) []invocation {
 	t.Helper()
 	return []invocation{
-		// --help and --version are options only as the SOLE argument,
-		// and only spelled as a unique prefix: everywhere else they are
-		// ordinary tokens of the expression.
 		{name: "no arguments"},
 		{name: "dashdash alone", args: []string{"--"}},
 		{name: "dashdash then operand", args: []string{"--", "-1"}},
@@ -47,7 +34,6 @@ func exprCases(t *testing.T) []invocation {
 		{name: "posix help", args: []string{"--help", "x"}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "posix expression", args: []string{"1", "+", "2"}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// The value, and the status that reports it.
 		{name: "empty operand", args: []string{""}},
 		{name: "zero", args: []string{"0"}},
 		{name: "two zeros", args: []string{"00"}},
@@ -60,7 +46,6 @@ func exprCases(t *testing.T) []invocation {
 		{name: "non UTF-8 operand", args: []string{"\xff"}},
 		{name: "non UTF-8 pair", args: []string{"\xff\xfe"}},
 
-		// Syntax errors: which token each message names.
 		{name: "trailing operand", args: []string{"1", "2"}},
 		{name: "trailing empty operand", args: []string{"x", ""}},
 		{name: "leading empty operand", args: []string{"", "x"}},
@@ -88,8 +73,6 @@ func exprCases(t *testing.T) []invocation {
 		{name: "missing after paren open", args: []string{"1", "|", "(", "2"}},
 		{name: "close paren after or", args: []string{"1", "|", "2", ")"}},
 
-		// eval6: the keyword functions and `+ TOKEN`, which bind their
-		// arguments at their own level rather than through arithmetic.
 		{name: "length", args: []string{"length", "abc"}},
 		{name: "length of empty", args: []string{"length", ""}},
 		{name: "length of digits", args: []string{"length", "12345"}},
@@ -160,7 +143,6 @@ func exprCases(t *testing.T) []invocation {
 		{name: "substr then plus", args: []string{"substr", "abc", "1", "2", "+", "3"}},
 		{name: "substr then plus one", args: []string{"substr", "abc", "1", "1", "+", "1"}},
 
-		// Arithmetic, arbitrary-precision.
 		{name: "sum", args: []string{"1", "+", "2"}},
 		{name: "sum of quoted plus", args: []string{"1", "+", "+", "2"}},
 		{name: "difference", args: []string{"1", "-", "1"}},
@@ -224,8 +206,6 @@ func exprCases(t *testing.T) []invocation {
 		{name: "negative small modulo big", args: []string{"-1", "%", "99999999999999999999999"}},
 		{name: "big modulo itself", args: []string{"-99999999999999999999999", "%", "99999999999999999999999"}},
 
-		// Comparisons: numeric when both sides look like integers,
-		// byte-wise otherwise.
 		{name: "less than", args: []string{"1", "<", "2"}},
 		{name: "numeric less than", args: []string{"2", "<", "10"}},
 		{name: "string less than", args: []string{"a", "<", "b"}},
@@ -277,8 +257,6 @@ func exprCases(t *testing.T) []invocation {
 		{name: "non UTF-8 equality", args: []string{"\xff", "=", "\xff"}},
 		{name: "comparison binds looser than sum", args: []string{"2", "<", "3", "+", "4"}},
 
-		// `|` and `&`, and the short-circuit that decides whether the
-		// other side's error is ever reached.
 		{name: "or takes the left", args: []string{"1", "|", "2"}},
 		{name: "or takes the right", args: []string{"0", "|", "2"}},
 		{name: "or of empty", args: []string{"", "|", "2"}},
@@ -320,7 +298,6 @@ func exprCases(t *testing.T) []invocation {
 		{name: "or with a missing right", args: []string{"1", "|"}},
 		{name: "equality chains", args: []string{"1", "=", "1", "=", "1"}},
 
-		// `:` — anchored POSIX basic regular expressions.
 		{name: "colon binds tighter than plus", args: []string{"1", "+", "2", ":", "3"}},
 		{name: "colon on the right of plus", args: []string{"3", ":", "3", "+", "1"}},
 		{name: "colon result times", args: []string{"abc", ":", "ab", "*", "2"}},
@@ -375,12 +352,6 @@ func exprCases(t *testing.T) []invocation {
 		{name: "leading empty alternative", args: []string{"ab", ":", `\|a`}},
 		{name: "two empty alternatives", args: []string{"ab", ":", `a\|\|b`}},
 		{name: "empty alternative on empty", args: []string{"", ":", `a\|`}},
-		// An alternation branch that compiles to NOTHING is tried after the
-		// branch beside it rather than where it was written (#9051), so
-		// `\(\|a\)a*` over `aa` reports `a` for the group. The pairing is
-		// binary and nests to the LEFT, which keeps the demotion local: in
-		// `\(\|z\|a\)` the empty branch trades places with `z` alone, still
-		// outranks `a`, and the group comes back empty.
 		{name: "empty branch yields to the branch beside it", args: []string{"aa", ":", `\(\|a\)a*`}},
 		{name: "empty branch yields to a longer neighbour", args: []string{"aaa", ":", `\(\|aa\|a\)a*`}},
 		{name: "empty branch yields to a shorter neighbour", args: []string{"aaa", ":", `\(\|a\|aa\)a*`}},
@@ -397,11 +368,6 @@ func exprCases(t *testing.T) []invocation {
 		{name: "two zero intervals are an empty branch", args: []string{"aa", ":", `\(x\{0\}x\{0\}\|a\)a*`}},
 		{name: "the longest overall outranks the demotion", args: []string{"aab", ":", `\(\|a\)\(aab\|a\)`}},
 		{name: "empty branches in sequence", args: []string{"aaa", ":", `\(\|a\)\(\|a\)\(\|a\)a*`}},
-		// A counted repetition expands as glibc's parse_dup_op builds it:
-		// the optional copies nest as `((x?)x)?`, and only the FIRST of
-		// them is an optional group, whose empty pass puts the registers
-		// back. So one optional copy reports the earlier non-empty pass
-		// and two or more report the empty last one (#9092).
 		{name: "one optional copy keeps the non-empty pass", args: []string{"a", ":", `\(\|a\)\{1,2\}`}},
 		{name: "two optional copies end on the empty pass", args: []string{"a", ":", `\(\|a\)\{1,3\}`}},
 		{name: "a mandatory copy ends on the empty pass", args: []string{"a", ":", `\(\|a\)\{2\}`}},
@@ -409,9 +375,6 @@ func exprCases(t *testing.T) []invocation {
 		{name: "empty branch in an interval over a longer subject", args: []string{"aa", ":", `\(\|a\)\{2,4\}`}},
 		{name: "empty branch in an interval followed by a star", args: []string{"aa", ":", `\(\|a\)\{1,2\}a*`}},
 		{name: "two-byte branch in an interval", args: []string{"abab", ":", `\(\|ab\)\{1,3\}`}},
-		// An unbounded repetition passes through its body empty once and
-		// leaves, and that pass is the optional group's: the registers go
-		// back to the last non-empty pass.
 		{name: "an empty pass after the mandatory copies", args: []string{"a", ":", `\(a\|\)\{2,\}b*`}},
 		{name: "an empty pass restores a longer group", args: []string{"aab", ":", `\(a*\|\)\{3,\}.*`}},
 		{name: "an empty pass after a plus", args: []string{"a", ":", `\(b\|\|a\)\{1,\}.*`}},
@@ -458,7 +421,6 @@ func exprCases(t *testing.T) []invocation {
 		{name: "empty interval", args: []string{"aaa", ":", `a\{\}`}},
 		{name: "three-part interval", args: []string{"aaa", ":", `a\{2,3,4\}`}},
 
-		// Bracket expressions.
 		{name: "bracket alone", args: []string{"abc", ":", "["}},
 		{name: "bracket at the end of a pattern", args: []string{"x", ":", "x["}},
 		{name: "negated bracket alone", args: []string{"x", ":", "[^"}},
@@ -526,7 +488,6 @@ func exprCases(t *testing.T) []invocation {
 		{name: "interval over a bracket", args: []string{"ab", ":", `[ab]\{2\}`}},
 		{name: "interval over a bracket fails", args: []string{"ab", ":", `[ab]\{3\}`}},
 
-		// Escapes, backreferences and the GNU word operators.
 		{name: "trailing backslash", args: []string{"abc", ":", "\\"}},
 		{name: "trailing backslash after a letter", args: []string{"abc", ":", `a\`}},
 		{name: "escaped dot", args: []string{".", ":", `\.`}},
@@ -553,9 +514,6 @@ func exprCases(t *testing.T) []invocation {
 		{name: "buffer end", args: []string{"a", ":", `a\'`}},
 		{name: "buffer end with more text", args: []string{"a'", ":", `a\'`}},
 		{name: "buffer start", args: []string{"a", ":", "\\`a"}},
-		// A duplication operator has no atom to repeat after a
-		// zero-width word operator, so it is the literal character —
-		// the same rule `^*a` already took for the anchor.
 		{name: "question after a word start is a literal", args: []string{"a", ":", `\<\?[ab]`}},
 		{name: "question after a word start matches the character", args: []string{"?a", ":", "\\`\\?a"}},
 		{name: "plus after a buffer start is a literal", args: []string{"a", ":", "\\`\\+a"}},
@@ -589,12 +547,6 @@ func exprCases(t *testing.T) []invocation {
 		{name: "ten is one then a zero", args: []string{"abcdefghija0", ":", `\(a\)\(b\)\(c\)\(d\)\(e\)\(f\)\(g\)\(h\)\(i\)\(j\)\10`}},
 		{name: "ten is one then a zero that fails", args: []string{"abcdefghij", ":", `\(a\)\(b\)\(c\)\(d\)\(e\)\(f\)\(g\)\(h\)\(i\)\(j\)\10`}},
 
-		// A backreference is scoped to the alternation BRANCH its group was
-		// completed in: a group closed in a sibling branch is out of scope,
-		// and so is the group the reference itself sits inside, which is
-		// still open. A group closed before an alternation is in scope in
-		// every branch of it, and one closed inside a branch is in scope
-		// again past the whole alternation.
 		{name: "backreference to a sibling branch", args: []string{"aab", ":", `\(a\)b\|\1`}},
 		{name: "backreference is the whole sibling branch", args: []string{"aab", ":", `\(a\)\|\1`}},
 		{name: "backreference after text in a sibling branch", args: []string{"aab", ":", `\(a\)\|x\1`}},
@@ -613,14 +565,6 @@ func exprCases(t *testing.T) []invocation {
 		{name: "backreference to a group closed in an earlier branch", args: []string{"aab", ":", `\(a\)\1\|\1`}},
 		{name: "backreference to a group opened in an earlier branch", args: []string{"aab", ":", `\(a\|\(b\)\)\2`}},
 
-		// Between alternation branches that match the SAME extent, glibc
-		// awards the match to the earlier one — unless that branch reached
-		// the end through a trailing zero-width assertion and a later one
-		// did not (#8796). An assertion's successors are duplicated nodes
-		// carrying its constraint, and the plain end node sorts before every
-		// duplicate when glibc picks the halt node. A leading assertion, an
-		// assertion followed by more text, or an assertion in every
-		// contending branch leaves the earlier branch in front.
 		{name: "trailing anchor yields to a plain branch", args: []string{"a", ":", `\(a\)$\|.`}},
 		{name: "trailing anchor inside the group yields", args: []string{"a", ":", `\(a$\)\|.`}},
 		{name: "trailing word boundary yields", args: []string{"a", ":", `\(a\)\b\|.`}},
@@ -655,7 +599,6 @@ func exprCases(t *testing.T) []invocation {
 		{name: "extra group close", args: []string{"a", ":", `\(a\)\)`}},
 		{name: "group close after a letter", args: []string{"a", ":", `a\)`}},
 
-		// Greedy structure: which iteration a group reports.
 		{name: "star over a group", args: []string{"abcd", ":", `\(a*\)*`}},
 		{name: "star over a group before a literal", args: []string{"aab", ":", `\(a*\)*b`}},
 		{name: "two stars", args: []string{"aaa", ":", `\(a*\)\(a\)`}},
@@ -686,7 +629,6 @@ func exprCases(t *testing.T) []invocation {
 		{name: "star over a group to a literal", args: []string{"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxy", ":", `\(x*\)*y`}},
 		{name: "star over a group to a missing literal", args: []string{"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", ":", `\(x*\)*y`}},
 
-		// The write-failure paths: expr exits 3, not 1.
 		{name: "closed stdout", args: []string{"1"}, stdout: stdoutClosed},
 		{name: "closed stdout with a zero value", args: []string{"0"}, stdout: stdoutClosed},
 		{name: "closed stdout with a syntax error", args: []string{"1", "+"}, stdout: stdoutClosed},
@@ -695,10 +637,6 @@ func exprCases(t *testing.T) []invocation {
 		{name: "full stdout with a zero value", args: []string{"0"}, stdout: stdoutFull},
 		{name: "full stdout with a syntax error", args: []string{"1", "+"}, stdout: stdoutFull},
 		{name: "full stdout with a bad regexp", args: []string{"abc", ":", `\(`}, stdout: stdoutFull},
-		// --help and --version print text that is ours by design, but a
-		// write that FAILS prints nothing and exits through gnulib's
-		// exit_failure, which expr sets to 3 rather than the 2 a usage
-		// error uses — so these four compare byte for byte.
 		{name: "closed stdout under help", args: []string{"--help"}, stdout: stdoutClosed},
 		{name: "closed stdout under version", args: []string{"--version"}, stdout: stdoutClosed},
 		{name: "full stdout under help", args: []string{"--help"}, stdout: stdoutFull},

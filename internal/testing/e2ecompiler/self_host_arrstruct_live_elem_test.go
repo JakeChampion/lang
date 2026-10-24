@@ -8,22 +8,6 @@ import (
 	"testing"
 )
 
-// --- An appended struct element whose SOURCE outlives the push ---------------
-//
-// `ps = ps.append(p)` where `p` is still live afterwards: the array and `p`
-// both own the element box. Whichever owner releases last frees the element's
-// `xs` buffer and its box; the other only drops its count. That has to hold in
-// either order and for every shape below: a read after the push, a struct
-// parameter the caller owns, one box pushed several times, and the source
-// rebound while the array still holds the old box. A MOVED element (the push
-// is the source's last use) hands its single reference to the array and takes
-// no retain.
-//
-// Each row pins the exit value, and the leak-accounting leg pins allocs and
-// frees. main returns 99 when __rc_underflow_count() is non-zero, so a release
-// that runs while another owner is live fails on the dangling direction rather
-// than the leaking one.
-
 type arrstructLiveElemCase struct {
 	name   string
 	src    string
@@ -44,10 +28,6 @@ func arrstructLiveElemCases() []arrstructLiveElemCase {
 	const decl = "struct P { xs: i32[], n: i32 }\n"
 	return []arrstructLiveElemCase{
 		{
-			// THE REPRO. The push is not `p`'s last use, so nothing is moved and
-			// both owners are live at the sweep. Base: 400 allocs / 200 frees —
-			// only the two buffers came back, every element box and its xs
-			// stranded.
 			name: "read_after_push",
 			src: decl + `function round(i: i32): i32 {
     let p: P = P { xs: [i, i + 1], n: i };
@@ -59,10 +39,6 @@ func arrstructLiveElemCases() []arrstructLiveElemCase {
 			want: 4, allocs: 300, frees: 300,
 		},
 		{
-			// A struct PARAM element: the CALLER owns the box, so the retain is
-			// what lets the callee's element walk see it as shared and take the
-			// box dec instead of freeing buffers the caller still reads. Without
-			// the retain this is exit 99, not a leak.
 			name: "param_element",
 			src: decl + `function take(p: P): i32 {
     let ps: P[] = [];
@@ -78,11 +54,6 @@ function round(i: i32): i32 {
 			want: 4, allocs: 300, frees: 300,
 		},
 		{
-			// The SAME box pushed four times. The walk decs it once per element
-			// and finds it shared every time; `p`'s own release is the one that
-			// reaches rc 1 and walks the fields. A per-site stamp is what makes
-			// this work — an inc derived from the element's own credit would fire
-			// zero times against four decs. Base: 400 / 200.
 			name: "repeated_push_same_box",
 			src: decl + `function round(i: i32): i32 {
     let p: P = P { xs: [i, i + 1], n: i };
@@ -95,11 +66,6 @@ function round(i: i32): i32 {
 			want: 4, allocs: 300, frees: 300,
 		},
 		{
-			// The MOVED element, which must NOT be stamped: a block-scoped local
-			// built and pushed inside the loop hands its single reference over.
-			// It was clean before and stays clean — an inc here leaves every
-			// element at rc 1 after the walk, which is a leak of the whole
-			// structure.
 			name: "moved_element_unchanged",
 			src: decl + `function round(i: i32): i32 {
     let keep: P[] = [];
@@ -118,10 +84,6 @@ function round(i: i32): i32 {
 			want: 36, allocs: 900, frees: 900,
 		},
 		{
-			// The source is REBOUND after the push. The rebind's field reclaim
-			// finds the old box shared and hands back this slot's count instead
-			// of freeing anything, so the container's walk reaches rc 1 and does
-			// the deep work. Base: 600 allocs / 200 frees.
 			name: "rebound_source",
 			src: decl + `function round(i: i32): i32 {
     let p: P = P { xs: [i, i + 1], n: i };
@@ -134,11 +96,6 @@ function round(i: i32): i32 {
 			want: 5, allocs: 500, frees: 500,
 		},
 		{
-			// A rebind while the container still holds the old box, read
-			// back as a value: freeing the old xs early reads garbage where
-			// native reads 15 per round. The junk arrays are not heap-
-			// allocated on the typed lowering, so the count covers only the
-			// P values.
 			name: "rebound_source_element_still_readable",
 			src: decl + `@noinline function hold(p: P): i32 { return 0; }
 function round(i: i32): i32 {
@@ -156,7 +113,6 @@ function round(i: i32): i32 {
 	}
 }
 
-// TestSelfHostArrStructLiveElemX86_64 is the leak-accounting leg.
 func TestSelfHostArrStructLiveElemX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -193,8 +149,6 @@ func TestSelfHostArrStructLiveElemX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostArrStructLiveElemWasmIR — exit codes only, so what this leg
-// catches is a release that frees a LIVE box on wasm, the 99 included.
 func TestSelfHostArrStructLiveElemWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping arrstruct live-element wasm IR e2e")
@@ -233,7 +187,6 @@ func TestSelfHostArrStructLiveElemWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostArrStructLiveElemIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostArrStructLiveElemIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

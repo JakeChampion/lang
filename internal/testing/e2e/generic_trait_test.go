@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// Generic traits (`trait Container[T]` / `trait From[T]`): a trait may take
-// type parameters, each impl binds them (`impl Container[i32] for B`), and
-// the conformance check substitutes them so the concrete method dispatches.
-// Container[i32].get → 7 (×10) + From[i32].from(20).deg → 20 = 90. See
-// docs/TRAITS.md.
 const genericTraitSrc = `trait Container[T] { function get(self: Self): T; }
 struct IntBox { v: i32 }
 impl Container[i32] for IntBox { function get(self: Self): i32 { return self.v; } }

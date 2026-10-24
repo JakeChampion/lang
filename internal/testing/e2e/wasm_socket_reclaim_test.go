@@ -40,7 +40,7 @@ func TestWasmSocketCloseZeroHandles(t *testing.T) {
 	for _, tc := range []struct{ name, expr string }{
 		{"listen", "tcp_listen(0)"},
 		{"connect", "tcp_connect_with([0u8, 0u8, 0u8, 0u8], 1, false)"},
-		{"accept", "tcp_accept(0)"}, // harness supplies a borrowed listener record
+		{"accept", "tcp_accept(0)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -62,7 +62,7 @@ func TestWasmSocketGuestStorage(t *testing.T) {
 	for _, tc := range []struct{ name, expr string }{
 		{"listen", "tcp_listen(0)"},
 		{"connect", "tcp_connect_with(any, 1, false)"},
-		{"accept", "tcp_accept(0)"}, // harness supplies a borrowed listener record
+		{"accept", "tcp_accept(0)"},
 		{"port", "tcp_local_port(0)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

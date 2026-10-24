@@ -7,16 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostContractRowsFoldEveryCalleeFact keeps semlower.contract_rows
-// complete. The per-module cache keys a unit on those rows, so a fact about its
-// callees that a unit's lowering reads and the rows leave out lets a cached
-// unit outlive the fact it was lowered with — a stale-cache miscompile, with
-// no error to say so.
-//
-// The facts are what produced_body hands ssarc.lower beyond the body's own
-// graph, plan and schema view: every field of each callee's ssasem.Contract
-// (the call sites read it through the function's calls table), and every
-// whole-module table of the Rows.
 func TestSelfHostContractRowsFoldEveryCalleeFact(t *testing.T) {
 	read := func(name string) string {
 		b, err := os.ReadFile("../../../compiler/" + name)
@@ -56,7 +46,7 @@ func TestSelfHostContractRowsFoldEveryCalleeFact(t *testing.T) {
 	}
 	for _, f := range tables {
 		if f[1] == "plans" {
-			continue // the body's own plan, not a fact about its callees
+			continue
 		}
 		if !strings.Contains(fn, "r."+f[1]+".") {
 			missing = append(missing, "Rows."+f[1])

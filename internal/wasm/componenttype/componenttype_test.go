@@ -13,11 +13,8 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestEmbedSimple — minimal cover: Embed appends a custom
-// section to a trivial module and the resulting bytes start
-// with the input + section id 0.
 func TestEmbedSimple(t *testing.T) {
-	core := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00} // bare module header
+	core := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}
 	out, err := componenttype.Embed(core, "fern")
 	if err != nil {
 		t.Fatalf("Embed: %v", err)
@@ -33,8 +30,6 @@ func TestEmbedSimple(t *testing.T) {
 	}
 }
 
-// TestEmbedUnknownWorld asserts the error path for unrecognised
-// world names — the only validation Embed does.
 func TestEmbedUnknownWorld(t *testing.T) {
 	_, err := componenttype.Embed([]byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}, "nope")
 	if err == nil {
@@ -42,13 +37,6 @@ func TestEmbedUnknownWorld(t *testing.T) {
 	}
 }
 
-// TestEmbedMatchesWasmTools is the integration guarantee. It
-// builds a small core module via wasm-tools (so the test is
-// independent of our Lang backend), runs `wasm-tools component
-// embed` for each world, and asserts that componenttype.Embed
-// produces byte-for-byte identical output. If wasm-tools is
-// unavailable the test skips — the wasmtime e2e tests already
-// gate on the same binary.
 func TestEmbedMatchesWasmTools(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -109,7 +97,6 @@ func firstDiff(a, b []byte) int {
 }
 
 func findWITDir() (string, error) {
-	// Walk up from the package directory until we find cmd/fern/wit.
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", err
@@ -127,10 +114,6 @@ func findWITDir() (string, error) {
 	}
 }
 
-// TestWorldFernPayloads pins the self-host compiler's copies of the embedded
-// worlds (the concatenated Fern string literals of each file's payload
-// function, two hex digits a byte) to their .bin files, so the two cannot
-// drift when the WIT is regenerated. The literals are read through the lexer.
 func TestWorldFernPayloads(t *testing.T) {
 	for world, file := range map[string]string{
 		"fern":  "wit_fern_world.fern",

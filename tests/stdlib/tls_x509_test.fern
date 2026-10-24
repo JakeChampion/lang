@@ -6,12 +6,6 @@ import "std/i64";
 import "std/tls/pem";
 import "std/tls/x509";
 
-// tests/stdlib/tls_x509_test.fern — std/tls/x509 and std/tls/pem: the
-// fields of certificates made with Python's `cryptography` (a P-256 chain,
-// RSA and Ed25519 roots and leaves, and leaves with a SHA-384 signature and
-// an unknown critical extension) and of RFC 8448 §3's server certificate,
-// refusals of malformed DER, and PEM both ways.
-
 function ec_root(): u8[] {
   return hex.hex_decode("308201433081eaa003020102020101300a06082a8648ce3d04030230193117301506035504030c0e4665726e205465737420526f6f74301e170d3236303130313030303030305a170d3237303130313030303030305a30193117301506035504030c0e4665726e205465737420526f6f743059301306072a8648ce3d020106082a8648ce3d030107034200040dcc7648c78a3118f2612866fe83ef19f40304f623399e1211a10f2b3d1c05cf30e8027677bcb912943e99ff71140ea9bc24713be1b75c31ff4054724c4f9d00a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300a06082a8648ce3d0403020348003045022051b74a89e235c981464cae54764206d65f11184dc5e78a5298441305ef3e72db022100d538cc2287d10ead1e561d7ecc33bf752db02620f12924df9728d20b5b4bd863");
 }
@@ -100,12 +94,10 @@ function dn_leaf(): u8[] {
   return hex.hex_decode("308201783082011da003020102020122300a06082a8648ce3d04030230253123302106035504030c1a4665726e204469726563746f727920436f6e73747261696e6564301e170d3236303130313030303030305a170d3237303130313030303030305a30163114301206035504030c0b636f6e73747261696e65643059301306072a8648ce3d020106082a8648ce3d030107034200048570e95d85825286db92c78317679bdd8ffe3c90d0af84291bf64132b66fcc99c926f087212d75b1f4dbc5d4999b4c5605adf66db801a4de371cdad39ebc55e5a34d304b300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b0601050507030130160603551d11040f300d820b6578616d706c652e636f6d300a06082a8648ce3d0403020349003046022100c64a5570234851208224d2936ae9a4e83a9530f9c6c78d7b856e1249c0b86032022100fd6bb1459d6d236b52471c4f4c96eb6a69439b4374c7cce0b2f66aacad362377");
 }
 
-// RFC 8448 §3's server certificate.
 function rfc8448_certificate(): u8[] {
   return hex.hex_decode("308201ac30820115a003020102020102300d06092a864886f70d01010b0500300e310c300a06035504031303727361301e170d3136303733303031323335395a170d3236303733303031323335395a300e310c300a0603550403130372736130819f300d06092a864886f70d010101050003818d0030818902818100b4bb498f8279303d980836399b36c6988c0c68de55e1bdb826d3901a2461eafd2de49a91d015abbc9a95137ace6c1af19eaa6af98c7ced43120998e187a80ee0ccb0524b1b018c3e0b63264d449a6d38e22a5fda430846748030530ef0461c8ca9d9efbfae8ea6d1d03e2bd193eff0ab9a8002c47428a6d35a8d88d79f7f1e3f0203010001a31a301830090603551d1304023000300b0603551d0f0404030205a0300d06092a864886f70d01010b05000381810085aad2a0e5b9276b908c65f73a7267170618a54c5f8a7b337d2df7a594365417f2eae8f8a58c8f8172f9319cf36b7fd6c55b80f21a03015156726096fd335e5e67f2dbf102702e608ccae6bec1fc63a42a99be5c3eb7107c3c54e9b9eb2bd5203b1c3b84e0a8b2f759409ba3eac9d91d402dcc0cc8f8961229ac9187b42b4de1");
 }
 
-// A certificate standing for a parse that failed, its algorithm the error.
 function failed(why: string): x509.Certificate {
   let none: x509.Name = x509.Name { raw: [], common_name: "" };
   return x509.Certificate { raw: [], tbs: [], version: 0, serial: [], algorithm: x509.OtherAlgorithm(why), issuer: none, subject: none, not_before: 0 as i64, not_after: 0 as i64, key: x509.OtherKey(""), spki: [], ca: false, path_len: -1, key_usage: -1, ext_key_usage: [], has_ext_key_usage: false, dns_names: [], ip_addresses: [], permitted_dns: [], excluded_dns: [], permitted_ip: [], excluded_ip: [], unknown_critical: [], signature: [] };
@@ -168,7 +160,6 @@ function joined(v: string[]): string {
   return out;
 }
 
-// summary is the fields a test compares, one line.
 function summary(c: x509.Certificate): string {
   return "v" + int.int_to_string(c.version) + " #" + hex.hex_encode(c.serial) + " " + x509.algorithm_name(c.algorithm) + " " + c.issuer.common_name + " > " + c.subject.common_name + " " + c.not_before.to_string() + ".." + c.not_after.to_string() + " " + key_shape(c.key);
 }
@@ -196,7 +187,6 @@ function test_authorities(): test.TestOutcome {
   if (!r.ca || r.path_len != -1 || hex.hex_encode(r.subject.raw) != hex.hex_encode(r.issuer.raw)) {
     return test.fail("root");
   }
-  // The intermediate's issuer is the root's subject, byte for byte.
   return test.assert_eq(hex.hex_encode(i.issuer.raw), hex.hex_encode(r.subject.raw));
 }
 
@@ -218,8 +208,6 @@ function test_name_constraints(): test.TestOutcome {
   if (joined(c.permitted_dns) != " example.com" || joined(c.excluded_dns) != " bad.example.com" || c.permitted_ip.len() != 1 || hex.hex_encode(c.permitted_ip[0]) != "c0000200ffffff00" || c.unknown_critical.len() != 0) {
     return test.fail("DNS and IP subtrees");
   }
-  // A directoryName subtree is not evaluated, so the critical extension is
-  // left unread.
   return test.assert_eq(joined(parsed(dn_int()).unknown_critical), " 2.5.29.30");
 }
 
@@ -239,7 +227,6 @@ function test_rfc8448(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// last is where the last occurrence of pat in b starts.
 function last(b: u8[], pat: string): i32 {
   let p: u8[] = hex.hex_decode(pat);
   let at: i32 = b.len() - p.len();
@@ -264,13 +251,10 @@ function test_refusals(): test.TestOutcome {
   if (refusal(b.append(0 as u8)) != "x509: der: malformed trailing bytes") {
     return test.fail("trailing byte");
   }
-  // The outer AlgorithmIdentifier says ecdsa-with-SHA384.
   let outer: i32 = last(b, "06082a8648ce3d040302");
   if (refusal(b.with(outer + 9, 3 as u8)) != "x509: malformed signature algorithm: the two identifiers differ") {
     return test.fail("disagreeing algorithms");
   }
-  // The subject alternative name renamed extended key usage, which then
-  // appears twice.
   let san: i32 = last(b, "0603551d11");
   return test.assert_eq(refusal(b.with(san + 4, 0x25 as u8)), "x509: malformed repeated extension 2.5.29.37");
 }

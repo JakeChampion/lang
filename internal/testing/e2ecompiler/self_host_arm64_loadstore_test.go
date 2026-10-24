@@ -7,11 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64LoadStore byte-checks the AArch64 load/store encoders
-// added in slice 3e of arm64_encode.fern (ldr/str, 64-bit unsigned scaled
-// immediate) against the ground-truth little-endian encodings, run through
-// the self-host wasm pipeline. Exit 0 = all checks pass; a failing check
-// returns its 1-based id.
 func TestSelfHostArm64LoadStore(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64 load/store e2e")
@@ -39,19 +34,10 @@ func TestSelfHostArm64LoadStore(t *testing.T) {
 	}
 }
 
-// TestSelfHostArm64DarwinMachOFrameRuns is the end-to-end proof of the
-// load/store encoders: a Fern program assembles a stack-frame round-trip —
-// sub sp; movz x0,#42; str x0,[sp,#8]; clobber x0; ldr x0,[sp,#8]; add sp
-// — then exits with x0. A wrong scaled offset or store/load opcode would
-// not reload 42. macho.fern wraps it into an ad-hoc-signed Mach-O — no
-// clang/ld64/codesign.
 func TestSelfHostArm64DarwinMachOFrameRuns(t *testing.T) {
 	assertMachORuns(t, machoRun{name: "frame42", main: arm64MachOFrameDriverMain, wantExit: 42})
 }
 
-// arm64LoadStoreSelfTestMain asserts the ldr/str encoders against their
-// ground-truth little-endian bytes. Each `return N` is a distinct
-// failing-check id (0 = all pass).
 const arm64LoadStoreSelfTestMain = `
 function main(): i32 {
     // str x0, [sp, #8] -> 0xF90007E0 -> E0 07 00 F9
@@ -70,9 +56,6 @@ function main(): i32 {
 }
 `
 
-// arm64MachOFrameDriverMain assembles a stack-frame spill/reload that
-// exits with the reloaded value (42): allocate 16 bytes, store 42 at
-// [sp,#8], clobber the register, reload it, free the frame.
 const arm64MachOFrameDriverMain = `
 function main(): i32 {
     let code: i32[] = [];

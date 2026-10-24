@@ -1,14 +1,14 @@
 import "core/map";
 
-// A column snapshot answers a FRESH array, and whether it owns its elements
-// follows the column: the runtime copies a string column with a per-element
-// retain, while an i32 column holds no references at all. Both arrays here
-// outlive the map they came from, so a snapshot that aliased the map instead
-// of copying would read freed bytes.
 
 
-// A string column snapshots WITH a per-element retain, so the answered array
-// owns its strings and outliving the map must still be safe.
+
+
+
+
+
+
+
 @noinline function str_keys_outlive(n: i32): i32 {
     let ks: string[] = [];
     {
@@ -35,7 +35,7 @@ import "core/map";
     return t;
 }
 
-// An i32 column holds no references: the buffer is the whole of it.
+
 @noinline function i32_keys(n: i32): i32 {
     let m: Map[i32, i32] = map_new(4);
     m = m.insert(7, 1);

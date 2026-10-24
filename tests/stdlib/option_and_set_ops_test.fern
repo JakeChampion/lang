@@ -1,16 +1,5 @@
 import "std/test";
 
-// tests/stdlib/option_and_set_ops_test.fern — batch 26
-// additions to std/test:
-//   * Option result assertions:
-//     `assert_is_some_i32` / `_string`,
-//     `assert_is_none_i32` / `_string`,
-//     `assert_is_some_eq_i32` / `_string`
-//   * Array set-relation assertions:
-//     `assert_array_intersects_i32` / `_string`,
-//     `assert_array_disjoint_i32` / `_string`
-
-// A toy lookup helper used as the "function under test".
 function lookup(k: i32): Option[i32] {
   if (k == 1) {
     return Some(100);
@@ -49,7 +38,6 @@ function test_is_none_i32_some_fails_with_value(): test.TestOutcome {
       return test.fail("expected Some to fail is_none");
     },
     Fail(msg) => {
-      // Failure must embed the unexpected payload.
       if (!msg.contains("Some(100)")) {
         return test.fail("expected 'Some(100)' in failure: " + msg);
       }
@@ -82,9 +70,6 @@ function test_is_some_eq_i32_none_fails(): test.TestOutcome {
       return test.fail("None should fail is_some_eq");
     },
     Fail(msg) => {
-      // Distinct diagnostic from value-mismatch ("got
-      // None, expected Some(...)") so the regression
-      // mode is readable.
       if (!msg.contains("got None")) {
         return test.fail("expected 'got None': " + msg);
       }
@@ -136,7 +121,6 @@ function test_intersects_i32_no_overlap_fails(): test.TestOutcome {
       return test.fail("disjoint should fail intersects");
     },
     Fail(msg) => {
-      // Failure should mention the array lengths.
       if (!msg.contains("length 3 and 3")) {
         return test.fail("expected 'length 3 and 3': " + msg);
       }

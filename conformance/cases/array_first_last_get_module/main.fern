@@ -1,6 +1,6 @@
-// std/array's is_empty / first / last / get: bounds-checked accessors returning
-// Option[T]; a negative index is None, not from-the-end.
-// The shipped module's free and method forms.
+
+
+
 import "std/array" as arr;
 function uw(o: Option[i32]): i32 { match (o) { Some(v) => { return v; }, None => { return 0 - 1; } } }
 function main(): i32 {

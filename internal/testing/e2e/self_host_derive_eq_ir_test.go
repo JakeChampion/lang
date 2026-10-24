@@ -9,69 +9,43 @@ import (
 	"testing"
 )
 
-// `@derive(cmp.Eq)` on the self-host IR path. The derive synthesises a
-// field-/payload-wise `eq`. Emitting `self.f.eq(other.f)` for EVERY field
-// resolves a scalar field's `.eq()` to `core/cmp`'s `i32.eq`, which the
-// self-host loader skips (it loads only local + builtin), bailing the whole
-// module to the legacy AST emitter. The synthesiser compares a
-// SCALAR field with the primitive `==` (a nominal field still delegates to its
-// own derived `.eq()`), so a derived `eq` lowers through the IR path with no
-// stdlib dependency. `==` equals `core/cmp`'s scalar `eq` (`self == other`), so
-// the native/self-host differential oracle still agrees.
 var deriveEqCases = []struct {
 	name string
 	main string
 	want int
 }{
-	// struct, i32 fields: eq true for equal, false when any field differs.
 	{"struct-i32", `import "core/cmp";
 @derive(cmp.Eq)
 struct P { x: i32, y: i32 }
 function main(): i32 { let a = P { x: 1, y: 2 }; let b = P { x: 1, y: 2 }; let c = P { x: 1, y: 9 }; if (a.eq(b) && !a.eq(c)) { return 42; } return 0; }`, 42},
-	// struct with a string field (string is a scalar → `==`) + an i32 field.
 	{"struct-string", `import "core/cmp";
 @derive(cmp.Eq)
 struct S { name: string, n: i32 }
 function main(): i32 { let a = S { name: "hi", n: 1 }; let b = S { name: "hi", n: 1 }; let c = S { name: "ho", n: 1 }; if (a.eq(b) && !a.eq(c)) { return 42; } return 0; }`, 42},
-	// nested struct: the outer derive delegates to the inner struct's own
-	// derived `.eq()` for the nominal field (exercising dv_eq_expr's else arm).
 	{"struct-nested", `import "core/cmp";
 @derive(cmp.Eq)
 struct Inner { v: i32 }
 @derive(cmp.Eq)
 struct Outer { inner: Inner, tag: i32 }
 function main(): i32 { let a = Outer { inner: Inner { v: 5 }, tag: 1 }; let b = Outer { inner: Inner { v: 5 }, tag: 1 }; let c = Outer { inner: Inner { v: 6 }, tag: 1 }; if (a.eq(b) && !a.eq(c)) { return 42; } return 0; }`, 42},
-	// enum: payload variants compare their (scalar) payload; payload-less
-	// variants compare by tag; cross-variant is unequal.
 	{"enum-mixed", `import "core/cmp";
 @derive(cmp.Eq)
 enum E { A(i32), B(string), C }
 function main(): i32 { if (A(5).eq(A(5)) && !A(5).eq(A(6)) && C.eq(C) && !A(5).eq(C) && B("x").eq(B("x"))) { return 42; } return 0; }`, 42},
-	// The OPERATOR form of the same thing. `==` / `!=` on a struct or enum is
-	// structural equality through the derived `eq`, not heap-pointer identity —
-	// the self-host IR path used to lower the two box pointers into a plain i32
-	// compare, so `a == b` on distinct-but-equal boxes was false and `a != c`
-	// was true for every pair (#6009).
 	{"struct-operator", `import "core/cmp";
 @derive(cmp.Eq)
 struct P { x: i32, y: i32 }
 function main(): i32 { let a = P { x: 1, y: 2 }; let b = P { x: 1, y: 2 }; let c = P { x: 1, y: 9 }; if (a == b && a != c && !(a == c) && a == a) { return 42; } return 0; }`, 42},
-	// Enum operands: a fresh variant construction and a bare unit variant both
-	// dispatch under the OWNING enum, so `Line(7) == Line(7)` is payload-wise.
 	{"enum-operator", `import "core/cmp";
 @derive(cmp.Eq)
 enum E { A(i32), B(string), C }
 function main(): i32 { if (A(5) == A(5) && A(5) != A(6) && C == C && A(5) != C && B("x") == B("x")) { return 42; } return 0; }`, 42},
-	// An enum held in a LOCAL types as its variant, so the dispatch has to
-	// redirect variant -> owning enum before naming the method.
 	{"enum-local-operator", `import "core/cmp";
 @derive(cmp.Eq)
 enum E { A(i32), C }
 function main(): i32 { let p = A(5); let q = A(5); let r = A(6); if (p == q && p != r) { return 42; } return 0; }`, 42},
 }
 
-// TestNativeDeriveEq runs the derived-Eq programs through the native
-// interpreter + x86-64 + wasm backends, oracle-checked.
 func TestNativeDeriveEq(t *testing.T) {
 	for _, tc := range deriveEqCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -93,9 +67,6 @@ func TestNativeDeriveEq(t *testing.T) {
 	}
 }
 
-// TestSelfHostDeriveEqIRX86_64 routes each case through the self-hosted x86-64
-// IR driver, pins routing to "ir" (the synthesiser's scalar `==` keeps the
-// derived eq IR-eligible), and oracle-checks the exit code.
 func TestSelfHostDeriveEqIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -129,7 +100,6 @@ func TestSelfHostDeriveEqIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostDeriveEqIRWasm runs the same cases through the wasm IR backend.
 func TestSelfHostDeriveEqIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host derive-eq wasm IR e2e")

@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Transitive reclamation Stage A — uniform-enum-of-struct
-// churn: a union whose variants each carry a struct holding
-// an array, built + matched + discarded every iteration. The
-// enum drop now recurses into __drop_struct_VInt (freeing the
-// struct box + its array) rather than flat-dec'ing the
-// payload. sum_{i=0..99}(i+1) = 4950 + 100 = 5050.
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "core/int";
 struct VInt { v: i32[] }

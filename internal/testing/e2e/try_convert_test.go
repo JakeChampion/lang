@@ -8,15 +8,6 @@ import (
 	"testing"
 )
 
-// std/convert TryFrom / TryInto (#2710): the fallible siblings of From / Into.
-// `TryFrom[T]` supplies a `try_from(T): Result[Self, string]` associated
-// function (a checked constructor); `TryInto[T]` a `try_into(): Result[T,
-// string]` method. They're ordinary traits (plain assoc-fn / method dispatch,
-// no special handling), so a user impl + call resolves like any other.
-//
-// Small.try_from(42) => Ok(Small{42}); Small.try_from(300) => Err("too big")
-// (len 7); Celsius{100}.try_into() delegates to Small.try_from => Ok(Small{100}).
-// 42 + 7 + 100 = 149.
 const tryConvertSrc = `import "std/convert" as convert;
 struct Small { v: i32 }
 impl convert.TryFrom[i32] for Small {

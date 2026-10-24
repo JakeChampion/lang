@@ -2,21 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// timeZonedIRCases exercise std/time's Zoned / TimeZone surface — fixed-offset
-// zone construction, `in_zone`, `to_datetime` (wall-clock split), and an
-// IANA-style `Option[TimeZone]` lookup — through the self-host IR path on
-// x86-64 + wasm. This is the last std/time "self-host pending" piece (after the
-// helpers, Date methods, date_parse_iso, RFC-3339, and Span/Duration).
-//
-// New ground vs the earlier std/time coverage: **nested structs** — a struct
-// field that is itself a struct (`Zoned { instant: Instant, zone: TimeZone }`,
-// `DateTime { date: Date, time: Time }`), built and read through two levels
-// (`z.instant.sec`, `dt.time.hour`, `dt.date.day`). The bodies mirror std/time
-// except the structs are renamed (`Date`/`Instant`/`Time`/`Zoned`/`TimeZone`/
-// `DateTime` are reserved built-ins, E010) to
-// `Civil`/`Moment`/`Clock`/`Zd`/`Tz`/`DT`. No imports are needed for the oracle
-// (pure builtins + structs). Each case returns a value kept <= 126 and is
-// oracle-checked against the interpreter. FEATURE-AUDIT std/time row.
 const timeZonedIRPrelude = `struct Civil { year: i32, month: i32, day: i32 }
 struct Clock { hour: i32, minute: i32, second: i32, nsec: i32 }
 struct Moment { sec: i64, nsec: i32 }
@@ -54,22 +39,13 @@ var timeZonedIRCases = []struct {
 	name string
 	main string
 }{
-	// to_datetime wall-clock hour at +09:00 (Tokyo). 1718281496 UTC is
-	// 2024-06-13T12:24:56Z; +9h -> 21:24 local. hour = 21.
 	{"to-datetime-hour", `let m: Moment = Moment { sec: 1718281496 as i64, nsec: 0 }; let zd: Zd = in_zone(m, Tz { name: "x", offset_seconds: 32400 }); return to_datetime(zd).time.hour;`},
-	// Same instant, nested date field readout: day rolls to 13 (still 13 here).
 	{"to-datetime-day", `let m: Moment = Moment { sec: 1718281496 as i64, nsec: 0 }; let zd: Zd = in_zone(m, Tz { name: "x", offset_seconds: 32400 }); return to_datetime(zd).date.day;`},
-	// Negative offset (-05:00) pulls wall-clock back across midnight: 12:24Z -> 07:24. hour = 7.
 	{"to-datetime-neg-offset", `let m: Moment = Moment { sec: 1718281496 as i64, nsec: 0 }; let zd: Zd = in_zone(m, Tz { name: "x", offset_seconds: 0 - 18000 }); return to_datetime(zd).time.hour;`},
-	// in_zone preserves the instant: read it back through the nested field.
 	{"in-zone-roundtrip", `let m: Moment = Moment { sec: 90 as i64, nsec: 0 }; let zd: Zd = in_zone(m, Tz { name: "x", offset_seconds: 0 }); return zd.instant.sec as i32;`},
-	// timezone_iana hit -> Some; read the nested offset (Tokyo = 32400 / 3600 = 9).
 	{"iana-hit-offset", `match (timezone_iana("Asia/Tokyo")) { Some(z) => { return z.offset_seconds / 3600; }, None => { return 100; }, }`},
-	// timezone_iana UTC -> Some; offset 0.
 	{"iana-utc", `match (timezone_iana("UTC")) { Some(z) => { return z.offset_seconds + 5; }, None => { return 100; }, }`},
-	// timezone_iana miss -> None -> sentinel 7.
 	{"iana-miss", `match (timezone_iana("Mars/Olympus")) { Some(z) => { return 0; }, None => { return 7; }, }`},
-	// Compose: look up a zone, then use it through in_zone + to_datetime.
 	{"iana-then-datetime", `match (timezone_iana("Asia/Tokyo")) { Some(z) => { let m: Moment = Moment { sec: 1718281496 as i64, nsec: 0 }; return to_datetime(in_zone(m, z)).time.hour; }, None => { return 100; }, }`},
 }
 
@@ -77,8 +53,6 @@ func timeZonedIRSrc(mainBody string) string {
 	return timeZonedIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostTimeZonedIR compiles each case with the self-host CLI for
-// x86-64 and wasm and checks the exit code against the interpreter.
 func TestSelfHostTimeZonedIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)

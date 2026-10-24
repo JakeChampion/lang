@@ -5,15 +5,6 @@ import (
 	"testing"
 )
 
-// #11943: a nested constructor pattern reads the scrutinee's payloads before
-// its inner test, where a failed test still needs the scrutinee for the arms
-// after it, so the box dies in the test's successor, the arm that rebuilds it.
-// The block proving the scrutinee's variant is a predecessor of that arm, and
-// the reuse layer finds it there: a unique tree updated through either colour
-// reuses its node after the first allocation, as the flat pattern does.
-//
-// `shared` keeps the previous tree alive across each update, so every update
-// must copy and leave the snapshot's value and children intact.
 func nestedPatternReuseSrc(rounds int, shared bool) string {
 	keep := "let old: i32 = value(t);"
 	check := "old != i - 1"
@@ -98,7 +89,6 @@ func checkNestedPatternReuse(t *testing.T, target string, run censusRun) {
 	if lo, hi := census(100, false), census(400, false); lo != hi {
 		t.Errorf("%s unique: %d allocations at 100 rounds and %d at 400, want the same: the nested arm does not reuse its node", target, lo, hi)
 	}
-	// paint reuses in place, so a shared round copies once, in update.
 	if lo, hi := census(100, true), census(400, true); hi-lo != 300 {
 		t.Errorf("%s shared: %d allocations at 100 rounds and %d at 400, want 300 more: a retained snapshot must be copied", target, lo, hi)
 	}

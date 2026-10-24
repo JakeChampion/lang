@@ -7,16 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostClockX86_64 exercises the self-hosted x86-64 emitter's
-// `now_unix_ms` and `monotonic_ns` clock builtins (std/test plan: the
-// time batch). Both return an i64 in %rax via clock_gettime(2).
-//
-// now_unix_ms: assert it sits well past 1e12 ms (~2001-09), proving a
-// real wall-clock value round-trips through the 64-bit slot (the value
-// exceeds 32-bit range, so a truncating path would fail this).
-//
-// monotonic_ns: take two stamps and assert the second is >= the first,
-// proving the clock advances monotonically.
 func TestSelfHostClockX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -53,11 +43,6 @@ func TestSelfHostClockX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostClockArm64 is the ARM64 counterpart: the self-hosted
-// ARM64 emitter's now_unix_ms / monotonic_ns. The asm_ir_run (-target arm64-linux) driver
-// (an x86 host binary) compiles the same clock program to aarch64 asm;
-// the assembled binary runs under qemu-aarch64 (which passes
-// clock_gettime through to the host) and must exit 7.
 func TestSelfHostClockArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

@@ -1,6 +1,6 @@
-// An index of any integer type reads the element it names (#12707). A u8
-// widens to i32; every other width reaches the same element through the
-// i32 it converts to exactly.
+
+
+
 import "std/i32";
 
 function by_u64(xs: i32[], i: u64): i32 {

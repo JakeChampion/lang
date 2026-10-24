@@ -1,9 +1,5 @@
 package e2e
 
-// `__mulhi_u64(a, b)` is the high 64 bits of the unsigned 128-bit product: one
-// `umulh` on arm64, `mulq` on x86-64, and four 32x32 partial products on wasm,
-// which has no such instruction. Go's bits.Mul64 is the oracle.
-
 import (
 	"fmt"
 	"math/bits"

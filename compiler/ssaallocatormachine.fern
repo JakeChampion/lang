@@ -1,11 +1,6 @@
-// Conditional small-request allocator effects. Linked storage, canonical
-// disjoint permissions, free-list ownership and ordered heap bounds remain
-// premises. This is not a global allocator invariant or freshness certificate.
 import "./ssacapacityisa" as isa;
 import "./ssadecrementtext" as text;
 
-// Half kinds: number, original register, stack, block, small-list base, end,
-// return, original stack, next head, original block, other global.
 struct Half { kind: i32, identity: i64, high: boolean }
 
 struct Word { low: Half, high: Half }
@@ -176,7 +171,6 @@ function stack(s: State, op: isa.Op, request: i32, bump: boolean): State {
     if (at < 0) {
       return State { ...s, ok: false };
     }
-    // Read the source before changing SP, including a source based on SP.
     let w = if (op.kind == 32) { load(s, at, 64) } else { s.regs[op.source] };
     let next = token(2, sp.low.identity - 8);
     return write(store(s, cell(next, 0, 64, request), 64, w, bump), 4, next);
@@ -192,7 +186,6 @@ function pop(s: State, op: isa.Op, request: i32, bump: boolean): State {
   }
   let w = load(s, at, 64);
   let advanced = write(s, 4, token(2, sp.low.identity + 8));
-  // Intel POP memory computes the destination using the incremented SP.
   return if (op.kind == 33) { store(advanced, address(advanced, op, request), 64, w, bump) } else { write(advanced, op.destination, w) };
 }
 
@@ -299,7 +292,6 @@ function test(s: State, op: isa.Op): State {
     let result = flags(s, w.low.identity, 0, op.width);
     return State { ...result, carry: 0, overflow: 0 };
   }
-  // Only the block's nonzero address is supplied by the domain; no sign fact.
   return State { ...unknown(s), zero: if (equal(w, token(3, 0))) { 0 } else { -1 }, carry: 0, overflow: 0 };
 }
 
@@ -513,17 +505,6 @@ function next_pc(s: State, op: isa.Op, pc: i32): i32 {
   return if (taken == 1) { op.target } else { pc + 1 };
 }
 
-// DI is40 or48. Canonical aligned disjoint stack S-64..S+15, linked globals
-// and selected slot L+DI are readable; lower stack and the selected update
-// are writable. Nonempty slot contains a valid owned block B of DI bytes,
-// whose first word is the arbitrary next head. Empty slot has initialized
-// nonzero heap_ptr B and unsigned B+DI<=end without wrap, with DI bytes of
-// available storage. These permissions and global invariants are UNPROVED.
-// Derives AX=B, DI=L+request (pop) or B+request (bump), the exact single slot
-// or heap_ptr update, all other registers and original return/argument intact.
-// Lower stack is scratch; RET consumes the original word and advances SP8.
-// No initialization, general size, terminal, flags, unwind, default or target
-// runtime certificate, and no discharge of constructor freshness premises.
 pub function check(output: string): boolean {
   let p = isa.allocator_program(output);
   return p.error == "" && text.allocator_storage(output) && path(p, 40, false) && path(p, 40, true) && path(p, 48, false) && path(p, 48, true);

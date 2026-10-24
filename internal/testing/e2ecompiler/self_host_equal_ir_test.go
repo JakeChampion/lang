@@ -2,16 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// equalIRCases exercise the Eq-driven `equal` (structural array equality)
-// and `index_of_last` verbs through the self-host IR path on x86-64 +
-// wasm. The surface is inlined rather than imported: an `Eq` trait +
-// i32 / string primitive impls (standing in for core/cmp) and the
-// `[T: Eq]` bodies. Both verbs
-// compare with the `==` operator (which lowers to the scalar compare /
-// `str_eq`, not a method call), so they monomorphise and lower cleanly
-// per element type. Each case returns a small deterministic int
-// (<= 125, wasm exit-code safe), oracle-checked against the interpreter.
-// #2689.
 const equalIRPrelude = `trait Eq { function eq(self: Self, other: Self): boolean; }
 impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } }
 impl Eq for string { function eq(self: Self, other: Self): boolean { return self == other; } }
@@ -46,13 +36,9 @@ var equalIRCases = []struct {
 	main string
 	want int
 }{
-	// i32 equality: equal, value mismatch, length mismatch -> 1 + 2 + 4 = 7.
 	{"equal-i32", `let a: i32[] = [1, 2, 3]; let b: i32[] = [1, 2, 3]; let c: i32[] = [1, 2, 4]; let r: i32 = 0; if (equal(a, b)) { r = r + 1; } if (!equal(a, c)) { r = r + 2; } if (!equal(a, [1, 2])) { r = r + 4; } return r;`, 7},
-	// string equality via str_eq: equal + mismatch -> 8 + 4 = 12.
 	{"equal-string", `let ss: string[] = ["x", "y", "x"]; let r: i32 = 0; if (equal(ss, ["x", "y", "x"])) { r = r + 8; } if (!equal(ss, ["x", "y", "z"])) { r = r + 4; } return r;`, 12},
-	// index_of_last i32: last 5 at index 4 -> 40, plus miss -> +1 -> 41.
 	{"last-i32", `let a: i32[] = [5, 1, 5, 2, 5]; let r: i32 = uw(index_of_last(a, 5), 0 - 1) * 10; if (uw(index_of_last(a, 9), 0 - 1) == 0 - 1) { r = r + 1; } return r;`, 41},
-	// index_of_last string: last "a" at index 2 -> 2 (str compare on the reverse scan).
 	{"last-string", `let ss: string[] = ["a", "b", "a", "c"]; return uw(index_of_last(ss, "a"), 0 - 1);`, 2},
 }
 
@@ -60,8 +46,6 @@ func equalIRSrc(mainBody string) string {
 	return equalIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostEqualIR compiles each case with the self-host CLI for x86-64
-// and wasm and checks the exit code.
 func TestSelfHostEqualIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {

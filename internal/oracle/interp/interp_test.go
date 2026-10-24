@@ -17,17 +17,6 @@ func evalProgramValue(t *testing.T, src string) Value {
 	return v
 }
 
-// evalProgram parses, type-checks, registers, and calls `main`.
-// Match the cmd/fern script-mode pipeline so method-call rewrites,
-// FString desugaring, and variant-call IsVariantCall flags land
-// before interp dispatch — early tests had separate "checked" and
-// "parser-only" helpers because some checker features arrived
-// later; once the interp moved to handle every AST shape directly,
-// the parser-only form became the exceptional path. Tests that
-// intentionally exercise interp BEFORE the checker has run (the
-// FString fallback case) wire up `interp.New` + `parser.Parse`
-// directly so the absence of a checker pass is documented at the
-// call site.
 func evalProgram(t *testing.T, src string) (Value, *Interp) {
 	t.Helper()
 	prog, err := parser.Parse(src)
@@ -84,7 +73,6 @@ func TestForLoopWithBreakContinue(t *testing.T) {
 			}
 			return sum;
 		}`)
-	// 0+1+2 (skip 3) +4+5+6 (break before 7) = 18
 	if n, ok := v.(Number); !ok || n != 18 {
 		t.Errorf("got %v, want 18", v)
 	}
@@ -124,16 +112,6 @@ func TestPrintBuiltin(t *testing.T) {
 	}
 }
 
-// putchar writes ONE BYTE — the low 8 bits of its argument — which is what
-// __fern_putchar does on every compiled backend (`write(1, &byte, 1)`) and what
-// docs/FEATURE-AUDIT.md specifies. The interpreter used to write `%c` of the
-// argument, encoding it as a rune, so it disagreed with all three backends for
-// anything above 127: putchar(233) produced the two UTF-8 bytes c3 a9 where the
-// backends produce the single byte e9, and an argument outside a rune's range
-// produced U+FFFD instead of wrapping.
-//
-// The cases are the ones that discriminate. 65 agrees under either rule, so it
-// is the control; the rest do not.
 func TestPutcharWritesOneByte(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -215,14 +193,6 @@ func TestInterpStringEquality(t *testing.T) {
 	}
 }
 
-// TestInterpFStringFallback exercises the parser-only path (no
-// checker run) so Desugared is nil and the interpreter assembles
-// the f-string from raw Parts. The literal-only segment proves
-// the path concatenates static text correctly.
-//
-// Wires interp directly rather than going through evalProgram
-// because that helper runs the checker (which would populate
-// Desugared and bypass the fallback this test exists to cover).
 func TestInterpFStringFallback(t *testing.T) {
 	src := `function main(): string { return f"hello world"; }`
 	prog, err := parser.Parse(src)
@@ -242,9 +212,6 @@ func TestInterpFStringFallback(t *testing.T) {
 	}
 }
 
-// TestInterpClosure exercises the Closure Value: a nested
-// function captures `n` from the enclosing scope and returns
-// `x + n` when called.
 func TestInterpClosure(t *testing.T) {
 	src := `function main(): i32 {
 		let n: i32 = 100;
@@ -257,9 +224,6 @@ func TestInterpClosure(t *testing.T) {
 	}
 }
 
-// TestInterpLambda exercises the *ast.Lambda Value path: an
-// anonymous function expression is bound to a var and then
-// invoked.
 func TestInterpLambda(t *testing.T) {
 	src := `function main(): i32 {
 		let k: i32 = 7;
@@ -272,11 +236,6 @@ func TestInterpLambda(t *testing.T) {
 	}
 }
 
-// TestInterpMapBasic exercises the new Map runtime through the
-// surface user code sees: literal construction, .get returning
-// Some / None, .set + read-back, .len, .has, .delete. Each
-// case is small so a regression in any single shim shows up
-// independently.
 func TestInterpMapBasic(t *testing.T) {
 	cases := []struct {
 		name string
@@ -352,7 +311,6 @@ func TestInterpMapBasic(t *testing.T) {
 }
 
 func TestInterpStructBasic(t *testing.T) {
-	// Fields are immutable; update via struct-update + rebind.
 	src := `struct Point { x: i32, y: i32 }
 		function main(): i32 {
 			let p: Point = Point { x: 3, y: 4 };
@@ -365,8 +323,6 @@ func TestInterpStructBasic(t *testing.T) {
 	}
 }
 
-// Struct-update literal `Point { ...a, y: 10 }`: un-named fields copy
-// from the base, named fields override. The result is a fresh value.
 func TestInterpStructUpdate(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 		function main(): i32 {
@@ -380,9 +336,6 @@ func TestInterpStructUpdate(t *testing.T) {
 	}
 }
 
-// Struct-update produces a fresh value: mutating/overriding into the
-// new struct must not change the base. Returns the base's fields after
-// an update derived from it.
 func TestInterpStructUpdateIsFunctional(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 		function main(): i32 {
@@ -396,9 +349,6 @@ func TestInterpStructUpdateIsFunctional(t *testing.T) {
 	}
 }
 
-// Sum types in the interpreter: a payload-carrying variant
-// constructed and then matched routes through the right arm with
-// payload bindings visible in the arm body.
 func TestInterpEnumMatchPayload(t *testing.T) {
 	src := `enum Pair { Two(i32, i32) }
 		function main(): i32 {
@@ -414,15 +364,7 @@ func TestInterpEnumMatchPayload(t *testing.T) {
 	}
 }
 
-// Generic enums in the interpreter: type erasure makes the
-// runtime representation independent of T, so a single Enum
-// value works for any instantiation. Constructor inference and
-// match-arm payload extraction both route correctly.
 func TestInterpGenericOption(t *testing.T) {
-	// `Option[T]` is auto-injected by the checker now (the
-	// previous test scaffolding skipped the checker and had to
-	// declare it locally). With evalProgram running the
-	// checker, just use the built-in.
 	src := `function main(): i32 {
 		let o: Option[i32] = Some(42);
 		match (o) {
@@ -437,11 +379,7 @@ func TestInterpGenericOption(t *testing.T) {
 	}
 }
 
-// TestInterpQualifiedVariants — two enums can declare the same
-// variant name; the disambiguation is the `Color.Red`-style
-// qualifier at the use site. Was IMPROVEMENTS.md #15.
 func TestInterpQualifiedVariants(t *testing.T) {
-	// Bare-name reference in payload-less position.
 	v, _ := evalProgram(t, `enum Color { Red, Green, Blue }
 		enum Status { Red, Yellow }
 		function main(): i32 {
@@ -456,10 +394,6 @@ func TestInterpQualifiedVariants(t *testing.T) {
 	if n, ok := v.(Number); !ok || n != 1 {
 		t.Errorf("Color.Red: got %v, want 1", v)
 	}
-	// Qualified variant call with payload. The two enums' Foo
-	// variants have different positions (`Foo` is index 0 in A,
-	// index 1 in B) — picking the wrong enum would mismatch the
-	// match arm's tag check.
 	v, _ = evalProgram(t, `enum A { Foo(i32), Bar }
 		enum B { Bar, Foo(i32) }
 		function main(): i32 {
@@ -475,14 +409,7 @@ func TestInterpQualifiedVariants(t *testing.T) {
 	}
 }
 
-// TestInterpTypeAscription — `expr as T` in non-numeric form is a
-// zero-cost annotation at the interp level. The checker accepts
-// the cast when `inner` is assignable to `T` (None vs Option[i32],
-// Ok(1) vs Result[i32, string], etc.); the interp must pass the
-// value through unchanged.
 func TestInterpTypeAscription(t *testing.T) {
-	// None gets a concrete type via ascription. Match still
-	// fires the None arm.
 	v, _ := evalProgram(t, `function main(): i32 {
 		let x: Option[i32] = None as Option[i32];
 		match (x) {
@@ -494,8 +421,6 @@ func TestInterpTypeAscription(t *testing.T) {
 	if n, ok := v.(Number); !ok || n != 42 {
 		t.Errorf("None as Option[i32]: got %v, want 42", v)
 	}
-	// Partial Result inference — ascription fixes E without
-	// changing the runtime value.
 	v, _ = evalProgram(t, `function main(): i32 {
 		let r: Result[i32, string] = Ok(7) as Result[i32, string];
 		match (r) {
@@ -509,7 +434,6 @@ func TestInterpTypeAscription(t *testing.T) {
 	}
 }
 
-// Wildcard arms catch what the explicit arms miss.
 func TestInterpMatchWildcard(t *testing.T) {
 	src := `enum Light { Red, Green, Yellow }
 		function main(): i32 {
@@ -526,13 +450,6 @@ func TestInterpMatchWildcard(t *testing.T) {
 	}
 }
 
-// match on a NON-enum scrutinee (i32 / string / bool) dispatches
-// each arm by `==` against its literal, with `_` as the
-// fall-through — the same semantics the compiled backends produce
-// via emitLiteralMatch. The interpreter must not reject it
-// ("match scrutinee is interp.Number, expected enum value") and
-// diverge from the compiled backends; pinned in both statement
-// and expression position, including guards.
 func TestInterpMatchLiteralNonEnum(t *testing.T) {
 	cases := []struct {
 		name string
@@ -585,21 +502,7 @@ func TestInterpMatchLiteralNonEnum(t *testing.T) {
 	}
 }
 
-// End-to-end test of the TCP socket builtins through the
-// interpreter — uses Go's net package to spin up a local
-// server, accept one connection, echo the bytes, and close.
-// Validates the full builtin surface (listen / accept / recv /
-// send / close) without needing qemu or wasmtime.
 func TestInterpTcpSocketEcho(t *testing.T) {
-	// We pick port 0 in the lang program — but our builtin
-	// requires a specific port. Use a high port and retry on
-	// "address in use". Simpler: bind in Go first, get the
-	// port, then have the lang program connect.
-	//
-	// For a focused test, exercise listen + close (no client
-	// dial). A full echo loop would need goroutine
-	// orchestration; that's covered by the AOT backends'
-	// integration tests on real ports.
 	src := `function main(): i32 {
 		let fd: i32 = tcp_listen(0);
 		if (fd < 0) { return 1; }
@@ -613,9 +516,6 @@ func TestInterpTcpSocketEcho(t *testing.T) {
 	}
 }
 
-// `let (a, b) = expr;` binds each name to the corresponding
-// tuple element. Covers a tuple literal, a function returning
-// a tuple, and a 3-element destructure for arity > 2.
 func TestInterpTupleDestructure(t *testing.T) {
 	src := `function divmod(a: i32, b: i32): (i32, i32) {
 		return (a / b, a % b);
@@ -636,9 +536,6 @@ func TestInterpTupleDestructure(t *testing.T) {
 	}
 }
 
-// Tuple-destructuring parameters `(a, b): (T, U)` — the parse-time
-// desugar routes through the same Destructure evaluation, covering a
-// named function, a mixed param list, and both lambda forms.
 func TestInterpParamDestructure(t *testing.T) {
 	src := `function add((a, b): (i32, i32)): i32 {
 		return a + b;
@@ -657,10 +554,6 @@ func TestInterpParamDestructure(t *testing.T) {
 	}
 }
 
-// Tuple patterns in match arms — literal elements dispatch by
-// equality, binders bind, `_` is ignored, guards see the bindings.
-// Covers the statement form, the expression form, and a string
-// element.
 func TestInterpTupleMatch(t *testing.T) {
 	src := `function classify(p: (i32, i32)): i32 {
 		match (p) {
@@ -692,10 +585,6 @@ func TestInterpTupleMatch(t *testing.T) {
 	}
 }
 
-// read_file validates UTF-8 at the boundary (D9, #5714): malformed
-// content surfaces as Err(InvalidUtf8(path)); read_file_bytes hands
-// the same bytes back raw. The interp is the differential oracle, so
-// its verdicts must match the AOT backends' __fern_utf8_valid.
 func TestBuiltinReadFileInvalidUtf8(t *testing.T) {
 	dir := t.TempDir()
 	bad := filepath.Join(dir, "bad.bin")
@@ -717,7 +606,6 @@ func TestBuiltinReadFileInvalidUtf8(t *testing.T) {
 	if p, ok := ioe.Payloads[0].(String); !ok || string(p) != bad {
 		t.Fatalf("payload = %#v, want the path", ioe.Payloads[0])
 	}
-	// The raw sibling stays unvalidated.
 	v, err = builtinReadFileBytes(nil, []Value{String(bad)})
 	if err != nil {
 		t.Fatalf("builtinReadFileBytes: %v", err)
@@ -731,8 +619,6 @@ func TestBuiltinReadFileInvalidUtf8(t *testing.T) {
 	}
 }
 
-// evalSliceOption evaluates `main` for a program whose only statement is
-// `return <slice>;`, returning the Option the interpreter produced.
 func evalSliceOption(t *testing.T, decl, expr string) *Enum {
 	t.Helper()
 	_, in := evalProgram(t, "function f(): Option[str] { "+decl+" return "+expr+"; }\n"+
@@ -751,18 +637,13 @@ func evalSliceOption(t *testing.T, decl, expr string) *Enum {
 	return e
 }
 
-// A string slice is `Option[str]` in the interpreter too (#5634). The
-// interpreter is the differential oracle, so all three verdicts have to
-// agree with the compiled backends: a well-formed range is `Some` of the
-// bytes, an endpoint inside a code point is `None`, and an out-of-range
-// endpoint is `None` rather than the error the array leg still raises.
 func TestStringSliceYieldsSome(t *testing.T) {
 	for _, tc := range []struct{ expr, want string }{
 		{`s[2:5]`, "cde"},
 		{`s[:3]`, "abc"},
 		{`s[7:]`, "hij"},
 		{`s[0:0]`, ""},
-		{`s[10:10]`, ""}, // empty AT the length, the permissive edge
+		{`s[10:10]`, ""},
 		{`s[0:10]`, "abcdefghij"},
 	} {
 		e := evalSliceOption(t, `let s: string = "abcdefghij";`, tc.expr)
@@ -779,8 +660,6 @@ func TestStringSliceYieldsSome(t *testing.T) {
 	}
 }
 
-// "héllo" is 68 C3 A9 6C 6C 6F, so offsets 1 and 3 are boundaries and
-// offset 2 sits inside the é. Either endpoint landing there is None.
 func TestStringSliceSplitCodePointYieldsNone(t *testing.T) {
 	for _, expr := range []string{`m[1:2]`, `m[2:4]`, `m[2:2]`, `m[0:2]`} {
 		e := evalSliceOption(t, `let m: string = "héllo";`, expr)
@@ -788,7 +667,6 @@ func TestStringSliceSplitCodePointYieldsNone(t *testing.T) {
 			t.Errorf("%s: got %s(%v), want None", expr, e.VariantName, e.Payloads)
 		}
 	}
-	// The same string sliced ON the boundaries still yields the é.
 	e := evalSliceOption(t, `let m: string = "héllo";`, `m[1:3]`)
 	if e.VariantName != "Some" {
 		t.Fatalf(`m[1:3]: got %s, want Some`, e.VariantName)
@@ -798,15 +676,12 @@ func TestStringSliceSplitCodePointYieldsNone(t *testing.T) {
 	}
 }
 
-// Out of range is None, NOT the abort it used to be. The trap survives
-// only in slice_unchecked, whose error is asserted below so the two
-// producers cannot quietly converge.
 func TestStringSliceOutOfRangeYieldsNone(t *testing.T) {
 	for _, expr := range []string{
-		`s[1:99]`,    // high past the end
-		`s[0 - 1:3]`, // negative low
-		`s[4:2]`,     // low > high
-		`s[11:11]`,   // both past the end
+		`s[1:99]`,
+		`s[0 - 1:3]`,
+		`s[4:2]`,
+		`s[11:11]`,
 	} {
 		e := evalSliceOption(t, `let s: string = "abcdefghij";`, expr)
 		if e.VariantName != "None" || e.Index != 1 {
@@ -815,9 +690,6 @@ func TestStringSliceOutOfRangeYieldsNone(t *testing.T) {
 	}
 }
 
-// The array leg is unchanged: an out-of-range array slice is still an
-// error, so moving the bounds check inside the type switch did not take
-// the array rule with it.
 func TestArraySliceOutOfRangeStillErrors(t *testing.T) {
 	src := `function main(): i32 { let xs: i32[] = [1, 2, 3]; let s: [i32] = xs[1:9]; return s.len(); }`
 	prog, err := parser.Parse(src)
@@ -838,14 +710,10 @@ func TestArraySliceOutOfRangeStillErrors(t *testing.T) {
 	}
 }
 
-// slice_unchecked keeps the trap: it is the interpreter's stand-in for
-// the exit-134 abort the compiled backends raise.
 func TestSliceUncheckedStillTraps(t *testing.T) {
 	if _, err := builtinSliceUnchecked(nil, []Value{String("hi"), Number(1), Number(9)}); err == nil {
 		t.Fatal("slice_unchecked out of range must be an error")
 	}
-	// In range it hands back the bytes, boundary or not: "héllo"[1:2] is
-	// half of the é and slice_unchecked does not object.
 	v, err := builtinSliceUnchecked(nil, []Value{String("héllo"), Number(1), Number(2)})
 	if err != nil {
 		t.Fatalf("slice_unchecked: %v", err)
@@ -855,8 +723,6 @@ func TestSliceUncheckedStillTraps(t *testing.T) {
 	}
 }
 
-// A usize runs at the host's 64 bits, so a shift count masks mod 64 like
-// i64's rather than mod 32 like i32's (#10742).
 func TestInterpUsizeShiftsAtSixtyFourBits(t *testing.T) {
 	v := evalProgramValue(t, `function main(): i32 {
     let one: usize = 1 as usize;

@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-// Array append grows the receiver's backing buffer in place when the
-// slot it extends into is unclaimed (#6395). Each case here holds a
-// second array value over that same buffer, so a growth that skipped
-// the claim check would be observable through it — arrays are values,
-// and `x = a.append(v)` must leave `a`, and every other view of its
-// buffer, alone.
 func TestArrayAppendValueSemantics(t *testing.T) {
 	cases := []struct {
 		name string
@@ -18,8 +12,6 @@ func TestArrayAppendValueSemantics(t *testing.T) {
 		want Number
 	}{
 		{
-			// Two appends off one array: the second must not see, or
-			// overwrite, the element the first one added.
 			name: "two appends off one array",
 			src: `function main(): i32 {
 				let a: i32[] = [1, 2];
@@ -30,8 +22,6 @@ func TestArrayAppendValueSemantics(t *testing.T) {
 			want: 342,
 		},
 		{
-			// Same, on a buffer carrying spare capacity from an earlier
-			// growth rather than one sized exactly to its elements.
 			name: "two appends off a grown array",
 			src: `function main(): i32 {
 				let a: i32[] = [];
@@ -44,7 +34,6 @@ func TestArrayAppendValueSemantics(t *testing.T) {
 			want: 310,
 		},
 		{
-			// A chain off one array: z extends x, y still starts from a.
 			name: "chained append off an alias",
 			src: `function main(): i32 {
 				let a: i32[] = [1, 2];
@@ -56,9 +45,6 @@ func TestArrayAppendValueSemantics(t *testing.T) {
 			want: 543,
 		},
 		{
-			// An array stored in a container must not grow when the
-			// binding it came from does. Built by a loop so the buffer
-			// has spare capacity at the point the two views split.
 			name: "append after storing in a nested array",
 			src: `function main(): i32 {
 				let a: i32[] = [];
@@ -72,7 +58,6 @@ func TestArrayAppendValueSemantics(t *testing.T) {
 			want: 56,
 		},
 		{
-			// Same through a struct field.
 			name: "append after storing in a struct field",
 			src: `struct Box { items: i32[] }
 			function main(): i32 {
@@ -86,9 +71,6 @@ func TestArrayAppendValueSemantics(t *testing.T) {
 			want: 56,
 		},
 		{
-			// The two views that split the buffer reached it by
-			// different routes — one through a struct field, one
-			// through the binding.
 			name: "two appends off one array through a field",
 			src: `struct Box { items: i32[] }
 			function main(): i32 {
@@ -103,8 +85,6 @@ func TestArrayAppendValueSemantics(t *testing.T) {
 			want: 305,
 		},
 		{
-			// Both appends happen inside a callee, on the same array
-			// passed twice.
 			name: "two appends off one array through a call",
 			src: `function grow(p: i32[], v: i32): i32[] { return p.append(v); }
 			function main(): i32 {
@@ -118,8 +98,6 @@ func TestArrayAppendValueSemantics(t *testing.T) {
 			want: 305,
 		},
 		{
-			// #4827's shape: an append on a parameter in argument
-			// position, with the parameter read again afterwards.
 			name: "param appended in argument position",
 			src: `function walk(path: i32[], depth: i32): i32 {
 				if (depth == 0) { return path.len(); }
@@ -134,8 +112,6 @@ func TestArrayAppendValueSemantics(t *testing.T) {
 			want: 20201,
 		},
 		{
-			// The self-reassign loop, which is the shape growth targets:
-			// the sum must not pick up a stale or duplicated element.
 			name: "self-reassign append loop",
 			src: `function main(): i32 {
 				let a: i32[] = [];
@@ -158,10 +134,6 @@ func TestArrayAppendValueSemantics(t *testing.T) {
 	}
 }
 
-// Building an n-element array costs O(n) element copies, not O(n²)
-// (#6395). Counting copies rather than timing keeps the assertion
-// deterministic on a shared runner: the quadratic shape copies n²/2
-// elements, which is far outside every bound below.
 func TestArrayAppendIsAmortised(t *testing.T) {
 	build := func(n int) int {
 		t.Helper()
@@ -185,8 +157,6 @@ func TestArrayAppendIsAmortised(t *testing.T) {
 	if largeCopies > 3*large {
 		t.Errorf("%d appends copied %d elements, want at most %d", large, largeCopies, 3*large)
 	}
-	// Linear growth quadruples with the input; the quadratic shape
-	// would go up sixteenfold.
 	if ratio := float64(largeCopies) / float64(smallCopies); ratio > 8 {
 		t.Errorf("copies grew %.1fx for a 4x larger array, want at most 8x (%d then %d)",
 			ratio, smallCopies, largeCopies)

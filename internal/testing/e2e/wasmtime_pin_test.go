@@ -6,17 +6,6 @@ import (
 	"testing"
 )
 
-// TestWasmtimePinMatchesCI keeps the Go-side wasmtime pin correct.
-//
-// The version lives in two places that cannot import each other: mise.toml is
-// what CI (jdx/mise-action), scripts/devbox and the session hook install, and
-// wasmtimePin (wasm_e2e_test.go) is what skipIfPreview2Missing compares the
-// local toolchain against. If they drift, the skip message tells developers to
-// install a version CI does not use — worse than no message, because it looks
-// authoritative.
-//
-// The pin exists at all because the component-model-async ABI is not stable
-// across wasmtime majors; see the comment in skipIfPreview2Missing.
 func TestWasmtimePinMatchesCI(t *testing.T) {
 	const manifest = "../../../mise.toml"
 	src, err := os.ReadFile(manifest)

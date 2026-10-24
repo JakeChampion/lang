@@ -11,8 +11,6 @@ import (
 	"testing"
 )
 
-// Recursive listing cases share this tree with cases that print and sort by
-// access time. Reading a directory must not change their input between sides.
 func TestLsTreeTimesSurviveReads(t *testing.T) {
 	root := lsTree(t)
 	before := map[string]syscall.Stat_t{}
@@ -25,7 +23,6 @@ func TestLsTreeTimesSurviveReads(t *testing.T) {
 			if err := syscall.Lstat(path, &st); err != nil {
 				return err
 			}
-			// WalkDir visits the directory before reading its children.
 			before[path] = st
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
@@ -50,10 +47,6 @@ func TestLsTreeTimesSurviveReads(t *testing.T) {
 	}
 }
 
-// lsDeepTree is a chain of directories whose relative path runs past
-// PATH_MAX, built through descriptors because no path reaches its bottom.
-// A regular file and a symlink sit at the top level for the indicator
-// cases, which stat the one and not the other.
 func lsDeepTree(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -83,9 +76,6 @@ func lsDeepTree(t *testing.T) string {
 	return root
 }
 
-// GNU does not stat a directory to recurse into it, so the one past
-// PATH_MAX is a directory it cannot open — named once on standard error,
-// with no header — rather than an entry it cannot access.
 func TestLsRecursivePastPathMax(t *testing.T) {
 	dir := lsDeepTree(t)
 	var cases []invocation

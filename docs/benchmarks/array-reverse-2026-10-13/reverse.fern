@@ -1,4 +1,3 @@
-// Release timing fixture: no allocation or reference-count instrumentation.
 import "std/array";
 
 function values(n: i32): i32[] {

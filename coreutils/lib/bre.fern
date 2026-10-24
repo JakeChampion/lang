@@ -1,50 +1,6 @@
-// coreutils/lib/bre.fern — POSIX basic regular expressions, as glibc
-// compiles them under `RE_SYNTAX_POSIX_BASIC`.
-//
-// expr(1) compiles with `RE_SYNTAX_POSIX_BASIC`, so that is the main
-// dialect here rather than a modern one: the operators are `\(
-// `\)` `\|` `\+` `\?` `\{m,n\}`, a bare `*` where no atom precedes it is
-// a literal asterisk, `^` is an anchor only where a branch begins and
-// `$` only where one ends, and backreferences `\1`…`\9` are part of the
-// language. The GNU word operators glibc adds (`\<` `\>` `\b` `\B` `\w`
-// `\W` `\s` `\S` `` \` `` `\'`) are here too, because expr users get them
-// from glibc whether POSIX admits them or not. Diagnostics are glibc's
-// `regerror` texts verbatim, since that is what the utilities print.
-//
-// tac(1) never sets a syntax at all, which leaves glibc's default —
-// syntax 0, `RE_SYNTAX_EMACS` — and `emacs_syntax()` selects that
-// dialect: `+` and `?` are bare operators and `\+` `\?` `\{` `\}` are
-// the plain characters, there are no intervals, `[:alpha:]` inside a
-// bracket is six ordinary members, `.` matches NUL but not newline, and
-// an empty range like `[z-a]` is allowed. Whether `^` holds after a
-// newline and `$` before one is a third setting again, decided at match
-// time by `newline_anchor`: `re_compile_pattern` sets it, tac leaves it
-// set, and expr clears it.
-//
-// MATCHING is POSIX leftmost-longest at a fixed start, and the pattern
-// is run as a program of the usual `Char` / `Split` / `Save` shape. The
-// engine that runs it is picked by the pattern and the question: a lazy
-// DFA for a regular pattern where only the match's extent is wanted, a
-// Thompson simulation with every thread in step for a regular pattern's
-// groups, and a backtracking search for the ones carrying a
-// backreference, which is not a regular language. `exec` and the engines
-// below say what each costs and why the captures come out where glibc
-// puts them. `search_back` is glibc's
-// `re_search` with a negative range, which is the shape tac scans a
-// buffer backwards with; `search` and `search_range` are the same call
-// reduced to whether a line matches anywhere, which is all nl and csplit
-// ask of it, and `search_range` takes the line as bounds into a buffer
-// rather than as a string cut out of one.
-//
-// A search reaches an engine through three filters of decreasing
-// strength, laid out at `search_range`: a program that is nothing but a
-// literal run never enters one, and a program that merely BEGINS with a
-// literal run — or with one literal per alternation branch — is
-// rejected over the whole range before one is entered.
 import "std/string";
 import "std/array";
 
-// Keep the source owner alive while sharing one matching engine.
 enum Input { Text(string, i32), Bytes(u8[], i32) }
 
 function text_input(text: string): Input {
@@ -110,7 +66,6 @@ function (s: Input) same_range(a: i32, b: i32, n: i32): boolean {
   }
 }
 
-// Text and raw APIs preserve byte offsets and the same matching rules.
 pub function (re: Bre) exec(text: string): BreMatch {
   return re.exec_input(text_input(text));
 }
@@ -151,11 +106,6 @@ pub function (re: Bre) search_range_bytes(text: u8[], lo: i32, hi: i32): boolean
   return re.search_range_input(byte_input(text), lo, hi);
 }
 
-// ---- instructions ----------------------------------------------------------
-//
-// `op` selects the form; `a` and `b` are its operands. `Split` tries `a`
-// before `b`, which is what makes the search greedy where the compiler
-// puts the body first.
 struct Inst { op: i32, a: i32, b: i32 }
 
 function op_char(): i32 {
@@ -206,7 +156,6 @@ function op_assert(): i32 {
   return 11;
 }
 
-// The zero-width assertions `op_assert` selects between.
 function assert_wordb(): i32 {
   return 0;
 }
@@ -231,63 +180,20 @@ function assert_buf_end(): i32 {
   return 5;
 }
 
-// ---- the compiled pattern --------------------------------------------------
-//
-// `classes` is one 256-byte membership table per bracket expression, laid
-// end to end. `err` is glibc's regerror text when compilation failed and
-// empty otherwise; nothing else is valid then. `first` is glibc's
-// fastmap — the bytes a match can begin with — and `empty_ok` whether
-// the pattern can match nothing at all, which together let a search
-// skip the positions where no match can start.
-//
-// `pre` is the run of bytes every match has to begin with — the leading
-// `Char` instructions — with `pre_bol` / `pre_eol` for the anchors
-// either side of it. `literal` says the program is NOTHING ELSE, and
-// then a search is a byte scan rather than a simulation; the patterns
-// real callers hand csplit and nl (`/MARK/`, `^CHAPTER`) are nearly all
-// of that shape. Where the program continues past the run, `pre` is a
-// stronger fastmap than `first`: a whole run of bytes rather than the
-// set the first one falls in.
-//
-// `alts` is the same condition for a program whose branches diverge
-// before the first byte: one literal per branch, of which a match
-// begins with one. It is empty where no such set could be proved, and
-// then nothing but the fastmap stands in front of the simulation.
-//
-// `seen0` is the simulation's generation-stamp array in its cleared
-// state, held here rather than built per search: the stamps are
-// positions, so a cleared one is -1 whatever the search, and the
-// engine's first stamp copies this rather than filling a new array on
-// every line.
-//
-// `dfa` is the lazy DFA's cache (see `dfa_run`), `bclass` and `reps` its
-// byte classes and one byte of each (`byte_classes`), and `cx_lo` /
-// `cx_nl` / `cx_word` say which facts about the byte before a position
-// the program's zero-width tests read, so a DFA state carries only those.
 pub struct Bre { insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backref: boolean, err: string, newline_anchor: boolean, first: u8[], empty_ok: boolean, pre: u8[], pre_bol: boolean, pre_eol: boolean, literal: boolean, alts: u8[][], seen0: i32[], dfa: DfaCache, bclass: u8[], reps: i32[], cx_lo: boolean, cx_nl: boolean, cx_word: boolean }
 
-// `Syntax` — which glibc dialect a pattern is read in, and whether a
-// newline anchors `$` at match time (the header has the three cases).
 pub struct Syntax { emacs: boolean, newline_anchor: boolean }
 
-// `posix_basic()` — `RE_SYNTAX_POSIX_BASIC`, with the newline anchor
-// `re_compile_pattern` sets and expr then clears back off.
 pub function posix_basic(): Syntax {
   return Syntax { emacs: false, newline_anchor: false };
 }
 
-// `emacs_syntax()` — glibc's syntax 0, which is what a program gets
-// when it never calls `re_set_syntax`.
 pub function emacs_syntax(): Syntax {
   return Syntax { emacs: true, newline_anchor: true };
 }
 
-// `BreMatch` — `end` is the end of the match, `starts`/`ends` the span of
-// each group (-1 where the group did not take part). Group 0 is the whole
-// match.
 pub struct BreMatch { matched: boolean, end: i32, starts: i32[], ends: i32[] }
 
-// glibc's regerror texts, which expr prints verbatim.
 function err_badpat(): string {
   return "Invalid regular expression";
 }
@@ -336,23 +242,14 @@ function err_esize(): string {
   return "Regular expression too big";
 }
 
-// RE_DUP_MAX: a repetition count above this is refused, which is why
-// `a\{32767\}` compiles and `a\{32768\}` does not.
 function dup_max(): i32 {
   return 32767;
 }
 
-// The instruction budget. A nest of repetitions can multiply out past
-// anything that fits, and glibc answers those with the same text.
 function inst_max(): i32 {
   return 200000;
 }
 
-// ---- the parse tree --------------------------------------------------------
-//
-// Parsing builds nodes and compiling walks them, because a counted
-// repetition emits its body several times over and a tree is what can be
-// emitted twice. `a`/`b`/`c` are child indices or counts by kind.
 struct Node { kind: i32, a: i32, b: i32, c: i32 }
 
 function nd_empty(): i32 {
@@ -399,19 +296,8 @@ function nd_assert(): i32 {
   return 10;
 }
 
-// `P` — the parser: the pattern, the cursor, the nodes built so far, the
-// group counter, the groups a backreference may name here, the dialect
-// the pattern is read in, and the first error met (parsing stops
-// reporting after one, the way glibc reports only the first).
 struct P { pat: Input, i: i32, nodes: Node[], classes: u8[], ngroups: i32, done: i32, err: string, emacs: boolean }
 
-// `done` is a bitmask of the groups COMPLETED at the cursor, over the
-// nine a `\N` can spell. glibc scopes a backreference to the alternation
-// branch its group closed in: a group closed in a sibling branch is not
-// visible, and neither is the group the reference sits inside, which is
-// still open. A group closed before an alternation is visible in every
-// branch of it, and one closed inside a branch is visible again once the
-// whole alternation is behind the cursor.
 function group_bit(n: i32): i32 {
   return 1 << n - 1;
 }
@@ -420,7 +306,6 @@ function group_done(p: P, n: i32): boolean {
   return (p.done & group_bit(n)) != 0;
 }
 
-// A number past nine is unnameable, so it takes no bit.
 function mark_group_done(p: P, n: i32): P {
   if (n > 9) {
     return p;
@@ -451,7 +336,6 @@ function byte_at(p: P, k: i32): i32 {
   return p.pat.at(k);
 }
 
-// Whether the two bytes at `k` are the escape `\<c>`.
 function esc_at(p: P, k: i32, c: i32): boolean {
   return byte_at(p, k) == 92 && byte_at(p, k + 1) == c;
 }
@@ -460,9 +344,6 @@ function is_digit(b: i32): boolean {
   return b >= 48 && b <= 57;
 }
 
-// ---- bracket expressions ---------------------------------------------------
-// The 256-byte membership table for one POSIX class name, or an empty
-// array when the name is not one.
 function class_name_table(name: string): u8[] {
   let t: u8[] = __alloc_u8(256);
   let b: i32 = 0;
@@ -505,7 +386,6 @@ function is_print(b: i32): boolean {
   return b >= 32 && b < 127;
 }
 
-// Whether byte `b` is in the POSIX class `name`, in the C locale.
 function class_has(name: string, b: i32): boolean {
   if (name == "alpha") {
     return is_alpha(b);
@@ -546,11 +426,6 @@ function class_has(name: string, b: i32): boolean {
   return false;
 }
 
-// `BItem` — one item read from inside a bracket. `kind` is 0 for a plain
-// byte, 1 for a `[.x.]` collating element, 2 for a `[=x=]` equivalence
-// class and 3 for a `[:name:]` character class; only the first two may
-// stand at either end of a range, which is why the kind is kept rather
-// than just the byte.
 struct BItem { byte: i32, kind: i32, table: u8[], err: string, next: i32 }
 
 function bi_byte(): i32 {
@@ -569,12 +444,10 @@ function bi_class(): i32 {
   return 3;
 }
 
-// Whether an item can stand at either end of a range.
 function range_ok(b: BItem): boolean {
   return b.kind == bi_byte() || b.kind == bi_collate();
 }
 
-// Resolve raw class bytes to a known ASCII spelling without creating text.
 function bracket_class(p: P, lo: i32, hi: i32): string {
   let names: string[] = ["alpha", "digit", "alnum", "upper", "lower", "space", "blank", "punct", "print", "graph", "cntrl", "xdigit"];
   for name in names {
@@ -591,14 +464,10 @@ function bracket_class(p: P, lo: i32, hi: i32): string {
   return "";
 }
 
-// One `[: :]`, `[. .]` or `[= =]` item starting at `k` (which points at
-// the `[`), or a plain byte. `-` handling is the caller's.
 function bracket_item(p: P, k: i32): BItem {
   let none: u8[] = [];
   if (byte_at(p, k) == 91) {
     let kind: i32 = byte_at(p, k + 1);
-    // `[:` opens a class only under RE_CHAR_CLASSES, which the Emacs
-    // syntax lacks; `[.` and `[=` are recognised in every dialect.
     if (kind == 58 && p.emacs) {
       kind = 0;
     }
@@ -627,7 +496,6 @@ function bracket_item(p: P, k: i32): BItem {
   return BItem { byte: byte_at(p, k), kind: bi_byte(), table: none, err: "", next: k + 1 };
 }
 
-// The index of the `<kind>]` closing a `[: :]`-style item, or -1.
 function find_close(p: P, from: i32, kind: i32): i32 {
   let k: i32 = from;
   while (k + 1 < p.pat.len()) {
@@ -639,8 +507,6 @@ function find_close(p: P, from: i32, kind: i32): i32 {
   return 0 - 1;
 }
 
-// A bracket expression starting after the `[`. Returns the parser with
-// the class appended and the class index, or an error.
 function parse_bracket(p0: P): (P, i32) {
   let p: P = p0;
   let t: u8[] = __alloc_u8(256);
@@ -691,8 +557,6 @@ function parse_bracket(p0: P): (P, i32) {
   return (P { ...p, classes: cs }, idx);
 }
 
-// One member of a bracket expression: a class, a collating element, a
-// range, or a byte. `-` is a member itself where no range can start.
 function bracket_one(p0: P, t0: u8[]): (P, u8[]) {
   let p: P = p0;
   let t: u8[] = t0;
@@ -741,7 +605,6 @@ function union_table(t0: u8[], other: u8[]): u8[] {
   return t;
 }
 
-// A class table built from a predicate, for the `\w` family.
 function shorthand_table(p0: P, which: i32): (P, i32) {
   let t: u8[] = __alloc_u8(256);
   let b: i32 = 0;
@@ -761,7 +624,6 @@ function shorthand_table(p0: P, which: i32): (P, i32) {
   return (P { ...p0, classes: cs }, idx);
 }
 
-// `which`: 0 `\w`, 1 `\W`, 2 `\s`, 3 `\S`.
 function shorthand_has(which: i32, b: i32): boolean {
   let word: boolean = is_alpha(b) || is_digit(b) || b == 95;
   if (which == 0) {
@@ -776,9 +638,6 @@ function shorthand_has(which: i32, b: i32): boolean {
   return !is_space_byte(b);
 }
 
-// The class table for `.`: every byte but NUL under POSIX
-// (`RE_DOT_NOT_NULL`), every byte but newline under Emacs, where it is
-// `RE_DOT_NEWLINE` that is missing instead.
 function any_table(p0: P): (P, i32) {
   let idx: i32 = p0.classes.len() / 256;
   let cs: u8[] = p0.classes;
@@ -798,11 +657,6 @@ function any_table(p0: P): (P, i32) {
   return (P { ...p0, classes: cs }, idx);
 }
 
-// ---- the grammar -----------------------------------------------------------
-// A whole alternation, ending at the pattern's end or at the `\)` the
-// caller opened. Each branch starts from the groups completed BEFORE the
-// alternation, and the alternation leaves behind everything any of its
-// branches completed.
 function parse_alt(p0: P): (P, i32) {
   let outer: i32 = p0.done;
   let r: (P, i32) = parse_branch(p0);
@@ -820,7 +674,6 @@ function parse_alt(p0: P): (P, i32) {
   return (p, left);
 }
 
-// One branch: pieces concatenated until `\|`, `\)` or the end.
 function parse_branch(p0: P): (P, i32) {
   let p: P = p0;
   let cur: i32 = 0 - 1;
@@ -850,8 +703,6 @@ function parse_branch(p0: P): (P, i32) {
   return (p, 0);
 }
 
-// Node 0 is always the empty match, so a branch with nothing in it and
-// an aborted parse both have something to point at.
 function empty_node(p: P, cur: i32): i32 {
   if (cur >= 0) {
     return cur;
@@ -859,10 +710,6 @@ function empty_node(p: P, cur: i32): i32 {
   return 0;
 }
 
-// One atom with its postfix operators. A zero-width atom takes none —
-// `^` and the GNU word operators alike: in `^*a` and in `\<\?a` the
-// operator has nothing to repeat, so it is the literal asterisk and the
-// literal question mark.
 function parse_piece(p0: P, first: boolean): (P, i32) {
   let r: (P, i32) = parse_atom(p0, first);
   let p: P = r.0;
@@ -878,8 +725,6 @@ function parse_piece(p0: P, first: boolean): (P, i32) {
       node = s.1;
       continue;
     }
-    // `+` and `?` are spelled bare under Emacs (`RE_BK_PLUS_QM` off) and
-    // backslashed under POSIX; the other spelling is a literal in each.
     if (plus_at(p, p.i)) {
       p = P { ...p, i: p.i + op_width(p) };
       let pl: (P, i32) = add_node(p, Node { kind: nd_rep(), a: node, b: 1, c: 0 - 1 });
@@ -922,7 +767,6 @@ function query_at(p: P, k: i32): boolean {
   return esc_at(p, k, 63);
 }
 
-// How many pattern bytes a `+` or `?` operator occupies.
 function op_width(p: P): i32 {
   if (p.emacs) {
     return 1;
@@ -930,9 +774,6 @@ function op_width(p: P): i32 {
   return 2;
 }
 
-// `\{m,n\}` after the atom in `node`. Emacs syntax has no intervals
-// (`RE_INTERVALS` off), so `\{` never reaches here from that dialect and
-// parse_escape reads it as a plain brace.
 function parse_interval(p0: P, node: i32): (P, i32) {
   let p: P = P { ...p0, i: p0.i + 2 };
   let lo: (i32, i32) = read_count(p, p.i);
@@ -947,8 +788,6 @@ function parse_interval(p0: P, node: i32): (P, i32) {
     k = hi.1;
   }
   if (!esc_at(p, k, 125)) {
-    // A `\}` further on means the braces are closed and what is between
-    // them is the fault; none at all means they are not closed at all.
     if (has_close_brace(p, k)) {
       return (fail(p, err_badbr()), node);
     }
@@ -978,8 +817,6 @@ function has_close_brace(p: P, from: i32): boolean {
   return false;
 }
 
-// A count: -1 when absent, and clamped past `dup_max` so an enormous one
-// is still refused rather than wrapping.
 function read_count(p: P, from: i32): (i32, i32) {
   let k: i32 = from;
   let v: i32 = 0 - 1;
@@ -995,8 +832,6 @@ function read_count(p: P, from: i32): (i32, i32) {
   return (v, k);
 }
 
-// `\{\}` and `\{2,1\}` are content errors; `\{,2\}` is 0 to 2 and
-// `\{,\}` is 0 or more, both glibc extensions expr users meet.
 function valid_interval(min: i32, max: i32, comma: boolean): boolean {
   if (min < 0 && !comma) {
     return false;
@@ -1017,8 +852,6 @@ function valid_interval(min: i32, max: i32, comma: boolean): boolean {
   return lo <= max;
 }
 
-// One atom. `first` says the branch has nothing in it yet, which is what
-// makes `^` an anchor and `*` a literal.
 function parse_atom(p0: P, first: boolean): (P, i32) {
   let p: P = p0;
   let b: i32 = byte_at(p, p.i);
@@ -1050,8 +883,6 @@ function parse_atom(p0: P, first: boolean): (P, i32) {
   return add_node(p, Node { kind: nd_char(), a: b, b: 0, c: 0 });
 }
 
-// A `$` is an anchor only at the end of a branch: the pattern's end, or
-// before `\)` or `\|`.
 function dollar_is_anchor(p: P, next: i32): boolean {
   if (next >= p.pat.len()) {
     return true;
@@ -1059,7 +890,6 @@ function dollar_is_anchor(p: P, next: i32): boolean {
   return esc_at(p, next, 41) || esc_at(p, next, 124);
 }
 
-// Everything spelled `\<c>`.
 function parse_escape(p0: P): (P, i32) {
   let p: P = p0;
   let c: i32 = byte_at(p, p.i + 1);
@@ -1132,9 +962,6 @@ function assert_index(c: i32): i32 {
   return 0 - 1;
 }
 
-// `\( … \)`. The group number is taken before the body is parsed, so
-// groups are numbered by their opening parenthesis as glibc numbers them,
-// but the group only becomes referenceable at its `\)`.
 function parse_group(p0: P): (P, i32) {
   let n: i32 = p0.ngroups + 1;
   let r: (P, i32) = parse_alt(P { ...p0, ngroups: n });
@@ -1149,16 +976,8 @@ function parse_group(p0: P): (P, i32) {
   return add_node(p, Node { kind: nd_group(), a: r.1, b: n, c: 0 });
 }
 
-// ---- compilation -----------------------------------------------------------
-// `C` — the emitter: the instruction list, the mark slots handed to star
-// loops, and the first error (only the instruction budget can fail here).
 struct C { insts: Inst[], nmarks: i32, err: string }
 
-// `emit` returns the emitter alone rather than the emitter and the index
-// it wrote at, and a caller that needs the index reads `c.insts.len()`
-// BEFORE the call. Returning the pair would cost a copy of the whole
-// instruction array per instruction (#8498), which a pattern like
-// `a\{32767\}` feels as a quadratic compile.
 function emit(c: C, in: Inst): C {
   if (c.insts.len() >= inst_max()) {
     return C { ...c, err: err_esize() };
@@ -1215,11 +1034,6 @@ function compile_node(c0: C, nodes: Node[], node: i32): C {
   return compile_rep(c, nodes, n);
 }
 
-// A group: its body between the saves of its start and its end. An
-// `optional` group's end save carries the flag update_regs reads (see
-// compile_rep). Written as one nested expression rather than three
-// steps: naming the emitter between the appends costs a copy of the
-// instruction array at each one (#8498).
 function compile_group(c: C, nodes: Node[], n: Node, optional: boolean): C {
   let flag: i32 = 0;
   if (optional) {
@@ -1228,17 +1042,6 @@ function compile_group(c: C, nodes: Node[], n: Node, optional: boolean): C {
   return emit(compile_node(emit(c, Inst { op: op_save(), a: (n.b - 1) * 2, b: 0 }), nodes, n.a), Inst { op: op_save(), a: (n.b - 1) * 2 + 1, b: flag });
 }
 
-// `A\|B`, with `A` laid out first so the search tries it first.
-//
-// A branch that compiles to NOTHING is the exception: glibc gives it the
-// LOWER priority of the pair, so `\(\|a\)a*` over `aa` reports `a` for
-// the group rather than the empty first branch (#9051). The pair is
-// binary and `parse_alt` nests it to the LEFT, which is what makes the
-// demotion local: in `\(\|z\|a\)` the empty branch trades places with
-// `z` alone and still outranks `a`, and glibc reports the empty group
-// there. Nothing here inspects the branch to decide — the left one is
-// laid out and the swap happens when it turns out to have emitted no
-// instruction, so the rule cannot drift from what the emitter does.
 function compile_alt(c0: C, nodes: Node[], n: Node): C {
   let split: i32 = c0.insts.len();
   let c: C = emit(c0, Inst { op: op_split(), a: 0, b: 0 });
@@ -1246,8 +1049,6 @@ function compile_alt(c0: C, nodes: Node[], n: Node): C {
   c = patch_a(c, split, first);
   c = compile_node(c, nodes, n.a);
   if (c.insts.len() == first && c.err.len() == 0) {
-    // The empty branch is the fall-through past `B`, so it needs
-    // neither a slot of its own nor a jump around one.
     c = compile_node(c, nodes, n.b);
     if (c.err.len() > 0) {
       return c;
@@ -1264,24 +1065,6 @@ function compile_alt(c0: C, nodes: Node[], n: Node): C {
   return patch_a(c, jump, c.insts.len());
 }
 
-// A repetition: `min` mandatory copies, then either a star loop or
-// `max - min` optional ones, in the shape glibc's parse_dup_op builds.
-//
-// The mandatory copies are compiled ONCE and spliced, rather than
-// recompiled per copy: recompiling threads the growing program through
-// the emitter again for every copy, and each of those appends copies the
-// whole instruction array (#8498), which makes `\(ab\)\{32767\}`
-// quadratic. Splicing appends into one array in one loop, which grows in
-// place.
-//
-// When the repeated element is a group, its FIRST optional copy is
-// marked optional, and only that one: glibc marks the element before it
-// duplicates it, and a duplicate is built through create_token_tree,
-// which clears the mark. An empty pass through a marked group puts the
-// registers back as the last non-empty group end left them
-// (update_regs), so over `a`, `\(\|a\)\{1,2\}` reports `a` while
-// `\(\|a\)\{1,3\}`, whose last copy is unmarked, reports the empty
-// group (#9092).
 function compile_rep(c0: C, nodes: Node[], n: Node): C {
   let c: C = compile_copies(c0, nodes, n.a, rep_min(n));
   if (c.err.len() > 0) {
@@ -1293,8 +1076,6 @@ function compile_rep(c0: C, nodes: Node[], n: Node): C {
   return compile_optionals(c, nodes, n.a, n.c - rep_min(n));
 }
 
-// The first optional copy of a repeated element: a group is marked
-// optional (compile_rep), anything else compiles as it is.
 function compile_optional_copy(c: C, nodes: Node[], body: i32): C {
   let n: Node = nodes[body];
   if (n.kind == nd_group()) {
@@ -1315,10 +1096,6 @@ function compile_copies(c0: C, nodes: Node[], body: i32, times: i32): C {
   return splice(C { ...c0, nmarks: c0.nmarks + one.nmarks * times }, one.insts, times, c0.nmarks, one.nmarks);
 }
 
-// `times` copies of `body`, each with its branch targets moved to where
-// the copy landed and its mark slots moved past the earlier copies' —
-// a star in the body needs one slot per copy, not one shared between
-// them.
 function splice(c: C, body: Inst[], times: i32, slot0: i32, slots: i32): C {
   if (c.insts.len() + body.len() * times > inst_max()) {
     return C { ...c, err: err_esize() };
@@ -1361,13 +1138,6 @@ function rep_min(n: Node): i32 {
   return n.b;
 }
 
-// `x*` as a loop that may pass through its body empty once, and then
-// leaves: the `Mark` records where the iteration began, and `Progress`
-// sends a pass that consumed nothing out of the loop instead of round
-// again. That is glibc's walk, which re-entering the loop node takes as
-// the second time through and leaves by its other edge — and the empty
-// pass runs the group's end, so an optional group goes back to its last
-// non-empty registers (regs_at_save).
 function compile_star(c0: C, nodes: Node[], body: i32): C {
   let slot: i32 = c0.nmarks;
   let c: C = C { ...c0, nmarks: slot + 1 };
@@ -1385,10 +1155,6 @@ function compile_star(c0: C, nodes: Node[], body: i32): C {
   return patch_b(patch_b(c, top, c.insts.len()), progress, c.insts.len());
 }
 
-// `count` optional copies as glibc nests them, `((x?)x)?`: every split
-// first, the outermost leading, then the copies in order, each split
-// skipping to just past its own copy. A later copy can match with an
-// earlier one skipped, and the earlier one is tried first.
 function compile_optionals(c0: C, nodes: Node[], body: i32, count: i32): C {
   if (count <= 0) {
     return c0;
@@ -1411,8 +1177,6 @@ function compile_optionals(c0: C, nodes: Node[], body: i32, count: i32): C {
   return c;
 }
 
-// Whether the tree holds a backreference, which is what rules out
-// memoising failures during the match.
 function has_backref(nodes: Node[]): boolean {
   let k: i32 = 0;
   while (k < nodes.len()) {
@@ -1424,9 +1188,6 @@ function has_backref(nodes: Node[]): boolean {
   return false;
 }
 
-// `bre_compile(pat)` — the pattern as a program in expr's dialect
-// (POSIX basic, `$` blind to newlines), or a `Bre` whose `err` carries
-// glibc's text for what is wrong with it.
 pub function bre_compile(pat: string): Bre {
   return bre_compile_syntax(pat, posix_basic());
 }
@@ -1435,7 +1196,6 @@ pub function bre_compile_bytes(pat: u8[]): Bre {
   return bre_compile_bytes_syntax(pat, posix_basic());
 }
 
-// `bre_compile_syntax(pat, syntax)` — the same in the dialect asked for.
 pub function bre_compile_syntax(pat: string, syntax: Syntax): Bre {
   return compile_input(text_input(pat), syntax);
 }
@@ -1462,9 +1222,6 @@ function compile_input(pat: Input, syntax: Syntax): Bre {
   }
   let empty: Inst[] = [];
   let c: C = C { insts: empty, nmarks: 0, err: "" };
-  // No `Save` pair around the whole program: the match is anchored, so
-  // group 0 always spans 0 to the end, and a pattern with no groups of
-  // its own then carries no capture vector at all.
   c = compile_node(C { ...c, insts: empty }, p.nodes, r.1);
   c = emit(c, Inst { op: op_match(), a: 0, b: 0 });
   if (c.err.len() > 0) {
@@ -1474,8 +1231,6 @@ function compile_input(pat: Input, syntax: Syntax): Bre {
   let fm: (u8[], boolean) = fastmap(c.insts, p.classes);
   let pre: (u8[], boolean, i32) = prefix_scan(c.insts);
   let tail: (boolean, boolean) = literal_tail(c.insts, pre.2);
-  // A program with a prefix run needs no branch literals: `pre` is that
-  // one branch, and the stronger filter of the two.
   let alts: u8[][] = no_alts;
   if (pre.0.len() == 0) {
     alts = branch_literals(c.insts);
@@ -1486,18 +1241,11 @@ function compile_input(pat: Input, syntax: Syntax): Bre {
   return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: fm.0, empty_ok: fm.1, pre: pre.0, pre_bol: pre.1, pre_eol: tail.0, literal: tail.1, alts: alts, seen0: fill(c.insts.len(), 0 - 1), dfa: dfa_cache(), bclass: bclass, reps: class_reps(bclass), cx_lo: reads_lo(c.insts), cx_nl: cx_nl, cx_word: cx_word };
 }
 
-// ---- the fastmap -----------------------------------------------------------
-// The bytes a match can begin with, and whether one can be empty: the
-// closure of the entry point over every instruction that consumes
-// nothing, with each zero-width test assumed to pass. A backreference
-// stands for any byte or none, since what it repeats is not known yet.
 function fastmap(insts: Inst[], classes: u8[]): (u8[], boolean) {
   let t: u8[] = __alloc_u8(256);
   let seen: i32[] = fill(insts.len(), 0);
   let work: i32[] = [0];
   let empty_ok: boolean = false;
-  // `work` is a stack read by index: an array has no pop, and `take`
-  // would copy it on every step.
   let top: i32 = 1;
   while (top > 0) {
     top = top - 1;
@@ -1531,7 +1279,6 @@ function fastmap(insts: Inst[], classes: u8[]): (u8[], boolean) {
   return (t, empty_ok);
 }
 
-// Store `v` at `at`, growing the array when `at` is its length.
 function push_at(own a: i32[], at: i32, v: i32): i32[] {
   if (at < a.len()) {
     return a.with(at, v);
@@ -1559,17 +1306,6 @@ function all_bytes(): u8[] {
   return t;
 }
 
-// ---- the literal prefix ----------------------------------------------------
-// A valid UTF-8 pattern can quantify only the final byte of a scalar.
-// Its compiled literal runs are therefore byte arrays, not text.
-// The fastmap answers with a SET the first byte has to fall in. Where a
-// program opens with a run of `Char` instructions there is a stronger
-// answer — the run itself — and where the program is that run and
-// nothing else the search is the byte scan and no engine runs at all.
-// `prefix_scan(insts)` — the leading `Char` run of a program, whether a
-// `^` precedes it, and the instruction the run stops at. Instructions
-// run in sequence, so those bytes are what EVERY match begins with,
-// whatever the rest of the program does.
 function prefix_scan(insts: Inst[]): (u8[], boolean, i32) {
   let i: i32 = 0;
   let bol: boolean = false;
@@ -1585,10 +1321,6 @@ function prefix_scan(insts: Inst[]): (u8[], boolean, i32) {
   return (bs, bol, i);
 }
 
-// Whether what follows the prefix run is only an optional `$` and the
-// match — which makes the whole program that literal — and whether the
-// `$` is there. A class, a repetition, an alternation or a group is
-// neither.
 function literal_tail(insts: Inst[], at: i32): (boolean, boolean) {
   let i: i32 = at;
   let eol: boolean = false;
@@ -1602,32 +1334,10 @@ function literal_tail(insts: Inst[], at: i32): (boolean, boolean) {
   return (eol, true);
 }
 
-// How many branch literals are worth carrying. Each one costs the
-// search a byte scan of its own, so a pattern that alternates over more
-// than this answers faster by simulating than by scanning for every
-// branch first.
 function alt_max(): i32 {
   return 8;
 }
 
-// `branch_literals(insts)` — one literal per branch of the entry point,
-// such that EVERY match begins with one of them, or an empty list where
-// no such set exists.
-//
-// `prefix_scan` reads the program in sequence and so stops at the first
-// `Split`, which leaves an alternation with no prefix at all. This walks
-// the same closure the fastmap does and collects, per branch, the run of
-// `Char` instructions it opens with — a whole literal rather than the
-// set of first bytes the fastmap unions those branches into.
-//
-// The conservative direction is an EMPTY list, and every case that is
-// not provably a literal takes it: a branch reaching a class, a
-// backreference, `Match` (so the pattern can match nothing), or any op
-// this does not recognise gives up on the whole analysis rather than on
-// that one branch, since a branch with no required literal makes the
-// filter unsound for the others too. Zero-width instructions consume
-// nothing and so cannot move where a match begins; walking through them
-// keeps the literal behind them.
 function branch_literals(insts: Inst[]): u8[][] {
   let none: u8[][] = [];
   let out: u8[][] = [];
@@ -1670,9 +1380,6 @@ function branch_literals(insts: Inst[]): u8[][] {
   return out;
 }
 
-// The first index in `text[lo..hi)` at which any of `lits` occurs, or
-// -1 where none does. A match begins with one of them, so that index is
-// the earliest position one can start at.
 function find_any_literal(text: Input, lits: u8[][], lo: i32, hi: i32): i32 {
   let best: i32 = 0 - 1;
   let i: i32 = 0;
@@ -1689,8 +1396,6 @@ function find_any_literal(text: Input, lits: u8[][], lo: i32, hi: i32): i32 {
   return best;
 }
 
-// Whether one of `lits` sits at `at`. The caller has not checked the
-// room, since the literals differ in length.
 function any_bytes_at(text: Input, at: i32, lits: u8[][], hi: i32): boolean {
   let i: i32 = 0;
   while (i < lits.len()) {
@@ -1702,7 +1407,6 @@ function any_bytes_at(text: Input, at: i32, lits: u8[][], hi: i32): boolean {
   return false;
 }
 
-// Whether `lit` sits at `at` in `text`. The caller has checked the room.
 function bytes_at(text: Input, at: i32, lit: u8[]): boolean {
   match (text) {
     Text(t, _) => {
@@ -1728,21 +1432,11 @@ function bytes_at(text: Input, at: i32, lit: u8[]): boolean {
   }
 }
 
-// The first index in `text[lo..hi)` at which `lit` occurs, or -1.
-//
-// `__memchr` answers over the whole of `text` — it takes a start and no
-// end — so it is the scan for a range that runs to the string's end,
-// where a candidate outside the range cannot exist, and the wrong one
-// for a range inside a larger buffer: csplit asks about one line of a
-// 64 KiB read, and a first byte absent from that line sends the vector
-// pass on across every line after it. A bounded range gets the plain
-// scan, whose cost is the range itself however rare the byte is.
 function find_literal(text: Input, lit: u8[], lo: i32, hi: i32): i32 {
   if (lit.len() == 0) {
     return lo;
   }
   let first: i32 = lit[0] as i32;
-  // The last position with room for the whole literal.
   let last: i32 = hi - lit.len();
   let i: i32 = lo;
   if (hi == text.len()) {
@@ -1766,38 +1460,6 @@ function find_literal(text: Input, lit: u8[], lo: i32, hi: i32): i32 {
   return 0 - 1;
 }
 
-// ---- matching --------------------------------------------------------------
-// Three engines run these programs.
-//
-// Without a backreference the pattern is a regular language. Where only
-// the match's extent is asked for, the lazy DFA (`dfa_run`) answers it.
-// Where groups are, a Thompson simulation runs it in ONE left-to-right
-// pass: every thread
-// advances together, a program counter is entered once per position —
-// which is also what stops an empty loop from going round for ever, and
-// a second time only where a path that crossed no zero-width assertion
-// overtakes one that did (`pike_closure`) — and the last position at which
-// a thread reaches `Match` is the longest match. The captures reported
-// are the ones carried by the highest-priority thread to reach each
-// program counter, which is the greedy order the compiler laid the
-// branches out in.
-//
-// A backreference is not regular: whether it matches depends on what an
-// earlier group captured, so a thread cannot be merged with another at
-// the same program counter. Those patterns take the third engine, a
-// backtracking search asked for one end position at a time, longest
-// first. `M` is its state.
-// Every engine sees the string as `text[lo, hi)` and starts its match at
-// a position inside that window. `hi` bounds it because glibc's
-// `re_search` is handed a length and `$` and `\'` hold at that end
-// whatever follows it in the buffer; `lo` bounds it because a caller
-// holding one line inside a larger buffer asks about the line in place
-// rather than cutting it out, and `^` and `` \` `` have to mean the
-// line's start rather than the buffer's. Both are the whole string for
-// the callers that hand over a whole string.
-// `zw_caps` holds the captures of the first path that reached the end
-// through a trailing zero-width assertion, kept only until a path that
-// did not is found (see step).
 struct M { text: Input, lo: i32, hi: i32, re: Bre, target: i32, caps: i32[], marks: i32[], have_zw: boolean, zw_caps: i32[] }
 
 function class_has_byte(re: Bre, idx: i32, b: i32): boolean {
@@ -1812,8 +1474,6 @@ function is_word_at(text: Input, k: i32, lo: i32, hi: i32): boolean {
   return is_alpha(b) || is_digit(b) || b == 95;
 }
 
-// `^`: the start of the window, or just after a newline when the buffer
-// anchors there.
 function bol_holds(re: Bre, text: Input, pos: i32, lo: i32): boolean {
   if (pos == lo) {
     return true;
@@ -1821,7 +1481,6 @@ function bol_holds(re: Bre, text: Input, pos: i32, lo: i32): boolean {
   return re.newline_anchor && text.at(pos - 1) as i32 == 10;
 }
 
-// `$`: the end, or just before a newline when the buffer anchors there.
 function eol_holds(re: Bre, text: Input, pos: i32, hi: i32): boolean {
   if (pos >= hi) {
     return true;
@@ -1850,7 +1509,6 @@ function assert_holds(text: Input, which: i32, pos: i32, lo: i32, hi: i32): bool
   return pos == hi;
 }
 
-// Whether one byte satisfies a consuming instruction.
 function byte_matches(re: Bre, in: Inst, b: i32): boolean {
   if (in.op == op_char()) {
     return in.a == b;
@@ -1858,13 +1516,6 @@ function byte_matches(re: Bre, in: Inst, b: i32): boolean {
   return class_has_byte(re, in.a, b);
 }
 
-// Whether some path from (pc, pos) reaches the end at exactly `target`.
-// Between equally long matches glibc prefers the one whose last step to
-// the end crossed no zero-width assertion: an assertion's successors are
-// duplicated nodes carrying its constraint, and the plain end node sorts
-// before every duplicate when the halt node is chosen. `zw` is whether
-// this path has crossed one since it last consumed a byte; a match
-// reached with it set is held as a fallback while the search goes on.
 function step(m0: M, pc0: i32, pos0: i32, zw0: boolean): (boolean, M) {
   let m: M = m0;
   let pc: i32 = pc0;
@@ -1960,8 +1611,6 @@ function step(m0: M, pc0: i32, pos0: i32, zw0: boolean): (boolean, M) {
   return (false, m);
 }
 
-// The instructions that have to try more than one continuation, and so
-// have to be able to put back what they changed.
 function branch(m0: M, pc: i32, pos: i32, in: Inst, zw: boolean): (boolean, M) {
   if (in.op == op_split()) {
     let r: (boolean, M) = step(m0, in.a, pos, zw);
@@ -1989,14 +1638,6 @@ function branch(m0: M, pc: i32, pos: i32, in: Inst, zw: boolean): (boolean, M) {
   return (false, m0);
 }
 
-// The registers past a group boundary, as glibc's update_regs leaves
-// them. `caps` holds every group's start and end, then a second copy of
-// them: what they were at the last non-empty group end. Entering a group
-// sets its start and clears its end. Leaving it non-empty records the
-// end and takes that copy; leaving it empty records the end, except in
-// a group marked optional (compile_rep) that has matched before, where
-// every register goes back to the copy. That is how `\(a*\)*` keeps
-// its last non-empty pass, and inner groups go back with it.
 function regs_at_save(own caps: i32[], in: Inst, pos: i32, ngroups: i32): i32[] {
   let slot: i32 = in.a;
   if (slot % 2 == 0) {
@@ -2034,14 +1675,10 @@ function fresh_caps(n: i32): i32[] {
   return c;
 }
 
-// `(re).exec(text)` — the longest match starting at the beginning of
-// `text`, with every group's span.
 function (re: Bre) exec_input(text: Input): BreMatch {
   return exec_at(re, text, 0, 0, text.len());
 }
 
-// `(re).match_at(text, start, hi)` — the end of the longest match
-// starting at `start` in `text[0, hi)`, or -1.
 function (re: Bre) match_at(text: Input, start: i32, hi: i32): i32 {
   if (!re.backref) {
     return dfa_run(re, text, start, 0, hi, false);
@@ -2053,51 +1690,8 @@ function (re: Bre) match_at(text: Input, start: i32, hi: i32): i32 {
   return m.end;
 }
 
-// ---- the lazy DFA ----------------------------------------------------------
-// Where only the END of a match is asked for — and where there are no
-// captures, that is all `exec` asks too — the thread list is a set: which
-// path reached a program counter first decides captures and nothing
-// else. So the simulation's states can be cached, the way glibc and RE2
-// do it. A DFA state is the set of program counters a byte has just
-// carried threads to, before their epsilon closure, plus what the
-// closure's zero-width tests need to know about the byte behind it
-// (`cx_*`). The closure also needs the byte AHEAD — `$`, `\>` and `\b`
-// read it — so it runs on the transition: the table cell for (state,
-// byte) holds the next state and whether the closure reached `Match`
-// before that byte.
-//
-// The table's columns are byte classes rather than bytes (`bclass`):
-// bytes no instruction or test tells apart share a column, which keeps a
-// state's row a few cells wide where 256 would make building one cost
-// more than running it. The last column is the end of the window, whose
-// cell says only whether a match ends there.
-//
-// States and transitions are built on first use and kept in `re.dfa`
-// across calls, so nl and csplit, which ask once per line, build the
-// states a pattern needs once per run rather than once per line. The
-// cache is bounded (`dfa_max_cells`, `dfa_max_words`): when it fills it
-// is emptied and the run goes on from the state it was in, so a pattern
-// whose DFA is exponential costs one closure per byte — the simulation's
-// cost — and never more memory than the bound.
-//
-// A backreference is not regular and never reaches here; captures take
-// the simulation (`exec_threads_from`), which this cannot stand in for.
-
-// The cache, held in cells so every copy of a `Bre` shares it. A run
-// takes the arrays out and puts them back (`dfa_take`, `dfa_put`), so
-// while it runs it holds the only reference and writes in place.
-//
-// `trans` is one row of cells per state, a cell per byte class and one
-// for the end: -1 where not yet built, else `next * 2 + matched`. `sets`
-// holds each state as its key, its length and its program counters,
-// starting at `offs[id]`. `slots` is an open-addressed hash of the
-// states, `id + 1` per slot, grown to stay at most half full.
 struct DfaCache { trans: Cell[i32[]], sets: Cell[i32[]], offs: Cell[i32[]], slots: Cell[i32[]] }
 
-// `found` is what the last call answered — a state id from `dfa_intern`,
-// a table cell from `dfa_step` — and `epoch` counts the times the cache
-// has been emptied, which invalidates every id taken before it. `seen`,
-// `gen` and `out` are the closure's (`dfa_closure`), and last one run.
 struct Dfa { trans: i32[], sets: i32[], offs: i32[], slots: i32[], found: i32, epoch: i32, seen: i32[], gen: i32, out: i32[] }
 
 function dfa_cache(): DfaCache {
@@ -2105,7 +1699,6 @@ function dfa_cache(): DfaCache {
   return DfaCache { trans: cell_new(none), sets: cell_new(none), offs: cell_new(none), slots: cell_new(none) };
 }
 
-// The cache's bounds: table cells, and program counters over all states.
 function dfa_max_cells(): i32 {
   return 1048576;
 }
@@ -2118,9 +1711,6 @@ function dfa_end(): i32 {
   return 256;
 }
 
-// The state key's parts: the facts about the byte behind the position
-// (the start of the window, a newline, a word byte), and whether every
-// position seeds a new match (`dfa_run`'s `search`).
 function cx_lo(): i32 {
   return 1;
 }
@@ -2148,7 +1738,6 @@ function has_op(insts: Inst[], op: i32): boolean {
   return false;
 }
 
-// Whether a zero-width test asks if a position is the window's start.
 function reads_lo(insts: Inst[]): boolean {
   let k: i32 = 0;
   while (k < insts.len()) {
@@ -2161,8 +1750,6 @@ function reads_lo(insts: Inst[]): boolean {
   return false;
 }
 
-// Whether a zero-width test asks if a byte either side of a position is
-// a word byte.
 function reads_word(insts: Inst[]): boolean {
   let k: i32 = 0;
   while (k < insts.len()) {
@@ -2179,12 +1766,6 @@ function is_word_byte(b: i32): boolean {
   return is_alpha(b) || is_digit(b) || b == 95;
 }
 
-// `byte_classes(...)` — a class id per byte, such that two bytes with
-// the same id satisfy the same `Char` and `Class` instructions and the
-// same zero-width tests: newline where `^` or `$` hold at one, word
-// bytes where a word test reads them. Each instruction splits every
-// class it cuts in two; a byte or a bracket table met before splits
-// nothing new, which keeps `a\{32767\}` one split.
 function byte_classes(insts: Inst[], classes: u8[], newline: boolean, word: boolean): u8[] {
   let cls: u8[] = __alloc_u8(256);
   let chars: u8[] = __alloc_u8(256);
@@ -2210,9 +1791,6 @@ function byte_classes(insts: Inst[], classes: u8[], newline: boolean, word: bool
   return cls;
 }
 
-// Split each class of `cls` by membership: of bracket table `idx`, of
-// the word bytes where `idx` is -2, else of the one byte `byte`. Ids are
-// renumbered in byte order, so they stay dense.
 function split_classes(own cls: u8[], classes: u8[], idx: i32, byte: i32): u8[] {
   let remap: i32[] = fill(512, 0 - 1);
   let next: i32 = 0;
@@ -2234,8 +1812,6 @@ function split_classes(own cls: u8[], classes: u8[], idx: i32, byte: i32): u8[] 
   return out;
 }
 
-// One byte of each class, in class order: what a transition is built
-// with, since every byte of a class answers alike.
 function class_reps(cls: u8[]): i32[] {
   let reps: i32[] = [];
   let b: i32 = 0;
@@ -2248,8 +1824,6 @@ function class_reps(cls: u8[]): i32[] {
   return reps;
 }
 
-// The key part for the byte behind `pos`, keeping only what the
-// program's tests read.
 function ctx_at(re: Bre, text: Input, pos: i32, lo: i32): i32 {
   if (pos == lo) {
     if (re.cx_lo) {
@@ -2271,9 +1845,6 @@ function ctx_after(re: Bre, b: i32): i32 {
   return c;
 }
 
-// A zero-width test between the byte behind (`ctx`) and `sym` ahead.
-// `cx_nl` is only ever set where newline_anchor is, so it answers `^`
-// alone.
 function dfa_zw_holds(re: Bre, in: Inst, ctx: i32, sym: i32): boolean {
   let at_lo: boolean = ctx % 2 == 1;
   if (in.op == op_bol()) {
@@ -2303,10 +1874,6 @@ function dfa_zw_holds(re: Bre, in: Inst, ctx: i32, sym: i32): boolean {
   return sym == dfa_end();
 }
 
-// The end of the longest match beginning at `start` in `text[lo, hi)`,
-// or -1. With `search`, a match may begin at any position from `start`
-// on — glibc's re_search reduced to whether there is one — and the
-// answer is where the first match found ends, or -1.
 function dfa_run(re: Bre, text: Input, start: i32, lo: i32, hi: i32, search: boolean): i32 {
   let row: i32 = re.reps.len() + 1;
   let endc: i32 = row - 1;
@@ -2319,7 +1886,6 @@ function dfa_run(re: Bre, text: Input, start: i32, lo: i32, hi: i32, search: boo
   let s: i32 = d.found;
   let best: i32 = 0 - 1;
   let pos: i32 = start;
-  // The input's bytes read directly, not through `at`'s match per byte.
   let is_text: boolean = false;
   let raw_t: string = "";
   let raw_b: u8[] = [];
@@ -2362,8 +1928,6 @@ function dfa_run(re: Bre, text: Input, start: i32, lo: i32, hi: i32, search: boo
   return best;
 }
 
-// Build the transition of state `s` on column `col`, record it, and
-// leave the cell's value in `found`.
 function dfa_step(own d0: Dfa, re: Bre, s: i32, col: i32): Dfa {
   let row: i32 = re.reps.len() + 1;
   let sym: i32 = dfa_end();
@@ -2386,7 +1950,6 @@ function dfa_step(own d0: Dfa, re: Bre, s: i32, col: i32): Dfa {
     d = dfa_intern(d, nkey, pcs, row);
     next = d.found;
     if (d.epoch != epoch) {
-      // `s` went with the cache; the cell has nowhere to go.
       return Dfa { ...d, found: next * 2 + bit };
     }
   }
@@ -2394,20 +1957,6 @@ function dfa_step(own d0: Dfa, re: Bre, s: i32, col: i32): Dfa {
   return Dfa { ...d, trans: d.trans.with(s * row + col, cell), found: cell };
 }
 
-// The closure of state `s` with `sym` ahead: `found` says whether it
-// reaches `Match`, and `out` holds the program counters `sym` carries
-// its threads to. They are kept in the order the closure meets them
-// rather than sorted: the order follows from the state, so a state's
-// successor is still one state, and a pattern whose sets run to
-// thousands of counters does not pay a sort per byte.
-//
-// A search state seeds a new match at the next position too.
-//
-// `seen` is stamped per closure rather than cleared, since a program can
-// run to `inst_max` instructions and a pattern like `a\{32767\}` reaches
-// a new state at every byte: a counter at `4 * gen` or above belongs to
-// this closure, and the two bits over it say it was entered and that it
-// is already in `out`.
 function dfa_closure(own d0: Dfa, re: Bre, s: i32, sym: i32): Dfa {
   let d: Dfa = d0;
   let gen: i32 = d.gen + 1;
@@ -2420,7 +1969,6 @@ function dfa_closure(own d0: Dfa, re: Bre, s: i32, sym: i32): Dfa {
   let key: i32 = d.sets[off];
   let len: i32 = d.sets[off + 1];
   let ctx: i32 = key % cx_search();
-  // Pushed last to first, so the closure meets them in the state's order.
   let stack: i32[] = [];
   let sp: i32 = 0;
   while (sp < len) {
@@ -2460,7 +2008,6 @@ function dfa_closure(own d0: Dfa, re: Bre, s: i32, sym: i32): Dfa {
         sp = sp + 1;
       }
     } else {
-      // Save, Mark and Progress: what they record is for captures.
       stack = push_at(stack, sp, pc + 1);
       sp = sp + 1;
     }
@@ -2471,8 +2018,6 @@ function dfa_closure(own d0: Dfa, re: Bre, s: i32, sym: i32): Dfa {
   return Dfa { ...d, gen: gen, out: out, found: matched };
 }
 
-// The bits a stamp holds for the closure whose stamps start at `base`;
-// an older stamp holds none.
 function stamp_bits(v: i32, base: i32): i32 {
   if (v < base) {
     return 0;
@@ -2490,7 +2035,6 @@ function dfa_hash(key: i32, pcs: i32[]): i32 {
   return h;
 }
 
-// `dfa_hash` of the state stored at `off`.
 function dfa_hash_at(sets: i32[], off: i32): i32 {
   let h: i32 = sets[off] + 7;
   let len: i32 = sets[off + 1];
@@ -2502,7 +2046,6 @@ function dfa_hash_at(sets: i32[], off: i32): i32 {
   return h;
 }
 
-// Whether the state at `off` is `key` over `pcs`.
 function dfa_same(sets: i32[], off: i32, key: i32, pcs: i32[]): boolean {
   if (sets[off] != key || sets[off + 1] != pcs.len()) {
     return false;
@@ -2517,8 +2060,6 @@ function dfa_same(sets: i32[], off: i32, key: i32, pcs: i32[]): boolean {
   return true;
 }
 
-// The id of the state `key` over `pcs`, added if it is new, in `found`.
-// A state is `row` table cells.
 function dfa_intern(own d0: Dfa, key: i32, pcs: i32[], row: i32): Dfa {
   let d: Dfa = d0;
   let i: i32 = dfa_hash(key, pcs) % d.slots.len();
@@ -2552,7 +2093,6 @@ function dfa_intern(own d0: Dfa, key: i32, pcs: i32[], row: i32): Dfa {
   return Dfa { ...d, found: id2 };
 }
 
-// The hash of every state, in `size` slots.
 function dfa_rehash(sets: i32[], offs: i32[], size: i32): i32[] {
   let slots: i32[] = fill(size, 0);
   let id: i32 = 0;
@@ -2567,8 +2107,6 @@ function dfa_rehash(sets: i32[], offs: i32[], size: i32): i32[] {
   return slots;
 }
 
-// An empty cache holding only the dead state, id 0: no program counter,
-// so every cell leads back to it and no match ends anywhere.
 function dfa_reset(epoch: i32, row: i32): Dfa {
   let none: i32[] = [];
   let d: Dfa = Dfa { trans: none, sets: none, offs: none, slots: fill(16, 0), found: 0, epoch: epoch, seen: none, gen: 0, out: none };
@@ -2599,12 +2137,6 @@ function dfa_put(re: Bre, own d: Dfa): void {
   re.dfa.slots.set(d.slots);
 }
 
-// `(re).search_from(text, lo, hi)` — glibc's `re_search` over
-// `text[lo, hi)` with a POSITIVE range: the match starting nearest the
-// beginning, tried from `lo` up to `hi`, as (start, end), or (-1, -1).
-// `^` and `$` mean the ends of `text[0, hi)` as `search_range` has
-// them, so a caller scanning a buffer for every match in turn asks with
-// bounds rather than with a cut-out suffix.
 function (re: Bre) search_from_input(text: Input, lo: i32, hi: i32): (i32, i32) {
   let start: i32 = lo;
   while (start <= hi) {
@@ -2621,8 +2153,6 @@ function (re: Bre) search_from_input(text: Input, lo: i32, hi: i32): (i32, i32) 
   return (0 - 1, 0 - 1);
 }
 
-// The first position in `text[pos, hi]` that `can_start_at` accepts, or
-// -1, found by one scan rather than a test per position.
 function next_start(re: Bre, text: Input, pos: i32, hi: i32): i32 {
   if (re.pre.len() > 0) {
     return find_literal(text, re.pre, pos, hi);
@@ -2647,11 +2177,6 @@ function next_start(re: Bre, text: Input, pos: i32, hi: i32): i32 {
   return i;
 }
 
-// `(re).search_back(text, hi)` — glibc's `re_search` over `text[0, hi)`
-// with a negative range: the match starting nearest the end, tried from
-// `hi - 1` down to 0, as (start, end), or (-1, -1). The position `hi`
-// itself is never a start, which is what keeps tac's backward scan
-// from finding the same empty match twice.
 function (re: Bre) search_back_input(text: Input, hi: i32): (i32, i32) {
   let start: i32 = hi - 1;
   while (start >= 0) {
@@ -2666,12 +2191,6 @@ function (re: Bre) search_back_input(text: Input, hi: i32): (i32, i32) {
   return (0 - 1, 0 - 1);
 }
 
-// The cheapest necessary condition for a match BEGINNING at `pos`: the
-// whole literal prefix where the program has one, one of the branch
-// literals where it has those, and glibc's fastmap otherwise. Either
-// literal test subsumes the fastmap — the run's first bytes ARE the
-// fastmap for such a program — so they replace it rather than run after
-// it.
 function can_start_at(re: Bre, text: Input, pos: i32, hi: i32): boolean {
   let n: i32 = re.pre.len();
   if (n > 0) {
@@ -2686,46 +2205,10 @@ function can_start_at(re: Bre, text: Input, pos: i32, hi: i32): boolean {
   return pos < hi && re.first[text.at(pos) as i32] as i32 != 0;
 }
 
-// `(re).search(text)` — glibc's `re_search` reduced to the question a
-// line-selecting utility asks of it: does the pattern match ANYWHERE in
-// `text`? nl(1) and csplit(1) are the callers.
-//
-// The scan hands the engines the whole of `text` as the range they see,
-// moving only the start position inside it rather than handing them a
-// suffix, so `^` still means the start of the line and `$` its end
-// however far in the scan has reached — `nl -bp'^a'` numbers a line
-// beginning with `a`, not every line containing one.
 function (re: Bre) search_input(text: Input): boolean {
   return re.search_range_input(text, 0, text.len());
 }
 
-// `(re).search_range(text, lo, hi)` — `search` over the bytes
-// `text[lo..hi)`, with `^` and `$` meaning those ends. A caller holding
-// one line inside a larger buffer asks it that way rather than cutting
-// the line out: csplit runs this once per line of its input, and a slice
-// materialised per line is the copy that costs more than the search.
-//
-// Three filters stand between the call and the engine, strongest
-// first, each reached only where the one above it does not apply:
-//
-//   1. `literal` — the program is the prefix run and nothing else, so
-//      the byte scan IS the answer and no engine runs.
-//   2. `pre` — the program continues past the run, so the run is only a
-//      necessary condition. One scan for it either rejects the whole
-//      range or moves the engine's first start to where it was found,
-//      since no match can begin before that.
-//   3. `alts` — the branches diverge before the first byte, so it takes
-//      one scan per branch to reject the range, and the earliest hit of
-//      any of them is where the engine starts.
-//
-// Past them the DFA reads each byte once whatever it holds, so it takes
-// no fastmap; the backtracking engine, which a position costs a search
-// of its own, skips the positions `can_start_at` rules out.
-//
-// `^` and `$` pin a match to `lo` and `hi` only while `newline_anchor`
-// is off. With it on they hold at every newline too, so an anchored
-// prefix no longer fixes the position it has to sit at and the first two
-// filters give way to the scan that assumes none.
 function (re: Bre) search_range_input(text: Input, lo: i32, hi: i32): boolean {
   let n: i32 = re.pre.len();
   let pinned: boolean = !re.newline_anchor;
@@ -2761,9 +2244,6 @@ function (re: Bre) search_range_input(text: Input, lo: i32, hi: i32): boolean {
       from = at;
     }
   } else if (re.alts.len() > 0) {
-    // No anchor case to split out: a branch literal is required at the
-    // match's own start wherever that falls, so `^` and `$` only narrow
-    // further what the simulation is then asked.
     let first_at: i32 = find_any_literal(text, re.alts, lo, hi);
     if (first_at < 0) {
       return false;
@@ -2780,16 +2260,9 @@ function (re: Bre) search_range_input(text: Input, lo: i32, hi: i32): boolean {
     }
     return false;
   }
-  // One pass: the DFA seeds a match at every position rather than being
-  // re-run from each of them, which is the difference between O(n) and
-  // O(n²) over a line.
   return dfa_run(re, text, from, lo, hi, true) >= 0;
 }
 
-// The DFA finds whether and where the match ends. A pattern with no
-// groups of its own reports nothing more: group 0 spans the start to
-// that end. One with groups takes the simulation for them, over the
-// match and no further.
 function exec_at(re: Bre, text: Input, start: i32, lo: i32, hi: i32): BreMatch {
   if (re.backref) {
     return exec_backtrack(re, text, start, lo, hi);
@@ -2805,8 +2278,6 @@ function exec_at(re: Bre, text: Input, start: i32, lo: i32, hi: i32): BreMatch {
   return exec_threads_from(re, text, start, end, lo, hi);
 }
 
-// The backtracking engine: ask for one end position at a time, longest
-// first, and take the first that answers yes.
 function exec_backtrack(re: Bre, text: Input, start: i32, lo: i32, hi: i32): BreMatch {
   let no: i32[] = [];
   let end: i32 = hi;
@@ -2824,30 +2295,14 @@ function exec_backtrack(re: Bre, text: Input, start: i32, lo: i32, hi: i32): Bre
   return BreMatch { matched: false, end: 0, starts: no, ends: no };
 }
 
-// The stamp for a program counter entered on a path that has crossed a
-// zero-width assertion since it last consumed a byte.
-//
-// It is held apart from the plain generation because such a path can be
-// OVERTAKEN: between equally long matches glibc prefers the one whose
-// last step to the end crossed no assertion (see step), so a later path
-// that crossed none has to be let through a program counter this one
-// already claimed — the end node is often several jumps past the
-// assertion, and every one of them is claimed. Stamps are positions, so
-// the plain ones are 0 and up and these are -2 and down, either way
-// clear of the cleared -1.
 function zw_stamp(gen: i32): i32 {
   return 0 - gen - 2;
 }
 
-// The marker that makes a pair on the closure's stack a visit of
-// `pc * 2 + zw` rather than an undo of slot `x` back to value `y` (a
-// capture is -1 or more).
 function visit(): i32 {
   return 0 - 2;
 }
 
-// Where a thread's loop marks start in its capture array: past the
-// registers and their copy (regs_at_save).
 function mark_base(re: Bre): i32 {
   return re.ngroups * 4;
 }
@@ -2862,43 +2317,12 @@ function zero_width_holds(re: Bre, text: Input, in: Inst, pos: i32, lo: i32, hi:
   return assert_holds(text, in.a, pos, lo, hi);
 }
 
-// The Thompson simulation: one pass, every thread in step, over the
-// bytes `text[lo, hi)`, for a match that must begin at `start` (glibc's
-// re_match) and whose groups are wanted. `end` is where the longest
-// match ends, which the DFA has already found, so the run stops there
-// and reads the captures of the first thread to reach `Match` at it.
-// `^` and `$` are asked about the position in `text[lo, hi)`, not about
-// where the scan began. The generation stamp is the position, so it
-// starts at `start` and `re.seen0` is below every one of them.
-//
-// A position's threads are `pcs`, in priority order, with their
-// captures in `caps`, `w` slots per thread laid end to end; the next
-// position's are built in `npcs` and `ncaps`, and the two swap rather
-// than being allocated again. Everything is a local of this one
-// function so every write is in place.
-//
-// Each thread's epsilon closure is a depth-first walk on an explicit
-// stack, since a program can nest `inst_max` instructions deep and a
-// recursive walk ran out of stack on `\(a\)\{1,32767\}`. It writes the
-// path's captures into `cap` in place: a split pushes its second branch
-// under its first, and an instruction that writes a capture pushes the
-// undo of that write under its successor, so the branch taken next sees
-// the captures as they were at the split. A program counter is entered
-// once per position, and a second time only where a path that crossed
-// no zero-width assertion overtakes one that did (`over`): it walks the
-// same ground again only to reach the end node, and the threads waiting
-// on a byte stay as they are, since they are in priority order and this
-// path does not outrank them.
 function exec_threads_from(re: Bre, text: Input, start: i32, end: i32, lo: i32, hi: i32): BreMatch {
   let nregs: i32 = re.ngroups * 4;
   let w: i32 = mark_base(re) + re.nmarks;
   let ni: i32 = re.insts.len();
   let seen: i32[] = re.seen0;
   let cap: i32[] = fresh_caps(w);
-  // Sized once for the worst case, so every write below is in place: a
-  // position holds each program counter at most once, and the walk
-  // enters each at most twice, pushing at most `nregs` undos and two
-  // visits per entry.
   let stack: i32[] = fill(4 * ni * (nregs + 2) + 2, 0);
   let pcs: i32[] = fill(ni, 0);
   let caps: i32[] = fill(ni * w, 0);
@@ -2909,9 +2333,6 @@ function exec_threads_from(re: Bre, text: Input, start: i32, end: i32, lo: i32, 
   let match_at: i32 = 0 - 1;
   let best: i32[] = [];
   let pos: i32 = start;
-  // The first round has one source, the start of the program, and builds
-  // the list for `start` itself; every later one steps the list for
-  // `pos` over its byte.
   let seeding: boolean = true;
   while (true) {
     let sources: i32 = 1;
@@ -2991,7 +2412,6 @@ function exec_threads_from(re: Bre, text: Input, start: i32, end: i32, lo: i32, 
           stack = stack.with(sp, (pc + 1) * 2 + zb).with(sp + 1, visit());
           sp = sp + 2;
         } else if (op == op_mark()) {
-          // A thread's loop marks ride after its registers.
           let slot: i32 = mark_base(re) + in.a;
           stack = stack.with(sp, slot).with(sp + 1, cap[slot]).with(sp + 2, (pc + 1) * 2 + zb).with(sp + 3, visit());
           sp = sp + 4;
@@ -3003,8 +2423,6 @@ function exec_threads_from(re: Bre, text: Input, start: i32, end: i32, lo: i32, 
             sp = sp + 2;
           }
         } else if (!over || op == op_match()) {
-          // A consuming instruction or the end becomes a thread; the end
-          // reached by an overtaking path rewrites the one already there.
           let row: i32 = nn;
           if (over) {
             row = match_at;
@@ -3036,15 +2454,10 @@ function exec_threads_from(re: Bre, text: Input, start: i32, end: i32, lo: i32, 
   return caps_to_match(best, re, start, end);
 }
 
-// Whether a thread waiting at `in` steps over the byte at `pos`: the run
-// ends at `end`, and a thread goes no further than the match.
 function steps(re: Bre, in: Inst, text: Input, pos: i32, end: i32): boolean {
   return pos < end && byte_matches(re, in, text.at(pos) as i32);
 }
 
-// How the walk enters a program counter whose stamp is `was`: 0 not at
-// all, 1 plainly, 2 as a path with no assertion behind it overtaking one
-// that had one (`over` in exec_threads_from).
 function entry_kind(was: i32, gen: i32, zb: i32): i32 {
   if (was == gen) {
     return 0;
@@ -3061,8 +2474,6 @@ function entry_kind(was: i32, gen: i32, zb: i32): i32 {
   return 1;
 }
 
-// The registers a Save can write, as [undo_from, undo_to): opening a
-// group writes its own pair; closing one may write any (regs_at_save).
 function undo_from(in: Inst): i32 {
   if (in.a % 2 == 0) {
     return in.a;
@@ -3077,14 +2488,10 @@ function undo_to(in: Inst, nregs: i32): i32 {
   return nregs;
 }
 
-// The instructions with at most one successor and no capture to write.
 function passes_through(op: i32): boolean {
   return op == op_jmp() || op == op_progress() || op == op_bol() || op == op_eol() || op == op_assert();
 }
 
-// That successor as a visit (`pc * 2 + zw`), or -1 where a zero-width
-// test fails. A test passed sets the zw bit; a pass through a loop that
-// consumed nothing leaves by the loop's exit (compile_star).
 function successor(re: Bre, in: Inst, pc: i32, zb: i32, cap: i32[], text: Input, pos: i32, lo: i32, hi: i32): i32 {
   if (in.op == op_jmp()) {
     return in.a * 2 + zb;
@@ -3121,8 +2528,6 @@ function fill(n: i32, v: i32): i32[] {
   return a;
 }
 
-// Group 0 spans `start` to `end`; `caps` holds only the groups the
-// pattern wrote.
 function caps_to_match(caps: i32[], re: Bre, start: i32, end: i32): BreMatch {
   let starts: i32[] = [start];
   let ends: i32[] = [end];

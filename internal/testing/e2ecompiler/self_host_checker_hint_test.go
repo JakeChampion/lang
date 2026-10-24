@@ -10,9 +10,6 @@ import (
 	"testing"
 )
 
-// The fallback is the checker's internal error for a statement it could not
-// type. A row with a nonzero `fallback` is a valid program that still draws
-// it; the other rows guard previously unsupported categories.
 func TestSelfHostCheckerFallbackHint(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "fern.fern")
@@ -34,8 +31,6 @@ func TestSelfHostCheckerFallbackHint(t *testing.T) {
 struct Dog {}
 impl Greet for Dog { function hi(self: Self): i32 { return 7; } }
 `
-	// fallback is the line the hint names: the innermost statement the
-	// checker could not type, or 0 for a program it accepts.
 	for _, tc := range []struct {
 		name     string
 		source   string
@@ -45,16 +40,9 @@ impl Greet for Dog { function hi(self: Self): i32 { return 7; } }
 		{"generic", `function ident[T](v: T): T { return v; } function main(): i32 { return ident(0); }`, 0},
 		{"option", `function main(): i32 { let o: Option[i32] = Some(3); return match (o) { Some(n) => n, None => 0 }; }`, 0},
 		{"result", `function main(): i32 { let r: Result[i32, string] = Ok(3); return match (r) { Ok(n) => n, Err(_) => 0 }; }`, 0},
-		// A match STATEMENT on a built-in enum: Option's and Result's variants
-		// have no struct sig.
 		{"option-match-stmt", `function f(o: Option[i32]): i32 { match (o) { Some(n) => { return n; }, None => { return 0; } } } function main(): i32 { return f(Some(3)); }`, 0},
 		{"result-match-stmt", `function f(r: Result[i32, string]): i32 { match (r) { Ok(n) => { return n; }, Err(e) => { return e.len(); } } } function main(): i32 { return f(Ok(3)); }`, 0},
-		// A user generic enum's payload is its spelling with the enum's
-		// parameters replaced by the scrutinee's arguments.
 		{"generic-enum-match-stmt", `enum Box[T, E] { Full(T), Blank(E) } function f(b: Box[i32, string]): i32 { match (b) { Full(n) => { return n; }, Blank(s) => { return s.len(); } } } function main(): i32 { let b: Box[i32, string] = Full(5); return f(b); }`, 0},
-		// A derived method on a generic type is spelled on the bare name, and
-		// its body reads the type's parameters off the declaration; it is a
-		// generic body like any other (#11776).
 		{"derived-on-generic-struct", `import "core/cmp"; @derive(cmp.Eq, cmp.Hash, cmp.Display) struct Pair[T] { a: T, b: T } function main(): i32 { let p: Pair[i32] = Pair[i32] { a: 1, b: 2 }; if (!p.eq(Pair[i32] { a: 1, b: 2 })) { return 1; } return p.hash() - p.hash() + p.to_string().len() - 18; }`, 0},
 		{"derived-on-generic-enum", `import "core/cmp"; @derive(cmp.Eq, cmp.Hash, cmp.Display) enum Tag[T] { One(T), Two(T, T), Empty } function main(): i32 { let a: Tag[i32] = Tag.Two(1, 2); if (!a.eq(Tag.Two(1, 2))) { return 1; } return a.hash() - a.hash() + a.to_string().len() - 9; }`, 0},
 		{"json-value-match-stmt", `import "std/json"; function f(v: json.JsonValue): i32 { match (v) { JNull => { return 1; }, JBool(b) => { return 2; }, _ => { return 0; } } } function main(): i32 { return f(JNull); }`, 0},
@@ -63,14 +51,9 @@ impl Greet for Dog { function hi(self: Self): i32 { return 7; } }
 		{"option-inferred-local", `function main(): i32 { let o = Some("ab"); match (o) { Some(v) => { return v.len(); }, None => { return 0; } } }`, 0},
 		{"dyn-binding", dynPrelude + `function main(): i32 { let d: dyn Greet = Dog {}; return 0; }`, 0},
 		{"dyn-method", dynPrelude + `function main(): i32 { let d: dyn Greet = Dog {}; return d.hi(); }`, 0},
-		// A map literal's values unify as arm results do.
 		{"map-literal-arms-settle-wide", `import "core/map"; function main(): i32 { let c: boolean = true; let m: Map[string, i64] = if (c) { Map { "a": 1234567890123 } } else { Map { "a": 0 } }; return 0; }`, 0},
 		{"map-literal-arms-settle-float", `import "core/map"; function main(): i32 { let c: boolean = true; let m = if (c) { Map { "a": 1 } } else { Map { "a": 2.5 } }; return 0; }`, 0},
-		// A generic struct's callable field is called at the instance's type
-		// arguments.
 		{"generic-struct-callable-field-call", `struct S[T] { f: (T) => T } function main(): i32 { let s = S[i32] { f: (x: i32): i32 => x }; return s.f(3); }`, 0},
-		// A lambda the program writes and calls in place is typed by what it
-		// declares, in a loop body as anywhere else.
 		{"iife", `function main(): i32 { return ((x: i32): i32 => { return x * 2; })(4); }`, 0},
 		{"iife-in-loop", `function main(): i32 {
     let n: i32 = 0;
@@ -79,52 +62,38 @@ impl Greet for Dog { function hi(self: Self): i32 { return 7; } }
     }
     return n;
 }`, 0},
-		// A function using a builtin struct (FileStat): the hint checks the
-		// module check_module typed, builtins included (#10752).
 		{"builtin-struct-field", `function isdir(p: string): boolean {
     let d: boolean = false;
     match (stat(p)) { Ok(st) => { d = st.is_dir; }, Err(e) => { } }
     return d;
 }
 function main(): i32 { if (isdir(".")) { return 0; } return ((x: i32): i32 => { return x * 2; })(4); }`, 0},
-		// An empty literal at a type parameter leaves it to the function
-		// value beside it, so iterating the result types its elements.
 		{"generic-empty-literal-and-fn-value", `function fold[T](n: i32, acc: T, visit: (i32, T) => T): T { return visit(n, acc); }
 function add(n: i32, acc: i32[]): i32[] { return acc.append(n); }
 function main(): i32 { let t = 0; for u in fold(3, [], add) { t = t + u; } return t; }`, 0},
-		// A variant assigned to a union-typed local widens, as it does in a
-		// declaration or a return.
 		{"union-variant-reassign", `struct Circle { r: i32 }
 struct Square { s: i32 }
 type Shape = Circle | Square;
 function main(): i32 { let sh: Shape = Circle { r: 1 }; sh = Square { s: 2 }; return 0; }`, 0},
-		// A type argument only the result names is the call's sole binding, so
-		// it holds under `?` as it does for a whole init (#11329).
 		{"written-type-arg-under-try", `struct Item { name: string }
 enum E { Bad }
 function get[T](x: i32): Result[T, E] { return Err(E.Bad); }
 function create(): Result[i32, E] { let item: Item = get[Item](1)?; return Ok(0); }
 function main(): i32 { return 0; }`, 0},
-		// An empty array literal binds nothing (#10499), so the written list
-		// is all that settles T.
 		{"written-type-arg-sole-binding", `function pick[T](a: T[]): T { return a[0]; }
 function use64(x: i64): i64 { return x; }
 function main(): i32 { use64(pick[i64]([])); return 0; }`, 0},
-		// A generic result only the destination binds reads at its type
-		// (#12382).
 		{"generic-result-bound-by-destination", `trait Ident { function one(): Self; }
 struct A { v: i32 }
 impl Ident for A { function one(): Self { return A { v: 10 }; } }
 function unit[T: Ident](): T { return T.one(); }
 function geta(): A { return unit(); }
 function main(): i32 { let a: A = unit(); return a.v + geta().v; }`, 0},
-		// An unsettled integer arm takes its sibling arm's type (#12381).
 		{"value-if-literal-settles-at-float", `function main(): i32 { let x = if (true) { 1 } else { 2.5 }; return 0; }`, 0},
 		{"value-if-literal-local-settles", `function main(): i32 { let q = 2; let x = if (true) { q } else { 2.5 }; return 0; }`, 0},
 		{"value-if-literal-settles-at-i64", `function main(): i32 { let a: i64 = 5; let x = if (true) { a } else { -1 }; return 0; }`, 0},
 		{"value-if-wide-array-arms", `function main(): i32 { let arr: i64[] = if (true) { [1234567890123] } else { [0, 0] }; return 0; }`, 0},
 		{"value-match-literal-array-assigns", `function main(): i32 { let k: i32 = 1; let a: i64 = 2; let x = match (k) { 1 => [a], _ => [3] }; return 0; }`, 0},
-		// So does a value block whose tail is one.
 		{"value-if-block-arm-settles-at-float", `function main(): i32 { let c: boolean = true; let x = if (c) { ({ 1 }) } else { 2.5 }; if (x > 2.0) { return 1; } return 0; }`, 0},
 		{"value-if-block-arm-leading-statement", `function main(): i32 { let x = if (true) { ({ let q: i32 = 3; 1 }) } else { 2.5 }; return 0; }`, 0},
 		{"value-if-nested-block-arm", `function main(): i32 { let x = if (true) { ({ ({ 1 }) }) } else { 2.5 }; return 0; }`, 0},
@@ -138,7 +107,6 @@ function main(): i32 { return 0; }`, 0},
 function main(): i32 { return 0; }`, 0},
 		{"value-if-block-arm-argument", `function take(v: f64): i32 { return 0; }
 function main(): i32 { return take(if (true) { ({ 1 }) } else { 2.5 }); }`, 0},
-		// The join reaches tuple elements and enum payloads.
 		{"value-if-tuple-elem-settles-at-float", `function main(): i32 { let c: boolean = true; let t = if (c) { (1, 2) } else { (3.5, 4) }; if (t.0 > 0.5) { return 1; } return 0; }`, 0},
 		{"value-if-tuple-elem-after-float", `function main(): i32 { let c: boolean = true; let t = if (c) { (3.5, 4) } else { (1, 2) }; if (t.0 > 0.5) { return 1; } return 0; }`, 0},
 		{"value-if-tuple-typed-sibling-elem", `function main(): i32 { let c: boolean = true; let n: i32 = 4; let t = if (c) { (1, n) } else { (3.5, 4) }; if (t.0 > 0.5 && t.1 == 4) { return 1; } return 0; }`, 0},
@@ -155,7 +123,6 @@ function main(): i32 { return take(if (true) { ({ 1 }) } else { 2.5 }); }`, 0},
 		{"value-if-ok-payload-settles-at-float", `function main(): i32 { let c: boolean = true; let r = if (c) { Ok(1) } else { Ok(2.5) }; match (r) { Ok(v) => { if (v > 0.5) { return 1; } }, Err(e) => {} } return 0; }`, 0},
 		{"value-if-generic-enum-payload", `enum Bx[T] { Full(T), Empty }
 function main(): i32 { let c: boolean = true; let b = if (c) { Full(1) } else { Full(2.5) }; match (b) { Full(v) => { if (v > 0.5) { return 1; } }, Empty => {} } return 0; }`, 0},
-		// A literal local binds as one in a statement the checker types on its own.
 		{"value-if-literal-local-arm", `function main(): i32 { let c: boolean = true; let x = 1; let y = if (c) { x } else { 2.5 }; if (y > 0.5) { return 1; } return 0; }`, 0},
 		{"value-if-literal-local-tuple-elem", `function main(): i32 { let c: boolean = true; let x = 1; let t = if (c) { (x, 2) } else { (3.5, 4) }; if (t.0 > 0.5) { return 1; } return 0; }`, 0},
 	} {
@@ -188,9 +155,6 @@ function main(): i32 { let c: boolean = true; let b = if (c) { Full(1) } else { 
 		})
 	}
 
-	// Programs both checkers reject, which this one used to report as the
-	// fallback: each must draw native's coded diagnostic, at native's
-	// position, and no internal error.
 	for _, tc := range []struct {
 		name   string
 		source string
@@ -252,8 +216,6 @@ function main(): i32 {
 	}
 }
 
-// The self-host checker accepts the compiler it is part of (#10188). Every
-// statement it cannot type is a place an ill-typed program would compile.
 func TestSelfHostChecksItsOwnSources(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "fern.fern")

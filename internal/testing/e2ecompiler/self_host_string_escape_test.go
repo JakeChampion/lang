@@ -13,56 +13,25 @@ import (
 	"unicode/utf8"
 )
 
-// The self-host's two GAS assemblers read back the escapes its own emitter
-// writes, and until this test they read back only some of them.
-//
-// asmcore.escape_for_ascii spells every byte below 0x20, and 0x7f, as GAS's
-// three-digit octal `\NNN`. Both in-process assemblers decoded `\0` as NUL and
-// passed every other digit through as itself, so `"A\x01B"` was emitted as
-// `.ascii "A\001B"` and assembled to `A`, NUL, `0`, `1`, `B` — then truncated
-// at the length the emitter recorded, reading back as `A`, NUL, `0`. Two stray
-// bytes per control byte, and everything after them in the literal shifted.
-//
-// Nothing caught it because nothing in the corpus puts a control byte in a
-// literal: `\n`, `\t` and `\r` have their own one-letter escapes, and high
-// bytes previously passed through raw. It surfaced from
-// `-embed` (#7986), where an asset is arbitrary bytes by definition.
-// docs/FEATURE-AUDIT.md carried a ✅ for `\xNN` on both self-host columns
-// throughout.
-//
-// The x86-64 half runs the program, which is the strongest form available. The
-// arm64 half compares assembled .data against GNU as on the same GAS text — no
-// qemu, and the layer the bug is actually in.
-
-// escapeCases are literals whose bytes exercise the decoder. Each is written as
-// Fern source and as the bytes it must produce.
 var escapeCases = []struct {
 	name string
 	src  string
 	want []byte
 }{
 	{"nul-then-letter", `A\x00B`, []byte{'A', 0, 'B'}},
-	// The one that made the bug visible: a control byte whose octal digits are
-	// not all zero, so a decoder that stops after `\0` leaves "1" behind.
 	{"one-then-letter", `A\x01B`, []byte{'A', 1, 'B'}},
 	{"del", `A\x7fB`, []byte{'A', 0x7f, 'B'}},
 	{"just-under-space", `A\x1fB`, []byte{'A', 0x1f, 'B'}},
 	{"run-of-controls", `\x00\x01\x02\x03\x04\x05\x06\x07`, []byte{0, 1, 2, 3, 4, 5, 6, 7}},
-	// The named escapes, which were already right and must stay right.
 	{"named-escapes", `A\tB\nC\rD`, []byte{'A', '\t', 'B', '\n', 'C', '\r', 'D'}},
-	// High bytes must survive octal escaping in UTF-8 assembly text too.
 	{"high-byte", `A\u{FF}B`, []byte("A\u00ffB")},
 	{"high-and-control", `\u{80}\x00\u{FF}\x1b`, []byte("\u0080\x00\u00ff\x1b")},
 	{"unicode", `é水`, []byte("é水")},
 	{"unicode-escape", `\u{1F600}\u{10FFFF}`, []byte("😀\U0010FFFF")},
-	// A REAL backslash followed by a digit. The escaped form is `\\0`, and a
-	// decoder that reads octal greedily past the `\\` would turn it into NUL.
 	{"escaped-backslash-then-digit", `A\\0B`, []byte{'A', '\\', '0', 'B'}},
 	{"escaped-quote", `q\"w`, []byte{'q', '"', 'w'}},
 }
 
-// escapeProbeSource is a program that prints one byte value per line, so a
-// wrong byte names itself instead of showing up as a garbled string.
 func escapeProbeSource(lit string) string {
 	return `function main(): i32 {
     let b: string = "` + lit + `";
@@ -123,7 +92,6 @@ func TestSelfHostStringEscapesX86_64(t *testing.T) {
 	}
 }
 
-// parseByteLines turns the probe's one-number-per-line output into bytes.
 func parseByteLines(t *testing.T, out string) []byte {
 	t.Helper()
 	var bs []byte
@@ -142,10 +110,6 @@ func parseByteLines(t *testing.T, out string) []byte {
 	return bs
 }
 
-// The arm64 half. arm64_native's decoder is a hand-mirrored copy of x86_native's
-// — the two assemblers are deliberately import-free — and an untested mirror is
-// how they drift, so it is checked against GNU as rather than assumed to match
-// its twin.
 func TestSelfHostArm64GasEscapesMatchGas(t *testing.T) {
 	gas := gnuArm64Oracle(t)
 	gcc, runner := x86_64Tooling(t)
@@ -153,9 +117,6 @@ func TestSelfHostArm64GasEscapesMatchGas(t *testing.T) {
 
 	for _, c := range escapeCases {
 		t.Run(c.name, func(t *testing.T) {
-			// The escaped form the emitter would write, spelled here rather
-			// than obtained from asmcore so this test pins the DECODER against
-			// GAS's grammar and not against whatever the encoder currently does.
 			esc := gasEscape(c.want)
 			snippet := ".text\n.globl _start\n_start:\n    ret\n.data\n    .ascii \"" + esc + "\"\n"
 
@@ -164,10 +125,6 @@ func TestSelfHostArm64GasEscapesMatchGas(t *testing.T) {
 				t.Fatalf("the oracle itself decoded %q to % d, want % d — the escaping in this test is wrong", esc, wantData, c.want)
 			}
 
-			// The self-host pads .data out to an 8-byte boundary where GNU as
-			// leaves it unpadded, so the comparison is over the literal's own
-			// length. The padding is legitimate section layout;
-			// what is under test is the bytes the decoder produced.
 			got := assembleSelfHostData(t, bench, runner, snippet)
 			if len(got) < len(c.want) {
 				t.Fatalf("self-host arm64 assembled .ascii %q to only %d bytes, want at least %d: % d", esc, len(got), len(c.want), got)
@@ -185,8 +142,6 @@ func TestSelfHostArm64GasEscapesMatchGas(t *testing.T) {
 	}
 }
 
-// gasEscape renders bytes the way asmcore.escape_for_ascii does: named
-// escapes, three-digit octal outside printable ASCII, everything else raw.
 func gasEscape(bs []byte) string {
 	var sb strings.Builder
 	for _, b := range bs {
@@ -210,8 +165,6 @@ func gasEscape(bs []byte) string {
 	return sb.String()
 }
 
-// Assembly is text even when a data directive represents arbitrary bytes.
-// Check the actual emitter as well as the decoder's hand-written fixtures.
 func TestSelfHostAssemblyTextUTF8(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := mustWrite(t, t.TempDir(), "bytes.fern", escapeProbeSource(`\u{80}\x00\u{FF}\x1b`))
@@ -231,9 +184,6 @@ func TestSelfHostAssemblyTextUTF8(t *testing.T) {
 	}
 }
 
-// assembleSelfHostData feeds GAS text to the bench driver and returns the
-// .rodata bytes it assembled. A refused line is a finding rather than a short
-// answer, for the same reason assembleSelfHost treats one that way.
 func assembleSelfHostData(t *testing.T, bin string, runner []string, snippet string) []byte {
 	t.Helper()
 	args := append(append([]string{}, runner...), bin, "-data")

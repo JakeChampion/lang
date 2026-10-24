@@ -11,12 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExportAttributeCompiles is the self-host parity gate for P6
-// slice 1 (docs/WIT-BRING-YOUR-OWN.md): the self-host parser accepts the
-// `@export("iface","wit-name")` attribute on a function and compiles the
-// program. Slice 1 parses + consumes the binding (the export lift lands with
-// the codegen slice), so the exported function compiles as an ordinary
-// function — here it's called from main and the self-host emits a working core.
 func TestSelfHostExportAttributeCompiles(t *testing.T) {
 	runner := x86_64Runner(t)
 	dir := t.TempDir()
@@ -24,8 +18,6 @@ func TestSelfHostExportAttributeCompiles(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
 	driverBin := buildSelfHostBin(t, "", dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
-	// An `@export` function, also called from main. The self-host must parse
-	// the attribute and compile the program.
 	prog := `@export("wasi:cli/run@0.2.0", "run")
 function run(): i32 { return 42; }
 
@@ -39,13 +31,6 @@ function main(): i32 { return run(); }`
 	}
 }
 
-// TestSelfHostExportScalarRunsViaConsumer is the runnable self-host parity gate
-// for P6 slice 3/4 (docs/WIT-BRING-YOUR-OWN.md): the SELF-HOST backend surfaces
-// the `iface#wit-name` core export for an `@export` function, the Go
-// world-driven composer lifts it (ComposeExportsFromWorld), and a separate Fern
-// consumer that `@import`s and calls it (composed the Go way) links against it
-// with `wasm-tools compose` and runs under wasmtime — proving the self-host-
-// emitted export is callable across the component boundary.
 func TestSelfHostExportScalarRunsViaConsumer(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -64,7 +49,6 @@ func TestSelfHostExportScalarRunsViaConsumer(t *testing.T) {
 		}
 	}
 
-	// --- self-host emits the exporter core (a command with main + @export). ---
 	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
 	driverBin := buildSelfHostBin(t, "", dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
@@ -87,9 +71,6 @@ function main(): i32 { return 0; }`
 		t.Fatalf("read exporter core: %v", err)
 	}
 
-	// Exporter world: exports the custom math interface, and imports
-	// wasi:cli/stdout (the self-host run-io core imports it for `write`, even
-	// though this exporter doesn't call it). Compose via the Go path.
 	expWit := filepath.Join(dir, "expwit")
 	if err := os.MkdirAll(expWit, 0o755); err != nil {
 		t.Fatalf("mkdir expwit: %v", err)
@@ -126,7 +107,6 @@ function main(): i32 { return 0; }`
 	}
 	run(wasmtools, "validate", exporter)
 
-	// --- Self-host-built consumer importing local:test/math#add. ---
 	userWit := filepath.Join(dir, "userwit")
 	if err := os.MkdirAll(userWit, 0o755); err != nil {
 		t.Fatalf("mkdir userwit: %v", err)
@@ -183,12 +163,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostExportStringResultRunsViaConsumer is the self-host parity gate for
-// the string-result export (P6 slice 5c, ported). The self-host emits the
-// string-result wrapper (repacking its `[len][bytes]` string into the canonical
-// `[ptr,len]` return area); the Go composer lifts it with the memory lift; and
-// a Fern consumer that @imports `greet() -> string` and writes it links + runs
-// under wasmtime. docs/WIT-BRING-YOUR-OWN.md.
 func TestSelfHostExportStringResultRunsViaConsumer(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -207,7 +181,6 @@ func TestSelfHostExportStringResultRunsViaConsumer(t *testing.T) {
 		}
 	}
 
-	// self-host emits the exporter core (command with main + string @export).
 	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
 	driverBin := buildSelfHostBin(t, "", dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
@@ -230,7 +203,6 @@ function main(): i32 { return 0; }`
 		t.Fatalf("read exporter core: %v", err)
 	}
 
-	// exporter world: exports strings, imports wasi:cli/stdout (run-io core).
 	expWit := filepath.Join(dir, "expwit")
 	if err := os.MkdirAll(expWit, 0o755); err != nil {
 		t.Fatalf("mkdir expwit: %v", err)
@@ -267,7 +239,6 @@ function main(): i32 { return 0; }`
 	}
 	run(wasmtools, "validate", exporter)
 
-	// Self-host-built consumer that imports greet() -> string and writes it.
 	userWit := filepath.Join(dir, "userwit")
 	if err := os.MkdirAll(userWit, 0o755); err != nil {
 		t.Fatalf("mkdir userwit: %v", err)
@@ -321,11 +292,6 @@ function main(): i32 { write(greet()); return 0; }`
 	}
 }
 
-// TestSelfHostExportStringParamRunsViaConsumer is the self-host parity gate for
-// the string-PARAMETER export (P6 slice 5d, ported). The self-host emits a
-// wrapper that copies the canonical (ptr,len) bytes into a fresh [len][bytes]
-// block before calling the Fern function; the Go composer lifts it with the
-// realloc lift; and a Fern consumer calls len_of("hello") and expects 5.
 func TestSelfHostExportStringParamRunsViaConsumer(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

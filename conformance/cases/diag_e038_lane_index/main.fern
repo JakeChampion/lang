@@ -1,5 +1,5 @@
-// E038: a lane index is an integer literal below the lane count, so the lane
-// a builtin names is fixed where it is written.
+
+
 import "std/f64";
 
 function main(): i32 {

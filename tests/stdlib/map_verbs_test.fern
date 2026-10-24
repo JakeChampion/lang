@@ -1,16 +1,6 @@
 import "core/map";
 import "std/test";
 
-// tests/stdlib/map_verbs_test.fern — higher-level Map verbs added
-// to core/map (#2685): `entries`, `merge`, `from`,
-// `get_or_insert`, `update`, and `contains_value`. Covered over both
-// i32 and string keys.
-//
-// These verbs use Option (`get`) + tuples + generic map ops, which the
-// self-host compiler can't lower yet (Option/tuple IR is a pending
-// slice), so this suite is exercised through the native compiler /
-// interpreter — mirroring how the closure combinators are interp-only.
-
 function test_entries_sum(): test.TestOutcome {
   let m: Map[i32, i32] = map_new(8);
   m = m.insert(1, 10);
@@ -44,7 +34,6 @@ function test_from(): test.TestOutcome {
 }
 
 function test_from_dup_last_wins(): test.TestOutcome {
-  // Later pair overwrites an earlier duplicate key.
   let m: Map[i32, i32] = map.from([(1, 10), (1, 99)]);
   if (m.len() != 1) {
     return test.fail("duplicate key should collapse");
@@ -102,7 +91,6 @@ function test_get_or_insert_absent(): test.TestOutcome {
 }
 
 function test_get_or_insert_word_count(): test.TestOutcome {
-  // The motivating use case: count occurrences in one lookup per word.
   let counts: Map[string, i32] = map_new(8);
   let words: string[] = ["a", "b", "a", "c", "a", "b"];
   for w in words {
@@ -119,7 +107,6 @@ function test_get_or_insert_word_count(): test.TestOutcome {
 }
 
 function test_update_word_count(): test.TestOutcome {
-  // The one-pass shape of the word-count loop: insert-or-modify per word.
   let counts: Map[string, i32] = map_new(8);
   let words: string[] = ["a", "b", "a", "c", "a", "b"];
   for w in words {
@@ -136,12 +123,10 @@ function test_update_word_count(): test.TestOutcome {
 
 function test_update_present_and_absent(): test.TestOutcome {
   let m: Map[i32, i32] = map_new(4);
-  // absent: seed from init (100), then apply fn -> 101.
   m = m.update(1, 100, (v: i32): i32 => v + 1);
   if (m.get_or(1, 0) != 101) {
     return test.fail("absent update should seed from init");
   }
-  // present: 101 -> 102.
   m = m.update(1, 100, (v: i32): i32 => v + 1);
   return test.assert_eq(m.get_or(1, 0), 102);
 }

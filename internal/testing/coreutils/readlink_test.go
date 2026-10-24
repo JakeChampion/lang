@@ -6,43 +6,6 @@ import (
 	"testing"
 )
 
-// readlink(1) is two programs under one name. Bare it is one
-// readlink(2) per operand — a link to a name that does not exist
-// prints that name, and an operand that is not a link at all fails in
-// silence — and with `-f` / `-e` / `-m` it canonicalises instead,
-// which is the walk `coreutils/lib/canon.fern` runs for realpath too.
-//
-// The corpus is built around the three places the modes differ:
-// a final component that does not exist (`-f` and `-m` print it, `-e`
-// refuses), a component in the MIDDLE that does not exist (only `-m`),
-// and a symbolic-link cycle (only `-m`, which stops where it stood and
-// keeps the name). Beside those sit the rules that have nothing to do
-// with the mode: a trailing slash makes the component it follows have
-// to be a directory, `..` pops whatever the walk has resolved so far,
-// diagnostics are OFF until `-v` turns them on, and `-n` drops the
-// delimiter — but only for one operand, and with a warning otherwise.
-
-// readlinkTree is the fixture both this corpus and realpath's are
-// built on, laid out so every rule above has something to stand on:
-//
-//	file        a plain file
-//	dir/        a directory, with dir/sub/ under it
-//	link        -> file
-//	link2       -> link            (a link to a link)
-//	dangling    -> nonexistent     (a link to nothing)
-//	dirlink     -> dir
-//	sublink     -> dir/sub         (so `sublink/..` is dir, not here)
-//	abslink     -> /absolute/target (absolute, and nowhere)
-//	selfdir     -> .
-//	loop1/loop2 a two-link cycle
-//	a, b, c     a three-link cycle, whose residue differs from loop's
-//	chain/l1…l9 a chain of nine links ending at a real file, which is
-//	            past the twenty-first only in a corpus that grows: it
-//	            is here to prove depth alone is NOT the limit
-//
-// The base is resolved first: /tmp itself is behind a symlink on some
-// hosts, and the answers are absolute, so an unresolved base would put
-// the fixture's own link in every expected byte.
 func readlinkTree(t *testing.T) string {
 	t.Helper()
 	base, err := filepath.EvalSymlinks(t.TempDir())
@@ -52,16 +15,7 @@ func readlinkTree(t *testing.T) string {
 	if err := os.MkdirAll(filepath.Join(base, "dir", "sub"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	// A link target is a byte string the kernel stores verbatim, and
-	// `read_link` is where one that is not valid UTF-8 enters a Fern
-	// program — so the fixture carries a link holding such a target and
-	// the file it names.
 	names := []string{"file", "dir/f"}
-	// The file whose NAME is not valid UTF-8 exists only where the filesystem
-	// holds one. The symlink below whose TARGET is those same bytes is
-	// created either way and is the more interesting fixture: a target is a
-	// byte string the kernel stores verbatim and never resolves at creation,
-	// so APFS takes it where it refuses the name.
 	if rawByteNamesHeld(t) {
 		names = append(names, "\xff\xfe")
 	}
@@ -81,8 +35,6 @@ func readlinkTree(t *testing.T) string {
 		{"\xff\xfe", "badtarget"},
 		{"loop2", "loop1"},
 		{"loop1", "loop2"},
-		// A target whose bytes a shell would have to quote, for the
-		// terminal-quoting cases.
 		{"a file", "spaced"},
 		{"b", "a"},
 		{"c", "b"},
@@ -120,7 +72,6 @@ func readlinkCases(t *testing.T) []invocation {
 		return invocation{name: name, args: args, dir: tree}
 	}
 	return []invocation{
-		// Bare: the bytes the link holds, verbatim, and nothing else.
 		at("a link", "link"),
 		at("a link to a link", "link2"),
 		at("a dangling link", "dangling"),
@@ -137,8 +88,6 @@ func readlinkCases(t *testing.T) []invocation {
 		at("a trailing slash on a link", "link/"),
 		at("a trailing slash on a directory link", "dirlink/"),
 
-		// -v is the only way anything reaches stderr; -q and -s are
-		// the default state, and the last of the three wins.
 		at("verbose on EINVAL", "-v", "file"),
 		at("verbose on ENOENT", "-v", "missing"),
 		at("verbose on a directory", "-v", "dir"),
@@ -152,8 +101,6 @@ func readlinkCases(t *testing.T) []invocation {
 		at("verbose in one cluster", "-vq", "file"),
 		at("silent in one cluster", "-qv", "file"),
 
-		// -n drops the delimiter, and is refused for more than one
-		// operand with a warning that is printed whatever -q says.
 		at("-n with one operand", "-n", "link"),
 		at("-n with two operands", "-n", "link", "link2"),
 		at("-n quietly with two operands", "-nq", "link", "link2"),
@@ -162,7 +109,6 @@ func readlinkCases(t *testing.T) []invocation {
 		at("-n verbose on a failure", "-n", "-v", "missing"),
 		at("-n canonicalising two operands", "-f", "-n", "link", "link2"),
 
-		// -z is the NUL delimiter, and -n beats it for one operand.
 		at("-z with one operand", "-z", "link"),
 		at("-z with two operands", "-z", "link", "link2"),
 		at("-nz with one operand", "-nz", "link"),
@@ -170,7 +116,6 @@ func readlinkCases(t *testing.T) []invocation {
 		at("-mnz in one cluster", "-mnz", "link", "link2"),
 		at("-z on a failure", "-z", "missing"),
 
-		// -f: all but the last component has to exist.
 		at("-f a link", "-f", "link"),
 		at("-f a link to a link", "-f", "link2"),
 		at("-f a plain file", "-f", "file"),
@@ -187,7 +132,6 @@ func readlinkCases(t *testing.T) []invocation {
 		at("-f a link to dot", "-f", "selfdir"),
 		at("-f a nine-link chain", "-f", "chain/l9"),
 
-		// -e: every component, the last one included.
 		at("-e a link", "-e", "link"),
 		at("-e a missing last component", "-e", "missing"),
 		at("-e a missing component under a directory", "-e", "dir/missing"),
@@ -198,7 +142,6 @@ func readlinkCases(t *testing.T) []invocation {
 		at("-e a directory", "-e", "dir"),
 		at("-e dot", "-e", "."),
 
-		// -m: nothing has to exist, and nothing is an error.
 		at("-m a link", "-m", "link"),
 		at("-m a missing last component", "-m", "missing"),
 		at("-m a missing middle component", "-m", "missing/missing2"),
@@ -209,9 +152,6 @@ func readlinkCases(t *testing.T) []invocation {
 		at("-m an absolute target that is nowhere", "-m", "abslink"),
 		at("-m through dot links", "-m", "selfdir/selfdir/file"),
 
-		// The cycle's residue is where the walk stopped, so it
-		// depends on the cycle's LENGTH: the two-link one and the
-		// three-link one stop on different names.
 		at("-m a two-link cycle", "-m", "loop1"),
 		at("-m a two-link cycle from the other side", "-m", "loop2"),
 		at("-m a three-link cycle", "-m", "a"),
@@ -219,8 +159,6 @@ func readlinkCases(t *testing.T) []invocation {
 		at("-m a three-link cycle two steps along", "-m", "c"),
 		at("-m a three-link cycle with a suffix", "-m", "a/x"),
 
-		// The verbose diagnostics of each mode, which is where the
-		// errno that stopped the walk is visible at all.
 		at("-v -e a missing name", "-v", "-e", "missing"),
 		at("-v -e a missing component", "-v", "-e", "dir/missing"),
 		at("-v -f a missing middle component", "-v", "-f", "missing/missing2"),
@@ -233,8 +171,6 @@ func readlinkCases(t *testing.T) []invocation {
 		at("-v -f an absolute target that is nowhere", "-v", "-f", "abslink"),
 		at("-v -e an absolute target that is nowhere", "-v", "-e", "abslink"),
 
-		// A trailing slash makes the component it follows have to be
-		// a directory — in every mode but -m, which checks nothing.
 		at("-f a trailing slash on a directory", "-f", "dir/"),
 		at("-f a trailing slash on a file", "-f", "file/"),
 		at("-e a trailing slash on a file", "-e", "file/"),
@@ -248,7 +184,6 @@ func readlinkCases(t *testing.T) []invocation {
 		at("-e a trailing slash on a dangling link", "-e", "dangling/"),
 		at("-f a trailing slash on a link to a directory", "-f", "dirlink/"),
 
-		// `..` pops what the walk RESOLVED, so it crosses a link.
 		at("-f dot", "-f", "."),
 		at("-f dotdot", "-f", ".."),
 		at("-f the root", "-f", "/"),
@@ -271,8 +206,6 @@ func readlinkCases(t *testing.T) []invocation {
 		at("-m a doubled slash", "-m", "//a"),
 		at("-m the root", "-m", "/"),
 
-		// The last mode option wins, in both spellings and in a
-		// cluster.
 		at("-e then -f", "-v", "-e", "-f", "missing"),
 		at("-f then -e", "-v", "-f", "-e", "missing"),
 		at("-e then -m", "-v", "-e", "-m", "missing"),
@@ -280,7 +213,6 @@ func readlinkCases(t *testing.T) []invocation {
 		at("-fe in one cluster", "-v", "-fe", "missing"),
 		at("-ef in one cluster", "-v", "-ef", "missing"),
 
-		// The long spellings.
 		at("--canonicalize", "--canonicalize", "missing"),
 		at("--canonicalize-existing", "--canonicalize-existing", "missing"),
 		at("--canonicalize-missing", "--canonicalize-missing", "missing"),
@@ -296,7 +228,6 @@ func readlinkCases(t *testing.T) []invocation {
 		at("--s is a unique prefix", "--s", "file"),
 		at("--z is a unique prefix", "--z", "link"),
 
-		// getopt faults, and the ambiguity lists in declaration order.
 		{name: "--c is ambiguous", args: []string{"--c", "link"}},
 		{name: "--ca is ambiguous", args: []string{"--ca", "link"}},
 		{name: "--can is ambiguous", args: []string{"--can", "link"}},
@@ -311,7 +242,6 @@ func readlinkCases(t *testing.T) []invocation {
 		{name: "help with a value", args: []string{"--help=x"}},
 		{name: "version with a value", args: []string{"--version=1"}},
 
-		// Operands, the awkward ones.
 		{name: "no operands"},
 		{name: "no operands with a mode", args: []string{"-f"}},
 		{name: "dashdash alone", args: []string{"--"}},
@@ -335,15 +265,10 @@ func readlinkCases(t *testing.T) []invocation {
 		at("an operand with an apostrophe", "-v", "a'b"),
 		at("several empty operands", "-v", "", ""),
 		{name: "POSIXLY_CORRECT stops at the first operand", args: []string{"link", "-v"}, dir: tree, env: []string{"POSIXLY_CORRECT=1"}},
-		// POSIXLY_CORRECT turns error reporting on AFTER the options,
-		// so it overrides -q and -s rather than losing to them.
 		{name: "POSIXLY_CORRECT reports a failure", args: []string{"file"}, dir: tree, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "POSIXLY_CORRECT beats quiet", args: []string{"-q", "file"}, dir: tree, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "POSIXLY_CORRECT beats silent", args: []string{"-s", "file"}, dir: tree, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// The answer is QUOTED when it goes to a terminal, in the style
-		// QUOTING_STYLE names — shell-escape when it names none, which
-		// is not gnulib's usual shell-escape-always default.
 		{name: "a terminal quotes the answer", args: []string{"spaced"}, dir: tree, ttyOut: true},
 		{name: "a terminal leaves a plain answer alone", args: []string{"link"}, dir: tree, ttyOut: true},
 		{name: "a terminal under literal quoting", args: []string{"spaced"}, dir: tree, ttyOut: true, env: []string{"QUOTING_STYLE=literal"}},
@@ -352,10 +277,6 @@ func readlinkCases(t *testing.T) []invocation {
 		{name: "zero leaves a terminal answer unquoted", args: []string{"-z", "spaced"}, dir: tree, ttyOut: true},
 		{name: "a pipe leaves the answer unquoted", args: []string{"spaced"}, dir: tree},
 
-		// The write-failure paths. A closed stdout with something
-		// buffered is close_stdout's `write error`; one with nothing
-		// to write is not an error at all, so the exit status is
-		// whatever the operands made it.
 		{name: "stdout closed with output", args: []string{"link"}, dir: tree, stdout: stdoutClosed},
 		{name: "stdout closed with no output", args: []string{"file"}, dir: tree, stdout: stdoutClosed},
 		{name: "stdout closed with a diagnostic", args: []string{"-v", "file"}, dir: tree, stdout: stdoutClosed},
@@ -381,10 +302,6 @@ func TestReadlinkHelpVersion(t *testing.T) {
 	requireVersion(t, "readlink", []string{"-f", "--version"}, 0)
 }
 
-// The canonicalising modes start a relative operand at the working
-// directory, so a removed one is getcwd(2)'s ENOENT under `-v` and
-// silence without it. Bare readlink asks readlink(2) about the name and
-// never needs the directory's.
 func TestReadlinkUnlinkedWorkingDirectory(t *testing.T) {
 	const enoent = "No such file or directory"
 	requireUnlinkedParity(t, "readlink", []unlinkedCase{

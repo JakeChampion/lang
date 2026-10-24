@@ -1,23 +1,3 @@
-// `chmod_at` end to end on every backend that provides it — the four
-// natives, plus the Mach-O build where the host can run it. WASI has no
-// permission bits, so E066 refuses the builtin there exactly as it refuses
-// `chmod` (capability `fsmode`), and the last test in this file is that
-// refusal rather than a wasm probe.
-//
-// What no unit test can assert: the FLAG picks the syscall on Linux —
-// fchmodat for follow, fchmodat2 with AT_SYMLINK_NOFOLLOW otherwise — and
-// each backend hand-writes that branch. A backend that issued the follow form
-// for both would chmod a symlink's TARGET where the caller asked for the link
-// and report Ok; one that issued fchmodat2 for both would work on a kernel
-// that has it and ENOSYS on one that does not. So the probe chmods two
-// symlinks to one file, one each way, in the order that makes a wrong branch
-// leave a wrong mode behind, and the Go side reads everything back through
-// its own Lstat.
-//
-// The two kernels answer the nofollow form differently, and the probe is
-// parameterised on which one runs it. Linux keeps no mode on a symlink and
-// says so — EOPNOTSUPP, or ENOSYS below fchmodat2 — and the builtin passes
-// that through as the Err. Darwin keeps one and changes it.
 package e2e
 
 import (
@@ -31,8 +11,6 @@ import (
 	"testing"
 )
 
-// The modes the probe writes. 0o5755 carries setuid and sticky, so a backend
-// that masked to 0o777 before the syscall lands 0o755 instead.
 const (
 	chmodAtSuid    = 0o5755
 	chmodAtPlain   = 0o640
@@ -41,22 +19,8 @@ const (
 	chmodAtThrough = 0o755
 )
 
-// chmodAtSource is the probe. Every failure returns its own exit code, so the
-// number names the step. `linkHasMode` is whether the kernel running it keeps
-// a mode on a symlink (Darwin) or refuses the nofollow form (Linux).
-//
-// The tree it operates on, all in `dir`:
-//
-//	plain     a regular file, the round-trip subject
-//	tgt       a regular file, the target of both symlinks
-//	flnk      a symlink to tgt, chmoded WITH following, first
-//	lnk       a symlink to tgt, chmoded WITHOUT following, second
-//	dangling  a symlink to nothing
 func chmodAtSource(dir string, linkHasMode bool) string {
 	p := func(name string) string { return filepath.Join(dir, name) }
-	// What the nofollow form on a symlink has to answer. On Darwin it is
-	// Ok; on Linux an Err carrying the kernel's own errno text, and either
-	// of the two is the kernel telling the truth.
 	onLink := func(okCode, wrongCode int) string {
 		if linkHasMode {
 			return fmt.Sprintf(`Ok(_) => {}, Err(_) => { return %d; }`, okCode)
@@ -119,12 +83,8 @@ func chmodAtSource(dir string, linkHasMode bool) string {
 		p("nodir/gone"), p("dangling"), onLink(24, 25), p(chmodAtNoSysMarker))
 }
 
-// chmodAtNoSysMarker is the file the probe creates when the kernel running
-// it has no fchmodat2 — qemu-user's aarch64 table, for one — so the nofollow
-// form on a plain file was ENOSYS and left the mode alone.
 const chmodAtNoSysMarker = "enosys"
 
-// chmodAtLstatMode is the entry's own permission bits, through Go's Lstat.
 func chmodAtLstatMode(t *testing.T, dir, name string) uint32 {
 	t.Helper()
 	var st syscall.Stat_t
@@ -134,9 +94,6 @@ func chmodAtLstatMode(t *testing.T, dir, name string) uint32 {
 	return uint32(st.Mode) & 0o7777
 }
 
-// chmodAtSeed builds the tree chmodAtSource operates on and returns the mode
-// a fresh symlink has here — fixed 0o777 on Linux, the umask's leavings on
-// Darwin — which is what an untouched link must still read back as.
 func chmodAtSeed(t *testing.T, dir string) uint32 {
 	t.Helper()
 	for _, name := range []string{"plain", "tgt"} {
@@ -154,15 +111,9 @@ func chmodAtSeed(t *testing.T, dir string) uint32 {
 	return chmodAtLstatMode(t, dir, "flnk")
 }
 
-// chmodAtCheckTree reads the tree back through Go's own Lstat, so a `stat`
-// that agreed with a broken `chmod_at` about the wrong bits cannot make the
-// probe self-consistent. `fresh` is what chmodAtSeed measured on a new link.
 func chmodAtCheckTree(t *testing.T, dir string, fresh uint32, linkHasMode bool) {
 	t.Helper()
 	mode := func(name string) uint32 { return chmodAtLstatMode(t, dir, name) }
-	// The last change to plain was the nofollow form, which lands where the
-	// kernel has fchmodat2 and is an honest ENOSYS where it does not; the
-	// probe's marker says which, and the mode it left has to agree.
 	wantPlain := uint32(chmodAtNoFol)
 	if _, err := os.Stat(filepath.Join(dir, chmodAtNoSysMarker)); err == nil {
 		wantPlain = chmodAtPlain
@@ -212,9 +163,6 @@ func TestArm64ChmodAt(t *testing.T) {
 	chmodAtCheckTree(t, dir, fresh, false)
 }
 
-// The Mach-O build issues XNU's fchmodat with the flag word itself, and XNU
-// keeps a mode on a symlink — so on an Apple Silicon host the same probe
-// runs natively with the other expectation.
 func TestArm64DarwinChmodAt(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("arm64-darwin execution only runs on Apple Silicon")
@@ -227,9 +175,6 @@ func TestArm64DarwinChmodAt(t *testing.T) {
 	chmodAtCheckTree(t, dir, fresh, true)
 }
 
-// The interpreter runs on whichever kernel hosts the test, so its expectation
-// follows the host: Linux refuses the nofollow form on a symlink, Darwin
-// changes the link.
 func TestInterpChmodAt(t *testing.T) {
 	linkHasMode := runtime.GOOS == "darwin"
 	dir := t.TempDir()
@@ -240,10 +185,6 @@ func TestInterpChmodAt(t *testing.T) {
 	chmodAtCheckTree(t, dir, fresh, linkHasMode)
 }
 
-// Neither WASI preview has permission bits, so there is nothing for either
-// follow mode to set. The answer on that target is the named refusal `chmod`
-// already gets at check time: no wasi profile grants `fsmode`, and E066 says
-// so with the builtin's name and the call site's position.
 func TestWASMChmodAtRefused(t *testing.T) {
 	dir := t.TempDir()
 	bin := buildFernCLI(t)

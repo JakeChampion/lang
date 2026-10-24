@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostStreqHelperGap pins the self-host wasm backend's string-helper
-// emission: a program that uses string equality (which lowers to a
-// `$__fern_streq` call) but declares no string *literals* must still emit the
-// string runtime, or the module references an undefined `$__fern_streq` and
-// wasmtime rejects it. The program gets its
-// strings from string_from_bytes_unchecked + string-typed declarations (no literals),
-// then compares them.
 func TestSelfHostStreqHelperGap(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host streq-helper e2e")
@@ -28,8 +21,6 @@ func TestSelfHostStreqHelperGap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read watbin.fern: %v", err)
 	}
-	// No string literals anywhere; strings come from string_from_bytes_unchecked and
-	// string-typed values, and are compared with ==.
 	const prog = `
 function mk(c: i32): string { return string_from_bytes_unchecked([c as u8]); }
 function streq(a: string, b: string): boolean { return a == b; }

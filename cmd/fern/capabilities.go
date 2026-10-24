@@ -9,14 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/tools/gates"
 )
 
-// runCapabilities implements `fern -capabilities FILE.fern`: load the
-// entry exactly as a compile would (fern.toml packages, workspaces,
-// vendored deps, literate entries all resolve through loadEntry),
-// type-check it (so method calls are rewritten to their hoisted
-// names), and print the per-package capability report computed by
-// internal/pkg/caps. Report mode only — the report itself never enforces
-// (grants are enforced on the compile/-check/-interp paths via
-// gates.Capabilities); see docs/PACKAGE-CAPABILITIES-BRIEF.md (#5361).
 func runCapabilities(srcPath string, w io.Writer) error {
 	e, err := loadEntry(srcPath)
 	if err != nil {

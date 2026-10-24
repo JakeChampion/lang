@@ -56,7 +56,6 @@ func DDByteCases() []DDByteCase {
 			})
 		}
 	}
-	// Cross cache_advance's 128 KiB batch with raw bytes and conversion.
 	cases = append(cases, DDByteCase{
 		Name:  "cache advice raw swab boundary",
 		Parts: []string{strings.Repeat(string(all), 513)[:131073]},

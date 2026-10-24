@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// Exercise the admission proof directly as well as the compiled pipeline tests.
-// Each accepted splice must still pass the typed graph verifier. Rejected
-// candidates retain the call and its environment.
 func TestSelfHostClosureInlineAdmission(t *testing.T) {
 	const src = `import "./ssa";
 import "./ssasem";

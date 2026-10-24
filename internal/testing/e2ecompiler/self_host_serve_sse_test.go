@@ -8,10 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The gate of a chunk producer that parks (docs/NET-P5-FRAMEWORK-PLAN.md
-// slice 4, std/http/sse): the self-host server streams events whose
-// producer waits on a timer, and the worker answers another connection
-// meanwhile, the keep-alive wrapper ticking between the events.
 func TestSelfHostServeSSE(t *testing.T) {
 	bin, runner := selfHostServer(t, e2eharness.SSEServerSource())
 	cmd := binCmd(runner, bin)

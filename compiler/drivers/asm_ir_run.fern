@@ -1,17 +1,3 @@
-// compiler/asm_ir_run.fern — the stdin driver for the register
-// backends: it emits a program read from stdin over the typed lowering, as the
-// CLI does.
-//
-// `-target arm64-linux` selects the arm64 backend instead (#4398 part 1),
-// replacing the retired asm_arm64_ir_run mirror driver. The
-// target-independent probe modes (`-ir-probe` / `-ir-needs`) work for both
-// targets; the per-module unit flags (`-ir-unit` / `-ir-ns` /
-// `-ir-extra-need` / `-ir-sigs`) remain x86-64-only.
-//
-// This is a SEPARATE driver so neither asm.fern nor the widely-built asm_run
-// driver gains an `ir` dependency — the byte-identical self-bootstrap and the
-// ~50 asm_run-based harnesses stay untouched.
-
 import "../util";
 import "../lexer";
 import "../parser";
@@ -22,11 +8,6 @@ import "../asm_arm64_ir";
 import "../ircore";
 import "../semlower";
 
-// main wraps `run` in the shared rc-over-release guard: this driver is
-// exactly where #6021 hid — a native-compiler rc bug that corrupted the
-// driver's OWN freelist while still emitting correct asm — so it now reports
-// a broken heap on every run rather than leaving it to be found by a
-// segfault in an unrelated later build.
 function main(): i32 {
   return util.rc_underflow_guard("asm_ir_run", run());
 }
@@ -34,32 +15,11 @@ function main(): i32 {
 function run(): i32 {
   let av: string[] = args();
   let probe: boolean = false;
-  // `unit` selects per-module translation-unit emit (#3451 step 1/3):
-  // "entry" is the program entry (`_start` + the shared runtime, defs
-  // exported); "lib" a library module (only its `.globl __fn_*`
-  // definitions, no `_start`/runtime). "" keeps the default whole-program
-  // emit.
   let unit: string = "";
-  // `ns` namespaces this unit's string-literal `.rodata` labels (.S<ns>_<idx>)
-  // so two per-module units' string pools don't collide at link. Empty keeps
-  // the whole-program `.S<idx>` labels.
   let ns: string = "";
-  // `-ir-needs`: print this module's runtime needs (one per line) instead of
-  // emitting asm — the per-module driver unions these across all modules and
-  // feeds them to the entry as -ir-extra-need so the entry's single runtime
-  // covers every module's helpers (#3451 step 3 / #3455).
   let needs_probe: boolean = false;
-  // `extra` accumulates -ir-extra-need <name>: the whole-program runtime-need
-  // union folded into the entry unit's shared runtime.
   let extra: string[] = [];
-  // `-ir-sigs <file>` (repeatable): a SIBLING module, lowered together with
-  // this one (typed_units) so a cross-module call checks against the
-  // callee's declaration. Models what the per-module driver supplies from
-  // the loaded import set; the named module's bodies are NOT emitted here
-  // (it is emitted as its own unit).
   let sig_paths: string[] = [];
-  // `-target x86-64-linux|arm64-linux|arm64-darwin` selects the backend; a
-  // caller that names none gets x86-64-linux.
   let target: string = "x86-64-linux";
   let ai: i32 = 1;
   while (ai < av.len()) {
@@ -91,12 +51,6 @@ function run(): i32 {
     }
     ai = ai + 1;
   }
-  // An unrecognised -target is refused rather than emitted for. This driver
-  // dispatches by naming the targets it knows and letting everything else
-  // reach the x86-64 branch, so a stale or misspelled name used to come back
-  // as a successful emit for the WRONG machine — the arm64 leg of #6710 was
-  // handed x86-64 text and surfaced as "unknown mnemonic `movq'" from the
-  // aarch64 assembler, which reads as a codegen bug rather than a typo.
   if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-darwin") {
     eprint("asm_ir_run: unknown -target: " + target + " (want x86-64-linux, arm64-linux, arm64-darwin)");
     return 2;
@@ -124,14 +78,10 @@ function run(): i32 {
     }
     sp = sp + 1;
   }
-  // `-ir-probe`: report the typed lowering's verdict instead of emitting asm —
-  // what it produces and what it refuses, per declaration, over this module
-  // and its `-ir-sigs` siblings.
   if (probe) {
     write(semlower.verdict_text(semlower.verdict(with_siblings(mod, siblings), target)));
     return 0;
   }
-  // `-ir-needs`: report the module's closed runtime-need set, one per line.
   if (needs_probe) {
     let nt: TypedUnits = typed_units(mod, siblings, target);
     for nd in asm_ir.module_runtime_needs(nt.u.mods[0], nt.g.im.funcs, nt.g.stab, nt.u.caches[0], nt.u.physical[0]) {
@@ -139,26 +89,16 @@ function run(): i32 {
     }
     return 0;
   }
-  // `-target arm64-linux`: the arm64 leg (replacing the retired asm_arm64_ir_run
-  // mirror), through the same entry the CLI emits with. The unit/sigs flags
-  // are x86-64-only and ignored here.
   if (target == "arm64-linux") {
     let d64: semlower.Driven = semlower.driven(mod, target);
     print(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub, 0 as usize));
     return 0;
   }
-  // `-target arm64-darwin`: the arm64-apple-darwin GAS text (@PAGE/@PAGEOFF,
-  // _main, BSD syscalls): the arm64 emit with its darwin flag set, then
-  // darwinize.
   if (target == "arm64-darwin") {
     let dd: semlower.Driven = semlower.driven(mod, target);
     print(asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(dd.full, true, dd.sub, 0 as usize)));
     return 0;
   }
-  // `-ir-unit entry|lib`: emit a single per-module translation unit (defs
-  // exported `.globl`; `_start`/runtime only for the entry). Separately-
-  // emitted units of a multi-module program link into one binary. The entry
-  // folds -ir-extra-need (the whole-program need union) into its runtime.
   if (unit == "entry" || unit == "lib") {
     print(typed_unit(mod, siblings, unit == "entry", ns, extra, target));
     return 0;
@@ -168,8 +108,6 @@ function run(): i32 {
   return 0;
 }
 
-// typed_unit emits `mod` as one unit of a per-module build over the typed
-// lowering (typed_units).
 function typed_unit(mod: parser.Module, siblings: parser.Module[], is_entry: boolean, ns: string, extra: string[], target: string): string {
   let t: TypedUnits = typed_units(mod, siblings, target);
   let needs: string[] = [];
@@ -179,9 +117,6 @@ function typed_unit(mod: parser.Module, siblings: parser.Module[], is_entry: boo
   return asm_ir.emit_module_ir_unit_flat(t.u.mods[0], is_entry, true, ns, needs, t.g.im.funcs, t.g.stab, 0, 0 - 1, t.u.caches[0], t.u.physical[0], t.d.sub.rt_lower, 0 as usize, asmcore.env_switches());
 }
 
-// The typed lowering checks a whole program, so it lowers `mod` together with
-// its `-ir-sigs` siblings and cuts `mod`'s share out as unit 0; a call to a
-// sibling it was not given is the checker's undefined-name error.
 struct TypedUnits { d: semlower.Driven, g: ircore.Gated, u: ircore.Units }
 
 function typed_units(mod: parser.Module, siblings: parser.Module[], target: string): TypedUnits {
@@ -194,9 +129,6 @@ function typed_units(mod: parser.Module, siblings: parser.Module[], target: stri
   return TypedUnits { d: d, g: g, u: ircore.split_units(g, parts, 0) };
 }
 
-// with_siblings is `mod` with its siblings' declarations after its own.
-// Siblings are never inlined, so which of them were passed cannot change
-// `mod`'s code.
 function with_siblings(mod: parser.Module, siblings: parser.Module[]): parser.Module {
   let whole: parser.Module = mod;
   for sm in siblings {

@@ -1,8 +1,8 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Bound whole-tuple result, then the `m = t.0` reassign idiom.
-// Per iter: hit 2 + surviving "other" 3 = 5; 500x → 2500.
+
+
+
+
+
 import "core/int";
 import "core/map";
 import "std/string";

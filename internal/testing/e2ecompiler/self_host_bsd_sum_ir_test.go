@@ -9,13 +9,6 @@ import (
 	"testing"
 )
 
-// `__bsd_sum(s, sum)` on the self-host IR path: the BSD checksum `sum -r`
-// keeps, continued over s from `sum` — per byte, rotate the 16 bits right by
-// one and add the byte, modulo 2^16.
-
-// bsdSumIRProg is SELF-CHECKING: it carries a Fern reference and compares the
-// kernel against it over every length to 40 from several starting sums, and
-// over 300 high bytes. 42 means every comparison matched.
 const bsdSumIRProg = `function ref(s: string, sum: i32): i32 {
     let v: i32 = sum & 65535;
     let i: i32 = 0;
@@ -46,8 +39,6 @@ function main(): i32 {
 }
 `
 
-// runBsdSumIR compiles bsdSumIRProg with the self-host modload driver for
-// the given register target and returns the exit code.
 func runBsdSumIR(t *testing.T, target string) int {
 	t.Helper()
 	var runner, runPrefix, extra []string
@@ -92,10 +83,6 @@ func TestSelfHostBsdSumIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostBsdSumIRWasm runs the same program through the self-hosted
-// wasm IR driver. The helper's presence in the emitted text is asserted, so a
-// module that silently stopped needing it would fail rather than pass by
-// exercising nothing.
 func TestSelfHostBsdSumIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host bsd_sum wasm IR e2e")

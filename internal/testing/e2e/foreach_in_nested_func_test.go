@@ -8,15 +8,6 @@ import (
 	"testing"
 )
 
-// A `for..in` inside a nested named function. The desugar that lowers ForEach
-// to the `.len()` + index loop walks statements, and a nested named function is
-// an *ast.FuncDecl statement whose body is a separate block — it had no arm in
-// that switch, so the ForEach survived to IR and every such program failed to
-// compile with "ir: unsupported statement *ast.ForEach". Nothing reached it:
-// the lambda arm covers `let f = () => {...}`, which is an EXPRESSION.
-//
-// sum over [1,2,3] = 6, plus the same loop one level deeper inside a lambda in
-// the nested function = 12.
 const foreachInNestedFuncSrc = `function total(xs: i32[]): i32 {
     function sum(acc: i32): i32 {
         let n: i32 = acc;

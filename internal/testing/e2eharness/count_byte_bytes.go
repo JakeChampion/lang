@@ -2,8 +2,6 @@ package e2eharness
 
 import "strings"
 
-// CountByteBytesSource exercises raw values, dense counts and vector tails.
-// The interpreter has no allocation counter, so only compiled targets use it.
 func CountByteBytesSource(allocations bool) string {
 	probe := ""
 	if allocations {

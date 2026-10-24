@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// Run the generated Darwin body with a fake sysctl on both native ISAs.
-// This checks the kernel ABI and its error path without executing XNU calls
-// on a Linux host; the Darwin sysinfo and Mach-O gates check the real emit.
 func TestSelfHostDarwinCPUCountSource(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

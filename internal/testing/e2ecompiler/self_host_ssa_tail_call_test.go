@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// `pick` returns `scale`'s result as it is on one path and a parameter on the
-// other, so the call is its only one and it is a tail call.
 const ssaTailCallProg = `@noinline function scale(a: i32, b: i32): i32 { return a * 3 + b; }
 @noinline function pick(a: i32): i32 {
   if (a > 5) {
@@ -28,9 +26,6 @@ function main(): i32 {
 }
 `
 
-// A function whose only call is a register call it returns as it is leaves
-// through a jump to the callee's register entry and builds no frame, on both
-// native targets, including debug builds.
 func TestSelfHostSSATailCall(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
@@ -55,7 +50,6 @@ func TestSelfHostSSATailCall(t *testing.T) {
 			if strings.Contains(body, frames[target]) || strings.Contains(body, "call") || strings.Contains(body, "bl ") {
 				t.Fatalf("pick builds a frame or calls:\n%s", body)
 			}
-			// 0..5 return themselves and 6..9 return 3a+1: 15 + 94 - 100.
 			if stderr, code := cli.exitOf(t, ssaTailCallProg, target); code != 9 {
 				t.Fatalf("exit %d, want 9\n%s", code, stderr)
 			}
@@ -78,7 +72,6 @@ func TestSelfHostSSATailCall(t *testing.T) {
 	})
 }
 
-// tailCallBody is the listing of __fn_<name> up to the next function label.
 func tailCallBody(t *testing.T, asm, name string) string {
 	t.Helper()
 	start := strings.Index(asm, "\n__fn_"+name+":\n")

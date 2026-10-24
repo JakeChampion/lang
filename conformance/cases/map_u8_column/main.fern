@@ -1,22 +1,22 @@
 import "core/map";
-// A `u8` map column read back through keys() and values(). The stride of the
-// result array is a property of the TYPE, and the runtime tag cannot see it:
-// a `u8` key and an `i32` key are both keyKind 0, so the i32 column writer wrote both
-// at its 4-byte destStride while the result was bound to a `u8[]`, whose
-// elements stride 1. Twelve entries read at stride 1 out of a buffer written
-// at stride 4 land inside the first three, and native summed 3 where every
-// other leg summed 66 — with the right length throughout, so nothing was lost
-// and nothing reported (#10000).
-//
-// The index reads are what separate a stride bug from a lost entry: at stride
-// 4 the value the reader finds at index 5 is a padding byte of entry 1, so a
-// length check alone passes on the broken compiler.
-//
-// Both maps are grown past their initial capacity so the rehash moves the
-// column before it is snapshotted. The empty and single-entry maps at the end
-// cover the two lengths a stride cannot be wrong at, which is what makes them
-// worth pinning: a fix that only ever ran the loop body would still have to
-// allocate a zero-length column and hand back a readable one-element one.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 function main(): i32 {
     let keyed: Map[u8, i32] = map_new(2);
     let i: i32 = 0;

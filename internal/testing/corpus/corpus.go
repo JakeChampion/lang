@@ -1,5 +1,3 @@
-// Package corpus names the repository's Fern sources by role, so every test
-// that sweeps them reads one list instead of keeping its own.
 package corpus
 
 import (
@@ -10,17 +8,10 @@ import (
 	"sort"
 )
 
-// Programs are the roots of the runnable programs: the examples, the Fern-side
-// tests and probes, and the benchmarks.
 var Programs = []string{"examples", "tests", "bench"}
 
-// Sources are the roots of every Fern source the formatter and printer must
-// round-trip: the programs, the compiler, and the standard library.
 var Sources = append(append([]string{}, Programs...), "compiler", "internal/stdlib")
 
-// Files lists every `.fern` file under roots, repo-relative with slash
-// separators, sorted. A root that contributes no file is an error, so a moved
-// directory fails the sweep instead of shrinking it.
 func Files(repoRoot string, roots []string) ([]string, error) {
 	var out []string
 	for _, root := range roots {
@@ -50,8 +41,6 @@ func Files(repoRoot string, roots []string) ([]string, error) {
 	return out, nil
 }
 
-// RepoRoot is the nearest directory at or above the working directory that
-// holds go.mod.
 func RepoRoot() (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {

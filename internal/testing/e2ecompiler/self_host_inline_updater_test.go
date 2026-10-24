@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// A function that rebuilds a record parameter with an array field updated is
-// an updater (seminline.updater), spliced like a leaf into every caller: the
-// caller then plans the element read, the element stored and the update that
-// keeps the array together. `put` is called from three places, so neither the
-// once nor the shared splice takes it. `kept` is the same body declared
-// `@noinline`, which stays a call.
 const inlineUpdaterProg = `struct P { xs: i32[], n: i32 }
 function put(p: P, i: i32, v: i32): P { return P { ...p, xs: p.xs.with(i, v) }; }
 @noinline function kept(p: P, i: i32, v: i32): P { return P { ...p, xs: p.xs.with(i, v) }; }

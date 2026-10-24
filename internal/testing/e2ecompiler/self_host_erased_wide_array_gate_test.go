@@ -8,33 +8,10 @@ import (
 	"testing"
 )
 
-// Erased-wide `T[]` generics — `reverse[T](xs: T[]): T[]` and friends — index and
-// append at an ERASED element width. On the register backends every slot is
-// 8 bytes so that is harmless, but on wasm32 an i32 is 4 bytes and an f64 is 8,
-// so the copy steps at 4 bytes through an 8-byte-element array.
-//
-// Ungated, that produces SILENT WRONG VALUES: `array.reverse` on an f64[]
-// returns 1.5 where 4.5 is expected, with the compiler exiting 0 and
-// FERN_STRICT_IR=1 reporting nothing. The interpreter and the x86-64 backend
-// are correct, so only the wasm leg is wrong.
-//
-// The erased-wide gate looks for a wide value passed BY VALUE through a
-// bare-typevar param; here nothing wide is passed by value at all — the erasure
-// is in the element type — so it also has to key on a wide-element array
-// reaching an erased `T[]` param.
-//
-// erasedWideArrayFixedCases are the promoted set: clause (c-arr) clones them
-// per concrete element type, so they COMPILE AND RUN CORRECTLY with a real
-// stride rather than being refused. Asserting values, not
-// routing, is the point: routing said "ir" while returning 1.5 for 4.5.
 var erasedWideArrayFixedCases = []struct {
 	name string
 	src  string
 }{
-	// The array-method instance `__arrm_flat_map__i32` keeps `U[]` in its
-	// result; the semantic lowering binds `U` from the lambda and produces the
-	// instance at the wide element, so these compile and answer as the
-	// interpreter does.
 	{"flat_map_method_i64", `import "std/array";
 function main(): i32 {
     let xs: i32[] = [1, 2, 3];
@@ -54,26 +31,19 @@ function main(): i32 {
     let xs: f64[] = [1.5, 2.5, 4.5];
     let ys: f64[] = array.reverse(xs);
     return (ys[0] * 10.0) as i32;
-}`}, // 45
+}`},
 	{"rotate_left_f64", `import "std/array";
 function main(): i32 {
     let xs: f64[] = [1.5, 2.5, 4.5];
     let ys: f64[] = array.rotate_left(xs, 2);
     return (ys[0] * 10.0) as i32;
-}`}, // 45
+}`},
 	{"drop_f64", `import "std/array";
 function main(): i32 {
     let xs: f64[] = [1.5, 2.5, 4.5];
     let ys: f64[] = array.drop(xs, 2);
     return (ys[0] * 10.0) as i32;
-}`}, // 45
-	// The two-typevar `map[T, U](xs: T[], f)` at a wide element and the
-	// array-method spelling `xs.map(f)` (#6287), whose `U` stays erased on the
-	// RESULT side. These were the refusal rows — the AST wasm path miscompiled
-	// them to a 4-byte stride — until the semantic lowering admitted a wide
-	// slot in a function value's signature: the call through the value now
-	// carries its funcref signature tag, so the instance is produced at the
-	// concrete element and answers as the interpreter does.
+}`},
 	{"map_f64_two_typevars", `import "std/array";
 function dbl(x: f64): f64 { return x * 2.0; }
 function main(): i32 {
@@ -81,14 +51,6 @@ function main(): i32 {
     let ys: f64[] = array.map(xs, dbl);
     return (ys[1] * 10.0) as i32;
 }`},
-	// The same two-typevar erasure reached through the array-METHOD spelling
-	// (#6287). `xs.map(f)` is folded to `__arrm_map__<elem>`, whose `T` the
-	// receiver fixes but whose `U` stays erased — so the wide element arrives on
-	// the RESULT side, which the param-direction gate above cannot see. These
-	// answered wrong or trapped, with the compiler exiting 0. The `flat_map`
-	// rows moved to the fixed list once a type variable anywhere in a
-	// spelling marked the instance a template: the semantic lowering binds
-	// `U` from the lambda and produces it at the concrete element.
 	{"map_method_i64", `import "std/array";
 function main(): i32 {
     let xs: i32[] = [1, 2, 3];
@@ -96,9 +58,6 @@ function main(): i32 {
     if (w[2] != 6i64) { return 2; }
     return 11;
 }`},
-	// The result reaches its wide destination by `return` and by assignment, not
-	// only by an annotated `let` — each is a separate reader of the mis-strided
-	// array, so each is its own row.
 	{"map_method_i64_return", `import "std/array";
 function g(xs: i32[]): i64[] { return xs.map((x: i32) => (x as i64) * 2i64); }
 function main(): i32 {
@@ -114,39 +73,31 @@ function main(): i32 {
     if (w[2] != 6i64) { return 2; }
     return 11;
 }`},
-	// A wide ELEMENT under the method spelling (#9838). The worklist's
-	// `__arrm_map__i64` clone keeps `U` erased, so the typed lowering declines
-	// it as a template and produces the instance beside it. A superseded
-	// template has no emitted body and no verdict, so it cannot decline the
-	// module on the wasm route.
 	{"map_method_i64_elem_named", `import "std/array";
 function dbl(x: i64): i64 { return x * (2 as i64); }
 function twice(own xs: i64[]): i64[] { return xs.map(dbl); }
-function main(): i32 { return twice([3 as i64, 5 as i64]).len() + 40; }`}, // 42
+function main(): i32 { return twice([3 as i64, 5 as i64]).len() + 40; }`},
 	{"map_method_i64_elem_lambda", `import "std/array";
 function main(): i32 {
     let xs: i64[] = [3 as i64, 5 as i64];
     let ys: i64[] = xs.map((x: i64): i64 => x * (2 as i64));
     return (ys[0] + ys[1]) as i32;
-}`}, // 16
+}`},
 	{"map_method_i64_elem_narrow_result", `import "std/array";
 function main(): i32 {
     let xs: i64[] = [3 as i64, 5 as i64];
     let ys: i32[] = xs.map((x: i64): i32 => (x as i32) + 1);
     return ys[0] * 10 + ys[1];
-}`}, // 46
+}`},
 	{"map_method_f64_elem_named", `import "std/array";
 function dbl(x: f64): f64 { return x * 2.0; }
 function main(): i32 {
     let xs: f64[] = [1.5, 2.25];
     let ys: f64[] = xs.map(dbl);
     return (ys[1] * 10.0) as i32;
-}`}, // 45
+}`},
 }
 
-// erasedWideArrayAllowCases must STILL lower: the gate keys on a wide ELEMENT,
-// so a narrow-element instantiation of the very same generic is unaffected. A
-// gate that refused these would be too wide and would cost real coverage.
 var erasedWideArrayAllowCases = []struct {
 	name string
 	src  string
@@ -156,43 +107,33 @@ function main(): i32 {
     let xs: i32[] = [1, 2, 4];
     let ys: i32[] = array.reverse(xs);
     return ys[0] * 10 + 5;
-}`}, // 45
+}`},
 	{"reverse_string", `import "std/array";
 function main(): i32 {
     let xs: string[] = ["ab", "cdef"];
     let ys: string[] = array.reverse(xs);
     return ys[0].len() + 38;
-}`}, // 42
-	// The array-METHOD refusals above key on the RESULT element being wide, so
-	// the narrow instantiations of the very same methods must keep lowering —
-	// including the pointer-element `string[]`, whose stride is 4 on wasm32.
+}`},
 	{"map_method_i32", `import "std/array";
 function main(): i32 {
     let xs: i32[] = [1, 2, 3];
     let w: i32[] = xs.map((x: i32) => x * 2);
     return w[2] * 7 + 3;
-}`}, // 45
+}`},
 	{"map_method_string", `import "std/array";
 function main(): i32 {
     let xs: i32[] = [1, 2, 3];
     let w: string[] = xs.map((x: i32) => "abcde");
     return w[2].len() + 40;
-}`}, // 45
+}`},
 	{"flat_map_method_i32", `import "std/array";
 function main(): i32 {
     let xs: i32[] = [1, 2, 3];
     let w: i32[] = xs.flat_map((x: i32) => [x * 2]);
     return w[2] * 7 + 3;
-}`}, // 45
+}`},
 }
 
-// erasedWideArrayBlindCases are callees that take an erased `T[]` but never read
-// an ELEMENT — so no stride is ever used and there is nothing to miscompile. A
-// gate that asks only whether a wide-element array reached an erased `T[]`
-// param refuses them anyway. `is_empty` is the one such shape in the
-// whole of std/array (the other concrete-return generics — `all`, `any`,
-// `count_where`, `position`, `sum_by` — feed elements to a predicate and stay
-// refused, correctly).
 var erasedWideArrayBlindCases = []struct {
 	name string
 	src  string
@@ -202,23 +143,19 @@ function main(): i32 {
     let xs: f64[] = [1.5, 2.5];
     if (array.is_empty(xs)) { return 1; }
     return 45;
-}`}, // 45
+}`},
 	{"len_only_generic_f64", `function count_of[T](xs: T[]): i32 { return xs.len(); }
 function main(): i32 {
     let xs: f64[] = [4.5, 1.5];
     return count_of(xs) * 20 + 5;
-}`}, // 45
+}`},
 	{"len_only_generic_i64", `function count_of[T](xs: T[]): i32 { return xs.len(); }
 function main(): i32 {
     let xs: i64[] = [9000000000, 1];
     return count_of(xs) * 20 + 5;
-}`}, // 45
+}`},
 }
 
-// TestSelfHostErasedWideArrayGateBlindWasm pins the other edge of the gate: a
-// callee that only asks its erased array for `.len()` must still lower and run.
-// The fixed cases above fail if the gate gets too narrow, this one if it gets
-// too wide, and neither alone is enough.
 func TestSelfHostErasedWideArrayGateBlindWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping erased-wide element-blind wasm cases")
@@ -260,8 +197,6 @@ func TestSelfHostErasedWideArrayGateBlindWasm(t *testing.T) {
 	}
 }
 
-// TestSelfHostErasedWideArrayFixedWasm pins that the promoted shapes now produce
-// the RIGHT ANSWER on wasm, against the interp oracle.
 func TestSelfHostErasedWideArrayFixedWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping erased-wide promoted wasm cases")
@@ -300,8 +235,6 @@ func TestSelfHostErasedWideArrayFixedWasm(t *testing.T) {
 	}
 }
 
-// TestSelfHostErasedWideArrayGateNarrowWasm pins that the gate keys on element
-// WIDTH: the same generics at i32 / string elements must still lower and run.
 func TestSelfHostErasedWideArrayGateNarrowWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping erased-wide narrow-element wasm gate")

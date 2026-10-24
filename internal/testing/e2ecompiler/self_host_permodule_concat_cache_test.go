@@ -7,14 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostPerModuleConcatObjectCacheX86_64 drives `-cache-dir` through the
-// single-process per-module concat (the 512–1500 function band), #6937. Every
-// phase is compared byte-for-byte with a clean concat build of the same sources.
-//
-// The reach phase: the entry starts calling a second lib3 function. The units
-// are cut from the typed lowering of the whole program, which is not pruned to
-// what the entry reaches, so only the entry re-emits. The fact phase is a
-// body-only edit that moves a parameter mode the typed lowering infers.
 func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir, mmr := buildConcatDriver(t, gcc)
@@ -75,8 +67,6 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 		return out
 	}
 
-	// The reach edit's target stays a call: a leaf the entry splices leaves
-	// lib3's unit too, which is the inliner working, not a reach leak.
 	edit("lib3.fern", "pub function m3_f1(", "@noinline pub function m3_f1(")
 
 	hits, misses := concat("cold")
@@ -85,13 +75,10 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 	hits, misses = concat("warm")
 	pmWantSets(t, "warm", hits, misses, all, []string{})
 
-	// Body-only edit of a function the reach set drops: lib3's source changes,
-	// so lib3 alone re-emits.
 	edit("lib3.fern", "return x + 305;", "return x + 1305;")
 	hits, misses = concat("body")
 	pmWantSets(t, "body", hits, misses, without("lib3"), []string{"lib3"})
 
-	// Reach edit: the entry keeps its value but now reaches m3_f1.
 	edit("entry.fern", "lib3.m3_f0(1)", "lib3.m3_f0(1) + lib3.m3_f1(1) - lib3.m3_f1(1)")
 	hits, misses = concat("reach")
 	var reHits []string
@@ -102,11 +89,6 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 	}
 	pmWantSets(t, "reach", hits, misses, without("__entry"), []string{"__entry"})
 
-	// A body-only edit that moves a fact about a function. m3_keep's parameter is
-	// inferred borrowed until its body starts consuming it, and callers lower
-	// against that mode, so lib3's contract rows move and every module importing
-	// lib3 re-emits the way it would for a signature change. Modules outside that closure are
-	// served. First bring m3_keep into reach, then make the fact-only edit.
 	edit("lib3.fern", "return x + 301;", "return x + 301 + m3_keep([x]) - 1;")
 	b3, err := os.ReadFile(filepath.Join(proj, "lib3.fern"))
 	if err != nil {
@@ -129,9 +111,6 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 		t.Fatalf("cached concat program exited %d, want 0", code)
 	}
 
-	// The concat cache is warm for these sources; an emit-all run against the
-	// same directory must not be served any of its units, and a concat run
-	// against a directory emit-all populated must not be served either.
 	outDir := filepath.Join(proj, "ea_out")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)

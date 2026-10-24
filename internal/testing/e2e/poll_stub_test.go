@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// The `poll(fds, timeout_ms)` builtin is poll(2) / ppoll(2) on the native
-// backends, wasi:io/poll.poll over the tokens as pollable handles on wasm
-// (docs/ASYNC-FUTURE-UNIFICATION.md), and a set over the handles' descriptors
-// on the interpreter. This pins that interp `poll([], 0)` answers -1 for the
-// empty set, and that a poll-using program compiles on wasm.
 func TestPollEmptySetInterpWasm(t *testing.T) {
 	bin := buildFernCLI(t)
 	const src = `function main(): i32 {
@@ -24,7 +19,6 @@ func TestPollEmptySetInterpWasm(t *testing.T) {
 		cmd := exec.Command(bin, "-interp", "-")
 		cmd.Stdin = strings.NewReader(src)
 		_ = cmd.Run()
-		// -1 truncated to the process exit low byte.
 		if code := cmd.ProcessState.ExitCode(); code != 255 {
 			t.Errorf("interp poll([], 0) exit = %d, want 255 (-1)", code)
 		}

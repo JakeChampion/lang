@@ -4,12 +4,6 @@ import (
 	"testing"
 )
 
-// #12135: a construction that rebuilds its own donor keeps a field in place,
-// which stands in for the construction's retain of that field. The loop below
-// reads `ctx.st` once, hands it to `wrap`, which keeps it and so takes a unit
-// of it, and then rebuilds `ctx` around it. The keep must replace only the
-// construction's retain: when `ctx` was unique, the call's retain was skipped
-// too, so `wrap` took the slot's unit and the rebuilt `ctx` held a freed `St`.
 const keptFieldCallSrc = `import "std/string";
 import "std/i32";
 import "std/array";

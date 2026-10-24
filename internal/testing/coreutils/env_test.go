@@ -6,43 +6,10 @@ import (
 	"testing"
 )
 
-// env(1) is the first utility here that EXECS, and the first whose whole
-// output is the environment, so the harness's fixed `baseEnv` does double duty:
-// it is the determinism that makes the dump comparable at all. Both sides see
-// exactly `LC_ALL=C LANG=C TZ=UTC PATH=/usr/bin:/bin`, in that order, so `env`
-// with no COMMAND prints four known lines rather than the session's sixty.
-//
-// Four things about it are worth knowing before reading the cases.
-//
-//   - **The action order is not the command-line order.** Clear (`-i`), unset
-//     (`-u`), set (`NAME=VALUE`), the signal options, `-C`, then exec. `-v`
-//     makes it visible, which is why so many cases below carry `-v`: it is the
-//     only way to assert the order rather than just the outcome.
-//   - **`-C` lands before the PATH search.** `env -C DIR cmd` resolves `cmd`
-//     from DIR, so a relative PATH entry means something different after it.
-//   - **`-S` is spliced into argv and re-parsed**, so options inside the string
-//     are real options and `-S'A=1 echo hi'` really does set A.
-//   - **`-i` suppresses `-u` entirely** — there is nothing to unset — in either
-//     option order.
-//
-// The `-S` grammar is the substance and it is bigger than it looks. The escape
-// set is `\\ \# \$ \" \' \_ \c \f \n \r \t \v` and NOTHING else: `\a`, `\b`,
-// `\e` and `\0` are all `invalid sequence`. `\_` separates words outside quotes
-// and is a literal space inside them; `\c` truncates the rest of the string;
-// `#` opens a comment only at the start of a token; an unquoted `$A` is an
-// error that echoes the whole remainder; and `${UNSET}` makes its token
-// DISAPPEAR while `""` leaves an empty one behind.
-//
-// Signal numbers are the host kernel's and the two kernels disagree about most
-// of them, so the cases below name signals rather than numbering them, except
-// where the number is the point.
-
 func init() {
 	registerCorpus("env", envCases)
 }
 
-// The `-S` strings, kept apart because there are so many of them and because
-// each is one measured rule.
 var envSplitStrings = []struct {
 	name string
 	s    string
@@ -111,14 +78,12 @@ func envCases(t *testing.T) []invocation {
 	execTree := envExecTree(t)
 	env0Tree := env0Files(t)
 
-	// ---- the bare forms ----
 	add(invocation{name: "no arguments dumps the environment"})
 	add(invocation{name: "dashdash alone still dumps", args: []string{"--"}})
 	add(invocation{name: "a command with no changes", args: []string{"/bin/echo", "hi"}})
 	add(invocation{name: "help with a value", args: []string{"--help=x"}})
 	add(invocation{name: "version with a value", args: []string{"--version=1"}})
 
-	// ---- -i and the bare dash ----
 	add(invocation{name: "ignore environment", args: []string{"-i"}})
 	add(invocation{name: "ignore environment long", args: []string{"--ignore-environment"}})
 	add(invocation{name: "bare dash implies -i", args: []string{"-"}})
@@ -130,7 +95,6 @@ func envCases(t *testing.T) []invocation {
 	add(invocation{name: "ignore twice", args: []string{"-i", "-i"}})
 	add(invocation{name: "dash after dashdash", args: []string{"--", "-"}})
 
-	// ---- -u ----
 	add(invocation{name: "unset an existing name", args: []string{"-u", "LANG"}})
 	add(invocation{name: "unset glued", args: []string{"-uLANG"}})
 	add(invocation{name: "unset long", args: []string{"--unset=LANG"}})
@@ -146,7 +110,6 @@ func envCases(t *testing.T) []invocation {
 	add(invocation{name: "unset outranks the command", args: []string{"-u", "", "/bin/echo", "hi"}})
 	add(invocation{name: "unset then set the same name", args: []string{"-u", "LANG", "LANG=new"}})
 
-	// ---- -0 ----
 	add(invocation{name: "null separated dump", args: []string{"-0"}})
 	add(invocation{name: "null separated long", args: []string{"--null"}})
 	add(invocation{name: "null with -i", args: []string{"-0", "-i", "A=1"}})
@@ -155,7 +118,6 @@ func envCases(t *testing.T) []invocation {
 	add(invocation{name: "null refusal beats not found", args: []string{"-0", "/no/such/cmd9090"}})
 	add(invocation{name: "null twice", args: []string{"-0", "-0"}})
 
-	// ---- -C ----
 	add(invocation{name: "chdir and run", args: []string{"-C", "/", "/bin/echo", "moved"}})
 	add(invocation{name: "chdir long", args: []string{"--chdir=/", "/bin/echo", "moved"}})
 	add(invocation{name: "chdir to a missing directory", args: []string{"-C", "/no/such/dir9090", "/bin/true"}})
@@ -165,9 +127,6 @@ func envCases(t *testing.T) []invocation {
 	add(invocation{name: "chdir without a command outranks a bad directory", args: []string{"-C", "/no/such/dir9090"}})
 	add(invocation{name: "last chdir wins", args: []string{"-C", "/no/such/dir9090", "-C", "/", "/bin/echo", "ok"}})
 
-	// ---- -a / --argv0 (9.5) ----
-	// It replaces what the child sees as its own name; the file run is
-	// still the COMMAND operand, so `-a` cannot redirect the exec.
 	add(invocation{name: "argv0 short", args: []string{"-a", "ZERO", "/bin/echo", "a"}})
 	add(invocation{name: "argv0 long", args: []string{"--argv0=ZERO", "/bin/echo", "a"}})
 	add(invocation{name: "argv0 glued", args: []string{"-aZERO", "/bin/echo", "a"}})
@@ -181,11 +140,6 @@ func envCases(t *testing.T) []invocation {
 	add(invocation{name: "argv0 on a command that is not there", args: []string{"-a", "ZERO", "/no/such/cmd9090"}})
 	add(invocation{name: "argv0 with what the child sees", args: []string{"-a", "ZERO", filepath.Join(execTree, "showargs"), "x"}})
 
-	// ---- --env0-from (9.12) ----
-	// The file's entries are NUL separated and it must end with one.
-	// Without -i they are merged into the inherited environment the way
-	// putenv merges an assignment; with -i they REPLACE it exactly, which
-	// is what lets an environment holding duplicates round-trip.
 	add(invocation{name: "env0 from a file", args: []string{"--env0-from", filepath.Join(env0Tree, "two")}})
 	add(invocation{name: "env0 equals form", args: []string{"--env0-from=" + filepath.Join(env0Tree, "two")}})
 	add(invocation{name: "env0 replaces an inherited name", args: []string{"--env0-from", filepath.Join(env0Tree, "overrides")}})
@@ -202,7 +156,6 @@ func envCases(t *testing.T) []invocation {
 	add(invocation{name: "env0 traced", args: []string{"-v", "-i", "--env0-from", filepath.Join(env0Tree, "noequals")}})
 	add(invocation{name: "env0 with a command", args: []string{"-i", "--env0-from", filepath.Join(env0Tree, "two"), "/bin/echo", "ran"}})
 
-	// ---- NAME=VALUE operands ----
 	add(invocation{name: "one assignment", args: []string{"FOO=bar"}})
 	add(invocation{name: "empty value", args: []string{"FOO="}})
 	add(invocation{name: "a name that is not one", args: []string{"1FOO=bar"}})
@@ -218,7 +171,6 @@ func envCases(t *testing.T) []invocation {
 	add(invocation{name: "dashdash does not stop assignments", args: []string{"--", "FOO=bar"}})
 	add(invocation{name: "an option after an operand is not an option", args: []string{"A=2", "-u", "A"}})
 
-	// ---- exit statuses ----
 	add(invocation{name: "command not found", args: []string{"/no/such/cmd9090"}})
 	add(invocation{name: "command not found via PATH", args: []string{"nosuchcmd9090"}})
 	add(invocation{name: "an empty command", args: []string{""}})
@@ -229,7 +181,6 @@ func envCases(t *testing.T) []invocation {
 	add(invocation{name: "a dash command", args: []string{"--", "-i"}})
 	add(invocation{name: "the command's own status passes through", args: []string{"/bin/false"}})
 
-	// ---- the signal options ----
 	add(invocation{name: "block a signal", args: []string{"--block-signal=INT", "/bin/true"}})
 	add(invocation{name: "block lower case", args: []string{"--block-signal=int", "/bin/true"}})
 	add(invocation{name: "block with the SIG prefix", args: []string{"--block-signal=SIGINT", "/bin/true"}})
@@ -242,16 +193,10 @@ func envCases(t *testing.T) []invocation {
 	add(invocation{name: "block a whitespace name", args: []string{"--block-signal= INT ", "/bin/true"}})
 	add(invocation{name: "block KILL is silently allowed", args: []string{"--block-signal=KILL", "/bin/true"}})
 	add(invocation{name: "ignore KILL is refused", args: []string{"--ignore-signal=KILL", "/bin/true"}})
-	// The shared operand2sig grammar (#9652). A number is masked because it
-	// may be a wait status, so 137 is KILL — which makes the pair below a
-	// cross-check on env's own asymmetry: blocking KILL is silently nothing
-	// while ignoring it is fatal, and 137 has to reach both.
 	add(invocation{name: "block a wait status", args: []string{"--block-signal=137", "/bin/true"}})
 	add(invocation{name: "ignore a wait status is refused", args: []string{"--ignore-signal=137", "/bin/true"}})
 	add(invocation{name: "block SIG and a number", args: []string{"--block-signal=SIG9", "/bin/true"}})
 	add(invocation{name: "block SIG on the top of the range", args: []string{"--block-signal=SIG64", "/bin/true"}})
-	// env is the one caller that cannot use signal 0, and it refuses every
-	// spelling of it with the message an unparseable name gets.
 	add(invocation{name: "block EXIT is refused", args: []string{"--block-signal=EXIT", "/bin/true"}})
 	add(invocation{name: "block SIG0 is refused", args: []string{"--block-signal=SIG0", "/bin/true"}})
 	add(invocation{name: "block a number masking to zero", args: []string{"--block-signal=256", "/bin/true"}})
@@ -261,20 +206,11 @@ func envCases(t *testing.T) []invocation {
 	add(invocation{name: "signal options need a command", args: []string{"--block-signal=INT"}})
 	add(invocation{name: "default a signal", args: []string{"--default-signal=INT", "/bin/true"}})
 	add(invocation{name: "ignore a signal", args: []string{"--ignore-signal=INT", "/bin/true"}})
-	// An ALTERNATE name and the PRIMARY one for the same number: both are
-	// accepted on input and only one is ever printed, so the pair pins which
-	// way round that is. Signal 29's two names had it backwards until the
-	// `kill` oracle showed GNU printing POLL where this printed IO.
 	add(invocation{name: "ignore by an alternate name", args: []string{"--ignore-signal=IO", "/bin/true"}})
 	add(invocation{name: "ignore by the primary name", args: []string{"--ignore-signal=POLL", "/bin/true"}})
-	// Both are KERNEL UAPI names (asm-generic/signal.h) that glibc never
-	// defines, so a GNU build cannot see them and answers `invalid signal`
-	// rather than treating them as a silent no-op. Accepting a name GNU
-	// refuses is a divergence on input a caller can type.
 	add(invocation{name: "LOST is not a signal GNU knows", args: []string{"--ignore-signal=LOST", "/bin/true"}})
 	add(invocation{name: "UNUSED is not a signal GNU knows", args: []string{"--ignore-signal=UNUSED", "/bin/true"}})
 
-	// ---- --list-signal-handling ----
 	add(invocation{name: "list with nothing changed", args: []string{"--list-signal-handling", "/bin/true"}})
 	add(invocation{name: "list an ignored signal", args: []string{"--ignore-signal=INT", "--list-signal-handling", "/bin/true"}})
 	add(invocation{name: "list a blocked signal", args: []string{"--block-signal=INT", "--list-signal-handling", "/bin/true"}})
@@ -282,13 +218,8 @@ func envCases(t *testing.T) []invocation {
 	add(invocation{name: "list several", args: []string{"--block-signal=INT,QUIT", "--ignore-signal=TERM", "--list-signal-handling", "/bin/true"}})
 	add(invocation{name: "list without a command", args: []string{"--list-signal-handling"}})
 	add(invocation{name: "list takes no argument", args: []string{"--list-signal-handling=X", "/bin/true"}})
-	// The number is the point here, not the signal: this is the one case that
-	// PRINTS a name whose number carries two of them, which is what caught
-	// the IO/POLL inversion. The oracle decides per kernel, so naming the
-	// number rather than a name keeps it honest on both.
 	add(invocation{name: "list names a two-named number", args: []string{"--ignore-signal=29", "--list-signal-handling", "/bin/true"}})
 
-	// ---- -v, which is the only way to assert the ORDER ----
 	add(invocation{name: "debug a plain run", args: []string{"-v", "/bin/true"}})
 	add(invocation{name: "debug with arguments", args: []string{"-v", "/bin/echo", "a", "b"}})
 	add(invocation{name: "debug with no command", args: []string{"-v"}})
@@ -304,7 +235,6 @@ func envCases(t *testing.T) []invocation {
 	add(invocation{name: "debug long", args: []string{"--debug", "/bin/true"}})
 	add(invocation{name: "debug twice", args: []string{"-v", "-v", "/bin/true"}})
 
-	// ---- getopt faults ----
 	add(invocation{name: "unknown short option", args: []string{"-Q", "/bin/true"}})
 	add(invocation{name: "unknown short in a cluster", args: []string{"-iQ", "/bin/true"}})
 	add(invocation{name: "unknown long option", args: []string{"--bogus", "/bin/true"}})
@@ -325,10 +255,8 @@ func envCases(t *testing.T) []invocation {
 	add(invocation{name: "unambiguous abbreviation ignore-e", args: []string{"--ignore-e"}})
 	add(invocation{name: "unambiguous abbreviation ignore-si", args: []string{"--ignore-si=INT", "/bin/true"}})
 
-	// ---- options after the command are the command's ----
 	add(invocation{name: "options pass through", args: []string{"/bin/echo", "-i", "-u", "X", "--help"}})
 
-	// ---- -S ----
 	for _, sp := range envSplitStrings {
 		add(invocation{name: "split " + sp.name, args: []string{"-S" + sp.s}})
 		add(invocation{name: "split long " + sp.name, args: []string{"--split-string=" + sp.s}})
@@ -344,32 +272,17 @@ func envCases(t *testing.T) []invocation {
 	add(invocation{name: "split in a cluster", args: []string{"-vS/bin/echo hi"}})
 	add(invocation{name: "an empty first token is an empty command", args: []string{"-S", "'' /bin/echo"}})
 
-	// ---- execvp's shell retry ----
-	//
-	// A file the kernel cannot load is handed to /bin/sh rather than refused
-	// (#9262), and the everyday case is a script with no `#!` line. The
-	// fixtures are a tree rather than literals because the fallback's shape
-	// is only visible through what the SHELL then reports: `$0` is the path
-	// execve was handed, `$#` counts the caller's own arguments, and a
-	// garbage ELF reaches the shell too, where the diagnostic is the shell's
-	// and not env's.
 	add(invocation{name: "a script with no shebang runs under the shell", dir: execTree, args: []string{"./noshebang"}})
 	add(invocation{name: "the shell sees the resolved path and the caller's arguments", dir: execTree, args: []string{"./showargs", "a", "b"}})
 	add(invocation{name: "the shell retry also applies to a name found on PATH", dir: execTree, args: []string{"showargs"}, env: []string{"PATH=" + execTree}})
 	add(invocation{name: "an empty executable file is a no-op under the shell", dir: execTree, args: []string{"./empty"}})
 	add(invocation{name: "a garbage ELF reaches the shell, which reports it", dir: execTree, args: []string{"./badelf"}})
-	// The refusals the retry must NOT swallow: both are EACCES rather than
-	// ENOEXEC, so they stay env's own diagnostic and 126.
 	add(invocation{name: "a script without the execute bit is still refused", dir: execTree, args: []string{"./unreadable"}})
 	add(invocation{name: "a directory with the execute bit is still refused", dir: execTree, args: []string{"./adir"}})
 
 	return cases
 }
 
-// envExecTree is the fixture for the shell-retry cases: a directory of files
-// that differ only in how the kernel refuses to exec them.
-// env0Files writes the NUL-separated fixtures --env0-from reads. The
-// terminating NUL is part of the format: a file without one is refused.
 func env0Files(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -398,8 +311,6 @@ func envExecTree(t *testing.T) string {
 	write("noshebang", "echo from-script\n", 0o755)
 	write("showargs", "echo \"dollar0=[$0] count=$# args=[$*]\"\n", 0o755)
 	write("empty", "", 0o755)
-	// A valid ELF magic and nothing that follows it: the kernel takes the
-	// four bytes, fails to make sense of the rest, and answers ENOEXEC.
 	write("badelf", "\x7fELFnot-an-elf\n", 0o755)
 	write("unreadable", "echo unreachable\n", 0o644)
 	if err := os.Mkdir(filepath.Join(dir, "adir"), 0o755); err != nil {
@@ -412,9 +323,6 @@ func TestEnv(t *testing.T) {
 	requireParity(t, "env", envCases(t))
 }
 
-// The two options whose TEXT is ours by design (docs/COREUTILS.md). Everything
-// else about them still has to match, including that `--help` beats a later
-// usage error and loses to an earlier one.
 func TestEnvHelpVersion(t *testing.T) {
 	requireHelp(t, "env", []string{"--help"}, 0)
 	requireHelp(t, "env", []string{"--h"}, 0)

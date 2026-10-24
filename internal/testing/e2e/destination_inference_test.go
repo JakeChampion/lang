@@ -6,10 +6,6 @@ import (
 	"testing"
 )
 
-// destinationInferenceSrc calls generics whose type parameters no argument
-// spells, so only the destination pins them (#12094, #12093): a `let`
-// annotation, an assignment's target and a `return`, through a free
-// function, a method, and a bounded generic.
 const destinationInferenceSrc = `import "core/cmp";
 import "std/i32";
 import "std/i64";
@@ -88,8 +84,6 @@ func TestWasmDestinationInference(t *testing.T) {
 	}
 }
 
-// An assignment's target types an array literal as a `let` annotation does:
-// `[2, "ab"]` is a valid `dyn Show[]` value however its first element reads.
 const assignedDynArraySrc = `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self; } }
 impl Show for string { function show(self: Self): i32 { return self.len(); } }

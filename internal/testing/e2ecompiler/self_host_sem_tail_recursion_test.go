@@ -6,18 +6,6 @@ import (
 	"testing"
 )
 
-// selfHostTailRecursionSource drives self-tail recursion across the parameter
-// modes the rewritten loop has to carry: a borrowed string the caller keeps
-// using afterwards, an owned array replaced every round, and both together
-// with the array growing. The depths are past any stack here, so a body that
-// did not become a loop dies rather than answers.
-//
-// The program reports the over-release counter and returns it, so a loop that
-// released a borrowed argument fails on the exit code rather than on whether
-// a freed string happened to still read correctly.
-//
-// No trailing escape on the print: `print` ends the line itself, and adding
-// one makes the answer carry a blank line the expectation does not.
 const selfHostTailRecursionSource = `import "std/i32";
 import "std/string";
 
@@ -124,14 +112,6 @@ function main(): i32 {
 
 const selfHostTailRecursionWant = "0|a=5 b=3 c=206 alive=14 ticks=300000 view=19 vw=5 still=5 vs=300000 wlen=300000 underflow=0\n"
 
-// TestSelfHostSemanticTailRecursion is the reference-typed half of #9692.
-//
-// Once a parameter carries a unit, the frame still owes a release after a
-// self-tail call returns, so a rewrite that matches a `call_direct f/N`
-// immediately followed by `return` in the op stream never fires on these
-// shapes. The graph rewrite runs before the unit planner, so the release is
-// placed around the loop rather than after a call that is no longer there;
-// these depths are what hold it.
 func TestSelfHostSemanticTailRecursion(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	stdlibRoot, err := filepath.Abs("../../stdlib")
@@ -153,12 +133,6 @@ func TestSelfHostSemanticTailRecursion(t *testing.T) {
 			if got != selfHostTailRecursionWant {
 				t.Fatalf("answered %q, want %q\nreport: %s", got, selfHostTailRecursionWant, report)
 			}
-			// An ABSOLUTE pin, not the relative one the production table
-			// gives: the loop replaces its array every round, so a rewrite
-			// that dropped the superseded generation on the floor would leak
-			// once per round and still answer correctly. Measured at 0 on
-			// arm64-darwin under FERN_LEAKCHECK, against 122024 bytes for the
-			// AST leg on the same program.
 			if target == "x86-64-sanitize" && leak != 0 {
 				t.Fatalf("the produced loop leaked %d bytes", leak)
 			}

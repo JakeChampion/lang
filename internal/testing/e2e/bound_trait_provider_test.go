@@ -6,16 +6,6 @@ import (
 	"testing"
 )
 
-// A method called on a value of a bounded type variable is the bound's method
-// in every instance (#12277). When two traits each provide `scale` for P, or
-// a user trait and std/num both provide `add` for i32, only the first claimant
-// keeps the plain symbol; a generic bounded by the other trait must reach the
-// renamed provider (`P.B.scale`, `i32.__entry.add`). Each line reaches both
-// providers, through a free generic, a supertrait, a lambda, a generic
-// struct's and a generic enum's bounded impl. The last line compares two
-// values of a bounded variable at f64 through a bounded impl and through a
-// match payload of the variable's type: `>` is IEEE, false against NaN, as it
-// is on a concrete f64 (#12697).
 const boundTraitProviderSrc = `import "core/cmp" as cmp;
 import "std/f64";
 import "std/num";
@@ -137,12 +127,6 @@ func TestWasmBoundTraitProvider(t *testing.T) {
 	}
 }
 
-// An associated function called through a bounded type variable, `T.zero()`,
-// is the bound's associated function in every instance (#12281), as a method
-// call is above: A and B each provide `zero` and `make` for P, a user trait and
-// std/num each provide `zero` for i32. Each line reaches both providers,
-// through a free generic, a supertrait, a lambda, a parameter named like the
-// variable, and a generic struct's and enum's bounded impl.
 const boundTraitProviderAssocSrc = `import "std/i32";
 import "std/num";
 

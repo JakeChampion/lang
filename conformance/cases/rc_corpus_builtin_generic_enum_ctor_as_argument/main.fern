@@ -1,9 +1,9 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The same shape on the BUILTIN generic enums, which reach the drop
-// through the identical path — `Option[i32[]]` and `Result[i32[], i32]`
-// are generic decls with ParamType payloads exactly as a user enum is.
+
+
+
+
+
+
 import "core/int";
 function mk(n: i32): i32[] {
     let a: i32[] = [];

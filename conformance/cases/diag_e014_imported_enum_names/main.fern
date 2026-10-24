@@ -1,6 +1,6 @@
-// Diagnostics on an imported enum's patterns name the enum and its variants
-// as the source spells them (`shapes.Shape`, `Circle`), never by the
-// module-mangled names the loader gives them.
+
+
+
 import "./shapes";
 
 function area(s: shapes.Shape): i32 {

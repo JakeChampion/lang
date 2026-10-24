@@ -1,31 +1,31 @@
-// Cross-backend f32/f64 printing + round-trip parity (#4410 part 2).
-//
-// The `to_string` formatter (std/f64 `__float_shortest` / Dragonbox) is a
-// single shared Fern implementation compiled per target, doing all of its work
-// in integer arithmetic over the IEEE-754 fields, so its output MUST be
-// byte-identical across interp / x86_64 / arm64 / wasm. This fixture pins that
-// contract: the exact-stdout check below is the cross-backend formatting
-// oracle (f32 was deliberately excluded from the differential fuzz oracle's
-// runnable pool, so this is its only parity coverage), and the round-trip
-// assertions pin parse_float ∘ to_string recovery on every backend.
-//
-// `to_string` is shortest-round-trip, so EVERY finite value has one unambiguous
-// rendering and any value may be printed here. The `f64_from_bits` block covers
-// Dragonbox's shorter-interval branch — the powers of two, where the gap below
-// the value is half the gap above it — across all four backends.
-//
-// The `roundtrips` assertions below carry a TOLERANCE for historical reasons
-// only: `parse_float` is correctly rounded and `to_string` is shortest-round-
-// trip, so the composition is the exact identity. The strict form is pinned by
-// TestFloatStringRoundTripIsExactIdentity; what these add here is that the
-// round-trip holds on every backend, which is this fixture's job.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/f64";
 import "std/string";
 
-// round-trips the f32 `x` through to_string → parse_float (which parses in
-// the f64 domain, #5363) and returns true when the recovered value is within
-// `tol` of the original.
+
+
+
 function roundtrips(x: f32, tol: f32): boolean {
     match (x.to_string().parse_float()) {
         Some(y) => { return (y - (x as f64)).abs() <= (tol as f64); },
@@ -34,7 +34,7 @@ function roundtrips(x: f32, tol: f32): boolean {
 }
 
 function main(): i32 {
-    // Exactly-representable f32 values → deterministic 7-digit rendering.
+
     let a: f32[] = [0.0, 1.0, -1.0, 7.0, -7.0, 0.5, -0.25, 0.125, 2.5, 100.0, 1000.0, -0.75, 42.0, 0.0625];
     let i: i32 = 0;
     while (i < a.len()) { print(a[i].to_string()); i = i + 1; }
@@ -43,24 +43,24 @@ function main(): i32 {
     let j: i32 = 0;
     while (j < g.len()) { print(g[j].to_string()); j = j + 1; }
 
-    // Powers of two (significand field zero) take Dragonbox's shorter-interval
-    // branch. Given by bit pattern so the extreme exponents are exact without
-    // relying on literal parsing: 2^-1019, 2^-1018, 2^-1005, 2^-1074 (the
-    // smallest subnormal, which is NOT shorter-interval — exponent field zero),
-    // and 2^1023.
+
+
+
+
+
     let p: i64[] = [18014398509481984, 22517998136852480, 72057594037927936, 1, 9214364837600034816];
     let q: i32 = 0;
     while (q < p.len()) { print(f64_from_bits(p[q]).to_string()); q = q + 1; }
 
-    // Round-trip: exactly-representable values recover exactly (tol 0).
+
     if (!roundtrips(0.5, 0.0)) { return 10; }
     if (!roundtrips(-0.25, 0.0)) { return 11; }
     if (!roundtrips(2.5, 0.0)) { return 12; }
-    // Inexact values recover within the documented f32 tolerance.
+
     if (!roundtrips(3.14, 0.001)) { return 20; }
     if (!roundtrips(0.1, 0.001)) { return 21; }
 
-    // parse_float rejects non-numeric input.
+
     match ("nope".parse_float()) {
         Some(_) => { return 30; },
         None => {}

@@ -1,7 +1,7 @@
 import "core/int";
 
-// Each labelled exit replays the inner action exactly once and observes its
-// late replacement. Completed iterations must not remain armed at return.
+
+
 function main(): i32 {
     let seen: i32 = 0;
     let i: i32 = 0;

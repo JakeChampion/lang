@@ -1,27 +1,12 @@
-// std/tls/keyschedule — the TLS 1.3 key schedule of RFC 8446 §7:
-// HKDF-Expand-Label and Derive-Secret, the chain from the early secret
-// through the handshake secret to the master secret, the traffic secrets
-// each stage yields, the traffic keys record protection uses, Finished's
-// verify_data and the key update.
-//
-//   let suite: keyschedule.CipherSuite = keyschedule.Aes128GcmSha256;
-//   let early: keyschedule.EarlySecret = keyschedule.early_secret(suite.hash(), psk);
-//   let hs: keyschedule.HandshakeSecret = early.handshake_secret(shared_secret);
-//   let keys: keyschedule.TrafficKeys = keyschedule.traffic_keys(suite, hs.client_traffic(transcript_hash));
-//
-// Sans-IO and stateless: the caller keeps the running transcript hash and
-// passes it in. A stage is a type of its own, so the chain can only be
-// walked forwards.
+// This module derives TLS 1.3 keys and secrets.
 
 import "std/crypto";
 
-// Hash — the hash a cipher suite's key schedule and transcript run over.
 pub enum Hash {
   Sha256,
   Sha384,
 }
 
-// size is Hash.length: the bytes of a digest, and of every secret.
 pub function (h: Hash) size(): i32 {
   match (h) {
     Sha256 => {
@@ -34,7 +19,6 @@ pub function (h: Hash) size(): i32 {
   return 0;
 }
 
-// digest is the hash of msg, as Transcript-Hash takes it.
 pub function (h: Hash) digest(msg: [u8]): u8[] {
   match (h) {
     Sha256 => {
@@ -47,15 +31,12 @@ pub function (h: Hash) digest(msg: [u8]): u8[] {
   return [];
 }
 
-// Aead — the record protection a cipher suite uses.
 pub enum Aead {
   Aes128Gcm,
   Aes256Gcm,
   ChaCha20Poly1305,
 }
 
-// key_len is the AEAD's key length; every TLS 1.3 AEAD takes a 12-byte
-// nonce.
 pub function (a: Aead) key_len(): i32 {
   match (a) {
     Aes128Gcm => {
@@ -71,15 +52,12 @@ pub function (a: Aead) key_len(): i32 {
   return 0;
 }
 
-// CipherSuite — a TLS 1.3 cipher suite (RFC 8446 §B.4): an AEAD and the
-// hash its key schedule runs over.
 pub enum CipherSuite {
   Aes128GcmSha256,
   Aes256GcmSha384,
   ChaCha20Poly1305Sha256,
 }
 
-// code is the suite's CipherSuite value (RFC 8446 §B.4).
 pub function (s: CipherSuite) code(): i32 {
   match (s) {
     Aes128GcmSha256 => {
@@ -95,8 +73,6 @@ pub function (s: CipherSuite) code(): i32 {
   return 0;
 }
 
-// cipher_suite is the suite with a CipherSuite value, or None for one not
-// implemented.
 pub function cipher_suite(code: i32): Option[CipherSuite] {
   if (code == 0x1301) {
     return Some(Aes128GcmSha256);
@@ -140,7 +116,6 @@ pub function (s: CipherSuite) aead(): Aead {
   return ChaCha20Poly1305;
 }
 
-// hkdf_extract is HKDF-Extract over h; an empty salt is h.size() zeros.
 pub function hkdf_extract(h: Hash, salt: [u8], ikm: [u8]): u8[] {
   match (h) {
     Sha256 => {
@@ -153,8 +128,6 @@ pub function hkdf_extract(h: Hash, salt: [u8], ikm: [u8]): u8[] {
   return [];
 }
 
-// hkdf_expand_label(h, secret, label, context, length) is HKDF-Expand over
-// the HkdfLabel { length, "tls13 " + label, context } (§7.1).
 pub function hkdf_expand_label(h: Hash, secret: [u8], label: string, context: [u8], length: i32): u8[] {
   let full: [u8] = label.as_bytes();
   let info: u8[] = __alloc_u8(10 + full.len() + context.len());
@@ -174,8 +147,6 @@ pub function hkdf_expand_label(h: Hash, secret: [u8], label: string, context: [u
   return [];
 }
 
-// derive_secret is Derive-Secret(secret, label, Messages), given the
-// transcript hash of the messages rather than the messages.
 pub function derive_secret(h: Hash, secret: [u8], label: string, transcript_hash: [u8]): u8[] {
   return hkdf_expand_label(h, secret, label, transcript_hash, h.size());
 }
@@ -189,8 +160,6 @@ function __put(own dst: u8[], at: i32, src: [u8]): u8[] {
   return dst;
 }
 
-// __next is the secret the next stage extracts with: Derive-Secret(secret,
-// "derived", "") as its salt and ikm as its input keying material.
 function __next(h: Hash, secret: [u8], ikm: [u8]): u8[] {
   let none: u8[] = [];
   return hkdf_extract(h, derive_secret(h, secret, "derived", h.digest(none)), ikm);
@@ -206,15 +175,12 @@ function __zeros(n: i32): u8[] {
   return z;
 }
 
-// The three stages of the schedule, each holding its secret.
 pub struct EarlySecret { hash: Hash, secret: u8[] }
 
 pub struct HandshakeSecret { hash: Hash, secret: u8[] }
 
 pub struct MasterSecret { hash: Hash, secret: u8[] }
 
-// early_secret is HKDF-Extract(0, PSK); an empty psk stands for the
-// h.size() zeros a handshake without one uses.
 pub function early_secret(h: Hash, psk: [u8]): EarlySecret {
   if (psk.len() == 0) {
     return EarlySecret { hash: h, secret: hkdf_extract(h, __zeros(h.size()), __zeros(h.size())) };
@@ -222,28 +188,19 @@ pub function early_secret(h: Hash, psk: [u8]): EarlySecret {
   return EarlySecret { hash: h, secret: hkdf_extract(h, __zeros(h.size()), psk) };
 }
 
-// binder_key is Derive-Secret(early_secret, "res binder", ""), the base key
-// of a resumption PSK's binder (§4.2.11.2); the binder itself is
-// `finished_verify_data` over it and the truncated ClientHello's hash.
 pub function (e: EarlySecret) binder_key(): u8[] {
   let none: u8[] = [];
   return derive_secret(e.hash, e.secret, "res binder", e.hash.digest(none));
 }
 
-// resumption_psk is the PSK a ticket stands for: HKDF-Expand-Label(
-// resumption_master_secret, "resumption", ticket_nonce, Hash.length)
-// (§4.6.1).
 pub function resumption_psk(h: Hash, resumption_master_secret: [u8], ticket_nonce: [u8]): u8[] {
   return hkdf_expand_label(h, resumption_master_secret, "resumption", ticket_nonce, h.size());
 }
 
-// handshake_secret takes the (EC)DHE shared secret.
 pub function (e: EarlySecret) handshake_secret(shared_secret: [u8]): HandshakeSecret {
   return HandshakeSecret { hash: e.hash, secret: __next(e.hash, e.secret, shared_secret) };
 }
 
-// client_traffic and server_traffic are the handshake traffic secrets,
-// over the transcript through ServerHello.
 pub function (s: HandshakeSecret) client_traffic(transcript_hash: [u8]): u8[] {
   return derive_secret(s.hash, s.secret, "c hs traffic", transcript_hash);
 }
@@ -256,8 +213,6 @@ pub function (s: HandshakeSecret) master_secret(): MasterSecret {
   return MasterSecret { hash: s.hash, secret: __next(s.hash, s.secret, __zeros(s.hash.size())) };
 }
 
-// client_traffic, server_traffic and exporter are over the transcript
-// through the server's Finished, resumption through the client's.
 pub function (m: MasterSecret) client_traffic(transcript_hash: [u8]): u8[] {
   return derive_secret(m.hash, m.secret, "c ap traffic", transcript_hash);
 }
@@ -274,7 +229,6 @@ pub function (m: MasterSecret) resumption(transcript_hash: [u8]): u8[] {
   return derive_secret(m.hash, m.secret, "res master", transcript_hash);
 }
 
-// TrafficKeys — the write key and IV a traffic secret yields (§7.3).
 pub struct TrafficKeys { key: u8[], iv: u8[] }
 
 pub function traffic_keys(suite: CipherSuite, traffic_secret: [u8]): TrafficKeys {
@@ -286,8 +240,6 @@ pub function traffic_keys(suite: CipherSuite, traffic_secret: [u8]): TrafficKeys
   };
 }
 
-// finished_verify_data is HMAC(finished_key, transcript hash) (§4.4.4),
-// base_key the handshake traffic secret of the side sending Finished.
 pub function finished_verify_data(h: Hash, base_key: [u8], transcript_hash: [u8]): u8[] {
   let none: u8[] = [];
   let finished_key: u8[] = hkdf_expand_label(h, base_key, "finished", none, h.size());
@@ -302,13 +254,10 @@ pub function finished_verify_data(h: Hash, base_key: [u8], transcript_hash: [u8]
   return [];
 }
 
-// verify_finished compares a peer's verify_data in constant time.
 pub function verify_finished(h: Hash, base_key: [u8], transcript_hash: [u8], verify_data: u8[]): boolean {
   return crypto.consteq(finished_verify_data(h, base_key, transcript_hash), verify_data);
 }
 
-// next_traffic_secret is the application traffic secret after a
-// KeyUpdate (§7.2).
 pub function next_traffic_secret(h: Hash, traffic_secret: [u8]): u8[] {
   let none: u8[] = [];
   return hkdf_expand_label(h, traffic_secret, "traffic upd", none, h.size());

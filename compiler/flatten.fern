@@ -1,33 +1,3 @@
-// compiler/flatten.fern — module-flattening for the
-// self-host pipeline. Ports internal/pkg/modload's namespacing into the
-// self-host compiler so a multi-module program (the compiler itself!)
-// lowers to a single flat namespace the asm emitter understands.
-//
-// Two halves, both driven by a RewriteCtx over the AST:
-//
-//   * flatten_qualified(mod) — brick 1: rewrite every QUALIFIED
-//     cross-module reference `mod.X` → flat `mod__X` (call / type /
-//     variant-pattern / struct-lit / field-access positions), driven
-//     by the module's import set.
-//   * mangle_module(mod, prefix) — brick 2: rename a non-entry
-//     module's own top-level decls to `prefix__name` and rewrite all
-//     its INTERNAL bare references to match, plus flatten any
-//     qualified refs it makes to other modules. Receiver methods keep
-//     their name (dispatched by receiver type) but their receiver
-//     type is mangled. After mangling every import this way and
-//     merging the decls with the entry module, the qualified
-//     references brick 1 produced resolve to real flat functions.
-//
-// Both share rewrite_expr / rewrite_stmt / rewrite_type_name, which
-// take a RewriteCtx:
-//   modnames  — imported module names; `m.X` (m in modnames) → `m__X`
-//   prefix    — own-module mangle prefix ("" = entry, no mangling)
-//   declnames — own top-level decl names; a bare ref to one → prefix__name
-//
-// Imports nothing: string handling is hand-rolled over the byte
-// builtins (s[i], s[i:j], .len(), ==, +), matching the rest of the
-// self-host sources.
-
 import "./ast";
 import "./util";
 import "./lexer";
@@ -35,39 +5,10 @@ import "./parser";
 import "./astwalk";
 import "./platforms";
 
-// `locals` lists the value-binding names in scope at the point being
-// rewritten: the params, and each `let` / `for` / match-arm binding from
-// the statement that makes it to the end of its scope. A local shadows a
-// module-level decl of its name (a local `range` beside the `range()`
-// function, std/math.random_int) and an import's qualifier (`let util =
-// "abc"; util.len()`), so neither is rewritten under it.
-// `ivar_names` / `ivar_mangled` are parallel arrays mapping a bare
-// imported-enum variant name (e.g. `Fail`, a variant of `std/test`'s
-// `TestOutcome`) to its bundled, prefix-mangled struct name
-// (`test__Fail`). The reference front-end resolves a bare variant
-// reference to its owning import; the self-host bundler must do the
-// same so a downstream module can `match`/construct an imported user
-// enum's variants by their bare names — exactly how `Some`/`None`
-// (Option) and `JString`/`NotFound` (the globally-injected builtin
-// enums) already resolve. Without this, only the variant's OWN module
-// could name it bare; a `match (test.assert_eq(...)) { Fail(m) => … }`
-// in a test file would silently fail to match (issue #2666's
-// TestOutcome). The self-host compiler's own modules sidestep this by
-// always qualifying (`ast.ExprIdent`), so this only widens what
-// downstream code can spell, never changing existing resolution.
-// `variant_scope` holds the prefixes of the modules whose variants this
-// module may name bare (see variant_scope).
-// declnames_mangled is the precomputed mangled_name(prefix, declnames[i])
-// parallel to declnames, so a bare own-decl reference resolves to a SHARED
-// string instance (like ivar_mangled) instead of re-deriving the name on every
-// occurrence. This reduces the allocation the mangle pass performs at its dominant
-// churn site (#4394 lever 1 names mangle_bare as such a site — see
-// docs/SELFHOST-SYMBOL-INTERNING.md); the emitted bytes are unchanged.
 pub struct ImportedEnum { name: string, prefix: string }
 
 pub struct RewriteCtx { modnames: string[], modprefixes: string[], prefix: string, declnames: string[], declnames_mangled: string[], dn_head: i32[], dn_next: i32[], locals: string[], enumnames: string[], imported_enums: ImportedEnum[], ivar_names: string[], ivar_mangled: string[], variant_scope: string[], reexport_keys: string[], reexport_targets: string[] }
 
-// Imported enums retain their source prefix, including through a re-export.
 function imported_enum_prefix(name: string, ctx: RewriteCtx): string {
   for en in ctx.imported_enums {
     if (en.name == name) {
@@ -89,8 +30,6 @@ function imported_enums(imports: LoadedModule[], pfxs: string[]): ImportedEnum[]
   return out;
 }
 
-// declname_buckets sizes the own-decl index. A module's decl count is in the
-// hundreds, so a prime a few times that keeps the chains at one or two.
 function declname_buckets(n: i32): i32 {
   if (n < 8) {
     return 8;
@@ -98,16 +37,9 @@ function declname_buckets(n: i32): i32 {
   return n * 2 + 1;
 }
 
-// build_declname_head / _next index `names` by hash, as the head/next columns
-// the same shape treeshake.RefSet uses. mangle_bare is the
-// only reader and it ran a full scan per bare name — 305 string compares a
-// call, 6.7 M over a checker.fern compile.
 function build_declname_head(names: string[]): i32[] {
   let nb: i32 = declname_buckets(names.len());
   let head: i32[] = util.minus_ones(nb);
-  // Backwards, so the bucket ends up holding its LOWEST index: the scan this
-  // replaces returned the first match, and build_declname_next chains upward
-  // from here.
   let i: i32 = names.len() - 1;
   while (i >= 0) {
     let k: i32 = util.hash_bucket(names[i], nb);
@@ -117,8 +49,6 @@ function build_declname_head(names: string[]): i32[] {
   return head;
 }
 
-// next[i] is the next-higher index sharing i's bucket, so walking from the head
-// visits a bucket in ascending index order and stops at the first match.
 function build_declname_next(names: string[]): i32[] {
   let nb: i32 = declname_buckets(names.len());
   let seen: i32[] = util.minus_ones(nb);
@@ -133,7 +63,6 @@ function build_declname_next(names: string[]): i32[] {
   return next;
 }
 
-// declname_index_of is the indexed form of "the first i with declnames[i] == name".
 function declname_index_of(name: string, ctx: RewriteCtx): i32 {
   if (ctx.dn_head.len() == 0) {
     return 0 - 1;
@@ -148,20 +77,6 @@ function declname_index_of(name: string, ctx: RewriteCtx): i32 {
   return 0 - 1;
 }
 
-// is_runtime_helper_name reports whether a decl keeps its BARE name in the
-// bundle instead of taking its module's `<mod>__` prefix — native's
-// `modload.isRuntimeHelperName`, which `internal/testing/e2ecompiler` pins entry for
-// entry.
-//
-// `core/map`'s helpers are the whole set. The language has no generic method on
-// a generic struct, so the Map surface is declared as concrete `_impl`
-// functions and every backend routes `map_new` / `__method_Map_get` onto them
-// through one alias table (`ir.CodegenAliases`) — which can only name a
-// function ONE way, so the two compilers have to agree about the symbol. They
-// did not: `map.__map_pow2_ceil` resolved here and nowhere else (#9608).
-//
-// Native also exempts `__method_*`; this does not, because exempting it would
-// move every stdlib method's symbol for no gain here.
 pub function is_runtime_helper_name(name: string): boolean {
   if (name == "map_new_impl") {
     return true;
@@ -175,8 +90,6 @@ pub function is_runtime_helper_name(name: string): boolean {
   return false;
 }
 
-// mangled_name is `prefix + "__" + name`, or `name` itself for a runtime
-// helper — how a DECL is renamed, and how a bare reference to one resolves.
 pub function mangled_name(prefix: string, name: string): string {
   if (is_runtime_helper_name(name)) {
     return name;
@@ -184,8 +97,6 @@ pub function mangled_name(prefix: string, name: string): string {
   return prefix + "__" + name;
 }
 
-// build_mangled_names precomputes mangled_name(prefix, names[i]) for each name
-// — the shared mangled instances a bare own-decl reference resolves to.
 function build_mangled_names(prefix: string, names: string[]): string[] {
   let out: string[] = [];
   let i: i32 = 0;
@@ -196,11 +107,6 @@ function build_mangled_names(prefix: string, names: string[]): string[] {
   return out;
 }
 
-// resolve_prefix maps a qualifier (`io` in `io.foo`) to the mangle prefix the
-// module's decls actually carry (`io_buffered`). For a plain `import "std/x"` the
-// qualifier IS the prefix (basename); for `import "std/x" as y` they differ, so
-// modnames[i] holds the qualifier and modprefixes[i] the basename. Falls back to
-// the qualifier itself when no parallel entry exists (identity, the old behaviour).
 function resolve_prefix(qualifier: string, ctx: RewriteCtx): string {
   let i: i32 = 0;
   while (i < ctx.modnames.len()) {
@@ -215,12 +121,6 @@ function resolve_prefix(qualifier: string, ctx: RewriteCtx): string {
   return qualifier;
 }
 
-// lookup_reexport redirects a naively-mangled qualified reference
-// (`facade__name`) to the original module's mangled symbol
-// (`helpers__name`) when `facade` re-exported `name` via `pub use`.
-// Returns `mangled` unchanged when no re-export applies. Chained
-// re-exports (`a` re-exports `b`'s re-export of `c`) are followed to the
-// end; the bounded loop guards against a cyclic table. See bundle.
 function lookup_reexport(mangled: string, ctx: RewriteCtx): string {
   return follow_reexports(mangled, ctx.reexport_keys, ctx.reexport_targets);
 }
@@ -248,13 +148,6 @@ function follow_reexports(mangled: string, keys: string[], targets: string[]): s
   return cur;
 }
 
-// IvarMatch is what a bare `name` finds among the imported enum variants
-// ctx's module sees: the first one's bundled name, "" when no module in its
-// variant_scope declares one, and whether a second enum the module sees, an
-// imported or a built-in one, declares it too. The map holds every loaded
-// module's variants, but a name the program loads for an unrelated module's
-// sake (std/net's `Other` beside IoError's) must not capture a bare reference
-// here.
 struct IvarMatch { mangled: string, ambiguous: boolean }
 
 function match_ivar(name: string, ctx: RewriteCtx): IvarMatch {
@@ -272,15 +165,10 @@ function match_ivar(name: string, ctx: RewriteCtx): IvarMatch {
   return IvarMatch { mangled: first, ambiguous: first.len() > 0 && parser.builtin_enum_of(name).len() > 0 };
 }
 
-// ivar_visible: whether `mangled` (`pfx__name`) is declared by a module in
-// ctx's variant_scope.
 function ivar_visible(mangled: string, name: string, ctx: RewriteCtx): boolean {
   return util.has_str(ctx.variant_scope, slice_unchecked(mangled, 0, mangled.len() - name.len() - 2) + "");
 }
 
-// ImportGraph is every loaded module's imports as indices into the bundle's
-// module list, flattened: module k's are edges[starts[k] .. starts[k + 1]],
-// and an import naming no loaded module is -1.
 struct ImportGraph { starts: i32[], edges: i32[] }
 
 function import_graph(imports: LoadedModule[], ids: string[], pfxs: string[]): ImportGraph {
@@ -298,11 +186,6 @@ function import_graph(imports: LoadedModule[], ids: string[], pfxs: string[]): I
   return ImportGraph { starts: starts, edges: edges };
 }
 
-// importers_of is the modules that import `imports[target]` directly, by
-// prefix, with "" for the entry when it does; every stdlib module when the
-// target is one, since the stdlib's own import graph has the cycles modload
-// breaks by clearing stamps rather than recording an edge (the Go checker's
-// traitInScope rule).
 function importers_of(target: i32, imports: LoadedModule[], g: ImportGraph, pfxs: string[], entry: parser.Module): string[] {
   let out: string[] = [];
   let std: boolean = is_stdlib_ident(imports[target].ident);
@@ -327,18 +210,10 @@ function importers_of(target: i32, imports: LoadedModule[], g: ImportGraph, pfxs
   return out;
 }
 
-// is_stdlib_ident reports whether a loaded module's identity is a standard
-// library path (`std/…`, `core/…`).
 function is_stdlib_ident(ident: string): boolean {
   return util.str_has_prefix(ident, "std/") || util.str_has_prefix(ident, "core/") || util.index_of_sub(ident, "/std/") >= 0 || util.index_of_sub(ident, "/core/") >= 0;
 }
 
-// import_cycle is the import that closes a cycle among the program's own
-// modules, which native refuses: walking depth-first from the entry, in the
-// order native loads them, the first import that leads back to a module still
-// being loaded. The entry, `entry_ident`, is being loaded from the start. A
-// cycle inside the stdlib (under `root`) is allowed, as native allows it:
-// std/string and std/i32 import each other.
 pub function import_cycle(entry: parser.Module, entry_ident: string, imports: LoadedModule[], root: string): Option[parser.Import] {
   let ids: string[] = module_ids(imports);
   let pfxs: string[] = assign_prefixes(imports);
@@ -360,12 +235,8 @@ pub function import_cycle(entry: parser.Module, entry_ident: string, imports: Lo
   return None;
 }
 
-// CycleWalk is what import_cycle's walk reads at every module.
 struct CycleWalk { g: ImportGraph, ids: string[], entry: string, root: string }
 
-// cycle_from walks module k depth-first. `state` is 0 for a module not yet
-// reached, 1 for one on the walk's path, 2 for one finished. A cycle comes
-// back as the module holding the closing import and that import's edge.
 function cycle_from(k: i32, w: CycleWalk, state: i32[]): (i32, i32, i32[]) {
   let st: i32[] = state.with(k, 1);
   let e: i32 = w.g.starts[k];
@@ -386,16 +257,10 @@ function cycle_from(k: i32, w: CycleWalk, state: i32[]): (i32, i32, i32[]) {
   return (0 - 1, 0 - 1, st.with(k, 2));
 }
 
-// under_root reports whether the module identity `ident` lies under the
-// stdlib root `root`.
 pub function under_root(ident: string, root: string): boolean {
   return root.len() > 0 && ident.len() > root.len() && slice_unchecked(ident, 0, root.len() + 1) == root + "/";
 }
 
-// variant_scope is the prefix of every module `mod` reaches through its
-// imports and theirs, `pub use` included: the modules whose enum variants it
-// may name bare. It is native's import closure (modload.importClosures), which
-// is what the checker's moduleSeesVariant consults.
 function variant_scope(mod: parser.Module, g: ImportGraph, ids: string[], pfxs: string[]): string[] {
   return prefixes_at(import_closure(mod, g, ids, pfxs), pfxs);
 }
@@ -408,7 +273,6 @@ function prefixes_at(ks: i32[], pfxs: string[]): string[] {
   return out;
 }
 
-// import_closure is variant_scope by index into the loaded modules.
 function import_closure(mod: parser.Module, g: ImportGraph, ids: string[], pfxs: string[]): i32[] {
   let seen: boolean[] = [];
   while (seen.len() < pfxs.len()) {
@@ -438,9 +302,6 @@ function import_closure(mod: parser.Module, g: ImportGraph, ids: string[], pfxs:
   return queue;
 }
 
-// enum_viewers is, for each loaded module, the prefixes of the other modules
-// whose import closure reaches it, "" for the entry: what its enums'
-// EnumDecl.visible_from holds.
 function enum_viewers(closures: i32[][], entry_closure: i32[], pfxs: string[]): string[][] {
   let none: string[] = [];
   let out: string[][] = [];
@@ -462,7 +323,6 @@ function enum_viewers(closures: i32[][], entry_closure: i32[], pfxs: string[]): 
   return out;
 }
 
-// module_sights is every bundled module's ModuleSight, the entry's last.
 function module_sights(entry: parser.Module, imports: LoadedModule[], g: ImportGraph, ids: string[], pfxs: string[]): parser.ModuleSight[] {
   let std: string[] = [];
   let k: i32 = 0;
@@ -497,7 +357,6 @@ function import_path_list(mod: parser.Module): string[] {
   return out;
 }
 
-// with_enum_viewers stamps every enum `mod` declares with `viewers`.
 function with_enum_viewers(mod: parser.Module, viewers: string[]): parser.Module {
   let enums: parser.EnumDecl[] = [];
   for ed in mod.enums {
@@ -506,8 +365,6 @@ function with_enum_viewers(mod: parser.Module, viewers: string[]): parser.Module
   return parser.Module { ...mod, enums: enums };
 }
 
-// first_dot / first_bracket: byte index of the first '.' / '[' in s,
-// or -1. Used to split a type spelling into its qualifier / base.
 function first_dot(s: string): i32 {
   let i: i32 = 0;
   while (i < s.len()) {
@@ -530,7 +387,6 @@ function first_bracket(s: string): i32 {
   return 0 - 1;
 }
 
-// is_in reports membership of `name` in a string list.
 function is_in(name: string, list: string[]): boolean {
   let i: i32 = 0;
   while (i < list.len()) {
@@ -542,8 +398,6 @@ function is_in(name: string, list: string[]): boolean {
   return false;
 }
 
-// basename strips a leading directory + `./` from an import path:
-// "./lexer" → "lexer", "std/i32" → "i32".
 function basename(path: string): string {
   let start: i32 = 0;
   let i: i32 = 0;
@@ -556,13 +410,10 @@ function basename(path: string): string {
   return slice_unchecked(path, start, path.len()) + "";
 }
 
-// mod_names derives the imported-module name set from a module.
 pub function mod_names(mod: parser.Module): string[] {
   let out: string[] = [];
   let i: i32 = 0;
   while (i < mod.imports.len()) {
-    // The QUALIFIER used in source: the alias when `import "p" as alias`, else
-    // the path basename. import_prefixes returns the parallel mangle prefixes.
     if (mod.imports[i].alias.len() > 0) {
       out = out.append(mod.imports[i].alias);
     } else {
@@ -573,10 +424,6 @@ pub function mod_names(mod: parser.Module): string[] {
   return out;
 }
 
-// module_ident is a module's IDENTITY: the resolved file path with the
-// `.fern` extension removed, so basename() still yields the short name the
-// mangle prefix and PerModule.ns are built from. One string per file, which
-// a basename is not -- `std/test` and `coreutils/test` share theirs.
 pub function module_ident(mpath: string): string {
   if (mpath.len() > 5) {
     if (slice_unchecked(mpath, mpath.len() - 5, mpath.len()) + "" == ".fern") {
@@ -586,13 +433,7 @@ pub function module_ident(mpath: string): string {
   return mpath;
 }
 
-// resolve_imports records on each of `mod`'s imports the identity the driver
-// resolves it to. Only the driver can do this: `./lib/gnu` from the entry and
-// `./gnu` from inside lib/ are one file, and flatten sees neither directory.
 pub function resolve_imports(mod: parser.Module, dir: string, root: string): parser.Module {
-  // Callers pass the directory with a trailing slash; resolve_path wants it
-  // without. Checked rather than assumed: stripping the last byte of a path
-  // that does not end in one would silently name a different directory.
   let d: string = dir;
   if (d.len() > 1 && d[d.len() - 1] == b'/') {
     d = slice_unchecked(d, 0, d.len() - 1) + "";
@@ -607,30 +448,6 @@ pub function resolve_imports(mod: parser.Module, dir: string, root: string): par
   return parser.Module { ...mod, imports: out };
 }
 
-// with_handler_main gives a handler-shaped entry (a top-level `handle`, no
-// `main`) the `main` the native checker synthesises for one: the handler
-// served under the supervisor on `PORT`, with `init`'s config and state
-// where it answers them —
-//
-//     function main(): i32 { return serve.supervise(serve.__port_from_env("PORT", 8080), serve.config(), handle); }
-//
-// or, for `init(plat: platform.Platform): (serve.Config, S)` beside a handler
-// threading `S` and a `shutdown(reason, state)` hook,
-//
-//     let (__fern_opts, __fern_state) = init(serve.__init_platform());
-//     return serve.supervise_with_shutdown(port, __fern_opts, __fern_state, handle, shutdown);
-//
-// An `init` answering only the state goes as the state argument, one
-// answering only the config as the config argument, and a void one runs
-// as a statement before the serve call. Where the target has no processes
-// (wasm32-wasi) the single-process entries of the same arity serve
-// instead, `serve.run`, `serve.run_with` and their `_shutdown` twins; an
-// empty target is the hosted shape, as native's Check is. `serve` is
-// whatever the entry imports std/serve as; without the import the names
-// stay bare, so the checker reports them undefined as native does. A
-// mispaired `init`, `handle` and `shutdown` is left alone: E075 is the
-// checker's, and a main calling the wrong serve would only add a second
-// error.
 pub function handler_serve_diags(entry: parser.Module, target: string): util.Diag[] {
   if (top_fn_index(entry, "main") >= 0 || platforms.for_target(target).environment == "wasi-http") {
     return [];
@@ -649,9 +466,6 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
   if (top_fn_index(entry, "main") >= 0) {
     return entry;
   }
-  // A wasi-http world serves through its incoming-handler export, which
-  // the wasm emit wires to `handle`; a serve loop there would only hold
-  // wasi:sockets imports the proxy world does not have.
   if (platforms.for_target(target).environment == "wasi-http") {
     return entry;
   }
@@ -690,9 +504,6 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
   let init_call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "init", line: 0, col: 0, ty: "" }, args: init_args, line: 0, col: 0, type_args: [], ty: "" };
   let hook: ast.Expr = ast.ExprIdent { name: "shutdown", line: 0, col: 0, ty: "" };
   let body: ast.Stmt[] = [];
-  // The options are `init`'s when it answers them, else the defaults;
-  // the state is `init`'s value, destructured from beside the options
-  // when it answers both.
   let opts: ast.Expr = ast.ExprCall { callee: serve_ref(qual, "config"), args: [], line: 0, col: 0, type_args: [], ty: "" };
   let state: ast.Expr = init_call;
   if (init_kind == 3) {
@@ -738,8 +549,6 @@ function bool_i32(b: boolean): i32 {
   return 0;
 }
 
-// top_fn_index is the position of the top-level function `name` (a method
-// of that name is not one), or -1.
 function top_fn_index(mod: parser.Module, name: string): i32 {
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
@@ -751,21 +560,6 @@ function top_fn_index(mod: parser.Module, name: string): i32 {
   return 0 - 1;
 }
 
-// with_result_handler lets a handler fail with `?`, as the native checker
-// does: a `handle` answering `Result[HttpResponse, E]` (or
-// `(S, Result[HttpResponse, E])` with state) is renamed to
-// `__fern_handle_result` and a `handle` of the plain shape is synthesised
-// over it, `return http__respond(__fern_handle_result(req, plat));`, or
-// `http__respond_with` for the stateful pair. A handler whose errors are
-// std/error's `dyn Error` is adapted with `respond_error` /
-// `respond_error_with`, handed the handler's platform too.
-//
-// It runs on the FLATTENED entry, where a type is spelled by the module
-// that declares it — `dyn error.Error` under std/error's bundle prefix
-// however the program imported the trait, and never a program's own
-// `trait Error` — so
-// `error_pfx` and `http_pfx` are the bundle prefixes of std/error and
-// std/http, "" for one the program does not load.
 pub function with_result_handler(entry: parser.Module, error_pfx: string, http_pfx: string): parser.Module {
   let hi: i32 = top_fn_index(entry, "handle");
   if (hi < 0) {
@@ -804,9 +598,6 @@ pub function with_result_handler(entry: parser.Module, error_pfx: string, http_p
     adapter = mangled_name(http_pfx, adapter);
   }
   let call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: adapter, line: 0, col: 0, ty: "" }, args: adapter_args, line: 0, col: 0, type_args: [], ty: "" };
-  // The wrapper keeps the handler's type parameters and bounds: a handler
-  // generic over its platform is instantiated where the serve loop hands it
-  // the host platform, and the wrapper stands in its place there.
   let wrapper: parser.FuncDecl = parser.FuncDecl { ...handle, name: "handle", ret_type: ret, body: [ast.StmtReturn { value: call, line: 0, col: 0 }], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, ret_fn_ret: "", ret_fn_param_types: "" };
   let funcs: parser.FuncDecl[] = [];
   let i: i32 = 0;
@@ -821,10 +612,6 @@ pub function with_result_handler(entry: parser.Module, error_pfx: string, http_p
   return parser.Module { ...entry, funcs: funcs.append(wrapper) };
 }
 
-// result_err_is_dyn_error reports whether the flattened type text
-// `Result[HttpResponse, E]` has an `E` of std/error's `dyn Error`: a trait
-// is spelled `<prefix>.<name>` there (canon_trait), and `error_pfx` is
-// std/error's bundle prefix.
 function result_err_is_dyn_error(error_pfx: string, result: string): boolean {
   if (error_pfx.len() == 0) {
     return false;
@@ -832,10 +619,6 @@ function result_err_is_dyn_error(error_pfx: string, result: string): boolean {
   return strip_spaces(result) == "Result[HttpResponse,dyn" + error_pfx + ".Error]";
 }
 
-// loaded_prefix is the bundle prefix of the loaded module at `path`
-// (`std/error`), or "" when the program does not load it. A loader that
-// resolves no paths leaves `ident` empty, and then the module's name is
-// the best available answer, as everywhere else in the bundler.
 function loaded_prefix(imports: LoadedModule[], pfxs: string[], path: string): string {
   let i: i32 = 0;
   while (i < imports.len()) {
@@ -851,19 +634,15 @@ function loaded_prefix(imports: LoadedModule[], pfxs: string[], path: string): s
   return "";
 }
 
-// path_is reports whether module path `p` is `want`, bare or under a root.
 function path_is(p: string, want: string): boolean {
   return p == want || p.len() > want.len() + 1 && slice_unchecked(p, p.len() - want.len() - 1, p.len()) + "" == "/" + want;
 }
 
-// result_of_response reports whether the type text is `Result[HttpResponse, E]`.
 function result_of_response(t: string): boolean {
   let s: string = strip_spaces(t);
   return s.len() > 20 && slice_unchecked(s, 0, 20) + "" == "Result[HttpResponse,";
 }
 
-// tuple_halves splits `(A, B)` at its top-level comma into A and B, or
-// answers ("", "") for another shape.
 function tuple_halves(t: string): (string, string) {
   let s: string = strip_spaces(t);
   if (s.len() < 4 || s[0] != b'(' || s[s.len() - 1] != b')') {
@@ -899,7 +678,6 @@ function strip_spaces(t: string): string {
   return out;
 }
 
-// serve_ref names a module's `name`: qualified through `qual`, or bare.
 function serve_ref(qual: string, name: string): ast.Expr {
   if (qual.len() == 0) {
     return ast.ExprIdent { name: name, line: 0, col: 0, ty: "" };
@@ -907,7 +685,6 @@ function serve_ref(qual: string, name: string): ast.Expr {
   return ast.ExprFieldAccess { obj: ast.ExprIdent { name: qual, line: 0, col: 0, ty: "" }, field: name, line: 0, col: 0, ty: "", const_read: false };
 }
 
-// index_of_str returns the position of `want` in `list`, or -1.
 function index_of_str(want: string, list: string[]): i32 {
   let i: i32 = 0;
   while (i < list.len()) {
@@ -919,15 +696,6 @@ function index_of_str(want: string, list: string[]): i32 {
   return 0 - 1;
 }
 
-// import_prefixes returns, parallel to mod_names, the prefix each of `mod`'s
-// imports was ASSIGNED by the bundle, looked up by the identity the driver
-// resolved it to. This is the only prefix authority: deriving one from the
-// basename here and another in the bundle is how two files sharing a name
-// ended up with one emitting under the other's prefix and every reference to
-// the loser undefined (#9762).
-//
-// Falls back to the basename when `resolved` is empty, which is every
-// single-file driver -- with one module there is nothing to collide with.
 function import_prefixes(mod: parser.Module, ids: string[], pfxs: string[]): string[] {
   let out: string[] = [];
   let i: i32 = 0;
@@ -946,10 +714,6 @@ function import_prefixes(mod: parser.Module, ids: string[], pfxs: string[]): str
   return out;
 }
 
-// assign_prefixes gives every loaded module its one mangle prefix, unique
-// across the bundle, parallel to the identities it returns them against.
-// Assign standard-library modules first, then user modules, each in path
-// order, matching modload.assignManglePrefixes regardless of import order.
 pub function assign_prefixes(imports: LoadedModule[]): string[] {
   let pfxs: string[] = [];
   let order: i32[] = [];
@@ -995,7 +759,6 @@ function prefix_before(a: LoadedModule, b: LoadedModule): boolean {
   return util.str_less(ak, bk);
 }
 
-// module_ids returns each loaded module's identity, for import_prefixes.
 function module_ids(imports: LoadedModule[]): string[] {
   let out: string[] = [];
   let i: i32 = 0;
@@ -1006,31 +769,19 @@ function module_ids(imports: LoadedModule[]): string[] {
   return out;
 }
 
-// mangle_bare maps a bare reference name to its own-module mangled
-// form when it names one of this module's top-level decls.
 function mangle_bare(name: string, ctx: RewriteCtx): string {
   return resolve_bare(name, ctx, false);
 }
 
-// mangle_bare_value is mangle_bare for a name read as a value. A variant name
-// that more than one enum the module sees declares resolves to none of them
-// here: it keeps the module's own spelling, and the checker reports it as
-// E036. A pattern or a type takes the first, since the scrutinee or the
-// declared type settles which one it is.
 function mangle_bare_value(name: string, ctx: RewriteCtx): string {
   return resolve_bare(name, ctx, true);
 }
 
 function resolve_bare(name: string, ctx: RewriteCtx, as_value: boolean): string {
-  // Own decl → its precomputed shared mangled instance, avoiding a fresh
-  // concat per occurrence.
   let di: i32 = declname_index_of(name, ctx);
   if (di >= 0 && di < ctx.declnames_mangled.len()) {
     return ctx.declnames_mangled[di];
   }
-  // A bare reference to one of this module's imported enum variants
-  // resolves to its bundled (prefix-mangled) struct name. Checked
-  // after own decls so a same-named local decl still wins.
   let iv: IvarMatch = match_ivar(name, ctx);
   if (as_value && iv.ambiguous) {
     if (ctx.prefix.len() == 0) {
@@ -1044,14 +795,6 @@ function resolve_bare(name: string, ctx: RewriteCtx, as_value: boolean): string 
   return name;
 }
 
-// rewrite_type_name rewrites a type spelling under ctx:
-//   * qualified `mod.Name` (mod imported) → `mod__Name` (array /
-//     generic suffix is preserved: `lexer.Token[]` → `lexer__Token[]`)
-//   * bare `Base` (Base is an own decl) → `prefix__Base`, preserving
-//     any `[]` / `[..]` suffix (`Token[]` → `prefix__Token[]`)
-//   * everything else (i32, Map[string,i32], other.Thing) untouched
-// rewrite_written mangles a struct literal's written instantiation as
-// rewrite_type_name does its type name; "" stays "".
 function rewrite_written(w: string, ctx: RewriteCtx): string {
   if (w.len() == 0) {
     return w;
@@ -1060,29 +803,13 @@ function rewrite_written(w: string, ctx: RewriteCtx): string {
 }
 
 pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
-  // A function type's parameter list spells a consuming slot `own T`, and the
-  // type sits behind the mode.
   if (parser.spelling_is_own(tn)) {
     return "own " + rewrite_type_spelling(parser.spelling_without_own(tn), ctx);
   }
   return rewrite_type_spelling(tn, ctx);
 }
 
-// rewrite_type_spelling is rewrite_type_name for a spelling with no mode.
 function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
-  // A tuple type `(A, B, …)` — mangle each ELEMENT type, preserving nesting.
-  // Without this, rewrite_type_name's bare/bracket logic treats the whole
-  // spelling as one name and leaves an own-module struct element unmangled
-  // (`(string, Box)` keeps `Box`), so a later cross-module tuple destructure
-  // recovers the unmangled tag and dispatches a non-existent `Box.method`
-  // instead of `mod__Box.method` (#3457: std/test's must_temp_dir ->
-  // (string, TestRunner), used by result_assertions / dir_listing).
-  // Decode the tuple via the structured TypeRef (SH-021, docs/SELF-HOST-AUDIT.md
-  // T2) rather than a hand-rolled depth-tracking top-level-comma split + per-
-  // element space trim; parse_type_ref splits the elements without letting a
-  // nested generic's / tuple's inner commas confuse the split, and each element
-  // rendered back is the canonical spelling the recursion expects. A tuple
-  // ARRAY (`(A, B)[]`) takes the same element rewrite, its suffix re-attached.
   let tref: parser.TypeRef = parser.parse_type_ref(tn);
   if (tref.is_tuple) {
     let out: string = "(";
@@ -1102,18 +829,6 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
     }
     return out;
   }
-  // A FUNCTION type (`(Flag) => Opt`, `() => i32`): parse_type_ref gives it an
-  // EMPTY base with args = the parameters plus the result last, which is the
-  // same shape a generic application has — so the branch below re-spelled it
-  // as `[Opt]`, losing the parameter list and the arrow along with the empty
-  // base. `Option[() => i32]` reached the closure lift as `Option[[i32]]`, and
-  // with no arrow left in the spelling the annotation stopped ruling out the
-  // zero-arg const reading: the payload was CALLED at construction and the
-  // match arm then called its i32 result (#7959).
-  //
-  // Parameters and result are full spellings, so each needs the same rewrite
-  // the tuple elements get; the array suffix goes after the arrow, exactly as
-  // render_type_ref spells it.
   if (tref.is_fn) {
     let fout: string = "(";
     let fi: i32 = 0;
@@ -1132,20 +847,6 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
     }
     return fout;
   }
-  // A GENERIC application (`Option[Flag]`, `Map[string, Flag]`,
-  // `mod.Wrapper[Flag]`, `Option[Flag][]`): rewrite the base AND every type
-  // ARGUMENT. The bracket handling further down re-attaches `tn[br:]`
-  // verbatim, which leaves an own-module type inside the brackets unmangled —
-  // `find(): Option[Flag]` kept `Option[Flag]` while the struct decl became
-  // `lib__Flag`. Nothing then resolves the match binder's payload type, so
-  // `f.<field>` on it cannot lower and the whole module bails to the AST
-  // emitter (std/cli's `parse` was the last such holdout, via
-  // `match (__cli_find_short(...)) { Some(f) => f.takes_value }`).
-  //
-  // Same recursion as the tuple case above, and for the same reason — the
-  // element is a full type spelling, so it needs the full rewrite, not a
-  // substring copy. An `args`-less spelling (`Flag[]`, a bare name) has
-  // nothing to recurse into and falls through to the logic below unchanged.
   if (!tref.is_tuple && !tref.is_fn && tref.args.len() == 0 && parser.dyn_trait_set(tref.base).len() > 0) {
     let dout: string = canon_dyn(tref.base, ctx);
     let dd: i32 = 0;
@@ -1177,11 +878,7 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
   if (dot >= 0) {
     let qual: str = slice_unchecked(tn, 0, dot);
     if (is_in(qual, ctx.modnames)) {
-      // Resolve the qualifier to the module's mangle prefix (alias-aware).
       let prefix: string = resolve_prefix(qual, ctx);
-      // Split any generic/array suffix off the base name so a
-      // re-exported `facade.Point[]` redirects on `Point` and
-      // re-attaches the `[]`.
       let rest: str = slice_unchecked(tn, dot + 1, tn.len());
       let member_dot: i32 = first_dot(rest);
       if (member_dot >= 0) {
@@ -1198,19 +895,11 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
       let rbase: str = slice_unchecked(rest, 0, rb);
       return lookup_reexport(prefix + "__" + rbase, ctx) + slice_unchecked(rest, rb, rest.len());
     }
-    // `E.Wrap` where THIS module declares `enum E`: the qualifier names a
-    // TYPE, not a module, so both halves take the module's mangle prefix —
-    // the same mangle_bare mangle_enum_decls applies to the enum's own name
-    // and variant list, so the two cannot drift. An imported module wins the
-    // spelling when a name is somehow both, since only that reading can
-    // reach across modules at all.
     if (is_in(qual, ctx.enumnames)) {
       return mangle_bare(qual + "", ctx) + "." + mangle_bare(slice_unchecked(tn, dot + 1, tn.len()) + "", ctx);
     }
     return tn;
   }
-  // No qualifier — maybe a bare own-module type (possibly with a
-  // generic / array suffix).
   let br: i32 = first_bracket(tn);
   if (br < 0) {
     return mangle_bare(tn, ctx);
@@ -1242,16 +931,9 @@ function rewrite_pattern(p: ast.Pattern, ctx: RewriteCtx): ast.Pattern {
   return p;
 }
 
-// rewrite_expr rewrites references inside an expression under ctx.
-// Qualified module ref `mod.field` (base ident in modnames) collapses
-// to a bare `mod__field` ident; a bare ident naming an own decl
-// becomes `prefix__name`; field access on a plain value is recursed
-// into untouched.
 pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
   match (e) {
     ast.ExprIdent(id) => {
-      // A local variable shadowing a module-level decl keeps its bare
-      // name (don't mangle it into the decl's reference).
       if (is_in(id.name, ctx.locals)) {
         return ast.ExprIdent { name: id.name, line: id.line, col: id.col, ty: id.ty };
       }
@@ -1261,25 +943,9 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
       match (fa.obj) {
         ast.ExprIdent(id) => {
           if (is_in(id.name, ctx.modnames) && !is_in(id.name, ctx.locals)) {
-            // Alias-aware: `io.foo` -> `io_buffered__foo`.
-            // `prefix + "__"` and NOT mangled_name: native mangles a
-            // qualified reference blindly, so `map.__map_pow2_ceil`
-            // resolves under neither compiler while the bare
-            // spelling resolves under both. A runtime helper is not
-            // public API, and matching native exactly is worth more
-            // here than opening a spelling only this compiler takes.
             let mangled: string = lookup_reexport(resolve_prefix(id.name, ctx) + "__" + fa.field, ctx);
-            // `ty: ""` and not `id.ty`: the result names a module-qualified
-            // FUNCTION, so the module ident's own tag says nothing about it.
             return ast.ExprIdent { name: mangled, line: id.line, col: id.col, ty: "" };
           }
-          // `E.Wrap(3)` where THIS module declares `enum E`: an
-          // ENUM-qualified variant reference, not a module-qualified
-          // value. It stays a field access (the checker resolves the
-          // qualifier through the union table) but both halves mangle,
-          // as rewrite_type_name does for the pattern spelling. A local
-          // of the same name shadows the enum, so the reference is then
-          // an ordinary field access.
           if (!is_in(id.name, ctx.locals) && is_in(id.name, ctx.enumnames)) {
             return ast.ExprFieldAccess { ...fa, obj: ast.ExprIdent { name: mangle_bare(id.name, ctx), line: id.line, col: id.col, ty: id.ty }, field: mangle_bare(fa.field, ctx) };
           }
@@ -1371,8 +1037,6 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
       return ast.ExprStructLit { ...slit, type_name: rewrite_type_name(slit.type_name, ctx), field_values: fvs, base: new_base, written: rewrite_written(slit.written, ctx) };
     },
     ast.ExprLambda(lm) => {
-      // The lambda's params join the enclosing locals, which it can
-      // capture; rewrite_block adds the body's own bindings.
       let inner: string[] = ctx.locals;
       for lp in lm.params {
         inner = inner.append(lp.name);
@@ -1409,9 +1073,6 @@ pub function rewrite_block(stmts: ast.Stmt[], ctx: RewriteCtx): ast.Stmt[] {
   return out;
 }
 
-// rewrite_var_type is rewrite_type_name for a `let`'s type channel, which for a
-// struct destructure carries the `@sd:<Struct>:<fields>` marker instead: the
-// struct it names is mangled as an annotation's would be.
 function rewrite_var_type(tn: string, ctx: RewriteCtx): string {
   if (!parser.is_struct_destr_marker(tn)) {
     return rewrite_type_name(tn, ctx);
@@ -1477,8 +1138,6 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
       return ast.StmtMatch { ...m, scrutinee: rewrite_expr(m.scrutinee, ctx), arms: rewrite_match_arms(m.arms, ctx), sugar: sugar };
     },
     ast.StmtDefer(d) => {
-      // Rewrite the deferred action's cross-module references before
-      // lower_defers (module_with_builtins) schedules it at the exits.
       return ast.StmtDefer { action: rewrite_stmt(d.action, ctx), on_error: d.on_error, line: d.line };
     },
     _ => {
@@ -1510,7 +1169,6 @@ function rewrite_match_arms(arms: ast.MatchArm[], ctx: RewriteCtx): ast.MatchArm
   return out;
 }
 
-// Retain resolved names in record patterns that the checker desugars after the bundle.
 function rewrite_record_sugar(sg: ast.MatchSugar, ctx: RewriteCtx): ast.MatchSugar {
   if (!has_record_arms(sg.arms)) {
     return sg;
@@ -1536,9 +1194,6 @@ function rewrite_params(params: ast.ParamDecl[], ctx: RewriteCtx): ast.ParamDecl
   return out;
 }
 
-// rewrite_type_name_list renames every element of a comma-joined type-spelling
-// list, so a fn-typed field's parameter types follow its own type_name and
-// fn_ret through the module-mangling rename.
 function rewrite_type_name_list(list: string, ctx: RewriteCtx): string {
   if (list.len() == 0) {
     return "";
@@ -1556,10 +1211,6 @@ function rewrite_type_name_list(list: string, ctx: RewriteCtx): string {
   return out;
 }
 
-// canon_trait spells a trait by the bundle prefix of the module that must
-// declare it: a bare name by the naming module's own prefix ("" for the entry,
-// so it stays bare), a qualified one by the prefix of the import it names. A
-// qualifier naming no import is left as written, and resolves nothing.
 function canon_trait(d: string, ctx: RewriteCtx): string {
   let dot: i32 = d.len() - 1;
   while (dot >= 0 && d[dot] != b'.') {
@@ -1576,7 +1227,6 @@ function canon_trait(d: string, ctx: RewriteCtx): string {
     return d;
   }
   let name: string = slice_unchecked(d, dot + 1, d.len()) + "";
-  // A trait reached through a `pub use` facade is the origin module's.
   let origin: string = lookup_reexport(ctx.modprefixes[k] + "__" + name, ctx);
   return slice_unchecked(origin, 0, origin.len() - name.len() - 2) + "." + name;
 }
@@ -1589,8 +1239,6 @@ function canon_derives(derives: string[], ctx: RewriteCtx): string[] {
   return out;
 }
 
-// The module that declares the trait `im` implements, as canon_trait resolves
-// it: "" for the entry's own.
 function trait_module_of(im: parser.ImplInfo, ctx: RewriteCtx): string {
   let spelling: string = im.trait_spelling;
   if (spelling.len() == 0) {
@@ -1607,8 +1255,6 @@ function trait_module_of(im: parser.ImplInfo, ctx: RewriteCtx): string {
   return slice_unchecked(canon, 0, dot) + "";
 }
 
-// canon_dyn spells each trait of a `dyn` set by canon_trait, keeping any
-// bracketed pin (`Iter[Item = i32]`) on the trait it follows.
 function canon_dyn(set: string, ctx: RewriteCtx): string {
   let out: string = "dyn ";
   let first: boolean = true;
@@ -1638,9 +1284,6 @@ function rewrite_struct_fields(fields: parser.StructFieldDecl[], ctx: RewriteCtx
   return out;
 }
 
-// param_names is the names a function's body starts with in scope: its
-// receiver and its parameters. rewrite_block adds each binding from the
-// statement that makes it.
 function param_names(fd: parser.FuncDecl): string[] {
   let out: string[] = [];
   if (fd.receiver_name.len() > 0) {
@@ -1654,32 +1297,15 @@ function param_names(fd: parser.FuncDecl): string[] {
   return out;
 }
 
-// rewrite_module_bodies applies ctx to every funcs/structs/aliases/
-// top_stmts position. Decl NAMES are handled by the caller (entry
-// keeps them; mangle renames them); this rewrites the bodies + type
-// spellings + the receiver type, plus mangles each non-receiver
-// function name and struct/alias name when ctx.prefix is set.
 function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Module {
   let funcs: parser.FuncDecl[] = [];
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
     let fd: parser.FuncDecl = mod.funcs[i];
-    // Non-receiver functions get name-mangled; receiver methods
-    // keep their name (dispatched by receiver type) but the
-    // receiver type itself is rewritten. bound_traits carries
-    // through untouched: those are TRAIT names, and the trait
-    // namespace is not rewritten (see mangle_impls). A bound's type
-    // ARGUMENTS ride along in the same spelling, so one written over a
-    // module-local type (`I: Iterator[Foo]`) does not match the impl's
-    // mangled `mod__Foo` and pins nothing — the variable stays erased,
-    // as it was before clone_bg pinned any. A VARIABLE argument, which
-    // is the shape that matters, names no module.
     let new_name: string = fd.name;
     if (fd.receiver_type == "") {
       new_name = mangle_bare(fd.name, ctx);
     }
-    // Body/params rewrite under a ctx that knows this function's local
-    // bindings, so a local shadowing a module decl is left unmangled.
     let bctx: RewriteCtx = RewriteCtx {
       modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix,
       declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: param_names(fd),
@@ -1738,10 +1364,6 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
   return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: [], enumnames: ctx.enumnames, imported_enums: ctx.imported_enums, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx), trait_reqs: mangle_trait_reqs(mod.trait_reqs, ctx) };
 }
 
-// mangle_trait_reqs rewrites the types a trait's requirement signatures name,
-// as rewrite_module_bodies rewrites every function's, so the requirement and
-// an impl's method are compared (E021) and resolved (a `dyn` call's result) in
-// the one spelling the flattened program has.
 function mangle_trait_reqs(reqs: parser.TraitReq[], ctx: RewriteCtx): parser.TraitReq[] {
   let out: parser.TraitReq[] = [];
   for r in reqs {
@@ -1758,27 +1380,11 @@ function mangle_sigs(sigs: parser.FuncDecl[], ctx: RewriteCtx): parser.FuncDecl[
   return out;
 }
 
-// mangle_impls rewrites an impl block's TARGET type the same way every other
-// type reference in the module is rewritten. It used to pass `mod.impls`
-// through untouched, which left the one name in the bundle that flatten does
-// not mangle: `impl Display for bigint.BigInt` in core/cmp kept its source
-// spelling while the method adopted to satisfy it — bigint's own
-// `(a: BigInt) to_string()` — became `bigint__BigInt`. The two never matched,
-// so every empty "adopt the existing method" impl drew a spurious
-// `E021 ... missing method`, and because a bundle's diagnostics are checked as
-// a SET, that poisoned every program importing std/string (which reaches
-// core/bigint + core/cmp since #6314) in the Go-vs-self-host differential.
-// trait_name and bounds are trait-namespace names, and method_names are bare
-// method names, none of which flatten mangles; trait_module names the module
-// that declares the trait, as canon_trait resolves it.
 function mangle_impls(impls: parser.ImplInfo[], ctx: RewriteCtx): parser.ImplInfo[] {
   let out: parser.ImplInfo[] = [];
   let i: i32 = 0;
   while (i < impls.len()) {
     let im: parser.ImplInfo = impls[i];
-    // An associated-type BINDING is a type name like any other, so it
-    // mangles with the rest — an `impl Iterator for R { type Item = Node; }`
-    // in a module must bind the module's mangled `Node`.
     let mangled_vals: string[] = [];
     let vi: i32 = 0;
     while (vi < im.assoc_values.len()) {
@@ -1806,14 +1412,6 @@ function mangle_impls(impls: parser.ImplInfo[], ctx: RewriteCtx): parser.ImplInf
   return out;
 }
 
-// mangle_enum_decls renames an imported module's EnumDecls to match the
-// prefix-mangled variant structs (`Full` -> `g3__Full`) the same module's
-// `mangle_bare` produces. Without this the EnumDecl (name + variant_names)
-// kept its bare spellings while the variant structs were mangled, so
-// monomorphize_enums — which drives instantiation off the EnumDecl's
-// variant_names — couldn't find a mangled variant struct, and an imported
-// generic enum matched inside the imported module bailed lower (the whole
-// merged program then routed AST). Slice 6 (end-to-end std/async).
 function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.EnumDecl[] {
   let out: parser.EnumDecl[] = [];
   let i: i32 = 0;
@@ -1843,13 +1441,8 @@ function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.En
   return out;
 }
 
-// flatten_qualified rewrites only QUALIFIED cross-module references
-// (`mod.X` → `mod__X`) in a module — no own-decl mangling. Used on
-// the entry module (whose own decls keep their bare names).
 pub function flatten_qualified(mod: parser.Module, ids: string[], pfxs: string[], scope: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[], imported: ImportedEnum[]): parser.Module {
   let empty: string[] = [];
-  // The entry's own decls keep their names, so one sharing an imported
-  // variant's name must still win over it, as an imported module's does (#11143).
   let own: string[] = collect_decl_names(mod);
   let ivn: string[] = [];
   let ivm: string[] = [];
@@ -1865,10 +1458,6 @@ pub function flatten_qualified(mod: parser.Module, ids: string[], pfxs: string[]
   return rewrite_module_bodies(mod, ctx);
 }
 
-// collect_decl_names returns the set of top-level names a module
-// contributes to the flat namespace: non-receiver functions, structs,
-// and type aliases. Receiver methods are excluded — they dispatch by
-// receiver type, not by a prefix-mangled name.
 pub function collect_decl_names(mod: parser.Module): string[] {
   let names: string[] = [];
   let i: i32 = 0;
@@ -1888,15 +1477,6 @@ pub function collect_decl_names(mod: parser.Module): string[] {
     names = names.append(mod.aliases[k].name);
     k = k + 1;
   }
-  // Enum NAMES too: an enum desugars to its variant structs (already counted
-  // above), but the enum's own name is also a usable type (`fs: Fut[T][]`).
-  // Without it, a same-module bare reference to the enum type stayed UNMANGLED
-  // (`Fut[T][]`) while a cross-module qualified use mangled (`mod__Fut[i32][]`),
-  // so monomorphization's bind_unify compared mismatched bases (`Fut` vs
-  // `mod__Fut`) and couldn't recover a type param whose ONLY source is a
-  // generic-enum argument (e.g. with_deadline(ms, fs: Future[T][]) — no bare-T
-  // param). Mangling the enum name makes param types, let annotations, and the
-  // EnumDecl name agree. (slice 6b)
   let en: i32 = 0;
   while (en < mod.enums.len()) {
     names = names.append(mod.enums[en].name);
@@ -1905,13 +1485,6 @@ pub function collect_decl_names(mod: parser.Module): string[] {
   return names;
 }
 
-// collect_enum_names returns the names of the `enum` decls the module makes.
-// It is what tells an ENUM-qualified reference — `E.Wrap`, where the module
-// itself declares `enum E` — from a MODULE-qualified one: both are spelled
-// `<qual>.<name>`, and once the module is prefix-mangled neither half of
-// `E.Wrap` lines up with the mangled `lib__E` / `lib__Wrap` the decl now
-// carries unless the qualifier is recognised as a type. Native asks the same
-// question of `ownEnums` (internal/pkg/modload).
 pub function collect_enum_names(mod: parser.Module): string[] {
   let names: string[] = [];
   let i: i32 = 0;
@@ -1922,12 +1495,6 @@ pub function collect_enum_names(mod: parser.Module): string[] {
   return names;
 }
 
-// unique_prefix is the self-host half of native's collision loop
-// (modload.assignManglePrefixes). Sanitising is not injective — `[.fern` and
-// `_.fern` both reduce to `_`, as do `a-b.fern` and `a_b.fern` — so without
-// this the two modules mangle their decls to the same symbol and one
-// definition silently wins. Suffixes match native's, so a program compiled by
-// either compiler carries the same symbols.
 function unique_prefix(base: string, used: string[]): string {
   let cand: string = base;
   let k: i32 = 1;
@@ -1938,14 +1505,10 @@ function unique_prefix(base: string, used: string[]): string {
   return cand;
 }
 
-// mangle_module renames a non-entry module's own decls to
-// `prefix__name` and rewrites every internal reference to match, plus
-// flattens any qualified refs it makes to other modules.
 pub function mangle_module(mod: parser.Module, prefix: string, ids: string[], pfxs: string[], scope: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[], imported: ImportedEnum[]): parser.Module {
   return rewrite_module_bodies(mod, module_ctx(mod, prefix, ids, pfxs, scope, ivar_names, ivar_mangled, reexport_keys, reexport_targets, imported));
 }
 
-// module_ctx is the context mangle_module renames `mod` under.
 function module_ctx(mod: parser.Module, prefix: string, ids: string[], pfxs: string[], scope: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[], imported: ImportedEnum[]): RewriteCtx {
   let decls: string[] = collect_decl_names(mod);
   return RewriteCtx {
@@ -1966,14 +1529,8 @@ function module_ctx(mod: parser.Module, prefix: string, ids: string[], pfxs: str
   };
 }
 
-// TraitDefaultIn is a trait's default method with its body already renamed
-// in the trait's own module, keyed `<prefix>.<Trait>` the way
-// parser.impl_trait_key spells the trait an impl implements.
 struct TraitDefaultIn { key: string, params: string[], method: parser.FuncDecl }
 
-// module_trait_defaults renames every default method of `mod`'s traits under
-// the module's own context, so the body calls the functions its own module
-// named wherever an impl inherits it (#8484).
 function module_trait_defaults(mod: parser.Module, ctx: RewriteCtx, acc: TraitDefaultIn[]): TraitDefaultIn[] {
   for td in mod.trait_decls {
     for m in td.methods {
@@ -1987,9 +1544,6 @@ function module_trait_defaults(mod: parser.Module, ctx: RewriteCtx, acc: TraitDe
   return acc;
 }
 
-// inherit_trait_defaults gives each impl in `mod` of a trait ANOTHER module
-// declares the defaults it does not write. The parser already did this for
-// the module's own traits, which `own` (the module's prefix) identifies.
 function inherit_trait_defaults(mod: parser.Module, own: string, defaults: TraitDefaultIn[]): parser.Module {
   let funcs: parser.FuncDecl[] = mod.funcs;
   for im in mod.impls {
@@ -2005,13 +1559,8 @@ function inherit_trait_defaults(mod: parser.Module, own: string, defaults: Trait
   return parser.Module { ...mod, funcs: funcs };
 }
 
-// RenamedImports is every import renamed under its own context, with the
-// trait defaults it inherits from other modules, plus every module's renamed
-// defaults for the entry to inherit from.
 struct RenamedImports { mods: parser.Module[], defaults: TraitDefaultIn[] }
 
-// rename_imports is the import half bundle and bundle_per_module share, so
-// the merged and the per-module builds agree on every module's decls.
 function rename_imports(entry: parser.Module, imports: LoadedModule[], ids: string[], pfxs: string[], graph: ImportGraph, ivar_names: string[], ivar_mangled: string[], rx: ReexportTable): RenamedImports {
   let imported: ImportedEnum[] = imported_enums(imports, pfxs);
   let ctxs: RewriteCtx[] = [];
@@ -2036,39 +1585,10 @@ function rename_imports(entry: parser.Module, imports: LoadedModule[], ids: stri
   return RenamedImports { mods: mods, defaults: defaults };
 }
 
-// =================== VALIDATION ====================
-
-// LoadedModule pairs an imported module with its two names, which are NOT
-// the same string and must not be conflated:
-//
-//   name  — the module's own name, its file's basename, which a diagnostic
-//           names it by; an alias or a `-` makes it differ from the
-//           qualifier source writes.
-//   ident — the IDENTITY, one string per FILE, which the bundler needs to
-//           give two same-basename modules their own prefixes (#9762).
-//           Empty from a loader that does not resolve paths; then the
-//           qualifier is the best available answer and behaviour is as before.
 pub struct LoadedModule { name: string, ident: string, mod: parser.Module }
 
-// MethodDedup is disambiguate_methods' answer: the rewritten module, and the
-// claim table extended with the keys it took.
 struct MethodDedup { mod: parser.Module, keys: string[] }
 
-// disambiguate_methods is the cross-module half of parser.claim_method_name.
-// mangle_module deliberately leaves a receiver method's NAME alone (dispatch is
-// by receiver type), so `impl Add for i32` in std/num and a user trait's `add`
-// for i32 both want the flat symbol `i32.add`. The first module to claim a
-// `<Type>.<name>` key keeps it — that is the definition every call site
-// resolves to — and a later module's method is interposed with its namespace
-// (`i32.num.add`). parse_module already made each module injective on its own,
-// and a renamed method keeps the impl_trait it was claimed for, which is what
-// `dyn` dispatch reads instead of the name. `claimed` is threaded across the
-// whole bundle, entry included.
-//
-// Collisions are tested against EARLIER modules only (`claimed`), never against
-// keys this module itself contributes: two methods of ONE module that still
-// share a key after claim_method_name are a genuine redeclaration, and renaming
-// one would hide the E006 the checker owes for it.
 function disambiguate_methods(mod: parser.Module, ns: string, claimed: string[]): MethodDedup {
   let out: parser.FuncDecl[] = [];
   let added: string[] = [];
@@ -2111,12 +1631,6 @@ function disambiguate_methods(mod: parser.Module, ns: string, claimed: string[])
   return MethodDedup { mod: deduped, keys: keys };
 }
 
-// imported_trait_spellings is every `alias.Trait` with which `mod` can name a
-// trait one of its imports declares: the parameter types
-// parser.desugar_trait_params turns into anonymous type parameters. A module's
-// own traits are bare, and the parser has already desugared those. An import
-// is matched as import_prefixes matches it: by `resolved` identity, else by
-// the basename a loader that records no identity named the module by.
 function imported_trait_spellings(mod: parser.Module, imports: LoadedModule[]): string[] {
   let ids: string[] = module_ids(imports);
   let quals: string[] = mod_names(mod);
@@ -2140,8 +1654,6 @@ function imported_trait_spellings(mod: parser.Module, imports: LoadedModule[]): 
   return out;
 }
 
-// loaded_index_by_name is the position of the loaded module named `name`,
-// or -1.
 function loaded_index_by_name(imports: LoadedModule[], name: string): i32 {
   let i: i32 = 0;
   while (i < imports.len()) {
@@ -2153,8 +1665,6 @@ function loaded_index_by_name(imports: LoadedModule[], name: string): i32 {
   return 0 - 1;
 }
 
-// desugar_imported_trait_params applies parser.desugar_trait_params to every
-// loaded module, against the traits its own imports declare.
 function desugar_imported_trait_params(imports: LoadedModule[]): LoadedModule[] {
   let out: LoadedModule[] = [];
   for lm in imports {
@@ -2163,14 +1673,8 @@ function desugar_imported_trait_params(imports: LoadedModule[]): LoadedModule[] 
   return out;
 }
 
-// Qualifiers is how one module of a bundle names others: `aliases` are the
-// qualifiers its imports are written with, `prefixes` the bundle prefix of the
-// module each names (parallel), `own` the prefix its own declarations carry
-// ("" for the entry), and the re-export table every qualified name follows.
 pub struct Qualifiers { aliases: string[], prefixes: string[], own: string, reexport_keys: string[], reexport_targets: string[] }
 
-// bundle_qualifiers is each module's Qualifiers in a bundle of `entry` and
-// `imports`: the entry's, then each import's in order.
 pub function bundle_qualifiers(entry: parser.Module, imports: LoadedModule[]): Qualifiers[] {
   let ids: string[] = module_ids(imports);
   let pfxs: string[] = assign_prefixes(imports);
@@ -2185,8 +1689,6 @@ pub function bundle_qualifiers(entry: parser.Module, imports: LoadedModule[]): Q
   return out;
 }
 
-// qualified_name is the bundled name `alias.name` resolves to, or "" when
-// `alias` is not one of the module's imports.
 pub function qualified_name(q: Qualifiers, alias: string, name: string): string {
   let i: i32 = index_of_str(alias, q.aliases);
   if (i < 0) {
@@ -2195,22 +1697,10 @@ pub function qualified_name(q: Qualifiers, alias: string, name: string): string 
   return follow_reexports(q.prefixes[i] + "__" + name, q.reexport_keys, q.reexport_targets);
 }
 
-// bundle merges an entry module with its imported modules into one
-// flat Module the asm emitter can lower directly. Each import is
-// mangled (`name__*`, brick 2) — which also renames its own `main`
-// to `name__main`, so it can't collide with the entry's `main`. The
-// entry is qualified-flattened (brick 1) so its `name.X` references
-// resolve to the mangled decls. Decl lists are concatenated; the
-// entry's top-level statements are kept (imports run no top stmts in
-// the compiler's module layout). This is the final brick: after it,
-// a multi-module program — the compiler itself — lowers to a single
-// namespace and self-compiles.
 pub function bundle(entry0: parser.Module, imports0: LoadedModule[], target: string): parser.Module {
-  // Imported record variants need their declarations before field positions resolve.
   return parser.resolve_variant_fields_module(bundle_with_prefixes(entry0, imports0, target, assign_prefixes(imports0)));
 }
 
-// The loader uses this same prefix table to attach package provenance.
 pub function bundle_with_prefixes(entry0: parser.Module, imports0: LoadedModule[], target: string, pfxs: string[]): parser.Module {
   let imports: LoadedModule[] = desugar_imported_trait_params(imports0);
   let entry: parser.Module = parser.desugar_trait_params(with_handler_main(entry0, target), imported_trait_spellings(entry0, imports0), true);
@@ -2223,17 +1713,6 @@ pub function bundle_with_prefixes(entry0: parser.Module, imports0: LoadedModule[
   let impls: parser.ImplInfo[] = [];
   let trait_reqs: parser.TraitReq[] = [];
   let trait_decls: parser.TraitDecl[] = [];
-  // Build the imported-enum-variant → mangled-name map once, from
-  // every import's parsed (pre-mangle) variant structs. A variant is
-  // an enum-member struct decl (`enum_owner != ""`); its bundled name
-  // is `<importname>__<variant>`, matching what mangle_module renames
-  // the owning module's decl to. Threaded into every module's rewrite
-  // so a bare variant reference (`Fail`) from any module resolves the
-  // same way the reference front-end resolves it (issue #2666).
-  // One prefix authority for the whole bundle. Everything below -- the
-  // enum-variant map, the re-export table, each module's own decls, and
-  // every importer's references -- reads these rather than deriving a
-  // prefix of its own (#9762).
   let ids: string[] = module_ids(imports);
   let ivar_names: string[] = [];
   let ivar_mangled: string[] = [];
@@ -2250,8 +1729,6 @@ pub function bundle_with_prefixes(entry0: parser.Module, imports0: LoadedModule[
     }
     iv = iv + 1;
   }
-  // `pub use` re-export table: redirects a consumer's `facade.name`
-  // (which mangles to `facade__name`) to the original `origin__name`.
   let rx: ReexportTable = build_reexports(imports, ids, pfxs);
   let graph: ImportGraph = import_graph(imports, ids, pfxs);
   let inferred: string[] = mangled_inferred_consts(imports, pfxs, entry);
@@ -2325,12 +1802,6 @@ pub function bundle_with_prefixes(entry0: parser.Module, imports0: LoadedModule[
     trait_decls = trait_decls.append(e.trait_decls[edi]);
     edi = edi + 1;
   }
-  // The bundle keeps the program's import CLOSURE — the entry's own imports
-  // plus every loaded module's — rather than an empty list. Nothing loads
-  // from a bundled module's list (the loaders read the entry and each part
-  // before they get here), and it is what tells the checker which stdlib
-  // modules the program linked: the self-host's answer to native's
-  // `prog.LoadedStdlibPaths`, which is what its E001 `core/map` rule reads.
   let closure: parser.Import[] = [];
   let closure_paths: string[] = [];
   let ci: i32 = 0;
@@ -2353,11 +1824,6 @@ pub function bundle_with_prefixes(entry0: parser.Module, imports0: LoadedModule[
     }
     cm = cm + 1;
   }
-  // Re-settle on the merged signature set. A call into an IMPORTED module had
-  // no declaration to settle its arguments against at parse time, so
-  // `lib.f([1, 2])` reached an `f64[]`/`i64[]` parameter as unsettled i32
-  // literals in a literal sized for i32 slots. settle_module is idempotent, so
-  // this settles only what the merge newly reaches.
   let merged: parser.Module = parser.Module {
     funcs: funcs,
     structs: structs,
@@ -2377,9 +1843,6 @@ pub function bundle_with_prefixes(entry0: parser.Module, imports0: LoadedModule[
   return parser.lower_stream_signatures(parser.route_inherited_defaults(parser.resolve_dyn_traits(parser.settle_module(parser.rewrite_assoc_const_reads(parser.substitute_const_refs(merged, merged_const_table(funcs, inferred)))))));
 }
 
-// mangled_inferred_consts names every const written without a type, across
-// the bundle, by the name it has once merged. A reference from another module
-// is only resolvable after the merge, so parse left it to flatten.
 function mangled_inferred_consts(imports: LoadedModule[], pfxs: string[], entry: parser.Module): string[] {
   let out: string[] = [];
   let i: i32 = 0;
@@ -2397,20 +1860,8 @@ function merged_const_table(funcs: parser.FuncDecl[], inferred: string[]): parse
   return parser.inferred_const_table(funcs, inferred, parser.ConstTable { names: nothing, values: [] });
 }
 
-// ReexportTable is the parallel-array re-export map threaded into every
-// module's rewrite: keys[i] is a naively-mangled qualified reference
-// (`facade__name`) and targets[i] the original module's mangled symbol
-// (`helpers__name`). Built by build_reexports from each import's `pub use`
-// directives. See lookup_reexport.
 pub struct ReexportTable { keys: string[], targets: string[] }
 
-// build_reexports scans every imported module for `pub use` directives
-// (re-export Import entries) and records, for each re-exported name, the
-// redirect from the re-exporting module's namespace to the target's. A
-// consumer's `facade.name` first mangles to `facade__name`; this table
-// then redirects it to the original `helpers__name`, which is the symbol
-// the bundled program actually defines. Mirrors the native compiler's
-// modload.resolveReexports (see internal/pkg/modload/modload.go).
 pub function build_reexports(imports: LoadedModule[], ids: string[], pfxs: string[]): ReexportTable {
   let keys: string[] = [];
   let targets: string[] = [];
@@ -2421,8 +1872,6 @@ pub function build_reexports(imports: LoadedModule[], ids: string[], pfxs: strin
     let j: i32 = 0;
     while (j < imps.len()) {
       if (imps[j].is_reexport) {
-        // The re-export's ORIGIN is a module too, so it takes its
-        // assigned prefix by identity like any other reference.
         let ok: i32 = 0 - 1;
         if (imps[j].resolved.len() > 0) {
           ok = index_of_str(imps[j].resolved, ids);
@@ -2446,33 +1895,11 @@ pub function build_reexports(imports: LoadedModule[], ids: string[], pfxs: strin
   return ReexportTable { keys: keys, targets: targets };
 }
 
-// PerModule is one separately-emittable translation unit of a per-module
-// build (#3451 step 4 / #3456): the mangled-but-NOT-merged module plus its
-// namespace (`ns`, used for the per-module string-literal `.rodata` labels and
-// the symbol-prefix bookkeeping), its identity (`ident`, LoadedModule's; "" for
-// the entry) and whether it is the program entry. ns is the module's bundle
-// prefix, the one mangle_module folds into `ns__decl`: label-safe, and unique
-// even when two modules share a basename.
 pub struct PerModule { ns: string, ident: string, mod: parser.Module, is_entry: boolean }
 
-// bundle_per_module is bundle's per-module twin: it applies the SAME mangling
-// (each import's own decls → `name__decl`, every internal reference rewritten;
-// the entry qualified-flattened so `name.X` resolves to the mangled decls) but
-// returns each module SEPARATELY instead of concatenating them into one. The
-// imported-enum-variant map is built once over all imports and threaded into
-// every module's rewrite, exactly as bundle does, so a bare variant reference
-// resolves identically whether the program is merged or emitted per-module.
-// The result is the input to per-module emit + link (#3456): each PerModule is
-// emitted as its own translation unit (entry → `_start` + the shared runtime;
-// imports → library units exposing their `.globl __fn_*`), and the units link
-// into one binary. The entry is the LAST element.
 pub function bundle_per_module(entry0: parser.Module, imports0: LoadedModule[], target: string): PerModule[] {
   let imports: LoadedModule[] = desugar_imported_trait_params(imports0);
   let entry: parser.Module = parser.desugar_trait_params(with_handler_main(entry0, target), imported_trait_spellings(entry0, imports0), true);
-  // One prefix authority for the whole bundle. Everything below -- the
-  // enum-variant map, the re-export table, each module's own decls, and
-  // every importer's references -- reads these rather than deriving a
-  // prefix of its own (#9762).
   let ids: string[] = module_ids(imports);
   let pfxs: string[] = assign_prefixes(imports);
   let ivar_names: string[] = [];
@@ -2495,9 +1922,6 @@ pub function bundle_per_module(entry0: parser.Module, imports0: LoadedModule[], 
   let inferred: string[] = mangled_inferred_consts(imports, pfxs, entry);
   let mods: parser.Module[] = [];
   let all_funcs: parser.FuncDecl[] = [];
-  // Same claim threading `bundle` does, in the same module order, so the
-  // per-module units and the merged bundle agree on which definition owns a
-  // `<Type>.<name>` symbol.
   let renamed: RenamedImports = rename_imports(entry, imports, ids, pfxs, graph, ivar_names, ivar_mangled, rx);
   let mclaims: string[] = [];
   let i: i32 = 0;
@@ -2512,7 +1936,6 @@ pub function bundle_per_module(entry0: parser.Module, imports0: LoadedModule[], 
   let flat: parser.Module = with_result_handler(flatten_qualified(entry, ids, pfxs, variant_scope(entry, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets, imported_enums(imports, pfxs)), loaded_prefix(imports, pfxs, "std/error"), loaded_prefix(imports, pfxs, "std/http"));
   let e: parser.Module = disambiguate_methods(inherit_trait_defaults(flat, "", renamed.defaults), "__entry", mclaims).mod;
   all_funcs = util.append_all(all_funcs, e.funcs);
-  // A unit reads a const another unit declares, so the table spans them all.
   let table: parser.ConstTable = merged_const_table(all_funcs, inferred);
   let out: PerModule[] = [];
   let j: i32 = 0;
@@ -2535,8 +1958,6 @@ function mangle_source(src: string, prefix: string): parser.Module {
 }
 
 function check_prefix_collisions(): boolean {
-  // Prefixes follow canonical path order, with stdlib first, even when
-  // imports arrive in reverse order and a real name contains a suffix.
   let empty: parser.Module = parser.parse_module([]);
   let collisions: LoadedModule[] = [
     LoadedModule { name: "frame", ident: "/project/frame", mod: empty },
@@ -2552,7 +1973,6 @@ function main(): i32 {
   if (!check_prefix_collisions()) {
     return 115;
   }
-  // --- Brick 1: qualified-reference flattening (entry module) ---
   let src: string = "import \"./lexer\";"
     + " function f(): i32 {"
     + "   let t: lexer.Token = lexer.tokenize(\"x\");"
@@ -2563,7 +1983,6 @@ function main(): i32 {
   if (mod.funcs.len() != 1) {
     return 1;
   }
-  // Entry func name is NOT mangled.
   if (mod.funcs[0].name != "f") {
     return 2;
   }
@@ -2612,7 +2031,6 @@ function main(): i32 {
       return 25;
     }
   }
-  // Plain field access survives untouched.
   let mod2: parser.Module = flatten_source(
     "import \"./lexer\"; function g(): i32 { return p.x; }",
   );
@@ -2644,16 +2062,12 @@ function main(): i32 {
     }
   }
 
-  // --- Brick 2: own-module mangling ---
-  // A module `m` with a struct, a method on it, and two free
-  // functions where one calls the other and constructs the struct.
   let msrc: string = "struct Box { v: i32 }"
     + " function (b: Box) get(): i32 { return b.v; }"
     + " function make(n: i32): Box { return Box { v: n }; }"
     + " function consume(): i32 { let b: Box = make(5); return b.get(); }";
   let mm: parser.Module = mangle_source(msrc, "m");
 
-  // Struct renamed.
   if (mm.structs.len() != 1) {
     return 40;
   }
@@ -2661,29 +2075,25 @@ function main(): i32 {
     return 41;
   }
 
-  // Functions: free funcs mangled; the method keeps its name but
-  // its receiver type is mangled.
-  // funcs order: get (method), make, use
   if (mm.funcs.len() != 3) {
     return 50;
   }
-  if (mm.funcs[0].name != "get") {  // method name kept
+  if (mm.funcs[0].name != "get") {
     return 51;
   }
-  if (mm.funcs[0].receiver_type != "m__Box") {  // receiver type mangled
+  if (mm.funcs[0].receiver_type != "m__Box") {
     return 52;
   }
-  if (mm.funcs[1].name != "m__make") {  // free func mangled
+  if (mm.funcs[1].name != "m__make") {
     return 53;
   }
-  if (mm.funcs[1].ret_type != "m__Box") {  // return type mangled
+  if (mm.funcs[1].ret_type != "m__Box") {
     return 54;
   }
   if (mm.funcs[2].name != "m__consume") {
     return 55;
   }
 
-  // make's body: `return Box { v: n };` → struct-lit type mangled.
   match (mm.funcs[1].body[0]) {
     ast.StmtReturn(r) => {
       match (r.value) {
@@ -2702,9 +2112,6 @@ function main(): i32 {
     }
   }
 
-  // use's body: `let b: m__Box = m__make(5); return b.get();`
-  // — local type mangled, internal call to `make` mangled, method
-  // call `b.get()` LEFT as a field-access dispatch (not mangled).
   match (mm.funcs[2].body[0]) {
     ast.StmtVar(v) => {
       if (v.type_name != "m__Box") {
@@ -2738,7 +2145,6 @@ function main(): i32 {
         ast.ExprCall(c) => {
           match (c.callee) {
             ast.ExprFieldAccess(fa) => {
-              // b.get() — field access on local `b`, NOT mangled.
               if (fa.field != "get") {
                 return 80;
               }
@@ -2768,7 +2174,6 @@ function main(): i32 {
     }
   }
 
-  // rewrite_type_name spot-checks via a hand-built ctx.
   let mn: string[] = [];
   mn = mn.append("lexer");
   mn = mn.append("test");
@@ -2799,14 +2204,9 @@ function main(): i32 {
   if (rewrite_type_name("other.Thing", ctx) != "other.Thing") {
     return 95;
   }
-  // Bare imported-enum variant resolves to its bundled mangled name;
-  // a same-named own decl still wins (declnames checked first).
   if (rewrite_type_name("Fail", ctx) != "test__Fail") {
     return 96;
   }
-  // Tuple types mangle each element, preserving nesting (SH-021 TypeRef decode).
-  // Own-decl + imported-qualified elements rewrite; a nested generic's / tuple's
-  // inner commas must not split the top-level element list.
   if (rewrite_type_name("(lexer.Token, i32)", ctx) != "(lexer__Token, i32)") {
     return 200;
   }
@@ -2819,16 +2219,9 @@ function main(): i32 {
   if (rewrite_type_name("((Token, i32), string)", ctx) != "((lx__Token, i32), string)") {
     return 203;
   }
-  // A tuple ARRAY rewrites its elements and keeps every suffix.
   if (rewrite_type_name("(string, Token)[]", ctx) != "(string, lx__Token)[]" || rewrite_type_name("(i32, lexer.Token)[][]", ctx) != "(i32, lexer__Token)[][]") {
     return 204;
   }
-  // FUNCTION types round-trip, parameters and result rewritten. parse_type_ref
-  // gives a fn an EMPTY base with args = parameters + result, which is the
-  // generic-application shape, so the generic branch used to re-spell
-  // `() => i32` as `[i32]` — dropping the arrow the closure lift reads the
-  // annotation by, and with it the evidence that a zero-arg payload is a fn
-  // VALUE rather than a const to call (#7959).
   if (rewrite_type_name("() => i32", ctx) != "() => i32") {
     return 205;
   }
@@ -2841,29 +2234,22 @@ function main(): i32 {
   if (rewrite_type_name("(i32, Token) => string", ctx) != "(i32, lx__Token) => string") {
     return 208;
   }
-  // A fn type as a GENERIC ARGUMENT — the position #7959 was measured in.
   if (rewrite_type_name("Option[() => i32]", ctx) != "Option[() => i32]") {
     return 209;
   }
   if (rewrite_type_name("Result[() => Token, string]", ctx) != "Result[() => lx__Token, string]") {
     return 210;
   }
-  // A fn RETURNING a fn, and one taking one: the nested arrow must survive both
-  // ways round.
   if (rewrite_type_name("() => (i32) => Token", ctx) != "() => (i32) => lx__Token") {
     return 211;
   }
   if (rewrite_type_name("(() => Token) => i32", ctx) != "(() => lx__Token) => i32") {
     return 212;
   }
-  // The array suffix belongs to the function result and survives rewriting.
   if (rewrite_type_name("() => Token[]", ctx) != "() => lx__Token[]") {
     return 213;
   }
 
-  // --- `pub use` re-export redirection (type position) ---
-  // A facade re-exports lexer's Token; a consumer's `lexer.Token`
-  // (which mangles to `lexer__Token`) redirects to `orig__Token`.
   let rxk2: string[] = [];
   rxk2 = rxk2.append("lexer__Token");
   let rxt2: string[] = [];
@@ -2875,17 +2261,10 @@ function main(): i32 {
   if (rewrite_type_name("lexer.Token[]", rctx) != "orig__Token[]") {
     return 98;
   }
-  // A non-re-exported qualified type still mangles normally.
   if (rewrite_type_name("lexer.Span", rctx) != "lexer__Span") {
     return 99;
   }
 
-  // --- ENUM-qualified references in a mangled module (#8650) ---
-  // `E.Wrap` inside a module being prefix-mangled is a variant of the
-  // module's OWN enum, not `<module>.<name>`: both halves take the prefix,
-  // so the pattern lines up with the mangled EnumDecl mangle_enum_decls
-  // produces. An imported module still wins a colliding qualifier, and an
-  // enum-shaped spelling whose qualifier is not an own enum is left alone.
   let edn: string[] = [];
   edn = edn.append("E");
   edn = edn.append("Wrap");
@@ -2908,7 +2287,6 @@ function main(): i32 {
     return 224;
   }
 
-  // --- Brick 3: bundle (merge entry + mangled imports) ---
   let amod: parser.Module = parser.parse_module(lexer.tokenize(
     "pub function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return 0; }",
   ));
@@ -2919,11 +2297,6 @@ function main(): i32 {
   loaded = loaded.append(LoadedModule { name: "a", ident: "", mod: amod });
   let merged: parser.Module = bundle(emod, loaded, "");
 
-  // a.add → a__add; a's own main → a__main (mangled, no collision);
-  // entry's main kept. So merged funcs: a__add, a__main, main.
-  // The merged module keeps the import CLOSURE — here the entry's one
-  // `./a`, since a imports nothing — which is what tells the checker
-  // which modules the program linked.
   if (merged.imports.len() != 1 || merged.imports[0].path != "./a") {
     return 100;
   }
@@ -2939,8 +2312,6 @@ function main(): i32 {
   if (merged.funcs[2].name != "main") {
     return 104;
   }
-  // Entry main's body: `return a__add(2, 3);` — qualified call
-  // flattened to the bare mangled name that a__add now provides.
   match (merged.funcs[2].body[0]) {
     ast.StmtReturn(r) => {
       match (r.value) {
@@ -2966,10 +2337,6 @@ function main(): i32 {
     }
   }
 
-  // --- Brick 4: `pub use` re-export through bundle ---
-  // helpers defines add5; facade re-exports it; entry calls facade.add5.
-  // The qualified call must flatten to `helpers__add5` (the real decl),
-  // NOT `facade__add5` (which has no decl).
   let hmod: parser.Module = parser.parse_module(lexer.tokenize(
     "pub function add5(n: i32): i32 { return n + 5; }",
   ));
@@ -2983,7 +2350,6 @@ function main(): i32 {
   rxloaded = rxloaded.append(LoadedModule { name: "facade", ident: "", mod: fmod });
   rxloaded = rxloaded.append(LoadedModule { name: "helpers", ident: "", mod: hmod });
   let rxmerged: parser.Module = bundle(rxmod, rxloaded, "");
-  // Find entry main and confirm its call resolved to helpers__add5.
   let fi: i32 = 0;
   let found_main: boolean = false;
   while (fi < rxmerged.funcs.len()) {

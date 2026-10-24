@@ -1,5 +1,5 @@
-// The unit type is written `void` and its value `()`; `()` is not a type
-// (#12700). The diagnostic names the spelling to write.
+
+
 function done(): Result[(), string] { return Ok(()); }
 
 function main(): i32 {

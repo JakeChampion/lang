@@ -1,38 +1,9 @@
-// coreutils/lib/gnu.fern — the conventions every utility in this
-// directory shares with GNU coreutils.
-//
-// The utilities here are held to byte-for-byte parity with GNU
-// coreutils on stdout, stderr and exit status (docs/COREUTILS.md), so
-// the shapes below are not house style — each one is a GNU behaviour
-// measured against the reference binary and then reproduced:
-//
-//   - Diagnostics are prefixed with argv[0] EXACTLY as invoked,
-//     directories included: `/usr/bin/yes: invalid option -- 'x'`.
-//     gnulib's set_program_name keeps the whole string, so a utility
-//     that prints a basename diverges the moment it is run by path.
-//   - A usage error prints one line naming the fault, then the
-//     `Try '<argv[0]> --help' for more information.` line, and exits
-//     with the utility's usage status (1 for most, 2 for sort/expr/…).
-//     The full help text is NEVER printed on the error path.
-//   - Options are glibc's getopt_long: long options match by unique
-//     prefix (`--vers` is `--version`), operands are permuted out
-//     unless POSIXLY_CORRECT is set, and every fault is worded as
-//     glibc words it. `getopt_new` below is that emulation.
-//
-// Error TEXT is glibc's, not ours: the strings in `io_error_text`
-// below are what `strerror` returns, because that is what GNU prints.
-//
-// Nothing here was copied from GNU sources; the behaviours were
-// measured from the reference binaries and reimplemented.
 import "std/string";
 import "std/array";
 import "std/io";
 import "std/io_buffered";
 import "std/errno";
 
-// `prog()` — the program name diagnostics are prefixed with: argv[0]
-// verbatim (see the header). Empty when argv is empty, which only
-// happens under an exec that passes no argv at all.
 pub function prog(): string {
   let argv: string[] = args();
   if (argv.len() == 0) {
@@ -41,29 +12,14 @@ pub function prog(): string {
   return argv[0];
 }
 
-// `version()` — the version this build of the utilities reports.
-//
-// Deliberately NOT a GNU coreutils version: these are a different
-// implementation, and claiming GNU's number would make the one output
-// that identifies the program lie about which program it is.
 pub function version(): string {
   return "0.1";
 }
 
-// `error(msg)` — one diagnostic line on stderr, GNU-prefixed.
 pub function error(msg: string): void {
   eprint(prog() + ": " + msg);
 }
 
-// `error_out(o, msg)` — `error` with the buffered stdout flushed
-// first, which is what gnulib's error() does. Without it a
-// diagnostic overtakes the output written before it whenever both
-// streams are the same pipe. Rebind: `o = gnu.error_out(o, msg);`.
-//
-// The flush is skipped when fd 1 is closed, as gnulib's flush_stdout
-// skips it: the stream is then left untouched rather than picking up a
-// write failure, which a utility checking it after every line would
-// otherwise report in place of what it had to say next.
 pub function error_out(o: io_buffered.BufWriter, msg: string): io_buffered.BufWriter {
   if (!stdout_open()) {
     error(msg);
@@ -74,7 +30,6 @@ pub function error_out(o: io_buffered.BufWriter, msg: string): io_buffered.BufWr
   return w;
 }
 
-// Raw diagnostics preserve the same stdout ordering as error_out.
 pub function error_out_bytes(o: io_buffered.BufWriter, msg: u8[]): io_buffered.BufWriter {
   let w: io_buffered.BufWriter = o;
   if (stdout_open()) {
@@ -92,7 +47,6 @@ pub function error_out_bytes(o: io_buffered.BufWriter, msg: u8[]): io_buffered.B
   return w;
 }
 
-// Whether fd 1 is open, which is gnulib's `is_open` — fcntl F_GETFL.
 function stdout_open(): boolean {
   match (stdout().flags()) {
     Ok(_) => {
@@ -104,67 +58,26 @@ function stdout_open(): boolean {
   }
 }
 
-// `die(o, msg, status)` — a fatal diagnostic from a utility that
-// buffers stdout: the message with the buffer flushed ahead of it, then
-// gnulib's close_stdout, which is an atexit handler and so reports a
-// failed output stream on the way out of an error path too — `comm
-// --check-order` on a full disk says the order fault AND `write error`.
-// Never returns.
 pub function die(o: io_buffered.BufWriter, msg: string, status: i32): void {
   let w: io_buffered.BufWriter = error_out(o, msg);
   close_stdout_with(w, false, status);
   exit(status);
 }
 
-// `try_help(status)` — the trailing line of every usage error, then
-// exit. Split out because a few utilities emit it with no preceding
-// message of their own.
 pub function try_help(status: i32): void {
   eprint("Try '" + prog() + " --help' for more information.");
   exit(status);
 }
 
-// `die_usage(msg, status)` — the whole usage-error path: the fault,
-// the `Try …` line, exit.
 pub function die_usage(msg: string, status: i32): void {
   error(msg);
   try_help(status);
 }
 
-// `argmatch(v, names, option)` — gnulib's ARGMATCH over a valued
-// option: an exact name, or a unique prefix of one, gives its index.
-// Anything else is the end of the program — `invalid` when the value
-// is a prefix of nothing, `ambiguous` when it is a prefix of several
-// (an empty value is a prefix of all of them) — with every valid name
-// listed under it and the usual `Try …` line:
-//
-//     tee: ambiguous argument 'w' for '--output-error'
-//     Valid arguments are:
-//       - 'warn'
-//       - 'warn-nopipe'
-//       …
-//
-// `option` is the name with its dashes and no quotes; the list is
-// printed in declaration order, which is the order it is passed in.
 pub function argmatch(v: string, names: string[], option: string): i32 {
   return argmatch_valued(v, names, one_value_each(names.len()), option);
 }
 
-// `argmatch_valued(v, names, values, option)` — ARGMATCH over a table
-// whose names carry VALUES, so several names can stand for one:
-// rm's `--interactive` takes never / no / none for one and always /
-// yes for another. A prefix matching only names that SHARE a value is
-// then accepted rather than ambiguous (`--interactive=n` is never),
-// and the list prints a run of equal-valued names on one line:
-//
-//     rm: invalid argument 'bogus' for '--interactive'
-//     Valid arguments are:
-//       - 'never', 'no', 'none'
-//       - 'once'
-//       - 'always', 'yes'
-//
-// Returns the VALUE rather than the index; `argmatch` above is this
-// over a table where every name stands for itself.
 pub function argmatch_valued(v: string, names: string[], values: i32[], option: string): i32 {
   let found: i32 = argmatch_find(v, names, values);
   if (found >= 0) {
@@ -177,9 +90,6 @@ pub function argmatch_valued(v: string, names: string[], values: i32[], option: 
   return argmatch_die(v, names, values, option, what);
 }
 
-// `argmatch_find(v, names, values)` — the lookup under `argmatch_valued`
-// without its diagnostic: the value `v` names, -1 when it names none
-// and -2 when it is a prefix of names with different values.
 pub function argmatch_find(v: string, names: string[], values: i32[]): i32 {
   let found: i32 = 0 - 1;
   let ambiguous: boolean = false;
@@ -206,10 +116,6 @@ pub function argmatch_find(v: string, names: string[], values: i32[]): i32 {
   return 0 - 1;
 }
 
-// `argmatch_exact(v, names, option)` — the same over an option that
-// takes no abbreviations: `cksum -a md` is invalid where `--output-error=w`
-// is a unique prefix. The failure is the same text, and there is no
-// `ambiguous` half of it because only an exact name matches.
 pub function argmatch_exact(v: string, names: string[], option: string): i32 {
   let i: i32 = 0;
   while (i < names.len()) {
@@ -239,8 +145,6 @@ function argmatch_die(v: string, names: string[], values: i32[], option: string,
   return 0;
 }
 
-// The values of a table where no two names share one, so every name
-// prints on its own line and a prefix of several is ambiguous.
 function one_value_each(n: i32): i32[] {
   let out: i32[] = [];
   let i: i32 = 0;
@@ -251,24 +155,10 @@ function one_value_each(n: i32): i32[] {
   return out;
 }
 
-// `is_option(a)` — whether getopt would treat `a` as an option token.
-// A lone `-` is an operand (it names stdin); `--` is the terminator
-// and is handled by the caller before this is asked.
 pub function is_option(a: string): boolean {
   return a.len() >= 2 && a[0] as i32 == 45;
 }
 
-// ---- errno wording ---------------------------------------------------------
-//
-// GNU prints `strerror(3)`, so the words belong to the host libc, and
-// sixteen errnos read differently on Darwin. These are the three a
-// utility spells out in a diagnostic of its own — the runtime's own
-// `IoError.Other` gets the same treatment from `internal/tables/strerror`, and
-// `internal/testing/coreutils/strerror_parity_test.go` pins these against that
-// table so the two lists cannot drift apart.
-//
-// An errno whose wording is the same on both platforms needs no helper
-// and has none: `"Permission denied"` is written where it is meant.
 pub function erange_text(): string {
   if (target_os() == "darwin") {
     return "Result too large";
@@ -290,12 +180,6 @@ pub function eilseq_text(): string {
   return "Invalid or incomplete multibyte or wide character";
 }
 
-// `io_error_text(e)` — the strerror text GNU prints for an IoError.
-//
-// The kinds the runtime names carry no message of their own, so the
-// mapping is by errno text; `Other` carries the runtime's own string,
-// which is the host libc's strerror text for the errno on every backend
-// (internal/tables/strerror).
 pub function io_error_text(e: IoError): string {
   match (e) {
     NotFound(_) => {
@@ -322,24 +206,14 @@ pub function io_error_text(e: IoError): string {
   }
 }
 
-// `is_broken_pipe(e)` — whether `e` is EPIPE. Only reachable at all once
-// SIGPIPE is ignored, since the default disposition kills the process
-// instead.
 pub function is_broken_pipe(e: IoError): boolean {
   return errno.of(e) == errno.EPIPE;
 }
 
-// `write_out(s)` — write `s` to stdout, reporting a failure the way
-// GNU's close_stdout does (`prog: write error: <strerror>`) and
-// exiting 1. For the paths where the utility has its own wording —
-// yes(1) says `standard output:` — hold a Writer and check it there.
 pub function write_out(s: string): void {
   write_out_with(s, 1);
 }
 
-// `write_out_with(s, status)` — `write_out` for a utility whose
-// write-failure exit is not 1: gnulib's `exit_failure`, which test(1)
-// sets to 2.
 pub function write_out_with(s: string, status: i32): void {
   let w: Writer = stdout();
   if let Err(e) = w.write(s) {
@@ -348,11 +222,6 @@ pub function write_out_with(s: string, status: i32): void {
   }
 }
 
-// ---- counts ----------------------------------------------------------------
-//
-// The multiplier a gnulib suffix stands for, or None. `b` is 512 flat;
-// every other letter is a power of 1024 bare or with `iB`, and of 1000
-// with a bare `B`.
 function suffix_power(c: i32): i32 {
   if (c == 75 || c == 107) {
     return 1;
@@ -395,28 +264,6 @@ pub function is_blank(c: i32): boolean {
   return c == 32 || c >= 9 && c <= 13;
 }
 
-// `parse_units(s)` — glibc's strtoumax over `s` followed by a gnulib
-// multiplier suffix (xstrtoumax with "bkKmMGTPEZYRQ0"): leading blanks
-// and a `+` are accepted, `1b` is 512, `1kB` is 1000 and `1KiB` is
-// 1024. A suffix with NO digits in front of it is the number 1, which
-// is gnulib's rule and not an oversight — `head -c b` is 512 bytes.
-// Returns (value, status): 0 accepted, 1 nothing numeric at all, 2 the
-// digits themselves past uintmax_t, 3 the suffix multiply past it, 4 a
-// suffix that is not one (`1x`), which glibc reports separately from 1.
-//
-// The two overflows are separate because glibc's are: strtoumax sets
-// ERANGE for 2 and leaves errno alone for 3, and tail's obsolete form
-// prints the raw errno, so `-36028797018963968b` gets no strerror text
-// while `-18446744073709551616b` gets `Numerical result out of range`.
-// The two malformed codes are separate because od's are: `od -j x` is
-// `invalid -j argument` and `od -j 1x` is `invalid suffix in -j
-// argument`. A caller with one wording for each pair asks
-// `count_malformed` and `count_overflow` rather than the numbers.
-//
-// `parse_number` is the same without the suffixes (xstrtoumax with ""),
-// for tail's `--max-unchanged-stats` and `--pid`; with no suffix to
-// multiply by it never returns 3, and a bare suffix is malformed there
-// because there are no valid ones.
 pub function parse_units(s: string): (u64, i32) {
   return parse_count(s, true);
 }
@@ -425,14 +272,10 @@ pub function parse_number(s: string): (u64, i32) {
   return parse_count(s, false);
 }
 
-// Whether `c` starts a multiplier suffix, which is what lets a suffix
-// with no digits in front of it stand for 1.
 function is_suffix(c: i32): boolean {
   return c == 98 || suffix_power(c) > 0;
 }
 
-// `count_malformed(status)` — the two ways parse_units refuses a string
-// as a number; `count_overflow` the two ways it refuses the value.
 pub function count_malformed(status: i32): boolean {
   return status == 1 || status == 4;
 }
@@ -533,12 +376,6 @@ function parse_count(s: string, suffixes: boolean): (u64, i32) {
   return (v, 0);
 }
 
-// `posix2_version()` — gnulib's: `_POSIX2_VERSION` in the environment
-// when the whole of it is a strtol number, clamped to the int range, else
-// the edition the platform's own <unistd.h> names, which is what GNU is
-// built with: 200809 on glibc, 200112 on macOS. Which POSIX a utility is
-// asked for decides whether its obsolete syntax is still read: tail's
-// `+N`, sort's `+POS`, uniq's `+N` (#9765).
 pub function posix2_version(): i64 {
   match (env("_POSIX2_VERSION")) {
     Some(v) => {
@@ -559,9 +396,6 @@ pub function posix2_version(): i64 {
   return 200809 as i64;
 }
 
-// strtol over the WHOLE string, saturating at the int ends the way
-// posix2_version clamps to INT_MIN / INT_MAX. None when anything is left
-// over, which is when gnulib keeps its default.
 function strtol_int(s: string): Option[i64] {
   let i: i32 = 0;
   while (i < s.len() && is_blank(s[i] as i32)) {
@@ -600,11 +434,6 @@ function strtol_int(s: string): Option[i64] {
   return Some(v);
 }
 
-// `digit_option(argv)` — the digit byte a digit declared as an option
-// stood for, for `option used in invalid context -- 5` (tail) and
-// `invalid trailing option -- 5` (head). The scan reports the id only,
-// so the tokens are re-read: a digit reaches this only as an option
-// byte, which is always in a short cluster.
 pub function digit_option(argv: string[]): string {
   let i: i32 = 1;
   while (i < argv.len()) {
@@ -623,23 +452,12 @@ pub function digit_option(argv: string[]): string {
   return "0";
 }
 
-// ---- a streamed stdout ------------------------------------------------------
-//
-// `Stream` — the buffered stdout of a utility that copies input through
-// (head, tail): the writer, whether anything has been written yet (the
-// blank line between `==> NAME <==` headers), and whether any input
-// failed.
 pub struct Stream { w: io_buffered.BufWriter, first: boolean, ok: boolean }
 
 pub function stream_new(): Stream {
   return Stream { w: out_new(), first: true, ok: true };
 }
 
-// gnulib's xwrite_stdout: a write that fails while the output is still
-// STREAMING is reported as `error writing 'standard output'`, where a
-// failure found only at the final flush is close_stdout's `write
-// error:`. Which one a run gets is the stdio buffer: output under one
-// block never reaches the fd until close.
 pub function stream_put(o: Stream, s: string): Stream {
   return stream_written(o, o.w.write_string(s));
 }
@@ -663,18 +481,10 @@ function stream_written(o: Stream, w: io_buffered.BufWriter): Stream {
   return Stream { ...o, w: w };
 }
 
-// One diagnostic, with the pending output flushed ahead of it and the
-// exit status turned to 1.
 pub function stream_fail(o: Stream, msg: string): Stream {
   return Stream { ...o, w: error_out(o.w, msg), ok: false };
 }
 
-// One `==> NAME <==` header, with the blank line every header after the
-// first carries. A file that failed to OPEN never reaches this, so it
-// does not consume the first-file slot.
-// The name is quoted the way every other diagnostic quotes one, so a
-// header cannot be confused with the content around it. GNU <= 9.11
-// printed it raw.
 pub function stream_header(o: Stream, name: string): Stream {
   let lead: string = "\n";
   if (o.first) {
@@ -683,8 +493,6 @@ pub function stream_header(o: Stream, name: string): Stream {
   return Stream { ...stream_put(o, lead + "==> " + quotef(name) + " <==\n"), first: false };
 }
 
-// `stream_flush(o)` — what is buffered goes out now; a failure is
-// close_stdout's `write error:`.
 pub function stream_flush(o: Stream): Stream {
   return Stream { ...o, w: flush(o.w) };
 }
@@ -693,31 +501,15 @@ pub function stream_finish(o: Stream): void {
   finish(o.w);
 }
 
-// `stream_finish_with(o, status)` — the end of a run that is exiting on
-// a diagnostic rather than because it ran out of work.
 pub function stream_finish_with(o: Stream, status: i32): void {
   finish_with(o.w, status);
   exit(status);
 }
 
-// ---- quoting ---------------------------------------------------------------
-//
-// GNU quotes the strings it embeds in diagnostics, and two styles are
-// visible in the C locale: `quote` wraps an operand in single quotes
-// with C escapes (`extra operand 'c\nd'`), `quotef` renders a file name
-// the way a shell would need it typed (`'no such': No such file or
-// directory`, bare when nothing in it is special). The full gnulib
-// table is `quote_style` below, for the utilities that let
-// QUOTING_STYLE pick one.
-// `quote(s)` — `s` in single quotes; backslash and the quote itself
-// backslashed, the seven named control characters as C escapes, and
-// every other control or non-ASCII byte as three octal digits.
 pub function quote(s: string): string {
   return c_quote(s, 39, false, "");
 }
 
-// The same diagnostic convention for raw input. Escaping every non-ASCII
-// byte makes the result valid text without decoding or changing the input.
 pub function quote_bytes(bytes: u8[]): string {
   let out: usize = buf_new(bytes.len());
   buf_push_byte(out, 39);
@@ -746,49 +538,26 @@ pub function quote_bytes(bytes: u8[]): string {
   return text;
 }
 
-// `quotea(name)` — gnulib's quoteaf: `quotef` with the bare form
-// quoted too, for the diagnostics that always show quotes
-// (`head: cannot open 'plain' for reading`) rather than only when
-// the name needs them (`wc: plain: No such file or directory`).
 pub function quotea(s: string): string {
   return shell_quote(s, false, true, "");
 }
 
-// `quotef(name)` — the file name as a shell would need it typed: bare
-// when nothing in it is special, else single-quoted with a quote
-// inside written `'\''` and every control or non-ASCII byte spliced
-// in as an ANSI-C `$'...'` run. A name whose only trouble is the
-// apostrophe goes in double quotes. Empty is `''`. A colon counts as
-// special here and nowhere else: the diagnostic this quotes for puts
-// one after the name (gnulib's quotearg_n_style_colon).
 pub function quotef(s: string): string {
   return shell_quote(s, true, true, ":");
 }
 
-// gnulib's quoting styles, in its order, so a position in this list is
-// the `style` that `quote_style` takes and the value QUOTING_STYLE
-// names (abbreviations allowed, as ARGMATCH takes them).
 pub function quoting_style_names(): string[] {
   return ["literal", "shell", "shell-always", "shell-escape", "shell-escape-always", "c", "c-maybe", "escape", "locale", "clocale"];
 }
 
-// The style a utility quotes with when QUOTING_STYLE says nothing:
-// shell-escape-always, which is `quotea`.
 pub function quoting_style_default(): i32 {
   return 4;
 }
 
-// `quoting_style_from_env()` — gnulib's getenv_quoting_style: the
-// style QUOTING_STYLE names, or the default with a warning when it
-// names none (`ignoring invalid value of environment variable
-// QUOTING_STYLE: 'bogus'`). Unset is the default and silent.
 pub function quoting_style_from_env(): i32 {
   return quoting_style_from_env_with(quoting_style_default());
 }
 
-// The same with the utility's own fallback rather than gnulib's:
-// `ls` off a terminal defaults to `literal`, and an unusable
-// QUOTING_STYLE has to land on THAT rather than on shell-escape.
 pub function quoting_style_from_env_with(fallback: i32): i32 {
   match (env("QUOTING_STYLE")) {
     Some(v) => {
@@ -806,27 +575,10 @@ pub function quoting_style_from_env_with(fallback: i32): i32 {
   }
 }
 
-// `quote_style(s, style)` — `s` quoted in one of gnulib's ten styles,
-// numbered as `quoting_style_names` lists them. The two `shell`
-// pairs differ in whether a name that needs no quoting gets them
-// anyway (`-always`) and whether a control or non-ASCII byte forces
-// quoting and comes out as an ANSI-C escape (`-escape`); `c-maybe` is
-// `c` with the quotes dropped when nothing inside needed a backslash;
-// `escape` is `c` with no quotes at all; `locale` and `clocale` are
-// `quote` and `c` in the C locale.
 pub function quote_style(s: string, style: i32): string {
   return quote_style_with(s, style, "");
 }
 
-// `quote_style_with(s, style, extra)` — `quote_style` over a table with
-// more bytes marked as needing a backslash, or as forcing the quotes:
-// gnulib's set_char_quoting. `ls` is what needs it, twice. A SPACE
-// joins the set under `-b`, so a name prints `sp\ ace` there while
-// `stat`'s own escape style leaves it alone; and a COLON joins it for
-// a directory header, so `ls -bR` writes `./a\:b:`.
-//
-// The literal style ignores the set, as gnulib does: it writes every
-// byte through and has nowhere to put a backslash.
 pub function quote_style_with(s: string, style: i32, extra: string): string {
   if (style == 0) {
     return s;
@@ -857,12 +609,6 @@ function in_set(extra: string, b: i32): boolean {
   return false;
 }
 
-// `c_quote(s, q, elide, extra)` — `s` between two `q` bytes (none when
-// `q` is 0) with backslash, `q`, every byte of `extra` and every
-// control or non-ASCII byte escaped the C way. `elide` returns `s`
-// untouched unless a `q`, a byte of `extra` or a control or non-ASCII
-// byte is in it: a backslash alone does not earn the quotes, and
-// prints bare.
 function c_quote(s: string, q: i32, elide: boolean, extra: string): string {
   if (elide && !c_needs_quotes(s, q, extra)) {
     return s;
@@ -902,8 +648,6 @@ function c_needs_quotes(s: string, q: i32, extra: string): boolean {
   return false;
 }
 
-// One control or non-ASCII byte as a C escape: `\a \b \f \n \r \t \v`
-// by name, anything else as `\NNN`.
 function append_c_escape(out: u8[], b: i32): u8[] {
   let bs: u8[] = out.append(92 as u8);
   let named: i32 = c_escape_letter(b);
@@ -944,9 +688,6 @@ function is_control_or_high(b: i32): boolean {
   return b < 32 || b >= 127;
 }
 
-// Whether printable byte `b` makes a file name need quoting at all.
-// `~` and `#` count only at the start of the name; `{` and `}` only
-// as the whole of it, which the caller checks.
 function shell_special(b: i32, leading: boolean): boolean {
   if (b == 126 || b == 35) {
     return leading;
@@ -954,10 +695,6 @@ function shell_special(b: i32, leading: boolean): boolean {
   return b == 32 || b == 39 || b == 34 || b == 92 || b == 36 || b == 42 || b == 59 || b == 61 || b == 33 || b == 63 || b == 91 || b == 40 || b == 41 || b == 38 || b == 124 || b == 60 || b == 62 || b == 96 || b == 94;
 }
 
-// Whether `s` needs quoting in a `shell` style: empty, a lone brace,
-// a special byte (one from `extra` too), or a control byte — every one
-// when the style escapes them, only a newline, return or tab when it
-// does not.
 function shell_needs_quotes(s: string, escapes: boolean, extra: string): boolean {
   if (s.len() == 0) {
     return true;
@@ -980,9 +717,6 @@ function shell_needs_quotes(s: string, escapes: boolean, extra: string): boolean
   return false;
 }
 
-// Whether byte `b` rules out the double-quoted form. Not the same set
-// as above: `:` and a space are fine inside double quotes, `{` and `}`
-// are not, and `~` / `#` are the other way round from `shell_special`.
 function double_quote_unsafe(b: i32, leading: boolean): boolean {
   if (is_control_or_high(b)) {
     return true;
@@ -993,12 +727,6 @@ function double_quote_unsafe(b: i32, leading: boolean): boolean {
   return b == 34 || b == 92 || b == 36 || b == 96 || b == 33 || b == 42 || b == 63 || b == 91 || b == 40 || b == 41 || b == 38 || b == 124 || b == 60 || b == 62 || b == 59 || b == 61 || b == 94 || b == 123 || b == 125;
 }
 
-// `shell_quote(s, elide, escapes, extra)` — the four `shell` styles:
-// bare when `elide` and nothing needs quoting (a byte of `extra`
-// counts), double-quoted when the apostrophe is the only trouble,
-// else single-quoted with `'\''` for a quote and, when `escapes`,
-// every control or non-ASCII byte spliced in as an ANSI-C `$'...'`
-// run.
 function shell_quote(s: string, elide: boolean, escapes: boolean, extra: string): string {
   if (elide && !shell_needs_quotes(s, escapes, extra)) {
     return s;
@@ -1070,12 +798,6 @@ function shell_quote(s: string, elide: boolean, escapes: boolean, extra: string)
   return string_from_bytes_unchecked(bs);
 }
 
-// `env_entry(entry, style)` — one environment entry the way GNU's
-// print_envvar writes it under quoting: the name and the value quoted
-// separately, so the `=` between them stays visible. An empty value
-// prints as `VAR=` rather than `VAR=''`, and an entry with no `=` at
-// all — which a parent writing environ directly can leave — is quoted
-// whole.
 pub function env_entry(entry: string, style: i32): string {
   let Some(eq) = entry.index_of("=") else {
     return quote_style(entry, style);
@@ -1087,19 +809,10 @@ pub function env_entry(entry: string, style: i32): string {
   return name + "=" + quote_style(slice_unchecked(entry, eq + 1, entry.len()) + "", style);
 }
 
-// ---- buffered stdout -------------------------------------------------------
-//
-// Output goes through a io_buffered.BufWriter, one write(2) per block, and a
-// failure is reported the way gnulib's close_stdout reports it:
-// `prog: write error: <strerror>`, exit 1. A utility that words it
-// differently (yes: `standard output:`) holds its own Writer.
-// The block size, measured rather than chosen (yes.fern has the
-// sweep): the pipe optimum on Linux.
 pub function block_bytes(): i32 {
   return 4096;
 }
 
-// `out_new()` — a buffered stdout; `out_with(cap)` picks the block.
 pub function out_new(): io_buffered.BufWriter {
   return io_buffered.buf_writer_new(stdout(), block_bytes());
 }
@@ -1108,8 +821,6 @@ pub function out_with(cap: i32): io_buffered.BufWriter {
   return io_buffered.buf_writer_new(stdout(), cap);
 }
 
-// `put(o, s)` — buffer `s`; dies on the first failed flush. Rebind:
-// `o = gnu.put(o, s);`.
 pub function put(o: io_buffered.BufWriter, s: string): io_buffered.BufWriter {
   return put_with(o, s, 1);
 }
@@ -1124,62 +835,41 @@ pub function put_bytes_with(o: io_buffered.BufWriter, bytes: u8[], status: i32):
   return w;
 }
 
-// `put_with(o, s, status)` — `put` for a utility whose write-failure
-// exit is not 1: gnulib's `exit_failure`, which expr(1) sets to 3.
 pub function put_with(o: io_buffered.BufWriter, s: string, status: i32): io_buffered.BufWriter {
   let w: io_buffered.BufWriter = o.write_string(s);
   die_on_write_error(w, status);
   return w;
 }
 
-// `check(o)` — die if a write has failed, without writing anything. For a
-// loop that pushes straight into the writer and asks once at the end rather
-// than on every piece.
 pub function check(o: io_buffered.BufWriter): io_buffered.BufWriter {
   die_on_write_error(o, 1);
   return o;
 }
 
-// `settle(o)` — the flush-if-full and the error check a loop that pushed
-// straight into `o.handle()` owes at the end of a line.
 pub function settle(o: io_buffered.BufWriter): io_buffered.BufWriter {
   let w: io_buffered.BufWriter = o.settle();
   die_on_write_error(w, 1);
   return w;
 }
 
-// `flush(o)` — write what is buffered now; dies like `put` when that
-// fails. Rebind: `o = gnu.flush(o);`.
 pub function flush(o: io_buffered.BufWriter): io_buffered.BufWriter {
   let w: io_buffered.BufWriter = o.flush();
   die_on_write_error(w, 1);
   return w;
 }
 
-// `finish(o)` — the end of the program: gnulib's close_stdout.
 pub function finish(o: io_buffered.BufWriter): void {
   close_stdout(o, false);
 }
 
-// `finish_with(o, status)` — `finish` with gnulib's `exit_failure` set
-// to something other than 1.
 pub function finish_with(o: io_buffered.BufWriter, status: i32): void {
   close_stdout_with(o, false, status);
 }
 
-// `close_stdout(o, prev_fail)` — gnulib's close_stream on stdout, reported
-// the way close_stdout reports it. `prev_fail` is the stream's error flag
-// set by something other than a write here (glibc refusing a conversion).
-// fclose failing with EBADF and nothing pending is not an error, so a
-// utility that printed nothing to a closed stdout exits 0; a failure
-// already on the stream is reported without strerror text unless fclose
-// itself failed too.
 pub function close_stdout(o: io_buffered.BufWriter, prev_fail: boolean): void {
   close_stdout_with(o, prev_fail, 1);
 }
 
-// `close_stdout_with(o, prev_fail, status)` — the same, exiting with
-// gnulib's `exit_failure` rather than 1.
 pub function close_stdout_with(o: io_buffered.BufWriter, prev_fail: boolean, status: i32): void {
   let some_pending: boolean = o.buffered() > 0;
   let prev: boolean = prev_fail;
@@ -1211,31 +901,6 @@ function die_on_write_error(w: io_buffered.BufWriter, status: i32): void {
   }
 }
 
-// ---- glibc's stdio, emulated -----------------------------------------------
-//
-// A utility that prints through stdio inherits one visible behaviour
-// from glibc that a plain buffered writer does not reproduce: what
-// close_stdout says when the output could not be written. `write error:
-// No space left on device` names the errno when the flush fclose runs
-// is what failed, and a bare `write error` reports a failure met
-// earlier with nothing left pending at the close. Which one a run gets
-// is decided by glibc's buffering algorithm — how much of a piece fits
-// in the buffer, when the buffer is flushed, and that a failed flush
-// drops the rest of the piece — so a utility reproduces the diagnostic
-// by issuing the same fwrite / printf / putc calls GNU does against
-// this emulation of that algorithm: `_IO_file_xsputn` for fwrite, fputs
-// and putc, and `_IO_do_flush` for fflush.
-//
-// The buffer is BUFSIZ (8192) bytes, or st_blksize when fstat of the
-// descriptor reports a smaller one, which every pipe, device and
-// ordinary file on Linux does (4096); it is allocated at the first
-// overflow, and a closed stdout fails the fstat and gets BUFSIZ. A
-// write that fails is sticky: glibc retries every later flush and
-// fails it again, and this stops issuing the syscall instead, which no
-// diagnostic can tell apart.
-//
-// Pending data is an immutable byte array. A capacity boundary can fall
-// inside a UTF-8 character, even when the caller writes valid text.
 pub struct Stdio { w: Writer, buf: u8[], cap: i32, alloc: boolean, err: Option[IoError] }
 
 pub function stdio_new(): Stdio {
@@ -1256,7 +921,6 @@ function bufsiz(): i32 {
   return 8192;
 }
 
-// `(s).fwrite(data)` — fwrite, fputs, putc: `_IO_file_xsputn`.
 pub function (s: Stdio) fwrite(data: string): Stdio {
   return xsputn(s, [], data, 0, data.len());
 }
@@ -1265,7 +929,6 @@ pub function (s: Stdio) fwrite_bytes(data: u8[]): Stdio {
   return xsputn(s, data, "", 0, data.len());
 }
 
-// The same write boundary with a clamped range of raw input.
 pub function (s: Stdio) fwrite_bytes_range(data: u8[], lo0: i32, hi0: i32): Stdio {
   let lo: i32 = lo0;
   let hi: i32 = hi0;
@@ -1281,9 +944,6 @@ pub function (s: Stdio) fwrite_bytes_range(data: u8[], lo0: i32, hi0: i32): Stdi
   return xsputn(s, data, "", lo, hi);
 }
 
-// Text and raw callers share the write ordering without copying a whole
-// string to a temporary array. Exactly one input is nonempty. Only pending
-// bytes are retained, so a buffer boundary need not be a UTF-8 boundary.
 function stdio_append_range(own pending: u8[], data: u8[], text: string, lo: i32, hi: i32): u8[] {
   if (text.len() == 0 && pending.len() == 0 && lo == 0 && hi == data.len()) {
     return data;
@@ -1318,8 +978,6 @@ function stdio_append_range(own pending: u8[], data: u8[], text: string, lo: i32
   return bytes;
 }
 
-// `(s).fflush()` — write what is pending; nothing is allocated for an
-// empty stream.
 pub function (s: Stdio) fflush(): Stdio {
   if (s.buf.len() == 0) {
     return s;
@@ -1328,18 +986,12 @@ pub function (s: Stdio) fflush(): Stdio {
   return Stdio { ...r, buf: [] };
 }
 
-// `(s).report(msg)` — gnulib's error(): stdout flushed, then the
-// diagnostic. Rebind: `s = s.report(msg);`.
 pub function (s: Stdio) report(msg: string): Stdio {
   let flushed: Stdio = s.fflush();
   error(msg);
   return flushed;
 }
 
-// `(s).close_stdout()` — gnulib's close_stdout over close_stream:
-// fclose, then `write error` with the errno when fclose failed and
-// without one when only an earlier write had, and no error at all for
-// a closed descriptor that had nothing pending and no earlier failure.
 pub function (s: Stdio) close_stdout(): void {
   let some_pending: boolean = s.buf.len() > 0;
   let prev_fail: boolean = false;
@@ -1380,10 +1032,6 @@ pub function (s: Stdio) close_stdout(): void {
   }
 }
 
-// `_IO_file_xsputn`: fill the buffer, flush it if that did not take
-// everything, write whole blocks of what is left directly, and buffer
-// the remainder. A failed flush ends the write
-// with the rest dropped. Callers observe the sticky error in the stream.
 function xsputn(s0: Stdio, data: u8[], text: string, lo: i32, hi: i32): Stdio {
   let s: Stdio = s0;
   let n: i32 = hi - lo;
@@ -1429,9 +1077,6 @@ function xsputn(s0: Stdio, data: u8[], text: string, lo: i32, hi: i32): Stdio {
   return s;
 }
 
-// `_IO_OVERFLOW(EOF)`: allocate the buffer on first use and write what
-// it holds. The buffer is empty afterwards whether or not the write
-// succeeded, as `new_do_write` leaves it.
 function overflow(s0: Stdio): Stdio {
   let s: Stdio = Stdio { ...s0, alloc: true };
   if (s.buf.len() == 0) {
@@ -1452,7 +1097,6 @@ function stdio_failed(s: Stdio): boolean {
   }
 }
 
-// Write borrowed bytes only while the stream has no earlier error.
 function sys_write(s: Stdio, data: [u8]): Stdio {
   match (s.err) {
     Some(_) => {
@@ -1470,8 +1114,6 @@ function sys_write(s: Stdio, data: [u8]): Stdio {
   }
 }
 
-// The long-option name in `a` (`--name` or `--name=value`), plus
-// whether a value was glued on.
 function long_parts(a: string): (string, boolean) {
   let body: str = slice_unchecked(a, 2, a.len());
   if let Some(eq) = body.index_of("=") {
@@ -1480,11 +1122,6 @@ function long_parts(a: string): (string, boolean) {
   return (body + "", false);
 }
 
-// `print_help` / `print_version` — the two outputs every utility
-// shares. `status` is the exit code: 0 for most, but true(1) and
-// false(1) exit with THEIR status even from `--help`. `fail_status`
-// is the exit code when the write fails: 1, or the utility's own
-// `exit_failure` (test(1) sets 2).
 function print_help(help_text: string, status: i32, fail_status: i32): void {
   write_out_with(help_text, fail_status);
   exit(status);
@@ -1495,48 +1132,8 @@ function print_version(name: string, status: i32, fail_status: i32): void {
   exit(status);
 }
 
-// ---- getopt_long ---------------------------------------------------------
-//
-// glibc's getopt_long, as the utilities observe it. One option is an
-// `Opt`; a utility declares its own in the order GNU declares them,
-// because that order is visible: the ambiguity list prints candidates
-// in declaration order, and `--help` / `--version` come LAST (so
-// `sort --v` lists '--version-sort' before '--version'). The two
-// standard options are appended by `getopt_new`, never declared.
-//
-// The scan is a cursor (docs/CURSOR-IDIOM.md): `next()` hands back one
-// option at a time, so a utility validates each value in argv order
-// exactly as the C loop does, and `head -n5x --foo` complains about
-// the count before it ever sees `--foo`. Operands are permuted out
-// unless POSIXLY_CORRECT is set (or `in_order()` was asked for), in
-// which case the first operand ends the options; `return_in_order()`
-// hands them back interleaved instead. Every fault exits through
-// `die_usage` with the utility's usage status.
-//
-// Short options: a cluster `-abc` is consumed byte by byte; an
-// unknown byte is `invalid option -- 'x'`. A required value is the
-// rest of the cluster if any (`-n5`), else the NEXT argv token
-// whatever it looks like (`-n -5`, `-n --`), else `option requires
-// an argument -- 'n'`. A short optional value is only ever the rest of
-// the cluster. Long options match by unique prefix with an exact match
-// winning; a glued `=value` is the value, or a fault for an option
-// that takes none.
-// `Opt` — one declared option. `short` is the option byte (0 for a
-// long-only option), `long` the name without dashes ("" for a
-// short-only one), `id` the tag `next()` reports it as. The two
-// spellings carry their arity separately — `short_arg` and `arg`,
-// each 0 / 1 / 2 for none / required / optional — because glibc keeps
-// two tables: the `short_options` string and the `struct option`
-// array. `tail` declares plain `f` in the first and
-// `{"follow", optional_argument}` in the second, so `-fname` is `-f`
-// followed by `-n ame` while `--follow=name` carries a value.
 pub struct Opt { short: i32, long: string, short_arg: i32, arg: i32, id: i32 }
 
-// `flag(short, long, id)` — an option taking no value; `valued` takes
-// a required one; `optional` takes one only when glued (`-cX`,
-// `--color=X`), in both spellings. `optional_long` is the split shape
-// above: nothing after the short letter, an optional `=value` after
-// the long name. `short` is "" or a single byte.
 pub function flag(short: string, long: string, id: i32): Opt {
   return Opt { short: short_byte(short), long: long, short_arg: 0, arg: 0, id: id };
 }
@@ -1553,10 +1150,6 @@ pub function optional_long(short: string, long: string, id: i32): Opt {
   return Opt { short: short_byte(short), long: long, short_arg: 0, arg: 2, id: id };
 }
 
-// `valued_optional_long(short, long, id)` — the other split shape, od's
-// `-S`: the short spelling REQUIRES a value and the long one takes it
-// only when glued, so `od -S 3 f` reads the 3 and `od --strings f`
-// takes the default.
 pub function valued_optional_long(short: string, long: string, id: i32): Opt {
   return Opt { short: short_byte(short), long: long, short_arg: 1, arg: 2, id: id };
 }
@@ -1568,23 +1161,10 @@ function short_byte(short: string): i32 {
   return short[0] as i32;
 }
 
-// `OptMatch` — one option occurrence: its `id`, and the value when
-// the option took one. `has_value` separates "no value" from an
-// empty one for the `optional` shape, and `long_form` says which
-// spelling was typed: gnulib's xstrtol_fatal names the option the way
-// it was written, so `-S x` and `--buffer-size=x` word the same fault
-// differently.
 pub struct OptMatch { id: i32, value: string, has_value: boolean, long_form: boolean }
 
-// `Getopt` — the scan state. `cluster` is what is left of a short
-// cluster still being consumed (without its dash); `operands` are
-// the tokens permuted out so far.
 pub struct Getopt { argv: string[], opts: Opt[], name: string, help: string, status: i32, fail: i32, in_order: boolean, report_operands: boolean, i: i32, cluster: string, operands: string[], past_dashdash: boolean, hint: string }
 
-// The ids `next()` reserves for the two standard options; they never
-// reach the caller because `next()` answers them itself. They are public
-// so a utility can declare a SHORT spelling of one: mktemp's `-V` is a
-// live alias for `--version` that its `--help` does not mention.
 pub function help_id(): i32 {
   return 0 - 1;
 }
@@ -1593,8 +1173,6 @@ pub function version_id(): i32 {
   return 0 - 2;
 }
 
-// `getopt_new(argv, opts, name, help_text, status)` — start a scan.
-// `status` is the utility's usage-error exit code.
 pub function getopt_new(argv: string[], opts: Opt[], name: string, help_text: string, status: i32): Getopt {
   let all: Opt[] = opts;
   all = all.append(flag("", "help", help_id()));
@@ -1610,27 +1188,14 @@ pub function getopt_new(argv: string[], opts: Opt[], name: string, help_text: st
   return Getopt { argv: argv, opts: all, name: name, help: help_text, status: status, fail: status, in_order: in_order, report_operands: false, i: 1, cluster: "", operands: empty, past_dashdash: false, hint: "" };
 }
 
-// `(g).exit_failure(status)` — gnulib's initialize_exit_failure: the
-// code a FAILED WRITE exits with, where `status` above is the code a
-// usage error exits with. They are the same number for almost every
-// utility, because gnulib calls usage() with exit_failure — but tty(1)
-// sets exit_failure to 3 and refuses a bad option with 2, so its
-// `--help > /dev/full` exits 3 where `tty -x` exits 2.
 pub function (g: Getopt) exit_failure(status: i32): Getopt {
   return Getopt { ...g, fail: status };
 }
 
-// `(g).fault_hint(line)` — an extra line printed between a getopt
-// fault and the `Try …` line. rm(1) is the only caller: any of its
-// getopt faults is followed by `Try 'rm ./-x' to remove the file
-// '-x'.` when an argv element that looks like an option names an
-// existing file, on the theory that the typo was a file name.
 pub function (g: Getopt) fault_hint(line: string): Getopt {
   return Getopt { ...g, hint: line };
 }
 
-// A fault raised by the scan itself, as against a utility's own
-// usage error: the hint above sits between the message and `Try …`.
 function die_fault(g: Getopt, msg: string): void {
   error(msg);
   if (g.hint.len() > 0) {
@@ -1639,34 +1204,18 @@ function die_fault(g: Getopt, msg: string): void {
   try_help(g.status);
 }
 
-// `(g).in_order()` — stop at the first operand regardless of
-// POSIXLY_CORRECT: the `+` optstring prefix of env(1), nice(1),
-// timeout(1) and the other command runners.
 pub function (g: Getopt) in_order(): Getopt {
   return Getopt { ...g, in_order: true };
 }
 
-// `operand_id()` — the id `next()` reports an operand under after
-// `return_in_order()`; the token is the match's value.
 pub function operand_id(): i32 {
   return 0 - 3;
 }
 
-// `(g).return_in_order()` — the `-` optstring prefix of uniq(1) and
-// sort(1): every operand is handed back by `next()` as `operand_id()` in
-// argv order instead of being permuted out, and POSIXLY_CORRECT no
-// longer ends the scan, because glibc lets the prefix outrank it. A
-// utility asks for this when an operand's MEANING depends on what came
-// before it — uniq's `+N` is a skip-chars count until a file operand has
-// been seen and a file name after that, and sort's `-k` spans are
-// positional against the files around them — and stops the scan itself
-// with `stop()`.
 pub function (g: Getopt) return_in_order(): Getopt {
   return Getopt { ...g, report_operands: true, in_order: false };
 }
 
-// `(g).next()` — the next option, or None once the options are
-// exhausted; rebind the cursor: `let (m, g) = g.next();`.
 pub function (g: Getopt) next(): (Option[OptMatch], Getopt) {
   if (g.cluster.len() > 0) {
     return short_option(g);
@@ -1684,9 +1233,6 @@ pub function (g: Getopt) next(): (Option[OptMatch], Getopt) {
       if (g.in_order) {
         return (None, take_rest(g));
       }
-      // Appended through the parameter itself so the operand list grows
-      // in place; a copy of the cursor as the root copies the list on
-      // every operand, which is quadratic in argv.
       g = Getopt { ...g, i: g.i + 1, operands: g.operands.append(a) };
       continue;
     }
@@ -1700,19 +1246,10 @@ pub function (g: Getopt) next(): (Option[OptMatch], Getopt) {
   return (None, g);
 }
 
-// `(g).operands()` — every operand, in argv order, once `next()` has
-// returned None.
 pub function (g: Getopt) operands(): string[] {
   return g.operands;
 }
 
-// `(g).next_argv_order()` — glibc's `-` optstring prefix
-// (RETURN_IN_ORDER): an OPERAND is reported where it stands rather
-// than collected, so a utility whose operands and option arguments are
-// ambiguous can decide between them in place. Returns (kind, m, g):
-// kind 0 the scan is over, 1 an option in `m`, 2 an operand in
-// `m.value`. join(1) is the caller — `join -o 1.1 2.2 f1 f2` gives -o
-// two arguments, and only the count of what follows says so.
 pub function (g: Getopt) next_argv_order(): (i32, OptMatch, Getopt) {
   let nil: OptMatch = OptMatch { id: 0, value: "", has_value: false, long_form: false };
   if (g.cluster.len() > 0) {
@@ -1762,24 +1299,14 @@ pub function (g: Getopt) next_argv_order(): (i32, OptMatch, Getopt) {
   return (0, nil, s);
 }
 
-// `(g).after_dashdash()` — whether the scan has passed `--`, after
-// which every token is an operand and nothing can still be an option
-// argument.
 pub function (g: Getopt) after_dashdash(): boolean {
   return g.past_dashdash;
 }
 
-// `(g).index()` — the argv cursor, one past the token just consumed.
-// join(1) reads it back to tell `-j1 N` from `-j 1`: only the glued
-// spelling is the obsolete option.
 pub function (g: Getopt) index(): i32 {
   return g.i;
 }
 
-// `(g).at_negative_number()` — whether the next token is `-N` or
-// `-.N`. seq(1) ends its option scan there, so a negative first
-// operand needs no `--`; the check is made between tokens, as GNU's
-// is, so `-w5` is still the option `-w` followed by an invalid `5`.
 pub function (g: Getopt) at_negative_number(): boolean {
   if (g.cluster.len() > 0 || g.i >= g.argv.len()) {
     return false;
@@ -1792,12 +1319,6 @@ pub function (g: Getopt) at_negative_number(): boolean {
   return b == 46 || b >= 48 && b <= 57;
 }
 
-// `(g).peek()` — the argv token the cursor is on, or None at the end,
-// and `(g).advance()` consumes it. Together they are getopt's
-// `argv[optind]` / `optind++`, which sort(1) reads directly: the
-// obsolete `+POS -POS` takes its second half off argv rather than
-// through the scan, so `-2` there is a key end and not
-// `invalid option -- '2'`.
 pub function (g: Getopt) peek(): Option[string] {
   if (g.cluster.len() > 0 || g.i >= g.argv.len()) {
     return None;
@@ -1809,12 +1330,10 @@ pub function (g: Getopt) advance(): Getopt {
   return Getopt { ...g, i: g.i + 1 };
 }
 
-// `(g).stop()` — end the scan: every remaining token is an operand.
 pub function (g: Getopt) stop(): Getopt {
   return take_rest(g);
 }
 
-// Everything from the cursor on is an operand.
 function take_rest(g: Getopt): Getopt {
   let ops: string[] = g.operands;
   let i: i32 = g.i;
@@ -1839,9 +1358,6 @@ function short_option(g: Getopt): (Option[OptMatch], Getopt) {
     die_fault(g, "invalid option -- '" + slice_unchecked(g.cluster, 0, 1) + "'");
   }
   let o: Opt = g.opts[k];
-  // A short spelling of --help / --version is answered here exactly as
-  // the long one is, so it short-circuits the rest of the cluster:
-  // `mktemp -Vx` prints the version rather than reaching the invalid x.
   if (o.id == help_id()) {
     print_help(g.help, 0, g.fail);
   }
@@ -1885,27 +1401,14 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
     k = k + 1;
   }
   if (found < 0) {
-    // The list is not every prefix match: glibc compares each later
-    // candidate against the FIRST one and names only those that differ,
-    // plus that first one. Two spellings of the same option therefore
-    // make no ambiguity and only one of them is listed — `tty --=x`
-    // names `--silent` and not `--quiet`, and `rmdir --p` is `--parents`
-    // even though `--path` matches it too.
     let list: string = "";
     let ambiguous: boolean = false;
     k = 0;
     while (k < g.opts.len()) {
       let o: Opt = g.opts[k];
       if (o.long.len() > 0 && o.long.starts_with(name)) {
-        // glibc lists the FIRST prefix match plus every later one that
-        // differs from it, so an alias sharing the first one's arity
-        // and value is left out: dircolors' `--=x` names seven of its
-        // eight long options, and the missing one is `--sh`, which is
-        // `--bourne-shell` under another spelling. (glibc also compares
-        // the option's flag pointer; nothing here has one.)
         if (found < 0) {
           found = k;
-          // The first match starts the list; `list` is still empty here.
           list = " '--" + o.long + "'";
         } else if (o.arg != g.opts[found].arg || o.id != g.opts[found].id) {
           ambiguous = true;
@@ -1936,10 +1439,6 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
       die_fault(g, "option '--" + o.long + "' requires an argument");
     }
   }
-  // The write-failure status is the utility's own `exit_failure`, which
-  // is the usage-error status for almost everything here — gnulib calls
-  // usage() with exit_failure, so printenv's 2 is both and head's 1 is
-  // both — and `exit_failure()` above is how the two that differ say so.
   if (o.id == help_id()) {
     print_help(g.help, 0, g.fail);
   }
@@ -1949,12 +1448,6 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
   return (Some(OptMatch { id: o.id, value: value, has_value: has, long_form: true }), s);
 }
 
-// `parse_standard_options_only(argv, name, help_text, status)` —
-// gnulib's parse_gnu_standard_options_only, for a utility whose ONLY
-// options are `--help` and `--version`: the scan above with nothing
-// declared, so an option is found wherever it stands until `--`
-// (`yes x --help` prints the help) and every other token is an
-// operand. Returns the operands in argv order.
 pub function parse_standard_options_only(argv: string[], name: string, help_text: string, status: i32): string[] {
   let none: Opt[] = [];
   let g: Getopt = getopt_new(argv, none, name, help_text, status);
@@ -1971,18 +1464,10 @@ pub function parse_standard_options_only(argv: string[], name: string, help_text
   return g.operands();
 }
 
-// `sole_help_version(argv, name, help_text, status)` — the narrower
-// rule true(1), false(1) and echo(1) use: `--help` and `--version`
-// are honoured only as the SOLE argument, spelled in full, and are
-// ordinary operands otherwise. `true --help x` therefore exits 0 in
-// silence, and `echo --help x` prints `--help x`.
 pub function sole_help_version(argv: string[], name: string, help_text: string, status: i32): void {
   sole_help_version_with(argv, name, help_text, status, 1);
 }
 
-// `sole_help_version_with(argv, name, help_text, status, fail_status)`
-// — the same, exiting `fail_status` rather than 1 when the write
-// fails: `[ --help` reports a closed stdout with test's own 2.
 pub function sole_help_version_with(argv: string[], name: string, help_text: string, status: i32, fail_status: i32): void {
   if (argv.len() != 2) {
     return;
@@ -1995,18 +1480,10 @@ pub function sole_help_version_with(argv: string[], name: string, help_text: str
   }
 }
 
-// ---- file names ------------------------------------------------------------
-//
-// gnulib's name splitting, which is not the shell's: trailing slashes
-// belong to the component they follow, so `base_name("x/")` is `x` and
-// `dir_name("x/y/")` is `x`.
 function is_slash(c: u8): boolean {
   return c as i32 == 47;
 }
 
-// `base_name(s)` — the last component of `s`, trailing slashes dropped.
-// A name that is nothing but slashes is `/`, and the empty name stays
-// empty.
 pub function base_name(s: string): string {
   let end: i32 = s.len();
   while (end > 0 && is_slash(s[end - 1])) {
@@ -2025,8 +1502,6 @@ pub function base_name(s: string): string {
   return slice_unchecked(s, start, end) + "";
 }
 
-// `dir_name(s)` — everything before `base_name`'s component, `.` when
-// there is none.
 pub function dir_name(s: string): string {
   let end: i32 = s.len();
   while (end > 0 && is_slash(s[end - 1])) {
@@ -2054,15 +1529,7 @@ pub function dir_name(s: string): string {
   return slice_unchecked(s, 0, i) + "";
 }
 
-// `join_path(dir, name)` — the two joined with exactly ONE slash
-// however many the directory ends with: `ln -t 'd///' s/f` makes `d/f`,
-// not `d///f`.
 pub function join_path(dir: string, name: string): string {
-  // An EMPTY directory contributes nothing, not a leading slash: gnulib's
-  // file_name_concat("", "x") is "x", and `nohup` is the caller that reaches
-  // it — with HOME set to the empty string its fallback path is the same
-  // `nohup.out` the working directory's attempt already used, so both
-  // failures name one file.
   if (dir.len() == 0) {
     return name;
   }
@@ -2077,9 +1544,6 @@ pub function join_path(dir: string, name: string): string {
   return head + "/" + name;
 }
 
-// `strip_slashes(s)` — `s` with its trailing slashes removed, which is
-// what `mv --strip-trailing-slashes` does to each source operand. A
-// name that is nothing but slashes keeps one, so `//` is `/`.
 pub function strip_slashes(s: string): string {
   let end: i32 = s.len();
   while (end > 1 && is_slash(s[end - 1])) {
@@ -2088,9 +1552,6 @@ pub function strip_slashes(s: string): string {
   return slice_unchecked(s, 0, end) + "";
 }
 
-// Where `s`'s last component starts — gnulib's last_component, which is
-// NOT `base_name`: trailing slashes belong to the component here, so
-// `x/`'s last component is `x/` and `/`'s is empty.
 function last_component_start(s: string): i32 {
   let i: i32 = 0;
   while (i < s.len() && is_slash(s[i])) {
@@ -2110,11 +1571,6 @@ function last_component_start(s: string): i32 {
   return last;
 }
 
-// ---- backups ---------------------------------------------------------------
-//
-// The `--backup` family gnulib gives every utility that replaces a
-// destination: four controls, eight names for them, and the scan that
-// picks the next `NAME.~N~`.
 pub function backup_none(): i32 {
   return 0;
 }
@@ -2131,8 +1587,6 @@ pub function backup_numbered(): i32 {
   return 3;
 }
 
-// The eight names, in gnulib's declaration order — which is visible,
-// because the invalid-argument list prints them in it.
 pub function backup_names(): string[] {
   return ["none", "off", "simple", "never", "existing", "nil", "numbered", "t"];
 }
@@ -2141,20 +1595,10 @@ pub function backup_values(): i32[] {
   return [backup_none(), backup_none(), backup_simple(), backup_simple(), backup_existing(), backup_existing(), backup_numbered(), backup_numbered()];
 }
 
-// `usable_suffix(s)` — whether `-S s` / `$SIMPLE_BACKUP_SUFFIX` is one a
-// backup name may be built from. A suffix is taken only when it IS its
-// own last component, so `-S 'x/y'`, `-S '/x'` and `-S '/'` are ignored
-// and `~` is used. `-S 'x/'` passes the test, and the backup name it
-// builds ends in a slash — which is how `ln -b -S x/ a b` reaches
-// `cannot backup 'b': Not a directory` on Linux. Darwin's rename answers
-// ENOENT there, which GNU takes as nothing to back up.
 pub function usable_suffix(s: string): boolean {
   return s.len() > 0 && last_component_start(s) == 0;
 }
 
-// The N in `NAME.~N~`, or -1 when `entry` is not one of NAME's numbered
-// backups. A leading zero disqualifies it — `b.~09~` is not a backup of
-// `b` and does not raise the next number.
 function numbered_index(entry: string, name: string): i32 {
   let head: string = name + ".~";
   if (!entry.starts_with(head) || !entry.ends_with("~")) {
@@ -2180,8 +1624,6 @@ function numbered_index(entry: string, name: string): i32 {
   return n;
 }
 
-// The highest N over `dir`'s `NAME.~N~` entries, or -1 when there is
-// none. A DIRECTORY named that way counts: the scan reads names.
 function highest_numbered(dir: string, name: string): i32 {
   let best: i32 = 0 - 1;
   match (read_dir(dir)) {
@@ -2200,9 +1642,6 @@ function highest_numbered(dir: string, name: string): i32 {
   return best;
 }
 
-// `backup_name(dest, control, suffix)` — the name the existing `dest` is
-// moved to. `existing` picks numbered only when a numbered backup of
-// this name is already there.
 pub function backup_name(dest: string, control: i32, suffix: string): string {
   let c: i32 = control;
   if (c == backup_existing()) {
@@ -2213,8 +1652,6 @@ pub function backup_name(dest: string, control: i32, suffix: string): string {
     }
   }
   if (c == backup_numbered()) {
-    // The first numbered backup is `.~1~`, so a directory with none in
-    // it starts there rather than one past the -1 the scan reports.
     let n: i32 = highest_numbered(dir_name(dest), base_name(dest));
     if (n < 0) {
       n = 0;
@@ -2224,20 +1661,12 @@ pub function backup_name(dest: string, control: i32, suffix: string): string {
   return dest + suffix;
 }
 
-// `prompt(msg)` — one question on stderr, answered by `yesno()`. The
-// message carries its own `? ` and NO newline: the answer is typed on the
-// same line, which is what every interactive utility here asks for and
-// what four of them used to hand-roll. A caller holding buffered stdout
-// flushes it first, so an earlier `-v` line cannot land after the
-// question it preceded.
 pub function prompt(msg: string): boolean {
   let w: Writer = stderr();
   w.write(prog() + ": " + msg);
   return yesno();
 }
 
-// `yesno()` — glibc's yesno(): one line from stdin, yes when it starts
-// with `y` or `Y` in the C locale. End of input and a failed read are no.
 pub function yesno(): boolean {
   match (io.read_line(stdin())) {
     Ok(Some(l)) => {
@@ -2249,22 +1678,8 @@ pub function yesno(): boolean {
   }
 }
 
-// ---- exec ------------------------------------------------------------------
-//
-// `execvp(3)`, which is what every coreutils utility that runs a command
-// uses — `env`, `nice`, `nohup`, `timeout`, `stdbuf`, `chroot`. Two steps
-// the raw `proc_exec_as` builtin does not take: the PATH search for a name
-// with no slash in it, and the shell retry below.
-// `Exec` — where a command name resolved to, or the errno that stopped it.
 pub struct Exec { path: string, errno: i32 }
 
-// `exec_errno_text(n)` — strerror for the numbers that arrive as raw errnos
-// rather than inside an IoError: execve's, and sigaction's refusal. Anything
-// else is reported by number, which is better than a wrong name.
-//
-// The NUMBER is the host's, and the two platforms agree on only some of
-// them: ENAMETOOLONG and ELOOP sit at 36 and 40 on Linux and at 63 and 62
-// on Darwin, so they are asked for by name below rather than written in.
 pub function exec_errno_text(n: i32): string {
   if (n == 2) {
     return "No such file or directory";
@@ -2307,8 +1722,6 @@ pub function eloop_errno(): i32 {
   return 40;
 }
 
-// What the host libc answers for an errno it has no name for. Darwin's
-// carries a colon; glibc's does not.
 pub function unknown_errno_text(n: i32): string {
   if (target_os() == "darwin") {
     return "Unknown error: " + n.to_string();
@@ -2316,9 +1729,6 @@ pub function unknown_errno_text(n: i32): string {
   return "Unknown error " + n.to_string();
 }
 
-// `resolve_command(cmd, envp)` — where execvp would look for `cmd`: the name
-// itself when it holds a slash, otherwise each `$PATH` entry in turn. `errno`
-// is 0 on success, and otherwise the number to report.
 pub function resolve_command(cmd: string, envp: string[]): Exec {
   if (cmd.len() == 0) {
     return Exec { path: "", errno: 2 };
@@ -2326,10 +1736,6 @@ pub function resolve_command(cmd: string, envp: string[]): Exec {
   if (cmd.contains("/")) {
     return Exec { path: cmd, errno: 0 };
   }
-  // An ABSENT PATH is not an empty one. execvp falls back to a built-in list
-  // when the variable is missing — measured as `/bin:/usr/bin` on glibc and
-  // `/usr/bin:/bin` on Darwin, which is `confstr(_CS_PATH)` on each — while an
-  // explicitly EMPTY PATH searches nothing and the command is not found.
   let (path, found) = env_value(envp, "PATH");
   if (found) {
     if (path.len() == 0) {
@@ -2355,9 +1761,6 @@ pub function resolve_command(cmd: string, envp: string[]): Exec {
           return Exec { path: cand, errno: 0 };
         },
         Err(e) => {
-          // EACCES anywhere on the search outranks a later ENOENT: execvp
-          // reports "permission denied" when it found the name but could not
-          // run it, and that is the difference between 126 and 127.
           if (errno.of(e) == errno.EACCES) {
             best = 13;
           }
@@ -2370,16 +1773,6 @@ pub function resolve_command(cmd: string, envp: string[]): Exec {
   return Exec { path: "", errno: best };
 }
 
-// `exec_command(cmd, argv, envp)` — resolve `cmd`, then replace this process
-// with it. Returns only on failure, with the errno to report.
-//
-// The ENOEXEC retry is execvp's and is not optional for parity: a file the
-// kernel cannot load — a script with no `#!` line being the everyday case —
-// is handed to `/bin/sh` rather than refused (#9262). The shell's argv is
-// `{"/bin/sh", <the path execve was handed>, <the caller's own arguments>}`,
-// so `$0` inside the script is the RESOLVED path and `$#` counts only what
-// the caller passed. A directory with the execute bit, or a file without
-// one, is EACCES rather than ENOEXEC and stays a refusal.
 pub function exec_command(cmd: string, argv: string[], envp: string[]): i32 {
   let f: Exec = resolve_command(cmd, envp);
   if (f.errno != 0) {
@@ -2398,9 +1791,6 @@ pub function exec_command(cmd: string, argv: string[], envp: string[]): i32 {
   return 0 - proc_exec_as("/bin/sh", shell_argv, envp);
 }
 
-// `env_value(envp, name)` — `name`'s value in an `environ`-shaped vector, and
-// whether it is there at all. A LATER entry wins, which is what the kernel
-// hands a process and what glibc's getenv reads.
 pub function env_value(envp: string[], name: string): (string, boolean) {
   let value: string = "";
   let found: boolean = false;

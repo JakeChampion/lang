@@ -2,11 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// f32LiteralSrc is f32 arithmetic whose literals were read as f64 (#10757): an
-// unsuffixed literal tree at an f32 destination or beside an f32 operand, and a
-// suffixed `f32` literal the checker typed f64, which surfaced in array
-// literals, generic calls and the value an `if` or `match` yields. Each line
-// prints what the interpreter prints.
 const f32LiteralSrc = `import "std/f64";
 import "std/i32";
 function id[T](x: T): T { return x; }

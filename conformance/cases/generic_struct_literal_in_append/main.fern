@@ -1,9 +1,9 @@
 import "std/i32";
 
-// A literal of a generic struct whose field holds a closure, written
-// straight as the argument of `append` and `with`: the clone it needs is
-// keyed from the array's element, since a closure-typed field value has no
-// spelling to infer it from.
+
+
+
+
 struct Box[T] { f: () => T, n: i32 }
 
 function start[T](entries: (() => T)[]): Box[T][] {

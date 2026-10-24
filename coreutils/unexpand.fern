@@ -1,36 +1,8 @@
-// unexpand.fern — GNU-compatible `unexpand`.
-//
-//   unexpand [-a | --first-only] [-t LIST] [FILE]...
-//
-// Runs of blanks become tabs wherever a tab reaches the same column.
-// Only a line's LEADING blanks are converted unless `-a` or `-t` says
-// otherwise, and `--first-only` takes that back whichever order they are
-// written in. The tab stops are expand's, in `coreutils/lib/tabs.fern`.
-//
-// The rule for when a run becomes a tab is finer than "it reaches a
-// stop", and the four shapes below are the whole of it — each measured
-// against the reference binary:
-//
-//   - A single blank that lands on a stop DIRECTLY AFTER a non-blank is
-//     held, not converted: a tab there would be the same width and the
-//     same length, and GNU leaves it alone. `1234567 x` keeps its space
-//     where a blank opening a line, or one following a tab, does not.
-//   - It is only held, though. If another blank follows it, the held one
-//     becomes a tab after all: `1234567  x` is `1234567\t x`.
-//   - Past the last stop conversion STOPS for the rest of the line, and
-//     everything held at that moment is written as it stood. That is why
-//     `abcdefg  i` under `-t 4,8` keeps both spaces while the same input
-//     under the default stops becomes `abcdefg\t i`.
-//   - The obsolete `-NUM` form is not `-t NUM`: its digits and commas
-//     are options of their own spelling ONE list read after the scan
-//     (`-1 -2` is a tab size of 12), and it does not turn on `-a`.
 import "std/array";
 import "std/io_buffered";
 import "./lib/gnu";
 import "./lib/tabs";
 
-// Option ids, in GNU's declaration order — `unexpand --=x` lists
-// `--tabs` `--all` `--first-only`.
 function opt_tabs(): i32 {
   return 1;
 }
@@ -43,11 +15,6 @@ function opt_first(): i32 {
   return 3;
 }
 
-// The obsolete `-NUM` form. Unlike expand's, the digits AND the comma
-// are options in their own right taking no value, and what they spell is
-// collected across the whole scan into ONE list read at the end: `-1 -2`
-// is a tab size of 12, and `-4 -t8` is the descending pair 8,4 rather
-// than two separate settings.
 function opt_digit(d: i32): i32 {
   return 10 + d;
 }
@@ -77,7 +44,6 @@ function help_text(): string {
   return out;
 }
 
-// Bytes per read(2), and the writer's threshold: bytes per write(2).
 function read_size(): i32 {
   return 65536;
 }
@@ -123,8 +89,6 @@ pub function main(): i32 {
         } else if (m.id == opt_comma()) {
           obsolete = obsolete + ",";
         } else {
-          // The obsolete form sets the stops and nothing else: unlike
-          // `-t`, it does not turn on `-a`.
           obsolete = obsolete + digit_of(m.id);
         }
       },
@@ -145,17 +109,11 @@ pub function main(): i32 {
   return run(files, stops, all && !first_only);
 }
 
-// `run(files, stops, convert_all)` — the whole conversion. Every piece
-// of a line is pushed straight into stdout's builder, which is flushed
-// once it holds a block, so no byte is copied into an accumulator on the
-// way.
 function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
   let o: io_buffered.BufWriter = gnu.out_with(block_size());
   let h: usize = o.handle();
   let pad: string = "        ";
   let ok: boolean = true;
-  // Non-zero when every stop is the same distance apart, which is the
-  // case for a default run and for `-t N`.
   let step: u64 = stops.size;
 
   let fi: i32 = 0;
@@ -217,8 +175,6 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
             },
             Err(e) => {
               let message: string = gnu.io_error_text(e);
-              // WASI may answer EBADF for a directory. Classify the open
-              // descriptor only after a failed read, preserving normal I/O.
               match (r.stat()) {
                 Ok(st) => {
                   if (st.is_dir) {
@@ -278,12 +234,8 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
 
     let lead: i32 = buf[lo] as i32;
     if (!convert_all && lead != 32 && lead != 9) {
-      // Nothing to convert: only leading blanks are candidates and this
-      // line has none, so it goes out as it stands.
       buf_push_bytes_range(h, buf, lo, hi);
     } else {
-      // The line stays a view into the chunk: every scan below is
-      // bounded by `end`, so nothing here needs it copied out.
       let end: i32 = hi;
       let p: i32 = lo;
       let column: u64 = 0 as u64;
@@ -291,16 +243,10 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
       let convert: boolean = true;
       let pending: i32 = 0;
       let held: boolean = false;
-      // Whether the pending run starts straight after a non-blank. A
-      // single blank is only held there; one that opens a line or
-      // follows a tab is converted as soon as it reaches the stop.
       let after_nb: boolean = false;
       while (p < end) {
         let c: i32 = buf[p] as i32;
         if (convert && (c == 32 || c == 9)) {
-          // The uniform case is most of them, and it is arithmetic:
-          // taking it here keeps the call and its tuple out of the
-          // inner loop.
           let target: u64 = 0 as u64;
           if (step != 0 as u64) {
             target = column + (step - column % step);
@@ -310,8 +256,6 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
             idx = nx.1;
           }
           if (target == 0 as u64) {
-            // Past the last stop: nothing more on this line converts,
-            // and what was held goes out as the blanks it was.
             convert = false;
             while (pad.len() < pending) {
               pad = pad + "                                ";
@@ -359,8 +303,6 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
             buf_push_bytes_range(h, buf, p, end);
             p = end;
           } else if (!convert_all) {
-            // Default: the first byte that is not a blank ends the
-            // convertible part of the line.
             buf_push_bytes_range(h, buf, p, end);
             p = end;
             convert = false;
@@ -379,9 +321,6 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
                   idx = idx - 1;
                 }
               } else if (b != 0) {
-                // wcwidth answers 0 for a NUL, so it takes no column at
-                // all — the one byte for which the count is not the
-                // byte count.
                 column = column + 1 as u64;
               }
               q = q + 1;

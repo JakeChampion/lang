@@ -7,28 +7,11 @@ import (
 	"testing"
 )
 
-// TestSelfHostMapKeyedArm64IR pins #6081: a `Map[K, V]` whose key K is a struct
-// or enum compares its keys through K's derived `Eq` on the self-host ARM64
-// path, not by reinterpreting the key box.
-//
-// The broken runtime compared a key box as if it were a string box, so two
-// keys of one type compared equal iff their FIRST FIELD was bit-identical.
-// Hence a struct key with a string first field, whose fresh value-equal copy
-// missed, and a scalar case with a negative probe that differs only in the
-// second field.
-//
-// The programs import the real std/core modules (the checker requires
-// `@derive(Eq, Hash)` and `import "core/map"` for a struct key — there is no
-// import-free spelling of this shape), so they route through asm_load_run's
-// file-loading driver with a stdlib root, like the std/regex IR table does.
 var mapKeyedArm64Cases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// Struct key carrying a STRING field: the #6081 shape. Every probe key is
-	// built fresh — one from a concatenation, so its bytes live in a different
-	// buffer than the inserted key's — and must still hit.
 	{"struct-string-field", `import "core/map";
 import "core/cmp";
 
@@ -54,10 +37,6 @@ function main(): i32 {
     return 42;
 }`, 42},
 
-	// Struct key of SCALARS only. The fixture never caught this shape because
-	// its positive probes hit; check 3 is the one that exposes it — on the
-	// broken runtime only field 0 was ever compared, so a key differing solely
-	// in `b` matched.
 	{"struct-scalars", `import "core/map";
 import "core/cmp";
 
@@ -75,8 +54,6 @@ function main(): i32 {
     return 42;
 }`, 42},
 
-	// Enum key: unit, scalar-payload and string-payload variants through the
-	// same derived eq. A fresh string payload is the enum twin of case 1.
 	{"enum-key", `import "core/map";
 import "core/cmp";
 
@@ -118,9 +95,6 @@ func TestSelfHostMapKeyedArm64IR(t *testing.T) {
 			if err != nil || len(out) == 0 {
 				t.Fatalf("%s: arm64 driver failed (%d bytes, err %v)", tc.name, len(out), err)
 			}
-			// `.Lssa_` is the arm64 IR emitter's per-function label prefix; its
-			// presence proves the module routed through asm_arm64_ir rather than
-			// erroring out to an empty emit.
 			if !strings.Contains(string(out), ".Lssa_") {
 				t.Fatalf("%s: arm64 asm has no .Lssa_ marker", tc.name)
 			}

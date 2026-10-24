@@ -10,9 +10,6 @@ import (
 	"testing"
 )
 
-// grammarKeywordScopes are the TextMate scopes the VS Code grammar gives the
-// lexer's reserved words. Contextual names (`fip`, `async`, ...) are scoped
-// otherwise and stay out of this comparison.
 var grammarKeywordScopes = map[string]bool{
 	"keyword.control.fern":        true,
 	"storage.type.fern":           true,
@@ -22,8 +19,6 @@ var grammarKeywordScopes = map[string]bool{
 
 var wordAlternation = regexp.MustCompile(`^\\b\(([a-z0-9]+(?:\|[a-z0-9]+)*)\)\\b$`)
 
-// TestGrammarHighlightsExactlyTheKeywords holds the VS Code grammar's keyword
-// set to the Go lexer's table and to compiler/lexer.fern's keywords().
 func TestGrammarHighlightsExactlyTheKeywords(t *testing.T) {
 	src, err := os.ReadFile("../../../editors/vscode/syntaxes/fern.tmLanguage.json")
 	if err != nil {
@@ -72,10 +67,6 @@ func TestGrammarHighlightsExactlyTheKeywords(t *testing.T) {
 	}
 }
 
-// TestFernLexerKeywordTableMatchesItsList holds compiler/lexer.fern's
-// is_keyword, the byte-dispatched comparison chain the lexer tokenises with,
-// to the keywords() list it is documented to mirror, which the compiler uses
-// to reject a keyword as a name and the language server to complete names.
 func TestFernLexerKeywordTableMatchesItsList(t *testing.T) {
 	src, err := os.ReadFile("../../../compiler/lexer.fern")
 	if err != nil {

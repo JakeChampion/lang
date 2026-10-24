@@ -6,27 +6,6 @@ import (
 	"testing"
 )
 
-// Post-check desugars inside a NESTED function body and a Lambda body.
-//
-// The checker builds these during checking and a post-check pass splices them
-// into the AST — the checked-arithmetic block-expr (Binary.CheckedLowered) and
-// the composite operator overloads (ArithCall / NegCall). That pass walks
-// top-level function bodies, and it did not descend into a function declared
-// INSIDE one, nor into an anonymous function expression.
-//
-// Neither the interpreter nor codegen can handle the un-desugared node, so the
-// failure is a hard error rather than a wrong answer — but they fail at
-// different times, which is what made the bug look narrower than it was.
-// Compiling fails EAGERLY: the IR rejects the node at emit whether or not it
-// would ever run ("ir: unsupported binary `+?`"). Interpreting fails only if
-// the enclosing nested function is actually CALLED ("interp: `/?` on
-// interp.Number and interp.Number not supported"). The generated seed that
-// surfaced this never called its nested function on that input, so it looked
-// like a compile-only problem; it is not.
-//
-// Hence every case below is reached through a call.
-//
-// Returns 0 when every case holds, else the index of the first failure.
 const checkedArithNestedProgram = `
 struct V { x: i32 }
 function (a: V) add(b: V): V { return V { x: a.x + b.x }; }

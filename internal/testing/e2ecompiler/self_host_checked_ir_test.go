@@ -8,53 +8,38 @@ import (
 	"testing"
 )
 
-// The checked operators `+?` / `-?` / `*?` (#5542) yield `Some(result)` when
-// the exact result fits the operand type and `None` on overflow.
-// irtables.chk_binary_ops tests the overflow condition, then builds `None` /
-// `Some(wrapped)` into an Option held in an ordinary pointer slot, so every
-// IR backend lowers it unchanged. Each program matches the result and returns
-// a distinctive exit code, mirroring the cases in
-// `internal/testing/e2e/checked_arith_test.go`.
 var checkedIRCases = []struct {
 	name     string
 	src      string
 	expected int
 }{
-	// i32 signed add / sub.
 	{"i32-add-overflow", `function main(): i32 { let a: i32 = 2147483647; let b: i32 = 1; match (a +? b) { Some(v) => { return 1; }, None => { return 11; } } }`, 11},
 	{"i32-add-ok", `function main(): i32 { let a: i32 = 40; let b: i32 = 2; match (a +? b) { Some(v) => { return v; }, None => { return 99; } } }`, 42},
 	{"i32-sub-underflow", `function main(): i32 { let a: i32 = 0 - 2147483647 - 1; let b: i32 = 1; match (a -? b) { Some(v) => { return 2; }, None => { return 12; } } }`, 12},
 	{"i32-sub-ok", `function main(): i32 { let a: i32 = 50; let b: i32 = 8; match (a -? b) { Some(v) => { return v; }, None => { return 99; } } }`, 42},
-	// i32 signed mul, incl. the (-1, MIN) division-round-trip edge.
 	{"i32-mul-overflow", `function main(): i32 { let a: i32 = 100000; let b: i32 = 100000; match (a *? b) { Some(v) => { return 3; }, None => { return 13; } } }`, 13},
 	{"i32-mul-neg1-min", `function main(): i32 { let a: i32 = 0 - 1; let b: i32 = 0 - 2147483647 - 1; match (a *? b) { Some(v) => { return 4; }, None => { return 14; } } }`, 14},
 	{"i32-mul-min-neg1", `function main(): i32 { let a: i32 = 0 - 2147483647 - 1; let b: i32 = 0 - 1; match (a *? b) { Some(v) => { return 5; }, None => { return 15; } } }`, 15},
 	{"i32-mul-ok", `function main(): i32 { let a: i32 = 6; let b: i32 = 7; match (a *? b) { Some(v) => { return v; }, None => { return 99; } } }`, 42},
 	{"i32-mul-zero", `function main(): i32 { let a: i32 = 0; let b: i32 = 0 - 2147483647 - 1; match (a *? b) { Some(v) => { if (v == 0) { return 55; } return 98; }, None => { return 99; } } }`, 55},
 
-	// u8: clamp low is 0, result in range by construction.
 	{"u8-add-overflow", `function main(): i32 { let u: u8 = 250; let w: u8 = 10; match (u +? w) { Some(v) => { return 6; }, None => { return 21; } } }`, 21},
 	{"u8-sub-underflow", `function main(): i32 { let u: u8 = 250; let w: u8 = 10; match (w -? u) { Some(v) => { return 7; }, None => { return 22; } } }`, 22},
 	{"u8-sub-ok", `function main(): i32 { let u: u8 = 250; let w: u8 = 10; match (u -? w) { Some(v) => { if ((v as i32) == 240) { return 24; } return 98; }, None => { return 99; } } }`, 24},
 	{"u8-mul-overflow", `function main(): i32 { let u: u8 = 250; let w: u8 = 10; match (u *? w) { Some(v) => { return 8; }, None => { return 23; } } }`, 23},
 
-	// u32.
 	{"u32-add-overflow", `function main(): i32 { let p: u32 = 4294967290; let q: u32 = 10; match (p +? q) { Some(v) => { return 9; }, None => { return 31; } } }`, 31},
 	{"u32-sub-underflow", `function main(): i32 { let p: u32 = 4294967290; let q: u32 = 10; match (q -? p) { Some(v) => { return 10; }, None => { return 32; } } }`, 32},
 	{"u32-mul-ok", `function main(): i32 { let q: u32 = 10; match (q *? q) { Some(v) => { return v as i32; }, None => { return 99; } } }`, 100},
 
-	// i64 at full width — no wider host type.
 	{"i64-add-overflow", `function main(): i32 { let x: i64 = 9223372036854775807; let y: i64 = 5; match (x +? y) { Some(v) => { return 40; }, None => { return 41; } } }`, 41},
 	{"i64-mul-neg1-min", `function main(): i32 { let x: i64 = 0 - 1; let y: i64 = 0 - 9223372036854775807 - 1; match (x *? y) { Some(v) => { return 43; }, None => { return 44; } } }`, 44},
 	{"i64-mul-ok", `function main(): i32 { let x: i64 = 6; let y: i64 = 7; match (x *? y) { Some(v) => { return v as i32; }, None => { return 99; } } }`, 42},
 
-	// u64.
 	{"u64-add-overflow", `function main(): i32 { let m: u64 = 18446744073709551615; let n: u64 = 1; match (m +? n) { Some(v) => { return 50; }, None => { return 51; } } }`, 51},
 	{"u64-sub-underflow", `function main(): i32 { let m: u64 = 0; let n: u64 = 1; match (m -? n) { Some(v) => { return 52; }, None => { return 53; } } }`, 53},
 	{"u64-add-ok", `function main(): i32 { let m: u64 = 21; let n: u64 = 21; match (m +? n) { Some(v) => { return v as i32; }, None => { return 99; } } }`, 42},
 
-	// /? and %?: None on a zero divisor and (signed) on MIN / -1. The
-	// division is deferred into the Some branch so a `84 /? 0` never traps.
 	{"i32-div-ok", `function main(): i32 { let a: i32 = 84; let b: i32 = 2; match (a /? b) { Some(v) => { return v; }, None => { return 99; } } }`, 42},
 	{"i32-div-zero", `function main(): i32 { let a: i32 = 84; let b: i32 = 0; match (a /? b) { Some(v) => { return 1; }, None => { return 41; } } }`, 41},
 	{"i32-div-minneg1", `function main(): i32 { let a: i32 = 0 - 2147483647 - 1; let b: i32 = 0 - 1; match (a /? b) { Some(v) => { return 2; }, None => { return 43; } } }`, 43},
@@ -73,8 +58,6 @@ var checkedIRCases = []struct {
 	{"u64-div-zero", `function main(): i32 { let m: u64 = 100; let z: u64 = 0; match (m /? z) { Some(v) => { return 9; }, None => { return 50; } } }`, 50},
 	{"u64-div-ok", `function main(): i32 { let m: u64 = 84; let z: u64 = 2; match (m /? z) { Some(v) => { return v as i32; }, None => { return 99; } } }`, 42},
 
-	// <<? and >>?: None on an out-of-range shift count (< 0 or >= width);
-	// <<? also on bits shifted out (`255u8 <<? 1` is None).
 	{"i32-shl-ok", `function main(): i32 { let a: i32 = 1; let b: i32 = 4; match (a <<? b) { Some(v) => { return v; }, None => { return 99; } } }`, 16},
 	{"i32-shl-oor", `function main(): i32 { let a: i32 = 1; let b: i32 = 32; match (a <<? b) { Some(v) => { return 1; }, None => { return 41; } } }`, 41},
 	{"i32-shl-neg", `function main(): i32 { let a: i32 = 1; let b: i32 = 0 - 1; match (a <<? b) { Some(v) => { return 2; }, None => { return 42; } } }`, 42},
@@ -101,8 +84,6 @@ var checkedIRCases = []struct {
 	{"u64-shr-ok", `function main(): i32 { let a: u64 = 1024; let b: u64 = 5; match (a >>? b) { Some(v) => { return v as i32; }, None => { return 99; } } }`, 32},
 }
 
-// TestSelfHostCheckedX86IR pins the checked operators on the x86-64 IR backend
-// of the self-hosted compiler.
 func TestSelfHostCheckedX86IR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -152,9 +133,6 @@ func TestSelfHostCheckedX86IR(t *testing.T) {
 	}
 }
 
-// TestSelfHostCheckedWasmIR pins the same cases on the wasm IR backend, where
-// the operand widths are native i32 / i64 and the Option occupies an i32 pointer
-// slot rather than a 64-bit register.
 func TestSelfHostCheckedWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host checked wasm IR e2e")

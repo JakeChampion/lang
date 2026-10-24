@@ -14,11 +14,6 @@ import "std/option";
 import "std/result";
 import "core/int";
 
-// tests/stdlib/http_h3q_test.fern — std/http/h3q: an HTTP/3 client and
-// server over std/quic connections in memory on a virtual clock. A GET and
-// its response, a large upload answered with trailers through loss and
-// reordering, requests answered out of order, and a graceful close.
-
 const ROOT: string = "3082011c3081cfa00302010202020201300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30243122302006035504030c194665726e20544c5320536572766572205465737420526f6f74302a300506032b6570032100d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300506032b65700341007353a91b5ad2e713d51d2fa08f3e800b99afa9e5725cfd746269d03210b1faadccfc942258bb8151da41be07943a4e8a14bd615e96692c8b896872460e827c0a";
 
 const ED_LEAF: string = "3082013e3081f1a00302010202020204300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b746c732e6578616d706c65302a300506032b6570032100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0a3533051300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301c0603551d1104153013820b746c732e6578616d706c658704c0000207300506032b6570034100bdd423797a497344c22bf704b418f31b7b6d0d884b517a57d1421c064fa68de8266518e0ddedfbdf189a71a2bb5bd2ffb7ca885f2a7f9ac0e96cb6d07d83e802";
@@ -29,8 +24,6 @@ const ED_PKCS8: string = "-----BEGIN PRIVATE KEY-----\n"
 
 const MS: i64 = 1000000;
 
-// The wall clock the client starts at, in Unix milliseconds: inside the test
-// chain's validity.
 const WALL_MS: i64 = 1700000000000;
 
 function server_config(): conn.Config {
@@ -62,12 +55,6 @@ function entropy(seed: i32, n: i32): u8[] {
   return out;
 }
 
-// Ends — the client, the server once its first datagram has made it, the
-// clock, what each reported, and every `lose_every`-th datagram lost and
-// each batch reversed when `reorder`. A `window` above 0 is the server's
-// per-stream window in place of h3q's. With `raw` the client's datagrams
-// and clock reach its QUIC connection alone, for a client that writes
-// HTTP/3 by hand and must not be held to what its own session sent.
 struct Ends { client: h3q.Conn, server: Option[h3q.Conn], now: i64, log: string, lose_every: i32, carried: i32, reorder: boolean, requests: HttpRequest[], ids: i64[], responses: string, window: i64, raw: boolean }
 
 function begin(): Result[Ends, string] {
@@ -111,8 +98,6 @@ function ordered(e: Ends, out: u8[][]): u8[][] {
   return back;
 }
 
-// round moves each side's datagrams to the other, takes what each
-// reported, and answers whether anything moved.
 function round(e: Ends): (Ends, boolean) {
   let c: h3q.Conn = e.client.transmit(e.now);
   let out: u8[][] = c.datagrams();
@@ -150,8 +135,6 @@ function client_received(e: Ends, d: u8[]): h3q.Conn {
   return e.client.receive(d, e.now);
 }
 
-// noticed takes each side's events: the server keeps the requests, the
-// client notes the responses.
 function noticed(e: Ends): Ends {
   let cevs: h3q.Event[] = e.client.events;
   let c: h3q.Conn = e.client.events_taken();
@@ -194,8 +177,6 @@ function event_text(ev: h3q.Event): string {
   }
 }
 
-// settled runs rounds until nothing moves, then the clock to the next
-// deadline, `rounds` times at most.
 function settled(e: Ends, rounds: i32): Ends {
   let cur: Ends = e;
   let i: i32 = 0;
@@ -288,8 +269,6 @@ function big(n: i32): u8[] {
   return out;
 }
 
-// A 30000-byte upload through loss and reordering, answered with its
-// size and a trailer.
 function test_upload_lossy(): test.TestOutcome {
   match (begin()) {
     Ok(e0) => {
@@ -317,8 +296,6 @@ function test_upload_lossy(): test.TestOutcome {
   }
 }
 
-// Three requests at once, answered last first, each reaching the client
-// before the next is answered.
 function test_concurrent(): test.TestOutcome {
   match (begin()) {
     Ok(e0) => {
@@ -347,8 +324,6 @@ function test_concurrent(): test.TestOutcome {
   }
 }
 
-// The server shuts down: GOAWAY, after which the client sends no more
-// requests, then H3_NO_ERROR, which the client reports.
 function test_close(): test.TestOutcome {
   match (begin()) {
     Ok(e0) => {
@@ -370,7 +345,6 @@ function test_close(): test.TestOutcome {
   }
 }
 
-// Open a request but leave its body unfinished across server shutdown.
 function streaming(e: Ends): Result[(Ends, i64), string] {
   let (q, id) = e.client.quic().open_stream(false)?;
   let fields: qpack.Field[] = [qpack.field(":method", "POST"), qpack.field(":scheme", "https"), qpack.field(":authority", "tls.example"), qpack.field(":path", "/partial"), qpack.field("content-length", "3")];
@@ -409,8 +383,6 @@ function test_shutdown_inflight(): test.TestOutcome {
   return test.assert_eq(body + " | " + e.log, "abc | server request 0 POST /partial 3b host=tls.example; client response 0 200 finished; ");
 }
 
-// A request already in flight can arrive after the server fixed its
-// GOAWAY boundary; it must not be handed to the application for retry.
 function test_shutdown_late(): test.TestOutcome {
   let Ok(e0) = begin() else {
     return test.fail("no client");
@@ -419,7 +391,6 @@ function test_shutdown_late(): test.TestOutcome {
   let Some(s) = e.server else {
     return test.fail("no server");
   };
-  // The client has not received GOAWAY yet, so this request is legal.
   e = Ends { ...e, server: Some(s.shutdown()) };
   let Ok(asked_late) = asked(e, get("/late")) else {
     return test.fail("client learned GOAWAY before it was transmitted");
@@ -428,9 +399,6 @@ function test_shutdown_late(): test.TestOutcome {
   return test.assert_eq(e.requests.len().to_string() + " " + e.client.ready().to_string(), "0 false");
 }
 
-// Every stream the server allows at once (100) opened, all answered and
-// settled: the client must be able to open another, since the server
-// grants a stream back as each closes.
 function test_limit(): test.TestOutcome {
   match (begin()) {
     Ok(e0) => {
@@ -478,11 +446,6 @@ function test_limit(): test.TestOutcome {
   }
 }
 
-// A request whose field section waits on a QPACK insert is left unread at
-// the server, so its stream window holds the body back at the client
-// rather than the server holding it all. Once the insert arrives the
-// request is read whole. The client writes the request and the insert by
-// hand, as h3q's own encoder never inserts.
 function test_blocked_backpressure(): test.TestOutcome {
   let Ok(e0) = begin() else {
     return test.fail("no client");

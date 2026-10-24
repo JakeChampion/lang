@@ -17,16 +17,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// std/crypto's SHA-256 takes __sha256_hw_blocks where __sha256_hw says the
-// target has a kernel: the SHA256H/H2/SU0/SU1 one on arm64, the SSSE3 schedule
-// with rorx rounds on x86-64. wasm runs std/crypto's own rounds. The program
-// prints which path it took, then digests that cover every padding edge (each
-// length to 200 bytes, so 55, 56, 63, 64, 119 and 120 among them) for SHA-256
-// and SHA-224, a 1000-byte input fed in chunks that straddle the block, a 1
-// MiB input, and the kernel called directly: three blocks from an unaligned
-// slice with a tail it must ignore, fewer bytes than a block, a short state,
-// and a string's bytes. Go's crypto/sha256 and sha256Block below give the
-// expected text.
 const sha256HWProg = `import "std/crypto";
 
 function digits(): string[] {
@@ -111,7 +101,6 @@ var sha256K = [64]uint32{
 	0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 }
 
-// sha256Block is FIPS 180-4's compression of one block into h.
 func sha256Block(h *[8]uint32, p []byte) {
 	var w [64]uint32
 	for i := 0; i < 16; i++ {
@@ -133,8 +122,6 @@ func sha256Block(h *[8]uint32, p []byte) {
 	}
 }
 
-// sha256HWKernel is what __sha256_hw_blocks answers where the target has a
-// kernel: the IV with data's whole blocks folded in, as little-endian words.
 func sha256HWKernel(data []byte) string {
 	h := [8]uint32{0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19}
 	for len(data) >= 64 {
@@ -156,8 +143,6 @@ func sha256HWPattern(n int) []byte {
 	return out
 }
 
-// sha256HWWant is the program's expected output; hw says whether the target
-// has a kernel, which decides what the direct kernel calls answer.
 func sha256HWWant(hw bool) string {
 	var b strings.Builder
 	if hw {
@@ -220,9 +205,6 @@ func sha256HWSource(t *testing.T) string {
 	return src
 }
 
-// TestSelfHostSHA256HW runs the program on each Linux target: arm64 under
-// qemu through both the self-host assembler and GNU as, and x86-64, which
-// take their kernels, and wasm, which runs std/crypto's rounds.
 func TestSelfHostSHA256HW(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := sha256HWSource(t)

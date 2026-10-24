@@ -9,31 +9,11 @@ import (
 	"testing"
 )
 
-// strArrFieldTransientReadCases pin the READ half of releasing a `string[]`
-// field's elements with its struct (__fern_str_arr_free at scope exit).
-//
-// A TRANSIENT element read such as `f.deps[0].len()` must not stop the field's
-// element boxes being released.
-//
-// Transient means the element is borrowed for one call and never bound: `len`,
-// the predicates (`starts_with` / `ends_with` / `contains` / `index_of`) and the
-// fresh-copy transforms (`to_ascii_upper` / `to_ascii_lower` / `reverse` /
-// `repeat`). `.trim()` and `.replace()` are deliberately absent — both can
-// return a VIEW of the receiver's buffer, which outlives the call and is exactly
-// the alias the deep free would dangle.
-//
-// This closes the AL-01 conformance case alloc_flat_fresh_array_arg on all three
-// backends: 424 B/round to flat on x86-64 and arm64, and flat stays flat on
-// wasm.
 var strArrFieldTransientReadCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The shape the conformance case is built from: the caller reads
-	// `f.deps[0].len()`, which is transient, so when `f` dies Node's drop still
-	// frees the three element boxes with the buffer. Flat across rounds; 98 is
-	// leaked element boxes.
 	{"strarr-field-transient-elem-read-flat", `struct Node { name: string, deps: string[], mtime: i32 }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function mk(pre: string): string[] { let o: string[] = []; let i: i32 = 0; while (i < 3) { o = o.append(w(pre)); i = i + 1; } return o; }
@@ -50,11 +30,6 @@ function main(): i32 {
     if (b2 - b1 >= 4096) { return 98; }
     return 0;
 }`, 0},
-	// A VIEW receiver is not transient: `.trim()` returns a zero-copy `str` over
-	// the element's buffer, and `v` outlives the call. Releasing the struct must
-	// not free the element under `v`, or `v` reads freed bytes. Value-exact
-	// against a freshly computed reference so a recycled buffer of the same
-	// length cannot pass.
 	{"strarr-field-view-elem-read-refused", `struct View { title: string, lines: string[] }
 function w(pre: string): string { return pre + "  a-wide-element-past-the-inline-threshold  "; }
 function mk(pre: string): string[] { let o: string[] = []; let i: i32 = 0; while (i < 3) { o = o.append(w(pre)); i = i + 1; } return o; }
@@ -62,9 +37,6 @@ function doc(title: string, lines: string[]): View { return View { title: title,
 function expect(pre: string): i32 { let r: string[] = mk(pre); return r[0].trim().len() + w(pre).len(); }
 function round(pre: string): i32 { let d: View = doc(w(pre), mk(pre)); let v: str = d.lines[0].trim(); let pad: string[] = mk(pre); if (pad.len() < 0) { return 0; } return v.len() + d.title.len(); }
 function main(): i32 { let pre: string = "ab"; let e: i32 = expect(pre); let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != e) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// A BOUND element is the other lasting alias: `let t = d.lines[0]` hands the
-	// box to a local that outlives the struct's drop. Still refused; `t` reads
-	// live bytes under allocation pressure.
 	{"strarr-field-bound-elem-read-refused", `struct Held { title: string, lines: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function mk(pre: string): string[] { let o: string[] = []; let i: i32 = 0; while (i < 3) { o = o.append(w(pre)); i = i + 1; } return o; }
@@ -74,8 +46,6 @@ function round(pre: string): i32 { let k: i32 = hold(pre); let pad: string[] = m
 function main(): i32 { let pre: string = "ab"; let e: i32 = w("ab").len() * 2; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != e) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
-// TestSelfHostStrArrFieldTransientReadIRX86_64 drives the cases through the
-// self-hosted x86-64 compiler.
 func TestSelfHostStrArrFieldTransientReadIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -103,8 +73,6 @@ func TestSelfHostStrArrFieldTransientReadIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrArrFieldTransientReadIRArm64 is the arm64 leg: the admission is
-// shared lowering analysis, the element walk is a per-backend transcription.
 func TestSelfHostStrArrFieldTransientReadIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -128,8 +96,6 @@ func TestSelfHostStrArrFieldTransientReadIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrArrFieldTransientReadWasmIR is the wasm leg, where the deep
-// release is $__fern_arr_dec_ptr.
 func TestSelfHostStrArrFieldTransientReadWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping string[]-field transient-read wasm IR e2e")

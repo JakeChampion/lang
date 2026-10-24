@@ -91,18 +91,14 @@ pub function run(row: ssaprepare.Emitted, aligned: boolean): void {
   let load = if (arm) { "    ldr x0, [sp, #0]\n" } else { "    movq 8(%rsp), %rax\n" };
   check(change(text, load, ""), arch, f, false);
   check(change(text, load, if (arm) { "    ldr x0, [sp, #8]\n" } else { "    movq 16(%rsp), %rax\n" }), arch, f, false);
-  // A correct stack entry must not hide a broken direct register entry.
   check(change(text, "__fn_" + f.name + ".r:", "__fn_" + f.name + ".r:\n    " + (if (arm) { "mov x0, #0" } else { "movq $0, %rax" })), arch, f, false);
   if (arm) {
-    // TST clears C on A64, so B.LO is taken. The x86 TEST/CF rule differs.
     let wrong = ".Lwrong_carry_" + f.name;
     check(change(text, load, load + "    tst x0, #1\n    b.lo " + wrong + "\n") + wrong + ":\n    mov x0, #0\n    ret\n", arch, f, false);
     let right = ".Lright_carry_" + f.name;
     let reg = "__fn_" + f.name + ".r:\n";
     let good = change(text, reg, reg + right + ":\n");
     check(change(good, load, load + "    tst x0, #1\n    b.lo " + right + "\n    mov x0, #0\n"), arch, f, true);
-    // Restoring the frame later cannot make a load from the saved frame
-    // pointer into a load of the original incoming parameter.
     let save = "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
     let restore = "    mov sp, x29\n    ldp x29, x30, [sp], #16\n";
     check(change(text, load, save + load + restore), arch, f, false);
@@ -131,8 +127,6 @@ function successors(text: string, arch: string, f: ssa.SFunc): void {
   require(entry.id == f.entry, 183);
   let term = ssa.STerm { ...entry.term, t: entry.term.f, f: entry.term.t };
   check(text, arch, ssa.SFunc { ...f, blocks: f.blocks.with(0, ssa.SBlock { ...entry, term: term }) }, false);
-  // The oracle follows the supplied final SSA, including reordered blocks
-  // and coherent changes to the returned constants.
   check(text, arch, ssa.SFunc { ...f, blocks: [f.blocks[2], f.blocks[0], f.blocks[1]] }, true);
   let changed = f.blocks;
   let i = 1;

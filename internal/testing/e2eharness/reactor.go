@@ -1,15 +1,5 @@
 package e2eharness
 
-// ReactorProbe exercises the reactor floor (#9853): a readiness set from
-// reactor_new, a listener and a connection watched through reactor_ctl,
-// waits that report the accept, the bytes, the writable side and the
-// peer's close, two descriptors ready at once reported by one wait, the
-// owned-buffer read of tcp_recv_into with its -EAGAIN when nothing is
-// queued, the quiet timeout, and the -EINVAL of an op or an event buffer
-// the floor refuses. A host may report readiness
-// spuriously, so a wait is checked for the pair it must contain rather
-// than for exactly one. Exit 42 and "ok" on stdout iff every check holds,
-// else the number of the first failing check.
 func ReactorProbe() string {
 	return `import "core/int";
 

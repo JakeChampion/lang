@@ -8,13 +8,6 @@ import (
 	"testing"
 )
 
-// A `T[][]` held by a struct field or a tuple element is released, inner
-// arrays included, when its holder dies (#10397). Each row is checked on every
-// backend, and the reads that follow a rebind run after fresh
-// allocations, so a row released early shows as a wrong answer. A box whose
-// release a row tests goes through id or ids, so it is built on the heap rather
-// than placed as a constant; a rebind target the test only reads past can stay
-// a constant.
 var nestedArrFieldDropCases = []struct {
 	name string
 	src  string

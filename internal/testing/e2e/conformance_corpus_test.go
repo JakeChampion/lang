@@ -1,14 +1,3 @@
-// Format gate for the conformance corpus (conformance/README.md).
-//
-// The fixture loader reads a fixed set of sidecar filenames and ignores
-// everything else, so an unrecognised sidecar is indistinguishable from
-// an absent one: `expected.exitcode` silently asserts exit 0, and a
-// compile-error case that also carries `expected.stdout` asserts nothing
-// about that stdout. Neither shows up as a failure anywhere — the case
-// just quietly tests less than its author believed.
-//
-// This test costs milliseconds and compiles nothing; it exists so that
-// the documented format is false-if-wrong rather than aspirational.
 package e2e
 
 import (
@@ -21,29 +10,18 @@ import (
 	"testing"
 )
 
-// Sidecars the loader understands. Keep in step with loadFixture and the
-// table in conformance/README.md. `meta` is read by this gate rather than
-// by the loader: it justifies a case that asserts less than the maximum.
 var (
 	runSidecars = []string{"expected.stdout", "expected.exit", "stdin", "match", "backends"}
-	// reclaim-observable is a marker, not a value: its presence tells the
-	// quarantine leg (TestFernFixturesSelfHostX86_64Quarantine) that the case
-	// prints its free-off output there, so only its exit code is held. It is
-	// read by fixture_test.go, so it is a real sidecar.
 	allSidecars = append([]string{
 		"expected.error", "expected.lowering-error", "meta", "reclaim-observable",
 	}, runSidecars...)
 )
 
-// Waiver kinds a case may claim in its `meta` file. A waiver says why the
-// case asserts less than byte-exact output on all four backends — the
-// distinction being which of these four things is actually true, since
-// they call for completely different follow-up.
 var waiverKinds = []string{
-	"implementation-gap", // a backend has not implemented it yet; needs an issue
-	"harness-limit",      // the runner cannot observe the behaviour there
-	"unspecified",        // the language deliberately grants the freedom
-	"harness-self-test",  // the case exercises the runner, not the language
+	"implementation-gap",
+	"harness-limit",
+	"unspecified",
+	"harness-self-test",
 }
 
 type caseMeta struct {
@@ -84,10 +62,6 @@ func TestConformanceCorpusFormat(t *testing.T) {
 	}
 }
 
-// checkCaseFormat validates one case directory against the format
-// documented in conformance/README.md, returning a problem string per
-// violation. It returns an error only when the directory itself cannot
-// be read.
 func checkCaseFormat(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -128,8 +102,6 @@ func checkCaseFormat(dir string) ([]string, error) {
 		report("no main.fern")
 	}
 
-	// Compile-error cases take a different path through the loader, which
-	// ignores every run-oriented sidecar.
 	if present["expected.error"] && present["expected.lowering-error"] {
 		report("carries both expected.error and expected.lowering-error — a case pins the stage that " +
 			"rejects it, and it cannot be two stages")
@@ -147,8 +119,6 @@ func checkCaseFormat(dir string) ([]string, error) {
 				report("%s case also carries %q, which is ignored on this path", kind, s)
 			}
 		}
-		// A rejection case cannot weaken — it asserts one diagnostic and
-		// runs on no backend — so there is nothing for a waiver to justify.
 		if present["meta"] {
 			report("%s case carries a `meta` waiver, but a rejection case asserts no output "+
 				"to weaken", kind)
@@ -166,9 +136,6 @@ func checkCaseFormat(dir string) ([]string, error) {
 		}
 	}
 
-	// A case "weakens" when it asserts less than byte-exact stdout across
-	// all four backends. Both ways of doing that are claims about the
-	// language, so both have to be justified in `meta` — see below.
 	weakened := false
 
 	if present["match"] {
@@ -203,9 +170,6 @@ func checkCaseFormat(dir string) ([]string, error) {
 		}
 		switch {
 		case known == len(allBackends):
-			// Selecting everything is what an absent file already means, so
-			// the list carries nothing; only its comment does, and a comment
-			// belongs in main.fern with the rest of the case's rationale.
 			report("backends file selects all %d backends, which is what omitting it means — delete it, moving any note into main.fern", len(allBackends))
 		case known > 0:
 			weakened = true
@@ -216,13 +180,6 @@ func checkCaseFormat(dir string) ([]string, error) {
 	return problems, nil
 }
 
-// checkMeta enforces the rule that matters most in this file: a case may
-// assert less than the maximum, but not silently. Either direction is a
-// problem — an unjustified weakening hides an implementation gap behind
-// what looks like a passing case, and a stale waiver on a case that no
-// longer weakens is how an obsolete exclusion survives for years (see
-// f64_sqrt, which sat excluded from two backends over a libm link that
-// had stopped being required).
 func checkMeta(dir string, haveMeta, weakened bool, read func(string) string) []string {
 	var problems []string
 	report := func(format string, args ...any) {
@@ -262,8 +219,6 @@ func checkMeta(dir string, haveMeta, weakened bool, read func(string) string) []
 	return problems
 }
 
-// parseMeta reads the `key: value` meta format. A line indented relative
-// to its key continues that key's value, so a reason can wrap.
 func parseMeta(src string) (caseMeta, []string) {
 	var m caseMeta
 	var errs []string

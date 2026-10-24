@@ -1,37 +1,10 @@
 package lexer
 
-// Determinism guard for the lexer.
-//
-// Tokenize is the first transformation in the compilation pipeline:
-// every stage downstream (parser → modload → checker → IR → codegen
-// → interp) reads from the token stream it produces. Nondeterminism
-// here would propagate to every subsequent stage at once, and the
-// determinism guards added at every later layer (parser #1719,
-// modload #1708, ir, codegen, interp) would all fire at the
-// same time on flaky failures.
-//
-// A linear scanner is normally deterministic by construction, but
-// the same was true of modload until TestLoadDeterministic caught a
-// real Go-map-iteration leak. Pinning the lexer here means a
-// future change that introduces a map-driven keyword table (e.g.
-// returning the kind via `for k, v := range keywords`) would fail
-// loudly at the source rather than as a flaky downstream diff.
-//
-// Comparing tokens directly catches more than printer-byte-equality
-// would: positions, kinds, and the FStringPart slices must all
-// match exactly. Two tokenisations of the same source must produce
-// equal slices in every field.
-
 import (
 	"reflect"
 	"testing"
 )
 
-// determinismMatrix favours the lex paths most prone to ordering
-// nondeterminism if the scanner ever started routing decisions
-// through a Go map: keyword lookup (vs identifier), number literal
-// parsing, string + f-string parts, multi-character operators,
-// and the whole punctuation set in one go.
 var determinismMatrix = map[string]string{
 	"minimal": `function main(): i32 { return 0; }`,
 
@@ -68,12 +41,6 @@ enum Shape { Circle(i32), Rect(i32, i32) }
 function main(): i32 { return 0; }`,
 }
 
-// TestTokenizeDeterministic tokenises each program several times
-// and asserts every tokenisation produces an identical token + comment
-// slice. A failure means the lexer's token order or per-token contents
-// depend on some non-deterministic process state — most likely Go
-// map iteration order, but also possible: pointer hash dependence
-// (in keyword interning) or goroutine scheduling.
 func TestTokenizeDeterministic(t *testing.T) {
 	for name, src := range determinismMatrix {
 		name, src := name, src

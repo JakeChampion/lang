@@ -17,14 +17,12 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// tarEntry is one member of a test archive; typeflag 0 means a regular file.
 type tarEntry struct {
 	name, body string
 	typeflag   byte
 	pax        map[string]string
 }
 
-// tarGz builds a gzip'd tar of entries and returns it with its sha256 hash.
 func tarGz(t *testing.T, entries []tarEntry) ([]byte, string) {
 	t.Helper()
 	var buf bytes.Buffer
@@ -58,13 +56,11 @@ func tarGz(t *testing.T, entries []tarEntry) ([]byte, string) {
 	return buf.Bytes(), sha256Ref(buf.Bytes())
 }
 
-// sha256Ref is b's hash as a manifest writes it.
 func sha256Ref(b []byte) string {
 	sum := sha256.Sum256(b)
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-// serve answers every request with body.
 func serve(t *testing.T, body []byte) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -74,7 +70,6 @@ func serve(t *testing.T, body []byte) string {
 	return srv.URL
 }
 
-// fetchEnv is a project directory and a private package store.
 type fetchEnv struct {
 	dir, cache string
 	t          *testing.T
@@ -95,8 +90,6 @@ func newFetchEnv(t *testing.T, files map[string]string) fetchEnv {
 	return e
 }
 
-// run runs the shipped fern with args in the project directory, a `-run`
-// for the host target.
 func (e fetchEnv) run(args ...string) (string, int) {
 	e.t.Helper()
 	if args[0] == "-run" {
@@ -118,9 +111,6 @@ func helperArchive(t *testing.T, extra ...tarEntry) ([]byte, string) {
 
 const helperMain = "import \"helper\";\nfunction main(): i32 { return helper.nine(); }\n"
 
-// TestShippedFernFetch: a url dependency is refused until `-fetch` puts it in
-// the store, after which the program builds from there; a second fetch has
-// nothing to do.
 func TestShippedFernFetch(t *testing.T) {
 	archive, hash := helperArchive(t, tarEntry{typeflag: tar.TypeXGlobalHeader, pax: map[string]string{"comment": "0123abcd"}})
 	url := serve(t, archive) + "/helper.tar.gz"
@@ -146,10 +136,6 @@ func TestShippedFernFetch(t *testing.T) {
 	}
 }
 
-// TestShippedFernFetchRefusals: an archive whose hash is not the manifest's,
-// one with an entry leaving the package directory, one with a link, one that
-// is not gzip and one cut short are all refused, saying why, and nothing is
-// left in the store.
 func TestShippedFernFetchRefusals(t *testing.T) {
 	good, _ := helperArchive(t)
 	_, other := helperArchive(t, tarEntry{name: "helper/extra.fern", body: "\n"})
@@ -182,8 +168,6 @@ func TestShippedFernFetchRefusals(t *testing.T) {
 	}
 }
 
-// TestShippedFernFetchFlatArchive: an archive with files at its top level is
-// the package as it stands.
 func TestShippedFernFetchFlatArchive(t *testing.T) {
 	archive, hash := tarGz(t, []tarEntry{
 		{name: "fern.toml", body: "[package]\nname = \"helper\"\n"},
@@ -203,8 +187,6 @@ func TestShippedFernFetchFlatArchive(t *testing.T) {
 	}
 }
 
-// TestShippedFernAddURL: `-add NAME url:…` downloads the archive to record
-// its hash, and leaves it in the store, so the next build needs no fetch.
 func TestShippedFernAddURL(t *testing.T) {
 	archive, hash := helperArchive(t)
 	url := serve(t, archive) + "/helper.tar.gz"
@@ -227,9 +209,6 @@ func TestShippedFernAddURL(t *testing.T) {
 	}
 }
 
-// TestShippedFernResolveURL: a version MVS selects from a url index source is
-// fetched and verified during `-resolve` and pinned with its url and hash;
-// with the store emptied, `-fetch` downloads it again from the lock.
 func TestShippedFernResolveURL(t *testing.T) {
 	archive, hash := helperArchive(t)
 	url := serve(t, archive) + "/helper-1.0.0.tar.gz"
@@ -259,8 +238,6 @@ func TestShippedFernResolveURL(t *testing.T) {
 	}
 }
 
-// TestSelfHostCLIFetchNeedsTheShippedFern: a build of fern.fern alone has no
-// HTTP client, and says so instead of failing somewhere less clear.
 func TestSelfHostCLIFetchNeedsTheShippedFern(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "fern.toml"), []byte("[package]\nname = \"app\"\n[dependencies]\nhelper = { url = \"http://127.0.0.1:1/x.tar.gz\", hash = \"sha256:"+strings.Repeat("0", 64)+"\" }\n"), 0o644); err != nil {

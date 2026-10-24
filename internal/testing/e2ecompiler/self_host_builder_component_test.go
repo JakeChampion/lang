@@ -11,8 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The builder operations are local memory operations. They need no WASI
-// imports, in either a pure component or a component with stdout.
 func testBuilderComponents(t *testing.T, compiler string, runner []string, stdlib string) {
 	t.Helper()
 	for _, tc := range []struct{ name, src string }{

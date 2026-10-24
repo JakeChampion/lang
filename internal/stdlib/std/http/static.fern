@@ -1,44 +1,4 @@
-// std/http/static — the files of a directory, answered as RFC 9110 has a
-// server answer for a selected representation: `ETag` and `Last-Modified`
-// from the file, the conditional requests std/http/cache evaluates, byte
-// ranges (`Range` and `If-Range`, 206, `multipart/byteranges` and 416),
-// and a precompressed
-// sibling (`.br`, `.zst`, `.gz`) chosen by `Accept-Encoding` under `Vary`.
-//
-//     import "std/http/static";
-//
-//     function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
-//       return static.serve(req, static.dir("public"), plat);
-//     }
-//
-// Behind std/http/router the route's rest parameter is the path, already
-// decoded:
-//
-//     r = r.get("/assets/{file...}", assets)?;
-//
-//     function assets(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
-//       match (params.get("file")) {
-//         Some(f) => {
-//           return static.serve_path(req, static.dir("public"), f, plat);
-//         },
-//         None => {
-//           return http.not_found();
-//         }
-//       }
-//     }
-//
-// The handler reads no file. It asks its platform what is at a path
-// (`plat.stat`) and answers with a `BodyFileRanges` the serve loop sends
-// from the file once the handler has returned, by `sendfile(2)` where the
-// target has it, so the bytes never pass through the handler. A mock or
-// simulated platform answers `stat` from the files a test set, and its
-// `materialize` reads the body back.
-//
-// A path is taken a segment at a time, as the serve loop decoded it: a `..`
-// segment, a segment holding NUL, and one beginning with `.` unless
-// `Options.dotfiles` says otherwise, are answered 404, so no request names
-// a file outside the directory. A symbolic link inside the directory is
-// followed, as `stat` follows it.
+// This module serves static files with HTTP cache validation, byte ranges, and compression.
 
 import "std/http";
 import "std/http/cache";
@@ -48,39 +8,23 @@ import "std/platform";
 import "std/time";
 import "std/url";
 
-// `Options` — how a directory is served. `index` is the file a path ending
-// in `/` answers with ("" for none: such a path is a 404, never a listing).
-// `dotfiles` serves names beginning with `.`. `precompressed` is the
-// codings whose siblings are looked for, the most preferred first, of
-// `br` (`.br`), `zstd` (`.zst`) and `gzip` (`.gz`). `cache_control` is sent
-// with every file. `max_ranges` is the most ranges one request is answered
-// with as a multipart body; past it the file is sent whole.
 pub struct Options { index: string, dotfiles: boolean, precompressed: string[], cache_control: Option[cache.CacheControl], max_ranges: i32 }
 
-// `options()` — `index.html`, no dotfiles, `br` then `zstd` then `gzip`
-// siblings, no `Cache-Control`, and up to 200 ranges, Apache's `MaxRanges`.
 pub function options(): Options {
   return Options { index: "index.html", dotfiles: false, precompressed: ["br", "zstd", "gzip"], cache_control: None, max_ranges: 200 };
 }
 
-// `Dir` — a directory to serve and how.
 pub struct Dir { root: string, options: Options }
 
-// `dir(root)` — `root` served with `options()`.
 pub function dir(root: string): Dir {
   return Dir { root: root, options: options() };
 }
 
-// `serve(req, d, plat)` — the file of `d` that the request's path names,
-// the path as the serve loop hands it over: decoded once, its dot segments
-// resolved.
 pub function serve(req: HttpRequest, d: Dir, plat: platform.Platform): HttpResponse {
   let path: string = http.http_url_path_only(req.path);
   return __serve(req, d, path.split("/"), path.ends_with("/"), plat);
 }
 
-// `serve_path(req, d, rel, plat)` — the file of `d` at `rel`, a decoded
-// path relative to it, as a router's rest parameter is.
 pub function serve_path(req: HttpRequest, d: Dir, rel: string, plat: platform.Platform): HttpResponse {
   return __serve(req, d, rel.split("/"), rel.len() == 0 || rel.ends_with("/"), plat);
 }
@@ -99,8 +43,6 @@ function __serve(req: HttpRequest, d: Dir, segs: string[], wants_dir: boolean, p
   }
 }
 
-// `__clean(segs, dotfiles)` — the path the segments name below the root,
-// each joined with a leading `/`, or None for one that may not be served.
 function __clean(segs: string[], dotfiles: boolean): Option[string] {
   let out: string = "";
   for s in segs {
@@ -115,9 +57,6 @@ function __clean(segs: string[], dotfiles: boolean): Option[string] {
   return Some(out);
 }
 
-// `__entry(req, d, path, wants_dir, plat)` — what is at `path`: a file, a
-// directory's index, the redirect that adds a directory's `/`, or the
-// error `stat` met.
 function __entry(req: HttpRequest, d: Dir, path: string, wants_dir: boolean, plat: platform.Platform): HttpResponse {
   match (plat.stat(path)) {
     Ok(st) => {
@@ -156,9 +95,6 @@ function __index(req: HttpRequest, d: Dir, path: string, plat: platform.Platform
   }
 }
 
-// `__add_slash(target)` — a 301 to the directory's own path with its `/`,
-// as a reference relative to the request's, its query kept. The path is the
-// decoded one, so its last segment is encoded again for the `Location`.
 function __add_slash(target: string): HttpResponse {
   let path: string = http.http_url_path_only(target);
   let query: string = target.slice_snap(path.len(), target.len());
@@ -166,7 +102,6 @@ function __add_slash(target: string): HttpResponse {
   return HttpResponse { ...http.redirect(url.url_encode(base) + "/" + query), status: 301 };
 }
 
-// `__last_segment(path)` — what follows the path's last `/`, or all of it.
 function __last_segment(path: string): string {
   let Some(slash) = path.last_index_of("/") else {
     return path;
@@ -174,9 +109,6 @@ function __last_segment(path: string): string {
   return path.slice_snap(slash + 1, path.len());
 }
 
-// `__stat_failed(e)` — 403 for a path the server may not read, 404 for one
-// that is not there or cannot be (a file used as a directory, a name too
-// long, a link loop), 500 for anything else.
 function __stat_failed(e: IoError): HttpResponse {
   match (e) {
     PermissionDenied(p) => {
@@ -194,13 +126,8 @@ function __stat_failed(e: IoError): HttpResponse {
   }
 }
 
-// `Rep` — the representation sent for a file: the file itself or a
-// precompressed sibling, what `stat` said of it, and its coding ("" for
-// none).
 struct Rep { path: string, st: FileStat, coding: string }
 
-// `__file(req, d, path, st, plat)` — the file at `path` (or its sibling)
-// under the request's preconditions and range.
 function __file(req: HttpRequest, d: Dir, path: string, st: FileStat, plat: platform.Platform): HttpResponse {
   let rep: Rep = __representation(req, d.options.precompressed, Rep { path: path, st: st, coding: "" }, plat);
   let now: Instant = time.instant_from_unix(plat.now_ms() / (1000 as i64));
@@ -219,9 +146,6 @@ function __file(req: HttpRequest, d: Dir, path: string, st: FileStat, plat: plat
   }
 }
 
-// `__representation(req, codings, plain, plat)` — the precompressed sibling
-// the request's `Accept-Encoding` ranks highest among those that exist, or
-// the file itself.
 function __representation(req: HttpRequest, codings: string[], plain: Rep, plat: platform.Platform): Rep {
   if (codings.len() == 0 || !req.headers.has("accept-encoding")) {
     return plain;
@@ -258,8 +182,6 @@ function __position(xs: string[], x: string): i32 {
   return i;
 }
 
-// `__suffix(coding)` — the extension of a sibling precompressed with
-// `coding`, "" for one this module does not know.
 function __suffix(coding: string): string {
   if (coding == "br") {
     return ".br";
@@ -273,8 +195,6 @@ function __suffix(coding: string): string {
   return "";
 }
 
-// `__etag(rep)` — a strong tag from the representation's modification time
-// and size, and its coding, so a sibling never shares the file's tag.
 function __etag(rep: Rep): cache.ETag {
   let tag: string = rep.st.mtime.to_string() + "." + rep.st.mtime_nsec.to_string() + "-" + rep.st.size.to_string();
   if (rep.coding.len() > 0) {
@@ -283,7 +203,6 @@ function __etag(rep: Rep): cache.ETag {
   return cache.strong(tag);
 }
 
-// `__headed(rep, o, ctype)` — the 200 for the whole representation.
 function __headed(rep: Rep, o: Options, ctype: string): HttpResponse {
   let h: HeaderMap = headers.header_map_new().append("Content-Type", ctype).append("Accept-Ranges", "bytes");
   if (rep.coding.len() > 0) {
@@ -303,21 +222,13 @@ function __headed(rep: Rep, o: Options, ctype: string): HttpResponse {
   }
 }
 
-// `__file_body(path, start, len)` — `len` bytes of the file from `start`.
 function __file_body(path: string, start: i64, len: i64): Body {
   let none: u8[] = [];
   return BodyFileRanges(path, [start, len], [none, none]);
 }
 
-// `Ranging` — what a `Range` is read against: the representation's
-// validators for `If-Range`, the time, and the most ranges answered.
 struct Ranging { v: cache.Validators, now: Instant, max: i32 }
 
-// `__ranged(req, full, rep, g, plat)` — `full`, or the part of it a GET's
-// `Range` asks for: a 206 for one satisfiable range, a 206 with a
-// `multipart/byteranges` body for several, a 416 when none is. A `Range`
-// that does not parse, one `If-Range` rules out, and a set `byte_range`
-// declines are answered whole, as RFC 9110 §14.2 lets a server answer them.
 function __ranged(req: HttpRequest, full: HttpResponse, rep: Rep, g: Ranging, plat: platform.Platform): HttpResponse {
   let fields: string[] = req.headers.get_all("range");
   if (req.method != "GET" || fields.len() != 1 || !cache.if_range(req, g.v, g.now)) {
@@ -344,12 +255,6 @@ function __content_range(start: i64, len: i64, size: i64): string {
   return "bytes " + start.to_string() + "-" + (start + len - 1 as i64).to_string() + "/" + size.to_string();
 }
 
-// `__byteranges(full, rep, spans, boundary)` — the 206 whose body is the
-// `spans` (start, length pairs) of the representation as
-// `multipart/byteranges` (RFC 9110 §14.6), each part under the
-// representation's media type and its own `Content-Range`; the other
-// fields of `full` are kept, `Content-Encoding` among them, since the
-// ranges are of the representation as it is coded.
 function __byteranges(full: HttpResponse, rep: Rep, spans: i64[], boundary: string): HttpResponse {
   let ctype: string = "application/octet-stream";
   match (full.headers.get("content-type")) {
@@ -372,8 +277,6 @@ function __byteranges(full: HttpResponse, rep: Rep, spans: i64[], boundary: stri
   return HttpResponse { ...full, status: 206, body: BodyFileRanges(rep.path, spans, seams), headers: h };
 }
 
-// `__boundary(plat)` — 128 random bits in hex, a multipart boundary no
-// file's bytes will hold by chance.
 function __boundary(plat: platform.Platform): string {
   let bytes: u8[] = [];
   for k in [0, 1, 2, 3] {
@@ -385,20 +288,8 @@ function __boundary(plat: platform.Platform): string {
   return hex.hex_encode(bytes);
 }
 
-// `Range` — what a `Range` field asks of a representation: `Part(start,
-// len)`, the one range to send; `Parts(spans)`, several, as start and
-// length pairs in the order asked; `Unsatisfiable`, nothing it has; or
-// `Whole`, the whole representation, for a unit other than bytes, a field
-// that does not parse, or a set `byte_range` declines.
 pub enum Range { Whole, Part(i64, i64), Parts(i64[]), Unsatisfiable }
 
-// `byte_range(value, size, max)` — a `Range` field's value read against a
-// representation of `size` bytes (RFC 9110 §14.1.2): an `int-range` past
-// the end is clamped to it, a `suffix-range` is the last bytes, a range
-// past the end is dropped, and the set is satisfiable when any of its
-// ranges is. More than `max` satisfiable ranges, or ranges adding up to
-// more than the representation (heavy overlap), are declined as `Whole`,
-// as §14.2 lets a server decline them.
 pub function byte_range(value: string, size: i64, max: i32): Range {
   let Some(eq) = value.index_of("=") else {
     return Whole;
@@ -444,8 +335,6 @@ function __range_set(found: i64[], size: i64, max: i32): Range {
   return Parts(found);
 }
 
-// `__range_spec(spec, size)` — one `int-range` (`first-last`, `first-`) or
-// `suffix-range` (`-n`).
 function __range_spec(spec: string, size: i64): Range {
   let Some(dash) = spec.index_of("-") else {
     return Whole;
@@ -484,8 +373,6 @@ function __suffix_range(n: i64, size: i64): Range {
   return Part(size - n, n);
 }
 
-// `__digits(s)` — the decimal number `s` spells, held at 2^62 past it, or
-// -1 for an empty or non-digit string.
 function __digits(s: string): i64 {
   if (s.len() == 0) {
     return 0 - 1 as i64;
@@ -503,9 +390,6 @@ function __digits(s: string): i64 {
   return n;
 }
 
-// `content_type(path)` — the media type a file is sent as, by its
-// extension, with `charset=utf-8` on the text types;
-// `application/octet-stream` for an extension the table does not hold.
 pub function content_type(path: string): string {
   let name: string = __last_segment(path);
   let Some(dot) = name.last_index_of(".") else {

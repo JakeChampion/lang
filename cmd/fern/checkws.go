@@ -9,18 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/platforms"
 )
 
-// runCheckTarget dispatches `fern -check ARG`:
-//   - `-` or a file → the single-entry type-check (runCheck), unchanged.
-//   - a directory that is a [workspace] root → type-check EVERY member
-//     package, aggregating results and failing if any member fails.
-//   - a directory that is a plain package → type-check that package's
-//     entry module.
-//
-// Checking a package means type-checking its entry module — the `lib`
-// module its manifest names (default lib.fern), or `main.fern` for an
-// application member that has no lib. This is the workspace-wide check
-// the multi-package self-hosted compiler needs: one command validates
-// lexer / parser / checker / codegen together.
 func runCheckTarget(arg, target string) error {
 	if target != "" && platforms.ForTarget(target) == nil {
 		return errUnknownTarget(target)
@@ -30,7 +18,7 @@ func runCheckTarget(arg, target string) error {
 	}
 	st, err := os.Stat(arg)
 	if err != nil || !st.IsDir() {
-		return runCheck(arg, target) // a file (or a bad path runCheck will report)
+		return runCheck(arg, target)
 	}
 	man, err := manifest.FindForDir(arg)
 	if err != nil {
@@ -47,9 +35,6 @@ func runCheckTarget(arg, target string) error {
 		return runCheck(entry, target)
 	}
 
-	// Workspace: check each member, aggregating. Don't stop at the first
-	// failure — report every member's status so one broken package
-	// doesn't hide the rest.
 	failed := 0
 	for _, rel := range man.Members {
 		dir := man.MemberDir(rel)
@@ -73,9 +58,6 @@ func runCheckTarget(arg, target string) error {
 	return nil
 }
 
-// packageEntry returns the entry module to type-check for the package
-// rooted at dir: its manifest's `lib` module when that file exists, else
-// `main.fern` (an application member), else an error naming both.
 func packageEntry(dir string) (string, error) {
 	man, err := manifest.Load(dir)
 	if err != nil {
@@ -99,7 +81,6 @@ func fileExists(p string) bool {
 	return err == nil && !st.IsDir()
 }
 
-// errUnknownTarget refuses a -target that names no descriptor.
 func errUnknownTarget(target string) error {
 	return fmt.Errorf("unknown target %q — run `fern-oracle -targets` for the list (targets are <isa>-<environment>, e.g. arm64-linux, x86-64-linux, wasm32-wasi)", target)
 }

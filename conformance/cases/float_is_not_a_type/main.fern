@@ -1,5 +1,5 @@
-// The 64-bit float is written `f64`; `float` is not a type (#12700). The
-// diagnostic names the spelling to write.
+
+
 function half(x: float): f64 { return x / 2.0; }
 
 function main(): i32 {

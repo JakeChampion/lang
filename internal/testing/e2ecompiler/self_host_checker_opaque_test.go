@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostCheckerOpaqueDifferentialX86_64 holds both checkers to the
-// `opaque` struct rule (#12658, docs/TRAITS.md): outside the module that
-// declares it, an opaque struct's fields cannot be read, assigned,
-// destructured or constructed, while its name, its factory functions and its
-// methods stay usable. Each row pins its expected codes in both checkers and
-// requires the same E021 diagnostics, message and count, from each — a pure
-// differential cannot tell both reporting E021 from neither reporting it.
 func TestSelfHostCheckerOpaqueDifferentialX86_64(t *testing.T) {
 	_, runner, driverBin := buildCheckerModloadDriverX86(t)
 	modules := map[string]string{
@@ -57,12 +50,9 @@ pub trait Greet {
 		{"construct", "import \"./email\";\nfunction main(): i32 { let e: email.Email = email.Email { addr: \"x\", n: 2 }; return 0; }\n", e021},
 		{"construct-missing-field", "import \"./email\";\nfunction main(): i32 { let e: email.Email = email.Email { addr: \"x\" }; return 0; }\n", []string{"E005", "E021"}},
 		{"struct-update", "import \"./email\";\nfunction main(): i32 { let e: email.Email = email.make(\"x\"); let f: email.Email = email.Email { ...e, n: 2 }; return 0; }\n", e021},
-		// A destructure names the struct by its declared spelling, which an
-		// importer reaches only as the mangled one.
 		{"let-destructure", "import \"./email\";\nfunction main(): i32 { let e: email.Email = email.make(\"x\"); let email__Email { n, .. } = e; return n; }\n", e021},
 		{"factory-and-method", "import \"./email\";\nfunction main(): i32 { let e: email.Email = email.make(\"ab\"); return e.domain().len() + email.inside(e); }\n", nil},
 		{"generic-through-accessor", "import \"./gbox\";\nfunction main(): i32 { let b: gbox.Box[i32] = gbox.mk(3); return gbox.get(b); }\n", nil},
-		// A trait default body is checked as the trait module's own source.
 		{"trait-default-in-the-declaring-module", "import \"./greet\";\nstruct R { n: i32 }\nimpl greet.Greet for R { function tag(self: Self): i32 { return self.n; } }\nfunction main(): i32 { let r: R = R { n: 1 }; return r.greet(); }\n", nil},
 		{"pub-struct-not-opaque", "import \"./email\";\nfunction main(): i32 { let o: email.Open = email.open(\"x\"); let p: email.Open = email.Open { ...o, n: 3 }; let q: email.Open = email.Open { addr: \"y\", n: 4 }; return o.n + p.n + q.addr.len(); }\n", nil},
 		{"entry-module-opaque", "pub opaque struct S { x: i32 }\nfunction main(): i32 { let s: S = S { x: 3 }; let t: S = S { ...s, x: 4 }; let S { x } = t; match (s) { S { x: y } => { return x + y + t.x - 10; } } }\n", nil},
@@ -105,7 +95,6 @@ func diagCodesOf(ds []driverDiag) []string {
 	return codes
 }
 
-// e021Messages is every E021 message, duplicates kept, sorted.
 func e021Messages(ds []driverDiag) []string {
 	var out []string
 	for _, d := range ds {

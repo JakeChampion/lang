@@ -1,13 +1,3 @@
-// arm64 (aarch64) Linux end-to-end tests. The IR layer is
-// shared with the wasm backend, but the assembly emit + Linux
-// syscall numbers are arm64-specific. Each test SKIPs (rather
-// than fails) when the cross-compiler or qemu-aarch64 isn't
-// installed.
-//
-// Tests run the compiled binary under qemu-aarch64, which
-// uses the host's Linux kernel via user-mode emulation. On
-// real arm64 Linux hosts (AWS Graviton, Apple Silicon in a container,
-// etc.) the same binary runs natively without qemu.
 package e2e
 
 import (
@@ -21,11 +11,6 @@ import (
 	"time"
 )
 
-// First arm64 e2e: `function main(): i32 { return 42; }`
-// validates the toolchain end-to-end. Compiles with the
-// self-host compiler for arm64-linux, runs under
-// qemu-aarch64, and confirms the kernel propagates main's
-// return value through `exit_group` to qemu's exit code.
 func TestArm64ExitCode(t *testing.T) {
 	for _, want := range []int{0, 1, 42, 137, 250} {
 		src := "function main(): i32 { return " + intToString(want) + "; }"
@@ -36,12 +21,6 @@ func TestArm64ExitCode(t *testing.T) {
 	}
 }
 
-// Issue #4871 (arm64 arm of the x86 TestX86_64NativeMapFieldStructRebindIndirect):
-// `let m = s.m.insert(...); return ISet { m: m }`, self-reassigned `s = iset_add(s,
-// x)`, aliased the borrowed receiver's in-place Map buffer and corrupted it on the
-// second wrap-insert (the issue reports arm64 corruption; here it hung). The
-// StructLit clone now covers the var-indirected mutator result, so the shared-IR
-// fix holds on arm64 too. Set size is 2.
 func TestArm64MapFieldStructRebindIndirect(t *testing.T) {
 	src := `
 import "core/map";
@@ -63,10 +42,6 @@ function main(): i32 {
 	}
 }
 
-// arm64 arithmetic + locals + function calls. Exercises the
-// per-op switch's coverage of OpAdd / OpSub / OpMul, OpLoadLocal
-// / OpStoreLocal, OpCallDirect for user-defined functions, and
-// the AAPCS64 prologue/epilogue with parameter spilling.
 func TestArm64Arithmetic(t *testing.T) {
 	for _, c := range []struct {
 		src  string
@@ -92,10 +67,6 @@ function main(): i32 { return fib(10); }`, 55},
 	}
 }
 
-// arm64 string literals + len(). String literals live in
-// .rodata with a 4-byte little-endian length prefix; pointers
-// the runtime carries are post-prefix (`.LStr_N` label points
-// at .asciz data). `len(s)` reads `[ptr - 4]`.
 func TestArm64StringLiteralLen(t *testing.T) {
 	for _, c := range []struct {
 		src  string
@@ -112,9 +83,6 @@ func TestArm64StringLiteralLen(t *testing.T) {
 	}
 }
 
-// arm64 f64 transcendentals: std/f64's sin/cos/exp/log/pow, compiled.
-// Tolerance comparisons; the accuracy contract is f64_ulp_test.go's.
-// Mirrors TestX86_64Transcendentals.
 func TestArm64Transcendentals(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -142,9 +110,6 @@ func TestArm64Transcendentals(t *testing.T) {
 	}
 }
 
-// arm64 string concat. Pulls in __fern_alloc + __fern_memcpy
-// + __fern_strcat — the entire string-runtime stack on the
-// arm64 target.
 func TestArm64StringConcat(t *testing.T) {
 	for _, c := range []struct {
 		src  string
@@ -167,13 +132,6 @@ func TestArm64StringConcat(t *testing.T) {
 	}
 }
 
-// `type X = A | B | C;` unions on arm64 — the first cut
-// desugars to a synthesised enum whose variants each carry
-// the named struct as a single positional payload. Verifies
-// the full pipeline: parser preserves the UnionDecl through
-// modload's combine, checker registers + desugars, monomorph
-// is a no-op on the synthesised enum, codegen lowers the
-// match as it would for any enum.
 func TestArm64Unions(t *testing.T) {
 	src := `struct Add { l: i32, r: i32 }
 struct Mul { l: i32, r: i32 }
@@ -201,11 +159,6 @@ function main(): i32 {
 	}
 }
 
-// arm64 twin of TestX86_64GenericUnions (#7737). Same source, second
-// backend: the union's members lower to a generic enum whose payloads
-// are parameterised structs, and the monomorphizer's per-instantiation
-// clones are backend-independent — so a divergence here would be in the
-// payload layout, which is exactly what a second backend catches.
 func TestArm64GenericUnions(t *testing.T) {
 	src := `struct Leaf[T] { v: T }
 struct Pair[T] { a: T, b: T }
@@ -233,26 +186,6 @@ function main(): i32 {
 	}
 }
 
-// Parser-in-lang v4: identifier references — adds `Var { name }`
-// as a primary expression alongside numeric literals. Closes the
-// last gap before parsing real arithmetic programs that mention
-// variables (`x + 1`, not just `3 + 1`).
-//
-// Tokenizer additions: TokIdent recognition (alpha + alphanumeric
-// continuation), shared with the lexer-in-lang v6 surface.
-// Parser additions: `parse_factor` branches on the kind tag —
-// int → Num, ident → Var, paren → recurse, anything else → Err.
-//
-// Eval grows an environment, modelled as parallel `string[]` /
-// `i32[]` arrays. Lookup is linear scan from the most recent
-// binding so shadowing works for free (last-write-wins on
-// the same name). Real-world compilers use a Map for this; the
-// list-of-pairs shape keeps the test independent of Map runtime
-// gaps in the script-mode interp.
-//
-// Error coverage: undefined variable surfaces a Result Err with
-// the offending name in the message, mirroring how the real
-// checker emits "unknown identifier x" diagnostics.
 func TestArm64ParserV4WithVars(t *testing.T) {
 	src := `
 import "std/i32";
@@ -504,20 +437,6 @@ function main(): i32 {
 	}
 }
 
-// Parser-in-lang v3: error handling via `Result[Expr, ParseError]`.
-// Replaces the bare-Expr returns from PR #402 with explicit
-// Result propagation through `parse_factor` / `parse_term` /
-// `parse_expr`. The struct-typed Err payload (`ParseError {
-// message, pos }`) exercises the pair-form-return path where
-// mixed-width Result variants route through a heap-box rebox.
-//
-// Errors covered:
-//   - Empty input: "unexpected end of input"
-//   - Unclosed paren: "missing close paren"
-//   - Missing operand: "expected number or paren"
-//
-// Successes still parse correctly under the new Result-shaped
-// control flow.
 func TestArm64ParserV3WithResult(t *testing.T) {
 	src := `
 import "std/i32";
@@ -709,18 +628,6 @@ function main(): i32 {
 	}
 }
 
-// Regression for the void-call phantom-push codegen bug.
-// `arr.append(v)` inlines an internal `__memcpy` call which is
-// VOID-RETURNING in lang's type system. The native backends
-// (arm64 + x86_64) must not push rax/x0 unconditionally
-// after every `bl`/`call`: that leaves a phantom slot holding
-// the runtime helper's stale return register. The phantom slot
-// is consumed by the surrounding OpStore — here the
-// struct-lit field initialiser — corrupting the field address
-// and crashing on the subsequent store. Fixed by gating the
-// post-call push on the callee's return type (void → no push).
-// This shape (struct lit containing arr.append(...)) is the
-// minimal trigger.
 func TestArm64StructLitWithArrayPush(t *testing.T) {
 	src := `struct State { vals: i32[] }
 
@@ -735,31 +642,6 @@ function main(): i32 {
 	}
 }
 
-// Stmt-interp v4 — `else` branches in if-statements. v3 (#426)
-// shipped bare if-then; v4 adds the optional else arm + the
-// `else if` chain pattern via right-associative parsing.
-//
-// Grammar:
-//
-//	if_stmt ::= "if" "(" expr ")" "{" stmt* "}"
-//	          | "if" "(" expr ")" "{" stmt* "}" "else" "{" stmt* "}"
-//	          | "if" "(" expr ")" "{" stmt* "}" "else" if_stmt
-//
-// The third arm — `else if` — desugars at parse time into a
-// nested IfSt as the else-branch's only statement. That gives
-// us C-style if/else-if/else chains for free.
-//
-// Eval: if cond → run thn body; else → run els body. State
-// threads the same way the if-then version did.
-//
-// Tests:
-//  1. Bare if-then (v3 sanity, unchanged).
-//  2. if/else dispatch — select between two return values.
-//  3. abs(x) via if/else — return -x or x.
-//  4. max(a, b) via if/else (using a comparison in cond).
-//  5. else-if chain — classify a number into three buckets.
-//  6. Nested if/else inside a function — recursive function
-//     that branches.
 func TestArm64StmtInterpElse(t *testing.T) {
 	src := `
 import "std/i32";
@@ -1242,42 +1124,6 @@ function main(): i32 {
 	}
 }
 
-// Stmt-interp v3 — function declarations + calls. The natural
-// conclusion of the stmt-interp arc. v1 (#424) shipped var /
-// assign / return; v2 (#425) added while + comparisons. v3
-// closes the gap to "real procedural language" — top-level
-// functions, multi-arg calls, recursion, mutual recursion. The
-// in-lang interpreter can now host iterative_factorial,
-// recursive_factorial, fibonacci, gcd, etc. — the same shape
-// every introductory CS textbook ends on.
-//
-// Grammar additions:
-//
-//	program ::= fn_def* stmt*
-//	fn_def  ::= "fn" name "(" param ("," param)* ")" "{" stmt* "}"
-//	expr    ::= ... | name "(" expr ("," expr)* ")"
-//
-// Call disambiguates at parse time on single-token lookahead
-// (matching interp v6/v7's split between Var and Call).
-// Function bodies are full statement lists — they can declare
-// locals, mutate them via assignment, loop with while, and
-// return.
-//
-// Recursion works because the function table is built before
-// main runs. Mutual recursion works for the same reason.
-//
-// Tests:
-//  1. Simple zero-arg function (`fn answer() { return 42; }`).
-//  2. Single-arg function (`fn double(x) { return x * 2; }`).
-//  3. Recursive factorial via if-then return — proves call
-//     machinery handles deep recursion.
-//  4. Iterative factorial — function body with while loop +
-//     local var + return.
-//  5. Multi-arg gcd via Euclidean algorithm — two-arg call,
-//     recursive.
-//  6. Mutual recursion (is_even / is_odd) — confirms the
-//     function table is closed-over.
-//  7. Function compose at top-level — call from main flow.
 func TestArm64StmtInterpFunctions(t *testing.T) {
 	src := `
 import "std/i32";
@@ -1752,49 +1598,6 @@ function main(): i32 {
 	}
 }
 
-// Stmt-interp v2 — while loops + comparison operators. v1
-// (#424) shipped var / assign / return / linear flow. v2 adds
-// the missing pieces that make the toy language actually
-// Turing-complete at the statement level: a loop construct
-// (so iterative algorithms work), and comparison operators
-// (so loops can have meaningful exit conditions).
-//
-// Grammar additions:
-//
-//	stmt ::= ... existing
-//	       | "while" "(" expr ")" "{" stmt* "}"
-//	expr ::= comp
-//	comp ::= add (("=="|"!="|"<"|"<="|">"|">=") add)?
-//
-// Comparisons are NON-CHAINING: `a < b < c` is rejected by
-// the single-relation grammar (the parser produces left-assoc
-// arith inside each side but treats the relation as a flat
-// binary). Comparison results are i32 0 / 1 — same shape as
-// interp v4 (no boolean type at the toy-AST level).
-//
-// While semantics: re-evaluate the cond at the top of every
-// iteration, exit when zero or when a return fires inside the
-// body. State threads through every iteration the same way it
-// does between top-level statements: `state = eval_stmt(s,
-// state)` per statement, propagating the done flag.
-//
-// Tests:
-//  1. Bare while with single body stmt — counter 1..N.
-//  2. While + var + assign — sum 1..10 = 55.
-//  3. Nested while — multiplication table sum.
-//  4. Early return inside loop body — short-circuits.
-//  5. False initial cond — body never runs.
-//  6. Comparisons in isolation (return a < b).
-//  7. Factorial via iterative loop — closes the
-//     recursion-free Turing-completeness gap.
-//
-// Comparison opcodes (lexed as two-char punct, parser folds
-// into one op token):
-//
-//	== → 1001, != → 1002, < → 1003, <= → 1004, > → 1005, >= → 1006
-//
-// (Outside the 0..127 ASCII range so they don't collide with
-// existing single-char arith ops.)
 func TestArm64StmtInterpWhile(t *testing.T) {
 	src := `
 import "std/i32";
@@ -2153,48 +1956,6 @@ function main(): i32 {
 	}
 }
 
-// Stmt-interp-in-lang: statement-level constructs — `let`
-// declarations, assignment, and `return`. A FUNDAMENTALLY new
-// shape vs the expression-only spikes. v1..v7 all dealt in
-// single expressions; this spike parses a SEQUENCE of
-// statements that share a mutable env and produces the return
-// value of whichever `return` fires first.
-//
-// Grammar:
-//
-//	program ::= stmt* ;
-//	stmt    ::= "let" name "=" expr ";"     // declaration
-//	          | "return" expr ";"            // exit
-//	          | name "=" expr ";"            // reassignment
-//	expr    ::= existing arithmetic grammar
-//
-// The exit-on-return semantics matches every real procedural
-// language. eval_block walks the statement list, looks for a
-// return, and short-circuits on first hit. Statements before
-// the return mutate the env (declarations append, assignments
-// rebind the most recent same-named binding); statements
-// after a return are unreachable but the test doesn't bother
-// detecting that.
-//
-// Env shape: parallel string[] / i32[] arrays, mutable through
-// the in-place assign helper. Lang arrays are functional at
-// the language level, so "mutation" means replacing the env
-// arrays with fresh copies that differ in one slot — same
-// pattern the env_lookup chain has used since interp v5.
-//
-// Properties tested:
-//  1. Bare return — `return 5;` → 5.
-//  2. Var + return — `let x = 5; return x;` → 5.
-//  3. Reassignment — `let x = 1; x = x + 1; return x;` → 2.
-//     Confirms the assign path rebinds the existing slot
-//     rather than shadowing.
-//  4. Multi-var arithmetic — `let x = 3; let y = 4; return
-//     x * 10 + y;` → 34.
-//  5. Early return — `let x = 1; return x; let y = 99; return
-//     y;` → 1. The second return is dead code; the first
-//     fires and the eval stops.
-//  6. Forward dependencies — `let x = 10; let y = x + 5;
-//     return y;` → 15. Later declarations see earlier ones.
 func TestArm64StmtInterpInLang(t *testing.T) {
 	src := `
 import "std/i32";
@@ -2491,41 +2252,6 @@ function main(): i32 {
 	}
 }
 
-// Stack-VM-in-lang: AST → flat bytecode → stack-machine
-// execution. A new SHAPE in the self-host spike series — fold,
-// reduce, and print all walk an AST and produce a transformed
-// AST or string. compile() walks the AST and produces a FLAT
-// LIST OF OPS that a stack VM executes. This is the lowering
-// pattern every real compiler uses (lang's IR does the same:
-// AST → linear Op[] sequence consumed by codegen).
-//
-// Bytecode:
-//
-//	PushConst v   — push integer constant onto the stack
-//	Load name     — push the value of named variable
-//	Bin op        — pop two, apply op (+, -, *, /), push result
-//
-// Compile is a post-order walk: emit child ops then the parent
-// op. The resulting linear sequence runs left-to-right on the
-// VM, building up intermediate values on the stack. Same shape
-// as wasm's stack machine, RPN calculators, and lang's own IR
-// dispatch loop in the codegen backends.
-//
-// Properties tested:
-//  1. Round-trip semantic equivalence — execute(compile(e), env)
-//     == eval(e, env) for the same env, on every shape exercised
-//     by the earlier spikes (literals, vars, all four binary
-//     operators, nesting, parens).
-//  2. Bytecode shape — `1 + 2 * 3` compiles to exactly:
-//     [PushConst 1, PushConst 2, PushConst 3, Bin *, Bin +].
-//     Five ops, post-order, in that order. The shape proves the
-//     compile walk is bottom-up + left-to-right.
-//  3. Stack discipline — after a successful execute(), the stack
-//     has exactly one element (the result). Tested by always
-//     reading the top and asserting on it.
-//  4. fold + compile integration — folding the AST FIRST makes
-//     the bytecode shorter. `compile(fold("1 + 2 * 3"))` is
-//     one op (PushConst 7) instead of five.
 func TestArm64StackVMInLang(t *testing.T) {
 	src := `
 import "std/i32";
@@ -2843,32 +2569,6 @@ function main(): i32 {
 	}
 }
 
-// Strength-reduce-in-lang: the algebraic-identity complement
-// to constfold (#420). Constfold collapses BinOps with two
-// literal operands; strength reduction simplifies BinOps where
-// ONE operand is a known constant that triggers an identity:
-//
-//	x + 0   →   x      x - 0   →   x
-//	0 + x   →   x      0 * x   →   0
-//	x * 1   →   x      x * 0   →   0
-//	1 * x   →   x      x / 1   →   x
-//
-// The real pass (compiler/ir.fern's reduce_strength) runs these on IR (after
-// type-aware short-circuit handling); this spike runs them on
-// the toy Expr AST. Same shape, simpler representation.
-//
-// Properties tested:
-//  1. Identity rules fire — `x + 0` collapses to `x`, the
-//     enclosing BinOp disappears. count_binop drops by one.
-//  2. Absorbing rule for `* 0` — `x * 0` collapses to `0`.
-//     Note `x / 0` does NOT collapse — that's a runtime trap,
-//     not an algebraic identity.
-//  3. Combined with constfold — running fold + reduce in
-//     sequence on `(2 + 3) + (x * 1)` collapses to `5 + x`
-//     via two passes.
-//  4. Idempotence — reduce(reduce(e)) ≡ reduce(e).
-//  5. Semantic preservation — eval(reduce(e)) == eval(e) for
-//     any e and any env that doesn't divide-by-zero.
 func TestArm64StrengthReduceInLang(t *testing.T) {
 	src := `
 import "std/i32";
@@ -3175,32 +2875,6 @@ function main(): i32 {
 	}
 }
 
-// Printer-in-lang: the natural complement to parse-in-lang.
-// Closes the parse/print round-trip — `parse(print(e))` reproduces
-// the original AST shape. Together with the constfold pass
-// (#420) this rounds out lex / parse / fold / print / eval, the
-// full pipeline shape of a self-hosted compiler.
-//
-// `print_expr(e: Expr): string` walks the AST and produces a
-// canonical textual rendering. BinOp is always parenthesised,
-// which means the output isn't minimal but is always
-// unambiguous — `1 + 2 * 3` round-trips through "(1 + (2 * 3))"
-// rather than "1 + 2 * 3", but parse+ast_eq still hold because
-// the inner shape is preserved. Real lang's printer uses
-// precedence-aware parens (drops redundant ones at top of
-// binary chains); the always-parens shape lets the spike stay
-// focused on the tree walk rather than precedence tables.
-//
-// Round-trip property: `parse(print(e))` must structurally
-// equal `e`. Tested across the same expression shapes as the
-// constfold spike — atoms, simple BinOps, nested, vars mixed
-// in. Confirms the printer respects associativity (the parens
-// disambiguate; otherwise `1 - 2 - 3` and `1 - (2 - 3)` parse
-// to different ASTs).
-//
-// Bonus integration: fold + print proves the combined pipeline.
-// `print(fold(parse("1 + 2 * 3")))` should be "7" (the folded
-// Num prints its value directly, no parens).
 func TestArm64PrinterInLang(t *testing.T) {
 	src := `
 import "std/i32";
@@ -3446,40 +3120,6 @@ function main(): i32 {
 	}
 }
 
-// Constfold-in-lang: a real compiler pass, written in lang.
-// Closes a meaningful self-host milestone — lex/parse/eval has
-// been the pattern through v1..v7, but a tree-rewriting
-// transformation over the AST is the shape of every real
-// compiler optimization (constfold, DCE, inlining, copy-prop,
-// strength reduction). This spike proves lang can host that
-// shape too.
-//
-// The pass: `fold(e: Expr): Expr`. Walks the expression tree
-// bottom-up, replacing any BinOp whose operands are both Num
-// with a single Num holding the folded value. Anything with a
-// Var or partial-fold remainder passes through unchanged at
-// that node (but its subtrees are still folded). Matches the
-// shape of internal/check/constfold in the real compiler.
-//
-// Test strategy:
-//  1. Parse "1 + 2 * 3" → BinOp(+, Num(1), BinOp(*, Num(2),
-//     Num(3))). Fold → Num(7). Confirms fully-constant
-//     expressions collapse to a single literal.
-//  2. Parse "x + 2 * 3" → fold partials: the 2 * 3 inside
-//     a BinOp collapses; the outer BinOp(+, Var(x), Num(6))
-//     stays since one operand is a Var.
-//  3. Parse "(1 + 2) + (3 + 4)" → Num(10). Confirms recursive
-//     folding through nested BinOps.
-//  4. Idempotence: fold(fold(e)) == fold(e). Real compilers
-//     run optimization passes in a loop; idempotence is the
-//     stable-fixpoint property they all need.
-//  5. Semantic preservation: eval(fold(e)) == eval(e). The
-//     pass must not change the program's meaning.
-//
-// Counting helpers (`count_num`, `count_binop`) drive the
-// structural assertions — after folding the constant cases,
-// the node count is exactly 1; after the partial case it's
-// 1 BinOp + 1 Var + 1 Num.
 func TestArm64ConstfoldInLang(t *testing.T) {
 	src := `
 import "std/i32";
@@ -3758,35 +3398,6 @@ function main(): i32 {
 	}
 }
 
-// Interp-in-lang v7: multi-arg functions. v6 (#418) shipped
-// single-arg functions, deferring multi-arg as "trivially
-// additive but doubles the line count without proving
-// anything new about the calling convention". This PR makes
-// good on that — actually adding multi-arg is mechanical, but
-// it lets the toy interpreter host pairwise / triadic helpers
-// (`min(a, b)`, `cond(c, t, f)`, `ackermann(m, n)`) without
-// the unary workaround of synthetic tuple-wrapping.
-//
-// Grammar changes:
-//
-//	fn_def ::= "fn" name "(" param ("," param)* ")" "=" expr ";"
-//	call   ::= name "(" expr ("," expr)* ")"
-//
-// Storage: each function gets a `params: string[]` list (was a
-// single `string`) and each Call gets an `args: Expr[]` list
-// (was a single `Expr`). The FnDef struct collects each
-// function's name + params + body, and the Program holds a
-// `fns: FnDef[]` + the main expression.
-//
-// Eval-side: evaluate each arg LEFT-TO-RIGHT (matches the rest
-// of lang), zip with the function's param names into a fresh
-// env, recurse with the new env. Zero-arg functions (no params
-// between the parens) round-trip cleanly — the empty arg
-// array zips with the empty param array and the body sees a
-// pristine env.
-//
-// Recursion still falls out from the closed-over fn table.
-// Mutual recursion works for the same reason.
 func TestArm64InterpV7MultiArg(t *testing.T) {
 	src := `
 import "std/i32";
@@ -4060,41 +3671,6 @@ function main(): i32 {
 	}
 }
 
-// Interp-in-lang v6: function declarations + calls. The toy
-// interpreter from v5 gains top-level `fn` definitions and a
-// `Call` expression node, closing the gap from "lambda-ish let
-// blocks" to "real recursive functions". With this the in-lang
-// interpreter can host factorial, fibonacci, and arbitrary
-// mutual recursion — the same Turing-complete shape every
-// pedagogical interpreter ends on.
-//
-// Grammar additions (single-arg for brevity):
-//
-//	program ::= fn_def* expr
-//	fn_def  ::= "fn" name "(" param ")" "=" expr ";"
-//	factor  ::= ... | name "(" expr ")"
-//
-// Functions live in three parallel arrays — `fn_names`,
-// `fn_params`, `fn_bodies` — passed through every eval call.
-// Recursion works because the function table is built before
-// eval starts; a Call looks up by name, evaluates the arg,
-// pushes (param, arg-value) onto the env, and recurses into
-// the body with a FRESH env (functions don't see the caller's
-// locals — lexical scope).
-//
-// Single-arg keeps the types simple: i32 in, i32 out.
-// Multi-arg would need parallel param/arg arrays at the Call
-// site; trivially additive but doubles the test's line count
-// without proving anything new about the calling convention.
-//
-// Calls disambiguate at parse time: `ident "("` lookahead
-// becomes Call, bare `ident` stays Var. Matches the real
-// parser's primary-postfix split.
-//
-// `fn_bodies: Expr[]` works because Expr is a union (sugar
-// over enum) — arrays of enum cells are heap-allocated value
-// containers with the standard array runtime, no special
-// support needed.
 func TestArm64InterpV6Functions(t *testing.T) {
 	src := `
 import "std/i32";
@@ -4355,29 +3931,6 @@ function main(): i32 {
 	}
 }
 
-// Parser-in-lang v5: `let x = e in body` bindings + `if c
-// then a else b` expressions, layered on top of the arith /
-// relation grammar. The Expr union grows to five variants:
-//
-//	type Expr = Num | Var | BinOp | Let | If;
-//
-// Identifier tokenisation joins the lexer — `let`, `in`, `if`,
-// `then`, `else` are recognised as keywords (still TokIdent at
-// the lex layer; the parser dispatches on the spelling).
-//
-// Environment is a pair of parallel string[] / i32[] arrays
-// the eval threads through every recursive call. Let-binding
-// uses functional `.push` (PR #412 added Array.push to the
-// interp) so sibling scopes don't see each other's bindings.
-// Lookup walks the array tail-first to give inner shadows
-// precedence over outer ones.
-//
-// This is the closest the toy interp gets to a "real" mini-
-// language — Num, Var, BinOp, Let, If is the same five-node
-// shape every CS-textbook lambda calculus interpreter starts
-// with. Function declarations + calls are the natural next
-// step but need named-callable storage, which is a bigger
-// jump.
 func TestArm64InterpV5LetIf(t *testing.T) {
 	src := `
 import "std/i32";
@@ -4573,23 +4126,6 @@ function main(): i32 {
 	}
 }
 
-// Parser-in-lang v4: comparison operators (`==`, `!=`, `<`,
-// `<=`, `>`, `>=`) layered on top of the arithmetic
-// interpreter. Adds a new `parse_relation` precedence level
-// above `parse_expr`; comparisons don't chain (`a < b < c` is
-// rejected by the single-relation grammar). Result of a
-// comparison is i32 1 / 0 — no boolean type at the AST level.
-//
-// BinOp now stores `op: string` instead of `op: i32`. A
-// string holds both single-char and multi-char operators
-// without a second tag field. The eval body dispatches on
-// the string directly.
-//
-// `rhs` / `op_s` hoisted to function scope in parse_relation
-// so the wasm emitter (which names locals by lang identifier)
-// doesn't see a duplicate across the two sibling `if`
-// branches — same workaround the prelude's `__map_hash`
-// already uses.
 func TestArm64InterpV4Comparisons(t *testing.T) {
 	src := `
 import "std/i32";
@@ -4768,19 +4304,6 @@ function main(): i32 {
 	}
 }
 
-// Parser-in-lang v2: full lex → parse → eval pipeline. Wires
-// the lexer-in-lang spike (PRs #394-#395, #399-#401) to the
-// recursive-descent parser (PR #402) so a source string flows
-// through tokenisation, AST construction, and recursive
-// evaluation — all in lang.
-//
-//	interp("1 + 2 * 3") → 7
-//	interp("(1 + 2) * 3") → 9
-//
-// This is the smallest end-to-end "compiler-shaped" pipeline
-// the lang has ever run on itself. Closes the lex+parse half
-// of the self-host validation arc; the next stages (checker,
-// IR, codegen) are bigger but architecturally similar shape.
 func TestArm64InterpV2(t *testing.T) {
 	src := `
 import "std/i32";
@@ -4920,31 +4443,6 @@ function main(): i32 {
 	}
 }
 
-// Parser-in-lang v1: recursive-descent arithmetic-expression
-// parser that consumes a hand-built Token[] and produces an
-// AST in the union shape the Go compiler's `internal/syntax/ast`
-// uses for Expr nodes. This is the FIRST validation that
-// the union-types machinery (PRs #390 + #392) handles
-// recursive struct-of-union payloads — `BinOp { left: Expr,
-// right: Expr }` references the union containing it.
-//
-// Operator precedence handled the textbook way: `expr` →
-// `term` → `factor`. `factor` recurses into `expr` for
-// parenthesised subexpressions, exercising the full
-// recursion through the AST.
-//
-// Cursor passed via a single-element `i32[]` for in-place
-// mutation — lang's value semantics + lack of by-reference
-// params mean this is the cheapest "out parameter" shape
-// available. Will get simpler when generic Cell[T] /
-// reference types land.
-//
-// Closes a meaningful self-host milestone: the AST visitor
-// pattern (the main blocker per docs/ROADMAP-AND-SELF-
-// HOSTING.md) works end-to-end in real recursive-descent
-// code. Lexer-in-lang (PRs #394-#395, #399-#401) +
-// parser-in-lang (this) cover lex → parse, the first two
-// stages of the compiler pipeline.
 func TestArm64ParserV1(t *testing.T) {
 	src := `struct TokInt   { value: i32 }
 struct TokPunct { ch: i32 }
@@ -5080,27 +4578,6 @@ function main(): i32 {
 	}
 }
 
-// Lexer-in-lang v7: float literals + the Number/Float token-kind
-// split. Builds on v6 (line comments + full keyword set + string
-// escapes). Closes the last numeric-literal gap before f-strings.
-//
-// The Go lexer recognises a float as integer-digits followed by
-// `.<digit>+` — `1.5` is a Float, `1.` is the int `1` then a
-// `.` punctuator, `.5` is `.` then `5` (not a float either).
-// Exponent form (`1e10`, `1.5e-10`) isn't lexed as a single
-// token in lang. v7 mirrors that exactly.
-//
-// TokFloat carries the raw text spelling (`"1.5"`) rather than
-// a parsed f32/f64 — the real lexer does the same and defers
-// parse-to-double to the parser. The test asserts on the text,
-// which is sufficient to prove the lexer captured the right
-// bytes; numeric-equality testing would force the lang program
-// to do its own f32 parse, which is a downstream concern.
-//
-// The dot disambiguation point: `a[0].x` and `1.x` shouldn't
-// be lexed as floats. v7's `i + 1 < n && src[i] == '.' && next
-// is digit` rule handles both — `0.x` falls through (`x` isn't
-// a digit) so the `.` becomes a punctuator and `x` an ident.
 func TestArm64LexerV7(t *testing.T) {
 	src := `
 import "std/i32";
@@ -5264,39 +4741,6 @@ function main(): i32 {
 	}
 }
 
-// Lexer-in-lang v6: line comments, full keyword set, string
-// literals with escape sequences. Builds on v5 (hex integers +
-// numeric suffixes), v4 (numeric suffixes), v3 (string literals,
-// re-introduced here with escape handling), v2 (idents +
-// punctuation), v1 (decimal integers).
-//
-// New surface vs v5:
-//
-//  1. Line comments — `// ...` until newline (or EOF). Standard
-//     C-family comment lexing; the body is dropped, the closing
-//     newline is left for the whitespace branch to eat.
-//  2. Full keyword set — function / var / let / if / else /
-//     while / for / break / continue / return / true / false /
-//     match / struct / type + sized numeric type names. Matches
-//     the Go lexer's `keywords` map. The classifier is a chain
-//     of `==` comparisons; a Map lookup would be cleaner but
-//     Map[string,boolean] in script-mode interp is on the
-//     "blocked behind virtual heap" list.
-//  3. String literals with escapes — `\n` `\t` `\r` `\0` `\"`
-//     `\\` are decoded inline. Builds the body via repeated
-//     `s = s + ...` concat (one alloc per escape, one per run
-//     of plain bytes). Quadratic on long strings, fine for the
-//     lexer where token bodies are short.
-//  4. Underscore in identifiers — `is_digit`, `_pad`, etc.
-//     Real lang allows `[a-zA-Z_][a-zA-Z0-9_]*`. v5 only
-//     called `is_alpha()` / `is_alnum()`; v6 ORs in the
-//     underscore explicitly so `__alloc_u8` and friends lex
-//     as a single ident.
-//
-// Closes a meaningful chunk of lexer-port parity — the only
-// remaining gaps vs `internal/syntax/lexer/lexer.go` are float
-// literals, f-strings, and the Number/Float kind split. Float
-// literals will land in v7.
 func TestArm64LexerV6(t *testing.T) {
 	src := `
 import "std/i32";
@@ -5492,20 +4936,6 @@ function main(): i32 {
 	}
 }
 
-// Lexer-in-lang v5: hex integer literals (`0x1F`, `0XFF`) +
-// the carry-over numeric type-suffix recognition (`0x10i64`).
-// Recognises `0x` / `0X` prefix, scans hex digits via the
-// prelude's `is_hex_digit()` (PR #397), accumulates the value
-// via `hex_value(b)`. Bare `0x` (no hex digits) falls back
-// to two tokens — `0` then ident `x` — matching Go's behaviour.
-//
-// Numeric accumulators (`numV`, `numSfx`) are HOISTED to
-// function scope. Wasm names locals by lang identifier and
-// rejects sibling-scope duplicates; the hex + decimal arms
-// would each declare `let v` / `let sfx` and collide. The
-// hoisting is the recommended workaround the prelude already
-// uses (see `__map_hash`'s "Single shared `h` declaration"
-// comment).
 func TestArm64LexerV5(t *testing.T) {
 	src := `
 import "std/i32";
@@ -5649,13 +5079,6 @@ function main(): i32 {
 	}
 }
 
-// Lexer-in-lang v4: adds numeric type-suffix recognition
-// (`42i64` → TokInt{value: 42, suffix: "i64"}). Suffixes
-// accepted: `i32`, `i64`, `u32`, `u64`, `f32`, `f64` — the
-// six numeric widths lang exposes. The match is greedy but
-// strict: only a complete 3-byte suffix steals the bytes;
-// `42i6` lexes as bare `42` followed by ident `i6`. Pattern
-// mirrors Rust's numeric-literal suffix recognition.
 func TestArm64LexerV4(t *testing.T) {
 	src := `
 import "std/i32";
@@ -5769,19 +5192,6 @@ function main(): i32 {
 	}
 }
 
-// Lexer-in-lang v3: builds on v2 by adding block comments
-// (`/* ... */`), the `\n` / `\t` / `\r` string escapes via a
-// single `unescape(b: i32): i32` helper, AND swaps the inline
-// `is_digit` / `is_alpha` / `is_alnum` / `is_ws` helpers for
-// the prelude's `(b: i32).is_*` methods from PR #397. The
-// classifier swap is the more important change: it's the
-// first real-workload validation that the prelude additions
-// compose into a hand-rolled lexer without re-declaring local
-// helpers.
-//
-// Token surface still ~10% of the real lang lexer but the
-// shape now matches enough that the bigger port can land
-// incrementally without re-deriving the tokenisation structure.
 func TestArm64LexerV3(t *testing.T) {
 	src := `
 import "std/i32";
@@ -5925,23 +5335,6 @@ function main(): i32 {
 	}
 }
 
-// Extended lexer-in-lang: adds string literals (with `\\` /
-// `\"` escapes), multi-character operators (`==`, `!=`, `<=`,
-// `>=`, `=>`), keyword recognition vs identifier, and line
-// comments. Pushes more lang features through the pipeline
-// than `TestArm64LexerInLang`:
-//
-//   - String concatenation (`out = out + slice_unchecked(src, i, i+1)`) inside
-//     a loop — exercises strcat-in-loop allocation pattern
-//   - Multi-arm boolean chains in the keyword classifier
-//   - Mixed `match` over union variants with both `_` wildcard
-//     and explicit-variant arms
-//
-// Token surface still ~5% of the real lang lexer but enough
-// to drive a tiny self-contained source through end-to-end.
-// `TestArm64LexerInLang` keeps the minimum-viable shape; this
-// test pins the next increment so we catch regressions on the
-// bigger features before the full port lands.
 func TestArm64LexerV2(t *testing.T) {
 	src := `struct TokInt   { value: i32 }
 struct TokIdent { name: string }
@@ -6069,12 +5462,6 @@ function main(): i32 {
 	}
 }
 
-// Byte-level ASCII classifiers — `(b: i32).is_ascii_digit()` /
-// `is_alpha()` / `is_alnum()` / `is_ascii_white_space()` /
-// `is_hex_digit()` / `is_ascii()`. Useful for hand-rolled
-// lexers and parsing routines; the lexer-in-lang spike
-// programs inline these today, this PR promotes them to
-// reusable prelude helpers.
 func TestArm64ByteClassifiers(t *testing.T) {
 	src := `
 import "std/i32";
@@ -6102,11 +5489,6 @@ function main(): i32 {
 	}
 }
 
-// `cmp.sort` / `cmp.sort_desc` over i32 — non-mutating stable merge
-// sort (input untouched; n < 2 inputs are returned as-is, larger
-// ones as a fresh array). Locks the generic sort's behavioral
-// contract on arm64: ordering, empty/singleton, and the input-preserved
-// property (the retired `sort_i32_asc` / `sort_i32_desc`, #5397).
 func TestArm64SortI32(t *testing.T) {
 	src := `
 import "core/cmp";
@@ -6143,24 +5525,6 @@ function main(): i32 {
 	}
 }
 
-// Tiny lexer written in lang — recognises integer literals,
-// identifiers, and single-byte punctuation. Validates that:
-//
-//   - `type Token = TokInt | TokIdent | ...` (union types
-//     from PR #390) handles the AST-shaped sum
-//   - `Add { ... }` flows into a Token-typed slot via the
-//     implicit wrap (PR #392)
-//   - `s[i]` byte access, `slice_unchecked` slicing, `arr.push`,
-//     and `match` over union variants all compose
-//   - The frameLoad / frameStore split (this PR) handles
-//     the deeper-than-256-byte frame the lexer's match arms
-//     produce on arm64
-//
-// First building block toward self-host: porting the real
-// lexer to lang is the smallest realistic milestone (see
-// docs/ROADMAP-AND-SELF-HOSTING.md "Realistic first-port
-// milestone"). This test pins a minimum-viable lexer shape
-// so we catch regressions before the bigger port lands.
 func TestArm64LexerInLang(t *testing.T) {
 	src := `struct TokInt { value: i32 }
 struct TokIdent { name: string }
@@ -6232,12 +5596,6 @@ function main(): i32 {
 	}
 }
 
-// Implicit struct → union wrap on arm64: a bare member-struct
-// literal flows into a union-typed position without explicit
-// `MemberName(...)` re-wrap. Exercises wrap at var-init, call-
-// arg, return, and assignment sites — the natural shape for
-// AST-style code where the consumer code keeps constructing
-// `Add { l: 1, r: 2 }` and letting the type system route it.
 func TestArm64UnionImplicitWrap(t *testing.T) {
 	src := `
 struct Add { l: i32, r: i32 }
@@ -6272,38 +5630,11 @@ function main(): i32 {
     return eval(a) + eval(built) + sum;
 }`
 	_, code := compileAndRunArm64(t, src)
-	// 2 * 5 (Mul) + 1+2 (Add) + 5 (Lit) = 18.
 	if code != 18 {
 		t.Errorf("got %d, want 18 (2*5 + 1+2 + 5)", code)
 	}
 }
 
-// `s.lines()` on arm64 — exercises the prelude function over
-// the two-word ABI: `s[i]` byte indexing, `slice_unchecked` slicing,
-// `out.append(line)`, and the array-result return path.
-// Runtime template substitution via the prelude format()
-// function. Walks fmt and replaces each {} placeholder with
-// args[i]. Mirrors Python str.format() / Rust format!()
-// minimal subset. Covers what f-strings DON'T: dynamic
-// templates (read from a config / locale table / error
-// catalogue), and programmatic diagnostic-string assembly
-// where the template lives in a const-table rather than at
-// every call site.
-//
-// Cases:
-//   - basic substitution: matched arg count
-//   - underfilled: more {} than args → literal {} tail
-//   - overfilled: more args than {} → extras silently dropped
-//   - no placeholders → identity (still cheap)
-//   - empty fmt → empty result
-//   - chained with to_string() for i32 args
-//
-// String-array methods — join / index_of / contains. All
-// three dispatch via the constrained-string-receiver pattern
-// in the checker; bodies live in the prelude as plain loops.
-// Tests cover the happy paths plus boundary cases (empty
-// array, not-found returns None from index_of and false from
-// contains, separator edge cases for join).
 func TestArm64ArrayJoin(t *testing.T) {
 	src := `
 import "std/string";
@@ -6373,46 +5704,6 @@ function main(): i32 {
 	}
 }
 
-// String surface additions per STDLIB-ROADMAP item #15:
-//
-//	s.fields()                       — whitespace split, no empties
-//	s.eq_ignore_ascii_case(other)    — ASCII case-fold equality
-//	s.strip_prefix(p) / strip_suffix(s)  — Option[string] companions to
-//	                                       starts_with / ends_with
-//
-// HTTP header parsing is the main motivator (case-insensitive
-// header-name compare, prefix-stripping path components,
-// whitespace-tolerant value tokenisation).
-// Radix parse/format per STDLIB-ROADMAP item #14:
-//
-//	parse_int_radix(s, base) Option[i32]
-//	int_to_string_radix(n, base) string
-//
-// Supported bases: 2..36 (digits 0-9 then a-z, case-insensitive
-// on parse). Covers hex addressing, binary debug dumps, octal
-// permissions, base-36 short IDs.
-// Path manipulation (string-level, POSIX) per STDLIB-ROADMAP
-// item #8: path_join / path_parent / path_file_name /
-// path_extension. Pure string ops — no FS interaction.
-// Big bundle from STDLIB-ROADMAP: most of item #3 (pad_start /
-// pad_end / split_once / trim_start_matches / trim_end_matches
-// / replace_n), plus string-count (a small adjacent helper),
-// plus i32 array reductions (sum / max / min). All small
-// prelude additions wired through the existing constrained-
-// receiver dispatch.
-// Thirty-first stdlib bundle: string word_at /
-// word_count_min / longest_word / is_quoted, i32[] gcd_all
-// / lcm_all / abs_each, string[] all_starts_with /
-// all_ends_with. 9 helpers.
-//
-// `gcd_all` / `lcm_all` fold the existing scalar `gcd` /
-// `lcm` helpers. Both use abs() on inputs (gcd is
-// sign-invariant; lcm without abs would yield nonsense
-// for negative inputs). Empty array → None.
-//
-// `is_quoted` only checks the outer shape (matching first
-// and last byte from {", `, '}); it doesn't validate
-// escaping or interior quote pairing.
 func TestArm64StdlibBundle31(t *testing.T) {
 	src := `
 import "std/string";
@@ -6505,16 +5796,6 @@ function main(): i32 {
 	}
 }
 
-// Thirtieth stdlib bundle: string replace_first /
-// is_kebab_case / is_snake_case / shift_byte, i32[]
-// index_of / adjacent_diff, i32 factorial / is_prime.
-// 8 helpers.
-//
-// `factorial` caps at 12! (largest factorial that fits in
-// i32); n >= 13 or n < 0 returns 0 as the out-of-range
-// sentinel. `is_prime` uses 6k±1 trial division, O(sqrt n).
-// `shift_byte` is a Caesar-style byte rotation — useful for
-// puzzles / toy obfuscation, not security.
 func TestArm64StdlibBundle30(t *testing.T) {
 	src := `
 import "std/string";
@@ -6589,22 +5870,6 @@ function main(): i32 {
 	}
 }
 
-// Twenty-ninth stdlib bundle: i32[] min_max / reversed /
-// every_positive, string without_chars / contains_only /
-// split_at / count_chars_in, i32 is_perfect_square.
-// 8 helpers.
-//
-// `min_max` returns `Option[(i32, i32)]` — both bounds in
-// a single pass. `reversed` is the i32[] companion to the
-// existing string[] `reverse` (they collapse to one once
-// generic Array methods land). `every_positive` is
-// vacuously true on an empty array, matching the all-of-X
-// quantifier convention.
-//
-// `split_at` returns a `(string, string)` tuple; negative
-// indices clamp to 0, out-of-range to len. `contains_only`
-// is vacuously true on the empty string but false on a
-// non-empty string with an empty set.
 func TestArm64StdlibBundle29(t *testing.T) {
 	src := `
 import "std/array";
@@ -6672,14 +5937,6 @@ function main(): i32 {
 	}
 }
 
-// Twenty-eighth stdlib bundle: cmp.sort / cmp.sort_desc over i32[]
-// and string[], i32[] cumsum, string ellipsis / first_line, i32
-// min_zero / sign_str.
-//
-// `ellipsis(n)` differs from `truncate(n, "...")`: with
-// `n == 3` on a longer string, ellipsis returns "..." while
-// truncate hard-truncates the source. Use ellipsis when you
-// want truncation always to be visually marked.
 func TestArm64StdlibBundle28(t *testing.T) {
 	src := `
 import "std/array";
@@ -6745,18 +6002,6 @@ function main(): i32 {
 	}
 }
 
-// Twenty-seventh stdlib bundle: i32[] median / mode /
-// sum_squared, string[] join_with_last, string
-// replace_byte / to_acronym / title_case, i32
-// is_multiple_of. 8 helpers.
-//
-// `median` returns the lower middle on even-length arrays
-// (no float averaging — return type is i32). `mode` ties
-// resolve to the first occurrence in original order.
-// `join_with_last` is the Oxford-comma shape: ", " between
-// non-final pairs, " and " between the last two. `title_case`
-// only upper-folds the first byte after each space; "FOX"
-// stays "FOX".
 func TestArm64StdlibBundle27(t *testing.T) {
 	src := `
 import "std/array";
@@ -6838,16 +6083,6 @@ function main(): i32 {
 	}
 }
 
-// Twenty-sixth stdlib bundle: string starts_with_any /
-// ends_with_any / lines_non_empty, i32[] range / count,
-// string[] count_str, HTTP redirect / no_content builders.
-// 8 helpers.
-//
-// `count` and `count_str` exist as separate names because
-// the Array.X dispatch in the checker is keyed by method
-// name only — it can't fan out on receiver element type
-// the way overload resolution would. Once we have generic
-// `Array.count[T]` they collapse to one helper.
 func TestArm64StdlibBundle26(t *testing.T) {
 	src := `
 import "std/http";
@@ -6912,11 +6147,6 @@ function main(): i32 {
 	}
 }
 
-// Twenty-fifth stdlib bundle: string is_url_like / is_json_like
-// / common_prefix / common_suffix, string[] min_by_len, i32
-// percent_of. 6 helpers (no array-method dispatch rewrite for
-// the string ones — they sit as plain receiver-typed prelude
-// fns, like is_ipv4 / is_email_like).
 func TestArm64StdlibBundle25(t *testing.T) {
 	src := `
 import "std/string";
@@ -6971,20 +6201,6 @@ function main(): i32 {
 	}
 }
 
-// Twenty-fourth stdlib bundle: string is_ipv4 / is_email_like,
-// i32 sum_of_digits / has_digit, string[] any_contains, HTTP
-// response builders (bad_request / internal_error). 7 helpers.
-//
-// is_ipv4's octet parse is a manual digit-walk rather than
-// parse_int — parse_int routes through i64 internally and hits
-// the native i64-comparison-across-i32-boundary bug for small
-// positive inputs (returns None on arm64 / x86-64 for "127").
-//
-// is_email_like binds the (string, string) tuple fields from
-// split_once to local `let`s before passing to `len`. Calling
-// `len(p.0)` directly on a tuple-field access crashes the arm64
-// backend (the string-header load folds incorrectly). The
-// workaround round-trips through a regular string local.
 func TestArm64StdlibBundle24(t *testing.T) {
 	src := `
 import "std/http";
@@ -7041,9 +6257,6 @@ function main(): i32 {
 	}
 }
 
-// Twenty-third stdlib bundle: string remove_all / before /
-// after / between, i32 is_between, byte is_letter, string[]
-// all_non_empty. 7 helpers.
 func TestArm64StdlibBundle23(t *testing.T) {
 	src := `
 import "std/string";
@@ -7097,9 +6310,6 @@ function main(): i32 {
 	}
 }
 
-// Twenty-second stdlib bundle: parse_hex_int / parse_bin_int,
-// is_in_range, matches_any, reverse_digits, is_palindrome,
-// to_array. 7 helpers.
 func TestArm64StdlibBundle22(t *testing.T) {
 	src := `
 import "std/string";
@@ -7146,9 +6356,6 @@ function main(): i32 {
 	}
 }
 
-// Twenty-first stdlib bundle: string is_int / is_float /
-// wrap, string[] take / drop, pack_rgb, byte is_printable /
-// is_control. 8 helpers.
 func TestArm64StdlibBundle21(t *testing.T) {
 	src := `
 import "std/math";
@@ -7203,9 +6410,6 @@ function main(): i32 {
 	}
 }
 
-// Twentieth stdlib bundle: i32 divmod (tuple), string
-// escape_shell / snake_case / kebab_case / is_valid_identifier,
-// is_valid_http_status. 6 helpers.
 func TestArm64StdlibBundle20(t *testing.T) {
 	src := `
 import "std/http";
@@ -7256,9 +6460,6 @@ function main(): i32 {
 	}
 }
 
-// Nineteenth stdlib bundle: byte digit_value / hex_value,
-// string count_byte, http_url_path_only,
-// http_user_agent_is_bot, i32 to_string_with_sep. 6 helpers.
 func TestArm64StdlibBundle19(t *testing.T) {
 	src := `
 import "std/http";
@@ -7308,9 +6509,6 @@ function main(): i32 {
 	}
 }
 
-// Eighteenth stdlib bundle: i32 ceil_div / round_up_to /
-// round_down_to, string remove_prefix / remove_suffix,
-// uuid.is_valid, format_duration_ms. 7 helpers.
 func TestArm64StdlibBundle18(t *testing.T) {
 	src := `
 import "std/format";
@@ -7356,9 +6554,6 @@ function main(): i32 {
 	}
 }
 
-// Seventeenth stdlib bundle: array max_by_len / sum_lens,
-// i32 log2_floor / sqrt_floor / to_rgb_hex, byte is_vowel,
-// string rstrip_newline. 7 helpers.
 func TestArm64StdlibBundle17(t *testing.T) {
 	src := `
 import "std/array";
@@ -7412,9 +6607,6 @@ function main(): i32 {
 	}
 }
 
-// Sixteenth stdlib bundle: string center / reverse_words,
-// i32 rotate_left / rotate_right, csv_parse_line,
-// http_header_value. 6 helpers.
 func TestArm64StdlibBundle16(t *testing.T) {
 	src := `
 import "std/csv";
@@ -7469,10 +6661,6 @@ function main(): i32 {
 	}
 }
 
-// Fifteenth stdlib bundle: array distinct / distinct_count,
-// i32 is_power_of_2 / next_power_of_2, byte
-// to_ascii_string, string hash_djb2, http_path_segments.
-// 7 helpers.
 func TestArm64StdlibBundle15(t *testing.T) {
 	src := `
 import "std/http";
@@ -7520,8 +6708,6 @@ function main(): i32 {
 	}
 }
 
-// Fourteenth stdlib bundle: trim_start_chars / trim_end_chars,
-// random_int, format_bytes, csv_escape / csv_join. 6 helpers.
 func TestArm64StdlibBundle14(t *testing.T) {
 	src := `
 import "std/csv";
@@ -7563,9 +6749,6 @@ function main(): i32 {
 	}
 }
 
-// Thirteenth stdlib bundle: array filter_non_empty /
-// count_non_empty, string word_count / escape_html /
-// strip_quotes, i32 to_string_padded. 6 helpers.
 func TestArm64StdlibBundle13(t *testing.T) {
 	src := `
 import "std/string";
@@ -7615,9 +6798,6 @@ function main(): i32 {
 	}
 }
 
-// Twelfth stdlib bundle: bit accessors (bit/set/clear/
-// toggle), byte newline predicate, line_count, HTTP
-// response builders, log_info/warn/error. 12 helpers.
 func TestArm64StdlibBundle12(t *testing.T) {
 	src := `
 import "std/http";
@@ -7674,9 +6854,6 @@ function main(): i32 {
 	}
 }
 
-// Eleventh stdlib bundle: splitn / first / last / take /
-// drop / chunks on strings, case-insensitive sort, i32
-// to_binary / to_oct. 11 helpers.
 func TestArm64StdlibBundle11(t *testing.T) {
 	src := `
 import "core/cmp";
@@ -7737,10 +6914,6 @@ function main(): i32 {
 	}
 }
 
-// Tenth stdlib bundle: numeric range constants (i32_max /
-// i32_min / i64_max / i64_min), one-sided trim (trim_start /
-// trim_end), trim_chars, case-insensitive prefix/suffix,
-// string sort, and string Ord.cmp. 11 helpers.
 func TestArm64StdlibBundle10(t *testing.T) {
 	src := `
 import "std/math";
@@ -7792,10 +6965,6 @@ function main(): i32 {
 	}
 }
 
-// Ninth stdlib bundle: case-insensitive ASCII search
-// (contains_ci / index_of_ci), multi-byte pad
-// (pad_start_str / pad_end_str), truncate with ellipsis,
-// digit count, pluralize. 7 new methods.
 func TestArm64StdlibBundle9(t *testing.T) {
 	src := `
 import "std/string";
@@ -7840,11 +7009,6 @@ function main(): i32 {
 	}
 }
 
-// Eighth stdlib bundle: i32 saturating / checked arithmetic
-// (overflow detection via sign-bit comparison — natives' i64
-// codegen has a comparison bug across the i32::MAX threshold,
-// so the prelude sticks to pure-i32 ops), string parse_bool,
-// (i32).to_hex(), HTTP method classifiers. 9 helpers.
 func TestArm64StdlibBundle8(t *testing.T) {
 	src := `
 import "std/i32";
@@ -7893,9 +7057,6 @@ function main(): i32 {
 	}
 }
 
-// Seventh stdlib bundle: i32[] product / avg, string leading/
-// trailing_count, hash_fnv32, escape_c, repeat_char,
-// http_status_text. 8 new helpers. Pure-prelude.
 func TestArm64StdlibBundle7(t *testing.T) {
 	src := `
 import "std/array";
@@ -7950,10 +7111,6 @@ function main(): i32 {
 	}
 }
 
-// Sixth stdlib bundle: i32 bit ops (count_ones, leading/
-// trailing_zeros, byte_swap), i64 power/gcd/lcm parity with
-// i32, range / range_step generators, repeat_with_sep. 11
-// new methods. Pure-prelude.
 func TestArm64StdlibBundle6(t *testing.T) {
 	src := `
 import "std/i32";
@@ -8008,9 +7165,6 @@ function main(): i32 {
 	}
 }
 
-// Fifth stdlib bundle: numeric methods (is_even/is_odd for
-// i32 + i64, pow, gcd, lcm), string search (last_index_of),
-// string casing (capitalize). 11 new methods. Pure-prelude.
 func TestArm64StdlibBundle5(t *testing.T) {
 	src := `
 import "std/i32";
@@ -8068,11 +7222,6 @@ function main(): i32 {
 	}
 }
 
-// Fourth stdlib bundle: punctuation classifier, byte→hex
-// helper, i32 sign trio (signum / is_positive / is_negative /
-// is_zero), string blanks/hex predicates, indent. 11 new
-// methods. All pure-prelude, no IR / checker work — sidesteps
-// the generic-prelude-function monomorph regression.
 func TestArm64StdlibBundle4(t *testing.T) {
 	src := `
 import "std/i32";
@@ -8123,11 +7272,6 @@ function main(): i32 {
 	}
 }
 
-// Third stdlib bundle: i64 / u32 / u64 scalar reductions
-// (abs only on i64; min/max/clamp on all three), plus three
-// string helpers (at / chars / reverse_bytes). 13 new methods.
-// chars() is the codepoint layer (#7231), so the multibyte case is
-// what separates it from the byte-level bytes().
 func TestArm64StdlibBundle3(t *testing.T) {
 	src := `
 import "std/i64";
@@ -8183,10 +7327,6 @@ function main(): i32 {
 	}
 }
 
-// Second stdlib bundle: byte case helpers (is_ascii_lower/is_ascii_upper/
-// to_ascii_lower/to_ascii_upper), i32 numeric methods (abs/min/max/clamp),
-// whole-string ASCII predicates (is_ascii_only / is_numeric /
-// is_alpha_only / is_alnum_only). 12 new methods total.
 func TestArm64StdlibBundle2(t *testing.T) {
 	src := `
 import "std/i32";
@@ -8508,11 +7648,6 @@ function main(): i32 {
 	}
 }
 
-// arm64 Map runtime — exercises the codegen-alias rewrites
-// (`map_new` → `map_new_impl`, `__method_Map_*` → `_impl`),
-// the new `__store_i32` / `__load_i32` / `__memset` runtime
-// helpers, and the lang prelude's open-addressing core. Same
-// shape as TestWASMStateMapAcrossCalls.
 func TestArm64Map(t *testing.T) {
 	for _, c := range []struct {
 		src  string
@@ -8632,18 +7767,6 @@ func TestArm64NestedTupleFieldExprType(t *testing.T) {
 	}
 }
 
-// `return (1234567890123, 42)` from a function with a
-// `(i64, i32)` signature must not be rejected as "return
-// type mismatch: function returns (i64, i32) but
-// expression is (i32, i32)". `settleNumeric` propagates
-// tuple-element widths into the AST, and the `Return` path
-// has to refresh its local `got`
-// from the post-settle tree — so the assignability check
-// still saw the pre-settle `(i32, i32)` shape and rejected
-// a valid return.
-//
-// Fix: feed `got` through `postSettleType` after
-// `settleNumeric`, mirroring the `Var` initializer path.
 func TestArm64ReturnTupleI64Settle(t *testing.T) {
 	src := `function pick(cond: boolean): (i64, i32) {
     if (cond) {
@@ -8689,16 +7812,6 @@ func TestArm64UnifyIfArmsPolymorphicNumeric(t *testing.T) {
 	}
 }
 
-// Sibling to #537: the match-expression arm-unify path
-// used a plain ast.Equal check, so a polymorphic NumberLit
-// (`0`) in one arm vs a concrete i64 expression (`a * b`)
-// in another erred at type-check time as
-// "match-expression arms differ: i64 vs i32" — the literal
-// never reached settleInt to be widened.
-//
-// Fix: route the arm unify through `unifyIfArms` so the
-// polymorphic-vs-concrete widening rules apply to match
-// arms the same way they do to if-expression arms.
 func TestArm64MatchExprUnifyPolyNumeric(t *testing.T) {
 	src := `enum E { A, B }
 function main(): i32 {
@@ -8717,19 +7830,6 @@ function main(): i32 {
 	}
 }
 
-// Regression for the `?` try-op on Option[i64] / Result[i64, _].
-// The IR's TryOp lowering loaded the success-path payload
-// at the hardcoded `ptr + 4` offset, but `emitEnumNew`
-// stores 8-byte payloads (i64 / f64 / two-word strings)
-// at `ptr + 8` to keep them 8-byte aligned past the
-// 4-byte tag. The success branch read the alignment
-// padding instead of the payload — every i64 unwrap
-// returned a 0-with-junk-high-bits value (observed:
-// 8213163615365103616 for an Option[i64] holding
-// 1234567890123).
-//
-// Fix: ask `payloadLayout` for the payload's actual
-// offset and emit that immediate instead of `4`.
 func TestArm64TryOpI64PayloadOffset(t *testing.T) {
 	src := `function fetch(): Option[i64] {
     return Some(1234567890123);
@@ -8755,23 +7855,6 @@ function main(): i32 {
 	}
 }
 
-// Regression for variant constructor calls whose payload
-// needed post-settle widening. `let o: Option[(i64, i32)] =
-// Some((1234567890123, 42));` failed with "cannot assign
-// Option[(i32, i32)] to variable of type Option[(i64, i32)]"
-// because postSettleType returned the pre-settle EnumType
-// type unchanged — it didn't recompute Args from the
-// post-settle constructor argument.
-//
-// settleNumeric DID propagate the destination type into
-// the tuple literal's elements (i64 stamped on the wide
-// literal), but the surrounding Some(...) call kept its
-// pre-settle (i32, i32) shape for the assignable check.
-//
-// Fix: postSettleType(*ast.Call) re-runs postSettleType on
-// each constructor argument when prior is an EnumType with
-// matching arity, rebuilding the Args from the resolved
-// argument types.
 func TestArm64PostSettleVariantCall(t *testing.T) {
 	src := `function main(): i32 {
     let o: Option[(i64, i32)] = Some((1234567890123, 42));
@@ -8789,22 +7872,6 @@ func TestArm64PostSettleVariantCall(t *testing.T) {
 	}
 }
 
-// `let arr: Option[i64][] = [Some(1234567890123), None,
-// Some(9876543210)];` failed with "array element type
-// Option, expected Option[i64]". The ArrayLit check
-// compared elements with raw `ast.Equal`, so a
-// `Some(literal)` (typed `Option[<polymorphic>]`) vs
-// a payloadless `None` (typed `Option` with empty Args)
-// triggered the error even though both shapes are
-// destination-compatible.
-//
-// Fix: ArrayLit element-check routes mismatches through
-// `unifyIfArms`, picking the concrete side. The
-// no-payload-vs-with-payload enum unify (already in
-// unifyIfArms) and the polymorphic-vs-concrete numeric
-// unify (#537) both flow through, so a mixed array of
-// Some / None lands on the concrete `Option[<num>]` and
-// settleNumeric walks each element with the right hint.
 func TestArm64ArrayLitOptionMixedSomeNone(t *testing.T) {
 	src := `function main(): i32 {
     let arr: Option[i64][] = [Some(1234567890123), None, Some(9876543210)];
@@ -8825,27 +7892,6 @@ func TestArm64ArrayLitOptionMixedSomeNone(t *testing.T) {
 	}
 }
 
-// `let m: Map[string, i64] = Map { "a": 1234567890123, ... };`
-// rejected with "cannot assign Map[string, i32] to variable
-// of type Map[string, i64]". MapLit's first-entry walk
-// returned `NumberType{Polymorphic: true}` for the bare
-// literal, and settleNumeric had no `ast.StructType` case
-// to flow the destination's V (i64) into each entry. The
-// IR also keyed off the MapLit's own `KeyType` /
-// `ValueType` stamps for the runtime keyKind / valKind
-// tags, so even compiling past the assignable check left
-// the box-allocator emitting the wrong stride for i64
-// values.
-//
-// Fix:
-//
-//   - settleNumeric gains a StructType case that walks each
-//     MapLit entry's key + value with the destination's
-//     `Map[K, V]` Args.
-//   - postSettleType returns a fresh StructType built from
-//     the resolved first entry, and refreshes the MapLit
-//     node's KeyType / ValueType in place so the IR sees
-//     the post-settle widths.
 func TestArm64MapLitI64ValueSettle(t *testing.T) {
 	src := `
 import "core/map";
@@ -8860,20 +7906,6 @@ function main(): i32 {
 	}
 }
 
-// Generic-function calls inferred their type-param T from
-// the arguments alone — for a polymorphic NumberLit arg the
-// inferred T was `NumberType{Polymorphic: true}` and the
-// arg's width never settled. `let x: i64 = pick(true,
-// 1234567890123, 0);` against
-// `function pick[T](cond: boolean, a: T, b: T): T`
-// silently truncated to `1912276171` (the literal's lower
-// 32 bits).
-//
-// Fix: settleInt gains an `*ast.Call` case that walks a
-// generic-function call's args, settling each arg position
-// that maps to the T parameter against the destination
-// width. The monomorph pass picks up the resolved width
-// via the refreshed `TypeArgs`.
 func TestArm64SettleGenericCallArgs(t *testing.T) {
 	src := `function pick[T](cond: boolean, a: T, b: T): T {
     if (cond) { return a; }
@@ -8889,20 +7921,6 @@ function main(): i32 {
 	}
 }
 
-// Sibling to #543. The settleInt Call case widened generic
-// arg widths against an integer destination, but
-// settleFloat had no Call case — so `let x: f64 = pick(true,
-// 3.14, 0.0);` printed `0` instead of `3.14`. The float
-// literal arguments stayed at the f32 / Polymorphic
-// default, the destination's 8-byte load read the wrong
-// half of the operand-stack slot, and the d0 register
-// received a zero.
-//
-// Fix: mirror the settleInt Call case in settleFloat —
-// recognise generic-function calls via
-// c.info.GenericFuncs, settle each `ParamType` arg
-// position against the destination float type, and
-// re-stamp TypeArgs[0] for monomorph.
 func TestArm64SettleGenericCallArgsFloat(t *testing.T) {
 	src := `function pick[T](cond: boolean, a: T, b: T): T {
     if (cond) { return a; }
@@ -8918,18 +7936,6 @@ function main(): i32 {
 	}
 }
 
-// Settle for `EnumType` hints recurses through if / match
-// arms. Before: `return match (c) { Set => Some(1234567890123),
-// Reset => Some(0), Init => None };` against an `Option[i64]`
-// return type silently produced `Some(0)` because the
-// settleNumeric EnumType case only matched a top-level
-// `*ast.Call` — when the variant constructor sat inside a
-// match arm body, the literal in `Some(...)` never saw
-// the destination's `T = i64` and stayed at the i32
-// default.
-//
-// Mirrors #534 (TupleType arm recursion) and #538
-// (match-arm unify) — same fan-out pattern for enum hints.
 func TestArm64SettleEnumInMatchAndIfArms(t *testing.T) {
 	src := `enum Cmd { Set, Reset, Init }
 function get(c: Cmd): Option[i64] {
@@ -8969,16 +7975,6 @@ function main(): i32 {
 	}
 }
 
-// Sibling to #530's NumberLit case. The IR's
-// b.exprType(*ast.FloatLit) returned nil — TupleLit
-// slot-sizing fell back to the 4-byte default for
-// `(3.14, 42)` against `(f64, i32)` and the f64 store /
-// load mis-aligned its operand-stack slot. Observed:
-// `let p: (f64, i32) = if (true) { (3.14, 42) } else
-// { (0.0, 0) };` printed `0` for p.0 instead of `3.14`.
-//
-// Fix: exprType(*ast.FloatLit) returns `FloatType{Width:
-// x.Width}` once the checker has stamped a width.
 func TestArm64FloatLitInTupleViaIfExpr(t *testing.T) {
 	src := `function main(): i32 {
     let cond: boolean = true;
@@ -8991,18 +7987,6 @@ func TestArm64FloatLitInTupleViaIfExpr(t *testing.T) {
 	}
 }
 
-// `struct S { v: Option[i64] }` initialised with `S { v:
-// None }` rejected with "field v: expected Option[i64],
-// got Option". The StructLit check used a raw `ast.Equal`
-// comparison between the field's declared type and the
-// value's `checkExpr` result — `None` checks to `Option`
-// with empty Args (the destination's T is unknown to the
-// caller), and the strict Equal fails.
-//
-// Same family as #541 (array element widen via
-// unifyIfArms). Fix: route StructLit's field-type mismatch
-// through `unifyIfArms`, which already knows
-// no-payload-vs-with-payload enums are compatible.
 func TestArm64StructFieldNoneOption(t *testing.T) {
 	src := `struct Wrap { inner: Option[i64] }
 function main(): i32 {
@@ -9025,29 +8009,6 @@ function main(): i32 {
 	}
 }
 
-// A match-expression returning i64 was lowered with a
-// scratch-slot type of polymorphic NumberType{} — that
-// landed as `local.set $T (i32)` on wasm, and the i64 arm
-// body's `local.set` failed with "type mismatch: expected
-// i32, found i64" at validation time.
-//
-// Native targets store every slot as an 8-byte word so
-// the mismatch was hidden, but wasm declares each local's
-// width explicitly. Symptom: any function whose body is
-// `return match (o) { Some(n) => i64-expr, None => 0 };`
-// rejected at wasm compile time.
-//
-// Fix: the IR's MatchExpr lowering walks the arm bodies,
-// picks the first non-polymorphic NumberType / FloatType
-// it finds via `exprType`, and uses that for the scratch
-// slot. Wasm's local declaration then sees i64 / f64 and
-// the validator accepts the store. The arm-body settle
-// from #534 / #545 already resolves widths; this just
-// consumes them.
-//
-// The test pin lives on arm64 (where it passed silently
-// before too) — the actual win is on wasm, exercised
-// implicitly by the full e2e suite.
 func TestArm64MatchExprI64ResultWidth(t *testing.T) {
 	src := `struct Node { v: i64 }
 function get(o: Option[Node]): i64 {
@@ -9067,15 +8028,6 @@ function main(): i32 {
 	}
 }
 
-// Sibling to #537. The polymorphic-numeric branch in
-// unifyIfArms had no float counterpart, so a polymorphic
-// FloatLit (`0.0`) in one if-arm vs a concrete f64
-// (struct field load) in another rejected the
-// if-expression as "branches differ: f64 vs f32".
-//
-// Fix: unifyIfArms also pairs a polymorphic FloatType
-// with a concrete FloatType, returning the concrete side
-// so the settle pass can stamp the literal's width.
 func TestArm64UnifyIfArmsPolymorphicFloat(t *testing.T) {
 	src := `struct N { v: f64 }
 function get(n: N, cond: boolean): f64 {
@@ -9092,26 +8044,6 @@ function main(): i32 {
 	}
 }
 
-// An IfExpr returning i64 silently emitted the wasm block
-// type as `(if (result i32))` even when both arms produced
-// i64. Native targets ignored the block type, so the bug
-// was wasm-only. The validator rejected:
-//
-//	"type mismatch: expected i32, found i64"
-//
-// Triggered when arm bodies aren't compile-time-constant
-// (e.g. a function-parameter `a: i64` referenced from an
-// arm); literal-only IfExprs escaped because the IR's
-// constant fold inlined them.
-//
-// Mirrors the MatchExpr scratch-slot fix from #550 — same
-// "consume the post-settle width" pattern, applied to
-// IfExpr's BlockType selection. Added i64 / f64 branches
-// for the wide-numeric arms.
-//
-// Test pin lives on arm64 (where it passed silently) —
-// the actual win is on wasm, exercised implicitly by the
-// e2e suite.
 func TestArm64IfExprI64BlockType(t *testing.T) {
 	src := `function pickOpt(cond: boolean, a: i64, b: i64): i64 {
     return if (cond) { a } else { b };
@@ -9141,23 +8073,6 @@ function main(): i32 {
 	}
 }
 
-// A match-expression returning a string was lowered with
-// a scratch slot typed as polymorphic NumberType{} — that
-// landed as a single i32 local on wasm32. String values
-// flow as the two-word `(data, len)` ABI on wasm32, so
-// the arm body's pair-push failed validation
-// ("expected i32 but nothing on stack") at the `local.set`
-// site that expected a single i32 instead of a pair.
-//
-// Same code path as the i64 / f64 fix from #550 — the
-// arm-body type walk now also recognises StringType and
-// carries it through, so the wasm codegen declares
-// `<slot>_data` and `<slot>_len` for the two-word fan
-// out.
-//
-// Test pin lives on arm64 (where the bug was hidden by
-// the i32 single-pointer string ABI); the actual win is
-// on wasm via the e2e suite.
 func TestArm64MatchExprStringResult(t *testing.T) {
 	src := `
 import "std/i64";
@@ -9177,23 +8092,6 @@ function main(): i32 {
 	}
 }
 
-// unifyIfArms used to bail on tuple types whose elements
-// only differed by polymorphic-vs-concrete width. The
-// previous `ast.Equal(a, b)` check failed for `(i32, f32)`
-// vs `(i64, f32)` (when one arm's first element was a
-// polymorphic NumberLit and the other was a concrete i64
-// expression), and the if-expression rejected with:
-//
-//	branches differ: (i32, f32) vs (i64, f32)
-//
-// The same for `(i64, f64)` mixed with `(i64, f32)` —
-// any whole-tuple-Equal failure short-circuited the
-// per-element widening.
-//
-// Fix: unifyIfArms learns to recurse element-wise into
-// TupleType. The integer / float widening rules already
-// added (#537, #551) flow through each element pair and
-// the surrounding settle pass stamps the final widths.
 func TestArm64UnifyIfArmsTupleElementWiden(t *testing.T) {
 	src := `function pick(b: boolean): (i64, f64) {
     return if (b) { (1234567890123, 3.14) } else { (0 as i64, 0.0) };
@@ -9208,29 +8106,6 @@ function main(): i32 {
 	}
 }
 
-// A generic function returning a tuple of type params
-// failed type-check with the puzzling error "function
-// returns (T, T) but expression is (T, T)" — both sides
-// rendered identically.
-//
-// Root cause: `resolveType` had no `ast.TupleType` /
-// `ast.SliceType` case. The parser builds bare type
-// identifiers as `StructType{Name:"T"}`; resolveType walks
-// the function's params + return type rewriting those into
-// `ParamType{Name:"T"}` when the name is in the type-param
-// set. With no TupleType recursion, a `(T, T)` return type
-// kept its elements as `StructType` while `checkExpr((x,
-// x))` returned a `TupleType` over the param's
-// already-resolved `ParamType`. `ast.Equal` compared
-// StructType vs ParamType and returned false; the user
-// saw identical-looking sides reject each other.
-//
-// Same hole for `SliceType`, which had a `case ArrayType`
-// already but the slice form (parser builds `[T]` as
-// `ast.SliceType`) silently kept its inner StructType.
-//
-// Fix: resolveType recurses into TupleType.Elems and
-// SliceType.Elem.
 func TestArm64ResolveTypeTupleSliceGeneric(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -9257,31 +8132,6 @@ function main(): i32 {
 	}
 }
 
-// `resolveTypesInBlock` didn't carry the surrounding
-// function's type-param set into local Var declarations,
-// nested FuncDecls, or nested control-flow / Match arms.
-// As a result, a generic function with a local
-// `let m: Map[string, V] = map_new(0)` kept V as
-// `StructType{Name:"V"}` (the parser's default for a
-// bare-name type identifier) instead of `ParamType{"V"}`.
-// The Map method dispatch then substituted Map's V with
-// `StructType{"V"}`, but `checkExpr(v)` on the function
-// param returned `ParamType{"V"}` — `ast.Equal` saw them
-// as different and the user got the puzzling:
-//
-//	argument 3: expected V, got V
-//
-// — with identical-looking sides.
-//
-// Same root family as the resolveType TupleType /
-// SliceType fix from #558. This PR threads the params
-// map through resolveTypesInBlock so local Var types,
-// nested FuncDecl signatures, and control-flow / Match
-// arm bodies all consult the type-param set.
-//
-// Test pin: generic Map-returning function with a
-// local `Map[string, V]` literal — `mk[V](v) ->
-// Map[string, V]` round-trips a key/value via set + get.
 func TestArm64GenericLocalMapType(t *testing.T) {
 	src := `
 import "core/map";
@@ -9300,29 +8150,6 @@ function main(): i32 {
 	}
 }
 
-// `let b: Box[i64] = Box { v: 1234567890123 };` failed
-// with "cannot assign Box[i32] to variable of type
-// Box[i64]". The StructLit checker's generic inference
-// only saw the literal's pre-settle width — the `T = i32`
-// default never widened against the destination
-// `Box[i64]` annotation.
-//
-// Same family as the MapLit widening from #542 / the
-// EnumType variant call refresh from #540. The generic
-// struct literal needed:
-//
-//  1. settleNumeric(StructType{Args:[i64]}) walking
-//     each field with the substituted type
-//     (`Box.v` → i64), AND
-//  2. postSettleType refreshing the StructType.Args
-//     from the literal's TypeArgs stamp so the
-//     assignable check sees the resolved shape.
-//
-// Fix: settleNumeric's StructType case handles
-// `*ast.StructLit` with a generic StructDecl — builds
-// the type-param sub, settles each field's value, and
-// stamps `sl.TypeArgs`. postSettleType for StructLit
-// returns the refreshed StructType from `x.TypeArgs`.
 func TestArm64GenericStructLitSettle(t *testing.T) {
 	src := `struct Box[T] { v: T }
 function main(): i32 {
@@ -9335,36 +8162,6 @@ function main(): i32 {
 	}
 }
 
-// Two stability / usability bugs hit when nested array
-// literals included an empty inner array. Both were
-// hiding behind each other:
-//
-//  1. `ast.ArrayType.String()` panicked with "invalid
-//     memory address or nil pointer dereference" when
-//     `Elem == nil`. The error formatter for the
-//     checker's "array element: expected Y, got X"
-//     message tried to format the empty-array literal's
-//     pre-settle type — which is `ArrayType{Elem: nil}`
-//     because the empty `[]` has no element. The result
-//     was a crash dump in the error message instead of
-//     the actual diagnostic. Same hole in `SliceType`.
-//  2. Even with the formatter fixed, the checker still
-//     rejected `let arr: i64[][] = [[1234567890123],
-//     [9876543210, 100], []];` as "array element type
-//     [], expected i64[]". The empty `[]`'s type
-//     doesn't carry an Elem; unifyIfArms had no rule
-//     for empty-array-vs-typed-array. Adding that rule
-//     lets the empty inner array inherit the outer's
-//     element type from a non-empty sibling.
-//
-// Fix:
-//   - ArrayType.String() and SliceType.String() return
-//     "[]" when Elem is nil instead of dereferencing.
-//   - unifyIfArms learns the empty-array compatibility
-//     rule (mirrored for SliceType).
-//
-// Test pin: a 2D i64 array literal with an empty inner
-// element.
 func TestArm64ArrayLitEmptyInnerUnify(t *testing.T) {
 	src := `function main(): i32 {
     let arr: i64[][] = [[1234567890123], [9876543210, 100], []];
@@ -9383,7 +8180,6 @@ func TestArm64Floats(t *testing.T) {
 		src  string
 		want int
 	}{
-		// f32 arithmetic
 		{`function main(): i32 {
     let a: f32 = 3.5;
     let b: f32 = 1.5;
@@ -9394,20 +8190,17 @@ func TestArm64Floats(t *testing.T) {
     let b: f32 = 3.0;
     return (a / b) as i32;
 }`, 3},
-		// f64 arithmetic + comparison
 		{`function main(): i32 {
     let pi: f64 = 3.14f64;
     let two: f64 = 2.0f64;
     if (pi * two > 6.0f64) { return 42; }
     return 0;
 }`, 42},
-		// Mixed: i32 → f64 → i32 round trip.
 		{`function main(): i32 {
     let n: i32 = 7;
     let f: f64 = (n as f64) * 1.5f64;
     return f as i32;
 }`, 10},
-		// Float negation.
 		{`function main(): i32 {
     let x: f32 = 5.5;
     let y: f32 = 0.0 - x;
@@ -9422,10 +8215,6 @@ func TestArm64Floats(t *testing.T) {
 	}
 }
 
-// arm64 indirect calls: OpConstFunc (function value
-// materialisation via adrp + add :lo12:) + OpCallIndirect
-// (blr xN). Lets handlers be passed as function values to
-// generic helpers like serve.run.
 func TestArm64IndirectCall(t *testing.T) {
 	_, code := compileAndRunArm64(t, `function add(a: i32, b: i32): i32 { return a + b; }
 function main(): i32 {
@@ -9437,10 +8226,6 @@ function main(): i32 {
 	}
 }
 
-// arm64 print / write / putchar — stdout builtins lowered to
-// direct write(2) syscalls. Verifies the asm wires the right
-// fd, length, and newline behaviour (`print` adds one, `write`
-// does not).
 func TestArm64Print(t *testing.T) {
 	out, code := compileAndRunArm64(t, `function main(): i32 {
     print("hello arm64");
@@ -9459,12 +8244,6 @@ func TestArm64Print(t *testing.T) {
 	}
 }
 
-// arm64 args() — materialises argv as a length-prefixed
-// string[]. compileAndRunArm64 doesn't pass extra args, so
-// we run the binary with a fixed argv list and
-// check len + each entry. argv[0] is implementation-defined
-// (the binary path under emulation, often `/tmp/...`); we
-// just check that it ends with our binary name.
 func TestArm64Args(t *testing.T) {
 	src := `function main(): i32 {
     let a: string[] = args();
@@ -9481,7 +8260,6 @@ func TestArm64Args(t *testing.T) {
 	if got, want := cmd.ProcessState.ExitCode(), 4; got != want {
 		t.Errorf("exit = %d (argc), want %d", got, want)
 	}
-	// argv[0] is the binary path; check just the user args.
 	for _, want := range []string{"alpha\n", "beta\n", "gamma\n"} {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("output missing %q\n--- got ---\n%s", want, out)
@@ -9489,8 +8267,6 @@ func TestArm64Args(t *testing.T) {
 	}
 }
 
-// Mirror of TestX86_64SliceMake — slice construction +
-// indexing now works on arm64 for all four element strides.
 func TestArm64SliceMake(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -9525,9 +8301,6 @@ func TestArm64SliceMake(t *testing.T) {
 	}
 }
 
-// arm64 random_bytes(n) — kernel CSPRNG fill. Verifies length
-// matches and that the output isn't all zeros (extremely unlikely
-// from getrandom + actual entropy).
 func TestArm64RandomBytes(t *testing.T) {
 	out, code := compileAndRunArm64(t, `function main(): i32 {
     let s: u8[] = random_bytes(16);
@@ -9552,11 +8325,6 @@ func TestArm64RandomBytes(t *testing.T) {
 	}
 }
 
-// arm64 random_i32() — single CSPRNG i32 via a 4-byte getrandom
-// read. Cross-backend companion to the interp / x86-64 / wasm
-// random_i32 paths (issue #2747). Folds two draws into a live-
-// and-varying signal: exit 7 = good, 0 = stuck-zero, 1 = the two
-// draws matched (non-varying generator).
 func TestArm64RandomI32(t *testing.T) {
 	_, code := compileAndRunArm64(t, `function main(): i32 {
     let a: i32 = random_i32();
@@ -9570,21 +8338,13 @@ func TestArm64RandomI32(t *testing.T) {
 	}
 }
 
-// arm64 s.as_bytes() — non-copying (data, len) → slice<u8> view.
-// Under the two-word string ABI the receiver arrives as
-// (data, len); the helper builds a slice header aliasing those
-// bytes (issue #2747). Verifies the slice length and that
-// indexing reads back the original bytes for both inline-sized
-// ("ABC") and heap-sized ("ABCDEFGHIJ") source strings.
 func TestArm64StringAsBytes(t *testing.T) {
-	// 3 (len) + 65+66+67 = 201.
 	if _, code := compileAndRunArm64(t, `function main(): i32 {
     let b = "ABC".as_bytes();
     return b.len() + (b[0] as i32) + (b[1] as i32) + (b[2] as i32);
 }`); code != 201 {
 		t.Errorf("inline as_bytes: exit = %d, want 201 (3 + 65+66+67)", code)
 	}
-	// 10 (len) + 'J' (74) = 84.
 	if _, code := compileAndRunArm64(t, `function main(): i32 {
     let b = "ABCDEFGHIJ".as_bytes();
     return b.len() + (b[9] as i32);
@@ -9593,9 +8353,6 @@ func TestArm64StringAsBytes(t *testing.T) {
 	}
 }
 
-// arm64 eprint + exit. eprint(s) writes to fd 2 (stderr); exit(code)
-// is a direct exit syscall and skips main's normal return path.
-// Combined: write to stderr, then bail with a specific code.
 func TestArm64EprintExit(t *testing.T) {
 	out, code := compileAndRunArm64(t, `function main(): i32 {
     eprint("oops");
@@ -9605,19 +8362,12 @@ func TestArm64EprintExit(t *testing.T) {
 	if code != 7 {
 		t.Errorf("exit = %d, want 7 (exit(7) should not fall through to return 99)", code)
 	}
-	// compileAndRunArm64 captures CombinedOutput so stderr is folded in.
 	want := "oops\n"
 	if out != want {
 		t.Errorf("output = %q, want %q", out, want)
 	}
 }
 
-// arm64 TCP primitives: tcp_listen / tcp_close round-trip
-// validates the socket / bind / listen / close syscall
-// chain. Port 0 means "kernel-assigned ephemeral" — fast
-// way to confirm the listener works without picking a free
-// port. Full HTTP server e2e (handle() + auto-main +
-// serve.run + parser/serializer composed) is a follow-up.
 func TestArm64TcpListen(t *testing.T) {
 	_, code := compileAndRunArm64(t, `function main(): i32 {
     let fd: i32 = tcp_listen(0);
@@ -9630,14 +8380,6 @@ func TestArm64TcpListen(t *testing.T) {
 	}
 }
 
-// `now_unix_ms()` on the arm64 backend lowers to a
-// `clock_gettime(CLOCK_REALTIME, &ts)` syscall (asm-generic
-// 113) + a `tv_sec * 1000 + tv_nsec / 1_000_000` reduction.
-// Asserts the returned ms value is in a plausible range —
-// past a sentinel epoch (2023) and before the year-9999 wall.
-// Closes docs/STDLIB-DESIGN-RESEARCH.md Rec §4 Phase 2.x on
-// arm64 (Linux); Darwin gets caught by the pre-scan
-// "not-yet-ported" guard.
 func TestArm64InstantNow(t *testing.T) {
 	_, code := compileAndRunArm64(t, `
 import "std/time";
@@ -9653,30 +8395,7 @@ function main(): i32 {
 	}
 }
 
-// End-to-end arm64 HTTP handler. Compiles a program that only
-// defines `function handle(req: HttpRequest, plat: platform.Platform):
-// HttpResponse` — the checker synthesises `main()` from it as
-// `serve.supervise(serve.__port_from_env("PORT", 8080), serve.config(), handle)`, and
-// the serve loop constructs a Platform per request before calling
-// the handler. The
-// resulting binary listens on the PORT env var, parses an
-// HTTP/1.1 request, calls the user handler, and writes the
-// serialised response back. Then this test sends two
-// back-to-back requests on separate connections and asserts
-// the bodies — the second one reuses the same long-lived
-// process, proving handler-built allocations from the first
-// request are reclaimed (by reference counting) rather than
-// leaking across requests.
-//
-// Runs under qemu-aarch64; the binary opens a real TCP socket
-// on the host's kernel (user-mode emulation forwards syscalls
-// 1:1). Picks a port via Go's net.Listen("tcp", ":0") then
-// closes the listener — tiny TOCTOU window before the binary
-// claims it, acceptable for CI.
 func TestArm64HttpHandler(t *testing.T) {
-	// Pick a free port. Close the Go listener immediately so
-	// the lang binary can claim it. Race window is small in
-	// practice.
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("no free TCP port: %v", err)
@@ -9704,9 +8423,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	}()
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	// Poll-connect until the lang binary has actually bound
-	// the port (qemu startup + tcp_listen take a few hundred
-	// ms). 10s deadline is generous for CI.
 	deadline := time.Now().Add(10 * time.Second)
 	var ready bool
 	for time.Now().Before(deadline) {
@@ -9722,10 +8438,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 		t.Fatalf("server never bound on %s within 10s", addr)
 	}
 
-	// Two requests, two connections — the second reuses the
-	// process after the first request's allocations have been
-	// reclaimed by reference counting. Each asks the server to
-	// close, so reading to end of stream sees the whole response.
 	cases := []struct {
 		req  string
 		want string
@@ -9747,7 +8459,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 		if err != nil {
 			t.Fatalf("request %d read: %v", i, err)
 		}
-		// HTTP/1.1 response: status-line + headers + blank line + body.
 		body := string(resp)
 		if !strings.Contains(body, "HTTP/1.1 200") {
 			t.Errorf("request %d: missing 200 status\n--- got ---\n%s", i, body)
@@ -9758,9 +8469,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	}
 }
 
-// arm64 control flow: while loop, if/else, comparison ops.
-// Verifies OpBlock / OpLoop / OpIf / OpEnd / OpBr / OpBrIf
-// scope tracking + the cbz / cbnz branch idioms.
 func TestArm64ControlFlow(t *testing.T) {
 	for _, c := range []struct {
 		src  string
@@ -9794,9 +8502,6 @@ function main(): i32 {
 	}
 }
 
-// Tail-call optimisation: recursion that would overflow the
-// qemu-aarch64 default stack returns cleanly with the right
-// value. TestSelfHostTcoIR holds the deeper cases per target.
 func TestArm64TailCall(t *testing.T) {
 	src := `function sum_to(n: i32, acc: i32): i32 {
     if (n == 0) { return acc; }
@@ -9808,22 +8513,11 @@ function main(): i32 {
 	binPath, qemu := compileArm64Bin(t, src)
 	cmd := runArm64Bin(qemu, binPath)
 	_, _ = cmd.CombinedOutput()
-	// 5,000,050,000 → i32 (705,082,704) → exit code (mod 256) = 80.
 	if got := cmd.ProcessState.ExitCode(); got != 80 {
 		t.Errorf("sum_to(100000, 0) → exit = %d, want 80", got)
 	}
 }
 
-// Closure factory pattern: `let f = makeAdder(7); f(35)`. The
-// IR's Defunctionalise pass rewrites `f(35)` into a direct call
-// to the hoisted `add` with env_ptr pulled out of the closure
-// pair at offset +ptrW (=8 on native).
-// Mirror of TestX86_64ClosureAliasing — closure values flowing
-// through intermediate variables get defunctionalized to direct
-// calls instead of crashing on call-of-pair-pointer in the
-// backend's OpCallIndirect.
-// Mirror of TestX86_64ClosureChainNoAlloc: closure-pair elision
-// for chained no-capture aliases must work on arm64 too.
 func TestArm64ClosureChainNoAlloc(t *testing.T) {
 	_, code := compileAndRunArm64(t, `function main(): i32 {
     function answer(): i32 { return 7; }
@@ -9836,7 +8530,6 @@ func TestArm64ClosureChainNoAlloc(t *testing.T) {
 	}
 }
 
-// Mirror of TestX86_64ResultPairForm.
 func TestArm64ResultPairForm(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -9871,9 +8564,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestX86_64PointerPayloadPairForm — pointer-shaped
-// payloads through pair-form on arm64. 16-byte heap box,
-// 8-byte payload store at offset 8, 8-byte consumer read.
 func TestArm64PointerPayloadPairForm(t *testing.T) {
 	src := `function pick(b: boolean): Option[string] {
     if (b) { return Some("hello world"); }
@@ -9891,8 +8581,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestX86_64UseCallback: closure-pair ABI uniforming
-// on arm64. `use` + function-value-as-param now works.
 func TestArm64UseCallback(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -9951,8 +8639,6 @@ function main(): i32 {
 	}
 }
 
-// Two closures over different captured values must not share
-// state — separate env blocks per MakeClosure.
 func TestArm64ClosureMultipleInstances(t *testing.T) {
 	src := `function makeAdder(n: i32): (i32) => i32 {
     function add(x: i32): i32 { return x + n; }
@@ -9963,16 +8649,11 @@ function main(): i32 {
     let add10 = makeAdder(10);
     return add5(1) + add10(1);
 }`
-	// (5+1) + (10+1) = 17
 	if _, code := compileAndRunArm64(t, src); code != 17 {
 		t.Errorf("got %d, want 17", code)
 	}
 }
 
-// Direct nested-function call (the ElideClosurePair case): the
-// slot writer IS OpMakeClosure, so elide fires and the closure
-// pair allocation collapses to just an env_ptr in the slot.
-// Exercises the OpMakeEnv path.
 func TestArm64ClosureCapturesParamAndVar(t *testing.T) {
 	src := `function outer(seed: i32): i32 {
     let bonus: i32 = 100;
@@ -9980,16 +8661,11 @@ func TestArm64ClosureCapturesParamAndVar(t *testing.T) {
     return inner(2);
 }
 function main(): i32 { return outer(40); }`
-	// 2 + 40 + 100 = 142
 	if _, code := compileAndRunArm64(t, src); code != 142 {
 		t.Errorf("got %d, want 142", code)
 	}
 }
 
-// String capture — pointer-shaped capture takes a full ptr-width
-// (8-byte) slot in the env block. Verifies arm64CaptureSlotSize
-// routes through `str x1, ...` rather than the 4-byte `str w1`
-// truncation path.
 func TestArm64ClosureCapturesString(t *testing.T) {
 	src := `function outer(s: string): i32 {
     function inner(): i32 { return s.len(); }
@@ -10001,13 +8677,6 @@ function main(): i32 { return outer("hello"); }`
 	}
 }
 
-// Closure RETURNS a captured string under the two-word `(data,
-// len)` ABI. The OpCallClosureDirect emit must push BOTH x0
-// (data) and x1 (len) post-call so the subsequent OpReturn pops
-// the full pair. Regression for the bug where only x0 was
-// pushed, leaving the caller's len-popping `ldr x1, [sp]` to
-// re-read the data half and `ldr x0, [sp]` to read an unrelated
-// stale stack slot.
 func TestArm64ClosureReturnsCapturedString(t *testing.T) {
 	src := `function outer(s: string): string {
     function inner(): string { return s; }
@@ -10023,13 +8692,6 @@ function main(): i32 {
 	}
 }
 
-// Method call on a captured string from inside an anonymous
-// lambda. Closureconv hoists Lambda → MakeClosure at IR-lower
-// time, but treeshake runs FIRST — so without a Lambda case
-// in `walkExpr`, the lambda body is invisible to liveness
-// analysis and `__method_string_trim` (only reachable through
-// the lambda) gets pruned. Link then fires "undefined
-// reference to __method_string_trim".
 func TestArm64LambdaCallsMethodOnCapturedString(t *testing.T) {
 	src := `
 import "std/string";
@@ -10045,11 +8707,6 @@ function main(): i32 {
 	}
 }
 
-// Two anonymous lambdas hoisted in the same converter session.
-// Both arrive at closureconv with origin name "lambda"; the
-// freshName counter used to key off `len(c.hoisted)` so both
-// hoists produced `__closure_lambda_1` and the assembler failed
-// with "symbol already defined". Per-origin counting fixes it.
 func TestArm64NestedLambdaUniqueNames(t *testing.T) {
 	src := `function main(): i32 {
     let outer = (): i32 => {
@@ -10067,14 +8724,6 @@ func TestArm64NestedLambdaUniqueNames(t *testing.T) {
 	}
 }
 
-// Anonymous lambda with body-local vars. Regression for the
-// "var X has no slot (compiler bug)" the IR panicked with
-// when checker stored the body's Var nodes against a synthetic
-// FuncDecl pointer that closureconv never re-keyed onto the
-// hoisted lambda. Cover takes a scalar local (`sq`) and a
-// string-typed local (`tag`) — the latter exercises the
-// pointer-width slot the original failure surfaced inside
-// closures that captured strings.
 func TestArm64LambdaWithBodyLocals(t *testing.T) {
 	src := `function main(): i32 {
     let greet = "hi";
@@ -10095,9 +8744,6 @@ func TestArm64LambdaWithBodyLocals(t *testing.T) {
 	}
 }
 
-// Multi-capture closure: two i32 captures laid out at offsets 0
-// and 4 in the env block. Verifies the running-offset
-// arithmetic in emitMakeClosureOrEnv.
 func TestArm64ClosureMultiCapture(t *testing.T) {
 	src := `function make2(a: i32, b: i32): (i32) => i32 {
     function f(x: i32): i32 { return a + b + x; }
@@ -10112,26 +8758,17 @@ function main(): i32 {
 	}
 }
 
-// Pointer + scalar captures mixed in one closure — pointer slot
-// is 8 bytes, scalar slot is 4 bytes. Exercises mixed-width
-// offset arithmetic.
 func TestArm64ClosureCapturesMixedPointers(t *testing.T) {
 	src := `function outer(s: string, n: i32): i32 {
     function inner(): i32 { return s.len() + n; }
     return inner();
 }
 function main(): i32 { return outer("hi", 40); }`
-	// len("hi") + 40 = 42
 	if _, code := compileAndRunArm64(t, src); code != 42 {
 		t.Errorf("got %d, want 42", code)
 	}
 }
 
-// Mirror of TestWASMClosureCapturesTuple — `targetTupleType`
-// now recognises `*ast.CaptureRef` so `t.0` / `t.1` inside a
-// closure body resolves through the tuple-offset path instead
-// of falling through to the struct path and erroring with
-// `field access on unresolved struct ""` at IR-emit time.
 func TestArm64ClosureCapturesTuple(t *testing.T) {
 	src := `function build(): () => i64 {
     let t: (i64, i64) = (1000000000000i64, 2000000000000i64);
@@ -10148,10 +8785,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestWASMLenOfClosureReturningString — `exprType`
-// of a *ast.Call now resolves function-typed locals so the
-// `len()` dispatch picks `OpStrLen` over the array-shape
-// `[ptr-4]; load`.
 func TestArm64LenOfClosureReturningString(t *testing.T) {
 	src := `function makeReader(): () => string {
     function build(): string { return "hello"; }
@@ -10166,9 +8799,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestWASMClosureFStringCapture — closureconv now
-// recurses through FString.Desugared so captured-name idents
-// inside `f"…{cap}…"` get rewritten to CaptureRef nodes.
 func TestArm64ClosureFStringCapture(t *testing.T) {
 	src := `
 import "std/string";
@@ -10186,8 +8816,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestWASMMutableCapturedVar — assignment to a
-// captured outer-scope variable now stores into the env block.
 func TestArm64MutableCapturedVar(t *testing.T) {
 	src := `function makeCounter(): () => i32 {
     let count: i32 = 0;
@@ -10209,9 +8837,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestWASMClosureCallsCapturedFn — the IR's call()
-// path now handles `*ast.CaptureRef` callees so calling a
-// captured function value inside a nested closure works.
 func TestArm64ClosureCallsCapturedFn(t *testing.T) {
 	src := `function makeAdder(n: i32): (i32) => i32 {
     function add(x: i32): i32 { return x + n; }
@@ -10231,11 +8856,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestWASMClosureRecursiveSelfCall — closureconv now
-// rewrites a recursive self-reference inside the hoisted body
-// from the original local name (`fact`) to the hoisted name
-// (`__closure_fact_1`) and forwards `__env` through so the
-// recursive callee gets the same captured-state block.
 func TestArm64ClosureRecursiveSelfCall(t *testing.T) {
 	src := `function makeFact(): (i32) => i32 {
     function fact(n: i32): i32 {
@@ -10406,12 +9026,6 @@ func TestArm64IfLet(t *testing.T) {
 	}
 }
 
-// Mirror of TestX86_64Usize. arm64 + arm64-darwin are the
-// targets that actually NEED usize — Linux qemu has a low heap
-// (< 4 GiB) so 32-bit truncation passes by coincidence; macOS's
-// high heap is the real test bed once the prelude pointer
-// locals migrate to usize.
-// Mirror of TestX86_64UsizeAutowiden.
 func TestArm64UsizeAutowiden(t *testing.T) {
 	src := `function offset_compute(base: usize, idx: i32, stride: i32): usize {
     return base + idx * stride;
@@ -10427,10 +9041,6 @@ function main(): i32 {
 	}
 }
 
-// TestArm64UsizeDivRem — parity mirror of TestX86_64UsizeDivRem. arm64
-// already resolves WidthPtr to the 64-bit register form via regForWidth,
-// so this guards against a regression and documents the cross-backend
-// contract. See docs/ADVERSARIAL-REVIEW-2026-06.md (B1).
 func TestArm64UsizeDivRem(t *testing.T) {
 	src := `function main(): i32 {
     let x: usize = 5000000000 as usize;
@@ -10446,13 +9056,8 @@ func TestArm64UsizeDivRem(t *testing.T) {
 	}
 }
 
-// TestArm64LargeStringLiteral — a string literal longer than 64 KiB must
-// compile: its byte length no longer fits `mov w0, #imm16`, so OpConstStr
-// must fall back to the literal-pool form. Regression for B3 in
-// docs/ADVERSARIAL-REVIEW-2026-06.md (the assembler would reject the
-// over-wide `mov` before the fix).
 func TestArm64LargeStringLiteral(t *testing.T) {
-	const n = 70000 // > 0xffff
+	const n = 70000
 	src := fmt.Sprintf("function main(): i32 {\n    let s: string = %q;\n    if (s.len() == %d) { return 7; }\n    return 1;\n}", strings.Repeat("a", n), n)
 	_, code := compileAndRunArm64(t, src)
 	if code != 7 {
@@ -10460,8 +9065,6 @@ func TestArm64LargeStringLiteral(t *testing.T) {
 	}
 }
 
-// TestArm64FloatToUsize — parity mirror of TestX86_64FloatToUsize for the
-// shared-IR B2 fix. See docs/ADVERSARIAL-REVIEW-2026-06.md.
 func TestArm64FloatToUsize(t *testing.T) {
 	src := `function main(): i32 {
     let f: f64 = 5000000000.0;
@@ -10475,11 +9078,6 @@ func TestArm64FloatToUsize(t *testing.T) {
 	}
 }
 
-// Mirror of TestX86_64WideScalarMap. Native arm64 (Linux qemu)
-// shares the slot-wider-than-declared-type coincidence with
-// x86-64 — i64 / f64 / u64 keys + values flow through the
-// `(m: i32, k: i32, v: i32)` prelude signatures without
-// truncation.
 func TestArm64WideScalarMap(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -10533,14 +9131,6 @@ function main(): i32 {
     let v2: i32 = m.get_or(k2, 99);
     return v1 + v2;
 }`, 3},
-		// m.keys() on Map[i64, _] needs to materialise an i64[]
-		// snapshot, not the i32[] truncation the lang-level
-		// `__map_keys_impl` would produce with its hard-coded
-		// 4-byte destStride. The IR's emitWideMapKeys walks the
-		// entries and memcpy's the raw 8-byte K slot into the
-		// result. Without it, every key gets its upper 32 bits
-		// dropped — distinct high-bit keys collide into the same
-		// snapshot value.
 		{"keys() preserves 8-byte values", `
 import "core/map";
 function main(): i32 {
@@ -10602,10 +9192,6 @@ function main(): i32 {
 	}
 }
 
-// compileArm64InDir builds `src` and runs the resulting binary
-// in a fresh temp dir seeded with `seed` files (path → content).
-// Returns stdout, exit code, AND the dir so callers can read
-// back files the program created. Mirrors wasm's runWasmInDir.
 func compileArm64InDir(t *testing.T, src string, seed map[string]string) (stdout string, exitCode int, dir string) {
 	t.Helper()
 	binPath, qemu := compileArm64Bin(t, src)
@@ -10621,8 +9207,6 @@ func compileArm64InDir(t *testing.T, src string, seed map[string]string) (stdout
 	return string(out), cmd.ProcessState.ExitCode(), dir
 }
 
-// read_file returns Ok(content) for a present file. Mirrors
-// TestWASMReadFileOk's shape.
 func TestArm64ReadFileOk(t *testing.T) {
 	src := `function main(): i32 {
     match (read_file("greeting.txt")) {
@@ -10639,8 +9223,6 @@ func TestArm64ReadFileOk(t *testing.T) {
 	}
 }
 
-// Missing files surface as `IoError.NotFound(path)`. The path
-// the caller passed must round-trip through the variant payload.
 func TestArm64ReadFileNotFound(t *testing.T) {
 	src := `function main(): i32 {
     match (read_file("does_not_exist.txt")) {
@@ -10655,14 +9237,11 @@ func TestArm64ReadFileNotFound(t *testing.T) {
     return 0 - 1;
 }`
 	_, code, _ := compileArm64InDir(t, src, nil)
-	// len("does_not_exist.txt") = 18
 	if code != 18 {
 		t.Errorf("got %d, want 18 (len of missing-file path via NotFound payload)", code)
 	}
 }
 
-// read_file_bytes returns Ok(u8[]) with the raw bytes — content
-// that is not valid UTF-8 round-trips exactly (D9, #5714).
 func TestArm64ReadFileBytesOk(t *testing.T) {
 	src := `function main(): i32 {
     match (read_file_bytes("blob.bin")) {
@@ -10686,7 +9265,6 @@ func TestArm64ReadFileBytesOk(t *testing.T) {
 	}
 }
 
-// read_file_bytes classifies errors identically to read_file.
 func TestArm64ReadFileBytesNotFound(t *testing.T) {
 	src := `function main(): i32 {
     match (read_file_bytes("does_not_exist.bin")) {
@@ -10701,16 +9279,11 @@ func TestArm64ReadFileBytesNotFound(t *testing.T) {
     return 0 - 1;
 }`
 	_, code, _ := compileArm64InDir(t, src, nil)
-	// len("does_not_exist.bin") = 18
 	if code != 18 {
 		t.Errorf("got %d, want 18 (len of missing-file path via NotFound payload)", code)
 	}
 }
 
-// read_file validates UTF-8 at the boundary (D9, #5714) — the arm64
-// mirror of TestX86_64ReadFileInvalidUtf8 (which carries the full
-// strict-scan matrix; this leg pins the reject + valid-multibyte
-// accept + raw-sibling paths).
 func TestArm64ReadFileInvalidUtf8(t *testing.T) {
 	src := `function main(): i32 {
     match (read_file("valid.txt")) {
@@ -10741,9 +9314,6 @@ func TestArm64ReadFileInvalidUtf8(t *testing.T) {
 	}
 }
 
-// write_file truncates the target and writes `content`. Verify
-// by reading the file back from the host side after the program
-// returns.
 func TestArm64WriteFileOk(t *testing.T) {
 	src := `function main(): i32 {
     match (write_file("out.txt", "wrote it\n")) {
@@ -10765,8 +9335,6 @@ func TestArm64WriteFileOk(t *testing.T) {
 	}
 }
 
-// Round-trip: write a file then read it back; len reports the
-// expected byte count. Both helpers in one program.
 func TestArm64ReadWriteFileRoundtrip(t *testing.T) {
 	src := `function main(): i32 {
     match (write_file("rt.txt", "round trip")) {
@@ -10816,9 +9384,6 @@ func TestArm64FloatBitCast(t *testing.T) {
     if (back == neg) { return 0; }
     return 1;
 }`, 0},
-		// arm64's hardware `fneg` already does sign-bit XOR
-		// (preserving -0.0); this pins parity with x86_64's
-		// OpFNeg fix in the same PR.
 		{"-0.0 bits = sign bit", `function main(): i32 {
     let bits_u: u32 = f32_bits(-0.0) as u32;
     if (bits_u == 2147483648 as u32) { return 0; }
@@ -10853,15 +9418,10 @@ function main(): i32 {
 			t.Errorf("stdin=%q: exit = %d, want %d", stdin, got, want)
 		}
 	}
-	runCase("", 0)        // EOF before any byte → None
-	runCase("hello\n", 1) // Some(line)
+	runCase("", 0)
+	runCase("hello\n", 1)
 }
 
-// Reader / Writer file I/O round-trip. open_writer +
-// Writer.write + Writer.close; open_appender; open_reader +
-// Reader.read_chunk / io.read_line / Reader.close. Mirrors
-// TestWASMOpenAppender / TestWASMReaderReadChunk /
-// TestWASMStreamingRoundtrip.
 func TestArm64ReaderWriter(t *testing.T) {
 	for _, c := range []struct {
 		name       string
@@ -10991,13 +9551,6 @@ function main(): i32 {
 	}
 }
 
-// Wasm-shaped feature parity for the native arm64 backend.
-// Each case asserts the program returns 0 (the wasm tests
-// returned arbitrary i32 values via runWasm; on native we get
-// the low byte of main's return as the exit code, so the
-// programs internally compare and short-circuit to 0/N to fit
-// the exit-code channel). Same source on x86-64 (see
-// TestX86_64FeatureParity).
 func TestArm64FeatureParity(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -11067,29 +9620,6 @@ function main(): i32 {
 	}
 }
 
-// Programs must declare every stdlib module they use (there is no
-// auto-prelude). With the prelude-to-modules migration (PRs #505 → #513)
-// every stdlib module declares its own method-source imports —
-// std/i32 ↔ std/string ↔ std/array form cyclic dependencies that
-// modload's stdlib-cycle gate handles — so the user's explicit
-// imports transitively pull in everything the dispatched methods
-// need.
-//
-// Each case below proves a different slice of the no-prelude
-// stack:
-//
-//   - `i32_string_cycle` — std/i32 imports std/string for
-//     `pad_start` inside to_string_padded; the cycle resolves.
-//   - `array_method_chain` — std/array transitively pulls in
-//     std/i32 (for `.abs()` inside abs_each).
-//   - `qualified_int_call` — qualified `int.int_to_string_radix`
-//     resolves through modload's normal mangling path under
-//     no-prelude.
-//   - `mixed_stdlib` — multiple explicit imports compose cleanly.
-//
-// All programs return 0 on success and a small nonzero code on
-// the first failing assertion, so the exit-code channel is
-// enough to verify correctness end-to-end.
 func TestArm64NoPreludeStdlibImports(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -11138,21 +9668,6 @@ function main(): i32 {
 	}
 }
 
-// TestArm64HeapAddressFits32Bits is a diagnostic probe that
-// exits non-zero iff the bump heap's first allocation lands
-// at an address that doesn't fit in i32. The runtime's
-// __fern_alloc currently uses a 0x10000000 hint without
-// MAP_FIXED — qemu-aarch64 honors the hint exactly, but the
-// native-arm64 kernel may relocate the mmap into the standard
-// high mmap region (above 4 GiB). When that happens, any
-// stdlib code that casts a heap pointer to i32 silently
-// truncates and traps on the bad address.
-//
-// Currently expected to pass on every host (the post-fix
-// stdlib doesn't truncate pointers anymore), but the test
-// stays as a regression watch — if a future change lands a
-// new `as i32` on a pointer path, the probe surfaces it
-// before the fernsmith corpus does.
 func TestArm64HeapAddressFits32Bits(t *testing.T) {
 	src := `function main(): i32 {
     let p: usize = __alloc(8);
@@ -11167,11 +9682,6 @@ func TestArm64HeapAddressFits32Bits(t *testing.T) {
 	}
 }
 
-// Phase 3 step 3: enum drop handlers (uniform case), native
-// parity. Mirrors TestX86_64RcDropEnumPayload. A heap-boxed enum
-// whose payload-carrying variants share an identical droppable
-// signature (e.g. a union of structs) drops the payloads on its
-// last reference before dec'ing the box.
 func TestArm64RcDropEnumPayload(t *testing.T) {
 	fresh := `struct W { a: i32[] }
 struct V2 { b: i32 }
@@ -11214,9 +9724,6 @@ function main(): i32 {
 	}
 }
 
-// Phase 2: aliased arrays force the copy path even when cap is
-// available. The shared rc>1 means a mutate-in-place would
-// corrupt the other holder's view.
 func TestArm64ArrayPushAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     let xs: i32[] = [10, 20];
@@ -11234,8 +9741,6 @@ func TestArm64ArrayPushAliasedCopies(t *testing.T) {
 	}
 }
 
-// Phase 2b: aliased array `arr[i] = v` must copy on rc>1 —
-// otherwise the other holder's view would silently mutate.
 func TestArm64ArrayIndexSetAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     let xs: i32[] = [10, 20, 30];
@@ -11254,10 +9759,6 @@ func TestArm64ArrayIndexSetAliasedCopies(t *testing.T) {
 	}
 }
 
-// Phase 2b on a u8-stride array — mirrors the int_to_string
-// pattern (scratch[i] = digit) that hit the wasm raw-_start
-// path's __fern_rc_dec low-address guard before the helper
-// internalised rc bookkeeping.
 func TestArm64ArrayIndexSetU8Stride(t *testing.T) {
 	src := `function main(): i32 {
     let buf: u8[] = __alloc_u8(4);
@@ -11272,10 +9773,6 @@ func TestArm64ArrayIndexSetU8Stride(t *testing.T) {
 	}
 }
 
-// Phase 2b extension: `obj.field[i] = v` for a writable local-
-// ident struct holding an array field. CoW applies to the
-// array buffer; the field's pointer is updated to the new
-// buffer on rc>1.
 func TestArm64ArrayIndexSetStructField(t *testing.T) {
 	src := `struct State { items: i32[] }
 function main(): i32 {
@@ -11291,9 +9788,6 @@ function main(): i32 {
 	}
 }
 
-// Aliased struct-field array: writing through s.field must
-// copy when the underlying buffer is shared with another
-// holder. The caller's `arr` should stay unchanged.
 func TestArm64ArrayIndexSetStructFieldAliasedCopies(t *testing.T) {
 	src := `struct State { items: i32[] }
 function main(): i32 {
@@ -11313,9 +9807,6 @@ function main(): i32 {
 	}
 }
 
-// Phase 2b extension: `a.b.field[i] = v` for nested struct
-// field chains. rootIdentOfFieldChain walks the chain back to
-// the root ident; the helper handles arbitrary chain depths.
 func TestArm64ArrayIndexSetNestedStructField(t *testing.T) {
 	src := `struct Inner { items: i32[] }
 struct Outer { inner: Inner }
@@ -11332,9 +9823,6 @@ function main(): i32 {
 	}
 }
 
-// Aliased nested struct field — writing through o.inner.items
-// must copy when the underlying buffer is shared with the
-// outer `arr` local.
 func TestArm64ArrayIndexSetNestedStructFieldAliasedCopies(t *testing.T) {
 	src := `struct Inner { items: i32[] }
 struct Outer { inner: Inner }
@@ -11351,9 +9839,6 @@ function main(): i32 {
 	}
 }
 
-// Phase 2b extension: `mat[i][j] = v` for arr-of-arr targets.
-// Verifies the basic in-place mutation works when mat[i]'s
-// rc is 1.
 func TestArm64ArrayIndexSetMat(t *testing.T) {
 	src := `function main(): i32 {
     let mat: i32[][] = [[1, 2, 3], [4, 5, 6]];
@@ -11369,9 +9854,6 @@ func TestArm64ArrayIndexSetMat(t *testing.T) {
 	}
 }
 
-// Phase 2b extension: aliased inner array via Phase 1d-ii inc
-// (`let inner = mat[0]`) makes the inner's rc 2; the write
-// must copy and leave the alias unchanged.
 func TestArm64ArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     let mat: i32[][] = [[1, 2], [3, 4]];
@@ -11386,10 +9868,6 @@ func TestArm64ArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 	}
 }
 
-// Phase 2c: Map.set is now value-returning. Callers can use
-// the `m = m.insert(k, v)` idiom for explicit value semantics;
-// the existing `m.insert(k, v)` statement form still works
-// (return discarded).
 func TestArm64MapSetReturnsMap(t *testing.T) {
 	src := `
 import "core/map";
@@ -11409,11 +9887,6 @@ function main(): i32 {
 	}
 }
 
-// Phase 2b extension: `obj.mat[i][j] = v` — outer rooted in a
-// FieldAccess chain rather than a bare ident. outerRootIdent
-// walks the chain back to the root local-ident; the rest of
-// the nested CoW emit handles arbitrary outer expressions via
-// re-evaluation.
 func TestArm64ArrayIndexSetObjMatInnerAliasedCopies(t *testing.T) {
 	src := `struct State { mat: i32[][] }
 function main(): i32 {
@@ -11430,9 +9903,6 @@ function main(): i32 {
 	}
 }
 
-// Phase 2b: explicit value-returning `arr.with(i, v)` method.
-// Self-assign idiom — same shape as the `arr[i] = v` desugar
-// would emit, but expression-position so it composes.
 func TestArm64ArraySetSelfAssign(t *testing.T) {
 	src := `function main(): i32 {
     let xs: i32[] = [10, 20, 30];
@@ -11447,8 +9917,6 @@ func TestArm64ArraySetSelfAssign(t *testing.T) {
 	}
 }
 
-// Phase 2b: aliased `arr.with` must copy. The original holder
-// stays unchanged.
 func TestArm64ArraySetAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     let xs: i32[] = [10, 20, 30];
@@ -11463,7 +9931,6 @@ func TestArm64ArraySetAliasedCopies(t *testing.T) {
 	}
 }
 
-// m.remove(k) returns the map without k; m.contains(k) says whether k was there.
 func TestArm64MapDeleteReturnsMapBool(t *testing.T) {
 	src := `
 import "core/map";
@@ -11488,7 +9955,6 @@ function main(): i32 {
 	}
 }
 
-// Phase 2c: m.cleared() returns Map[K,V].
 func TestArm64MapClearReturnsMap(t *testing.T) {
 	src := `
 import "core/map";
@@ -11511,9 +9977,6 @@ function main(): i32 {
 	}
 }
 
-// Phase 2d: Map.set copy-on-write — arm64 sibling of
-// TestX86_64MapSetAliasedCopies. An aliased map (let m2 = m1)
-// has rc=2, so m2.insert(...) copies and leaves m1 intact.
 func TestArm64MapSetAliasedCopies(t *testing.T) {
 	src := `
 import "core/map";
@@ -11531,8 +9994,6 @@ function main(): i32 {
 	}
 }
 
-// Phase 2d: Map.delete / Map.clear copy-on-write — arm64 sibling
-// of TestX86_64MapDeleteClearAliasedCopies.
 func TestArm64MapDeleteClearAliasedCopies(t *testing.T) {
 	src := `
 import "core/map";
@@ -11559,12 +10020,6 @@ function main(): i32 {
 	}
 }
 
-// Pointer-typed tuple element — struct, array, or nested tuple in
-// a tuple slot must round-trip through ptrW-aligned storage.
-// Bug: exprType returned nil for *ast.StructLit / *ast.ArrayLit /
-// *ast.TupleLit, so the TupleLit slot-sizing fell back to 4 bytes
-// while the load side knew the static type was 8 bytes on arm64.
-// Pointer stored at offset 4, read from offset 8 → segfault.
 func TestArm64TupleStructElem(t *testing.T) {
 	src := `struct Inner { x: i32, y: i32 }
 function main(): i32 {
@@ -11610,12 +10065,6 @@ func TestArm64TupleNestedTuple(t *testing.T) {
 	}
 }
 
-// Chained numeric tuple field access — `t.1.0` where the inner
-// is itself a tuple. Lexing `1.0` as a single float token loses
-// the second `.0` and the parser fails with "expected Ident, got
-// 1.0", so the lexer tracks the previous-token kind and
-// suppresses the `.<digit>` → float upgrade right after a `.`
-// punctuator.
 func TestArm64LexerChainedTupleNumericAccess(t *testing.T) {
 	src := `function main(): i32 {
     let t: (i32, (i32, i32)) = (1, (2, 3));
@@ -11629,12 +10078,6 @@ func TestArm64LexerChainedTupleNumericAccess(t *testing.T) {
 	}
 }
 
-// Empty `Map {}` with a destination annotation must inherit
-// K / V from the destination rather than defaulting to
-// `Map[i32, i32]`. settleNumeric walking only entries is a no-op
-// for an empty literal, which leaves the surrounding assignable
-// check looking at the pre-settle default and rejecting `let m:
-// Map[string, i32] = Map {};` with E003.
 func TestArm64EmptyMapDestinationInference(t *testing.T) {
 	src := `
 import "core/map";
@@ -11666,13 +10109,6 @@ function main(): i32 {
 	}
 }
 
-// Enum variant in a tuple slot — payload-less (`Green`) and
-// payload-bearing constructor (`Some(42)`). exprType returned nil
-// for a bare variant ident and for a variant constructor call, so
-// the enclosing TupleLit sized the variant element at 4 bytes while
-// the load side resolved EnumType (8 bytes on arm64). Pointer stored
-// at offset 4, read from offset 8 → segfault. Same family as the
-// struct / array / nested-tuple tuple-element fix.
 func TestArm64EnumVariantInTuple(t *testing.T) {
 	src := `enum Color { Red, Green, Blue }
 function main(): i32 {
@@ -11705,14 +10141,6 @@ function main(): i32 {
 	}
 }
 
-// Map with a pointer-shaped value type (tuple / struct / array).
-// `__map_get_impl` returns `Option[usize]`. Sizing usize as 4
-// bytes in the payload functions truncates and mis-offsets the
-// 8-byte V pointer on natives when it is wrapped in Some; the
-// consumer then reads `Option[V]` at the pointer offset (8) →
-// garbage → segfault. usize is pointer-width in payloadSlotSize /
-// payloadStoreOpFor / payloadLoadOpFor, and `m.get` reboxes the
-// helper's Option[usize] into a consumer-shaped Option[V].
 func TestArm64MapPointerShapedValues(t *testing.T) {
 	src := `
 import "core/map";
@@ -11753,12 +10181,6 @@ function main(): i32 {
 	}
 }
 
-// Chained field access where a struct field is tuple-typed:
-// `r.pos.0`. targetTupleType only walked tuple-of-tuple; a
-// struct-field-of-tuple target fell through to the struct path,
-// fieldOwner returned "", and codegen errored with "field access
-// on unresolved struct". Fix resolves the field's declared tuple
-// type via exprType.
 func TestArm64StructTupleFieldAccess(t *testing.T) {
 	src := `struct Rec { pos: (i32, i32), name: string }
 struct Nested { t: (i32, (i32, i32)) }
@@ -11778,13 +10200,6 @@ function main(): i32 {
 	}
 }
 
-// Unsigned comparison condition codes. arm64 emitted signed
-// `lt`/`le`/`gt`/`ge` for every `<`/`<=`/`>`/`>=`, ignoring the
-// op's Unsigned flag — so a u32 like 4294967295 (bit 31 set, reads
-// negative under signed compare) ordered wrong against small
-// values. Fix uses `lo`/`ls`/`hi`/`hs` for unsigned operands.
-// x86 / wasm were already correct, so this was a native-arm
-// divergence.
 func TestArm64UnsignedComparison(t *testing.T) {
 	src := `function main(): i32 {
     let big: u32 = 4294967295u32;     // -1 if misread as signed
@@ -11810,13 +10225,6 @@ func TestArm64UnsignedComparison(t *testing.T) {
 	}
 }
 
-// Unary minus on non-i32 numeric types. Two bugs: (1) the checker
-// rejected `-x` for any integer wider/narrower than i32 (requireNumber
-// only matched the bare i32 NumberType); (2) OpFNeg was emitted with
-// no width, so the backends took the f32 sign-flip path and corrupted
-// f64 values (`-5.0` came out non-negative). The integer path also
-// truncated i64 to a 32-bit `0 - x`. Fix: requireInteger in the
-// checker, width-tagged OpFNeg / OpSub in the IR.
 func TestArm64UnaryMinusWideTypes(t *testing.T) {
 	src := `function main(): i32 {
     let a: i64 = -5i64;
@@ -11840,9 +10248,6 @@ func TestArm64UnaryMinusWideTypes(t *testing.T) {
 	}
 }
 
-// Scientific-notation float literals end-to-end. The lexer now
-// accepts `[eE][+-]?digits` exponents; this confirms the values
-// parse and compute correctly through codegen.
 func TestArm64ScientificNotation(t *testing.T) {
 	src := `function main(): i32 {
     let a: f64 = 1e3;
@@ -11866,13 +10271,6 @@ func TestArm64ScientificNotation(t *testing.T) {
 	}
 }
 
-// Sub-i32 arithmetic wraps to the declared width. `+` `-` `*` `<<`
-// can push a u8 result past its width; scalar locals and struct
-// fields store full-width (only array elements narrow via store8),
-// so the result must be masked (unsigned) or sign-extended (signed)
-// back to width. Otherwise a `u8` var would hold 256 and downstream
-// casts/compares (which assume "every store narrows") would misread
-// it.
 func TestArm64SubI32ArithmeticWraps(t *testing.T) {
 	src := `struct S { v: u8 }
 function main(): i32 {

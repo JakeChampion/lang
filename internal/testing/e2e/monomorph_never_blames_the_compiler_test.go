@@ -11,20 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/modload"
 )
 
-// monomorph re-checks each instantiated clone and used to report ANY failure
-// as "monomorph: re-check failed (compiler bug)". Two ordinary user type
-// errors reached that path, so a program with a plain mistake accused the
-// compiler and gave its author no code to look up (#8452).
-//
-// Those two are fixed and pinned in internal/oracle/monomorph. This is the gate that
-// keeps the CLASS closed rather than the two instances: no program in the
-// conformance corpus may produce a message naming an internal pass. The
-// corpus is the right corpus for it because a third of it is compile-error
-// cases — programs deliberately wrong in every way the language can be — so
-// it exercises exactly the failures that would land there.
-//
-// A pass name in a user-facing message is the bug whether or not it also says
-// "compiler bug": the author cannot act on either.
 func TestMonomorphNeverBlamesTheCompilerOverTheCorpus(t *testing.T) {
 	entries, err := os.ReadDir(conformanceCases)
 	if err != nil {
@@ -44,11 +30,11 @@ func TestMonomorphNeverBlamesTheCompilerOverTheCorpus(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			prog, _, lerr := modload.Load(main)
 			if lerr != nil {
-				return // a load error is the loader's own diagnostic
+				return
 			}
 			info, cerr := checker.Check(prog)
 			if cerr != nil {
-				return // a checker diagnostic is what a wrong program should get
+				return
 			}
 			if merr := monomorph.Run(prog, info); merr != nil {
 				msg := merr.Error()

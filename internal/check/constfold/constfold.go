@@ -1,37 +1,3 @@
-// Package constfold resolves top-level `const` declarations.
-//
-// The pass runs after modload (so cross-module references have been
-// flattened to mangled names) and before the checker (so the rest of
-// the pipeline never sees a ConstDecl). For each const it
-// evaluates the initialiser as a constant expression — literals,
-// references to earlier consts, and arithmetic / comparison /
-// logical / unary operations on those, array and tuple literals of
-// constant elements, plus the asset builtins below. Anything outside that grammar (ordinary function calls, array
-// indexing, struct literals, runtime expressions) is rejected with a
-// diagnostic.
-//
-// Once every const is resolved the pass walks the rest of the AST
-// and replaces each Ident reference whose name matches a const with
-// a literal node carrying the resolved value. Const decls are
-// stripped from the program afterwards, so the checker / IR /
-// codegen layers stay unaware of the feature.
-//
-// The same traversal resolves the asset builtins against the compile-time
-// asset set (see internal/pkg/embed): `__fern_asset("name")` becomes a string
-// literal holding the file's text, which must be valid UTF-8, and
-// `__fern_asset_bytes("name")` a `u8[]` literal holding its bytes. Assets use
-// the const machinery rather than a pass of their own for two reasons: an
-// asset IS a compile-time constant, and a
-// `const PAGE: string = __fern_asset(...)` has to resolve during const
-// evaluation, not after it.
-//
-// It also resolves `target_os()` and `target_arch()` to the two halves of
-// the compile target's name (Inputs.TargetOS / Inputs.TargetArch) when the
-// caller has them — a compile does, a bare `-check` does not. Each call
-// becomes a plain string literal, and an `if` whose condition then folds
-// to a literal keeps only the arm it takes, so the capability gates and
-// the tree-shake see the program as built for this target: an arm that
-// reaches what one target lacks compiles for the other.
 package constfold
 
 import (
@@ -43,62 +9,27 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
-// The asset builtins split the way read_file / read_file_bytes do: the text
-// form yields a `string` and refuses a file that is not valid UTF-8, the
-// bytes form yields `u8[]` and takes any file. None is a function — no
-// declaration exists anywhere — so every occurrence must be substituted here
-// or reported; anything left behind reaches the checker as an undefined
-// identifier.
 const (
-	assetBuiltin      = "__fern_asset"
-	assetBytesBuiltin = "__fern_asset_bytes"
-	// The enumerations become an array of `(name, contents)` tuples in
-	// sorted-name order.
+	assetBuiltin       = "__fern_asset"
+	assetBytesBuiltin  = "__fern_asset_bytes"
 	assetsBuiltin      = "__fern_assets"
 	assetsBytesBuiltin = "__fern_assets_bytes"
 )
 
-// targetOSBuiltin is the compile target's environment as a constant:
-// `target_os()` reads "linux", "darwin", "android", "wasi", "wasi-http" or
-// "freestanding" — the environment half of the `-target` name, never the
-// compiler's host. The checker declares it (so `-check` types it with no
-// target in hand) and the interpreter answers it with the host it runs
-// on; every compiled path resolves it here.
 const targetOSBuiltin = "target_os"
 
-// targetArchBuiltin is the compile target's ISA as a constant:
-// `target_arch()` reads "arm64", "x86-64" or "wasm32" — the ISA half of
-// the `-target` name, never the compiler's host. Same three answerers as
-// target_os above: the checker declares it, the interpreter answers with
-// its host, and every compiled path resolves it here.
 const targetArchBuiltin = "target_arch"
 
-// Inputs are the compile-time facts the fold substitutes into the program.
 type Inputs struct {
-	// Assets is the `-embed` bundle; nil when nothing was embedded, in which
-	// case any use of __fern_asset is itself the error.
-	Assets *embed.Set
-	// TargetOS is the compile target's environment, what `target_os()`
-	// folds to. Empty leaves the calls alone for the checker to type.
-	TargetOS string
-	// TargetArch is the compile target's ISA, what `target_arch()` folds
-	// to. Empty leaves the calls alone, as TargetOS does.
+	Assets     *embed.Set
+	TargetOS   string
 	TargetArch string
 }
 
-// Fold evaluates every top-level const declaration in prog, then
-// substitutes references with the resolved literal and clears
-// prog.Consts. Errors aggregate; the first diagnostic surfaced
-// names the offending const and explains why it isn't a valid
-// constant expression.
-//
-// assets carries the `-embed` bundle and may be nil, in which case any use
-// of __fern_asset is itself the error.
 func Fold(prog *ast.Program, assets *embed.Set) error {
 	return FoldWith(prog, Inputs{Assets: assets})
 }
 
-// FoldWith is Fold with every compile-time input, not only the asset bundle.
 func FoldWith(prog *ast.Program, in Inputs) error {
 	values := map[string]ast.Expr{}
 	types := map[string]ast.Type{}
@@ -124,8 +55,6 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 				errs = append(errs, constError(cd, err))
 				continue
 			}
-			// The declared type is the const's type once the literal has
-			// settled to it — not litType's default reading of the literal.
 			gotT = cd.Type
 		}
 		values[cd.Name] = val
@@ -136,13 +65,6 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 		return diag.Errors(errs)
 	}
 
-	// Substitute every Ident reference matching a const name with
-	// the resolved literal. Const decls are then dropped — the rest
-	// of the pipeline runs against a const-free program.
-	// The entry's consts keep their names and no import can name the entry,
-	// so a body from another module sees only the other modules' mangled
-	// consts. Otherwise an entry `const A` would rewrite a library's own `A`
-	// (a variant, say) inside that library (#11143).
 	libValues := map[string]ast.Expr{}
 	for _, cd := range prog.Consts {
 		if v, ok := values[cd.Name]; ok && (prog.EntryModule == "" || cd.SourceModule != prog.EntryModule) {
@@ -156,10 +78,6 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 		if body := fn.BodyModule(); body != "" && body != prog.EntryModule {
 			sub.values = libValues
 		}
-		// A parameter DEFAULT is pasted into the CALL site, so the walker
-		// visits it at top-level scope, before the body's binders go in;
-		// a default left unfolded reached defaultargs spelled as a name and
-		// was refused by E076 as reading one.
 		w := ast.ScopeWalker{Visit: sub.visit, AfterStmt: foldIfCond}
 		w.WalkFunc(fn)
 	}
@@ -170,10 +88,6 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 	return nil
 }
 
-// evalConstTyped is evalConst for a value whose declared type (nil when
-// undeclared) may be composite: an array, tuple or struct literal of
-// constant elements folds element by element, each at its own declared width, and
-// `__fern_assets()` folds to its array of tuples.
 func evalConstTyped(e ast.Expr, want ast.Type, values map[string]ast.Expr, types map[string]ast.Type, assets *embed.Set) (ast.Expr, error) {
 	switch n := e.(type) {
 	case *ast.ArrayLit:
@@ -209,8 +123,6 @@ func evalConstTyped(e ast.Expr, want ast.Type, values map[string]ast.Expr, types
 		}
 		return &ast.TupleLit{P: n.P, Elems: elems}, nil
 	case *ast.StructLit:
-		// A struct literal of constant fields (#6685). The checker settles
-		// each field at its declared type, so none is folded to a width here.
 		if n.Base != nil {
 			break
 		}
@@ -232,7 +144,6 @@ func evalConstTyped(e ast.Expr, want ast.Type, values map[string]ast.Expr, types
 			return resolveAsset(n, assets)
 		}
 	case *ast.Ident:
-		// An earlier composite const is copied, so the two trees never alias.
 		if v, ok := values[n.Name]; ok {
 			return cloneLit(v, n.P), nil
 		}
@@ -240,10 +151,6 @@ func evalConstTyped(e ast.Expr, want ast.Type, values map[string]ast.Expr, types
 	return evalConst(e, declaredWidth(want), values, types, assets)
 }
 
-// evalConst tries to reduce e to a scalar literal AST node using only
-// constant-expression rules. Returned values are always one of
-// *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit,
-// *ast.CharLit; composites go through evalConstTyped.
 func evalConst(e ast.Expr, w intWidth, values map[string]ast.Expr, types map[string]ast.Type, assets *embed.Set) (ast.Expr, error) {
 	switch n := e.(type) {
 	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit, *ast.CharLit:
@@ -283,9 +190,6 @@ func evalConst(e ast.Expr, w intWidth, values map[string]ast.Expr, types map[str
 	}
 }
 
-// foldUnary reduces -x or !x where x is a literal. Position is
-// preserved from the source unary so diagnostics still point at the
-// right column if a later layer reports on the resulting node.
 func foldUnary(n *ast.Unary, w intWidth, operand ast.Expr) (ast.Expr, error) {
 	switch n.Op {
 	case "-":
@@ -306,14 +210,7 @@ func foldUnary(n *ast.Unary, w intWidth, operand ast.Expr) (ast.Expr, error) {
 	return nil, fmt.Errorf("unary operator %q is not allowed in constant expressions", n.Op)
 }
 
-// foldBinary handles arithmetic / comparison / logical / string-
-// concat over constant literals. It only accepts operand pairs that
-// match in scalar shape — number+number, float+float, bool&&bool,
-// string+string, etc. Mixed types (e.g. number + float) need an
-// explicit conversion in the source, just like at runtime.
 func foldBinary(n *ast.Binary, w intWidth, left, right ast.Expr) (ast.Expr, error) {
-	// String concatenation: "a" + "b". Comparison on strings is
-	// allowed too (== / !=).
 	if ls, lok := left.(*ast.StringLit); lok {
 		rs, rok := right.(*ast.StringLit)
 		if !rok {
@@ -330,7 +227,6 @@ func foldBinary(n *ast.Binary, w intWidth, left, right ast.Expr) (ast.Expr, erro
 		return nil, fmt.Errorf("operator `%s` not allowed on strings in constant expressions", n.Op)
 	}
 
-	// Boolean logic / equality.
 	if lb, lok := left.(*ast.BoolLit); lok {
 		rb, rok := right.(*ast.BoolLit)
 		if !rok {
@@ -349,7 +245,6 @@ func foldBinary(n *ast.Binary, w intWidth, left, right ast.Expr) (ast.Expr, erro
 		return nil, fmt.Errorf("operator `%s` not allowed on bools in constant expressions", n.Op)
 	}
 
-	// Float arithmetic / comparison.
 	if lf, lok := left.(*ast.FloatLit); lok {
 		rf, rok := right.(*ast.FloatLit)
 		if !rok {
@@ -358,7 +253,6 @@ func foldBinary(n *ast.Binary, w intWidth, left, right ast.Expr) (ast.Expr, erro
 		return foldFloatBinary(n, lf.Value, rf.Value)
 	}
 
-	// Number arithmetic / comparison — the default integer path.
 	ln, lok := left.(*ast.NumberLit)
 	rn, rok := right.(*ast.NumberLit)
 	if !lok || !rok {
@@ -367,23 +261,11 @@ func foldBinary(n *ast.Binary, w intWidth, left, right ast.Expr) (ast.Expr, erro
 	return foldNumberBinary(n, w, ln.Value, rn.Value)
 }
 
-// intWidth is the integer width a constant expression folds at, taken from
-// the const's DECLARED type. `docs/INTEGER-SEMANTICS.md` defines `+`, `-`,
-// `*` and `<<` as wrapping at the operand's width and masks shift counts to
-// it, so folding anywhere else gives a const a different value from the
-// identical expression written as code (#8444).
-//
-// bits is 0 when no width is known — an undeclared const, or a `usize`,
-// whose width is the target's. Those still fold in int64: an undeclared
-// const's literal stays polymorphic and settles at its USE site, so there is
-// no width to fold at until the checker has run, and this pass runs before
-// the checker by design (everything downstream sees a const-free program).
 type intWidth struct {
 	bits   int
 	signed bool
 }
 
-// declaredWidth reads the fold width off a const's declared type.
 func declaredWidth(t ast.Type) intWidth {
 	n, ok := t.(ast.NumberType)
 	if !ok || n.IsPointerWidth() || n.Polymorphic {
@@ -392,15 +274,10 @@ func declaredWidth(t ast.Type) intWidth {
 	return intWidth{bits: n.NormalWidth(), signed: n.IsSigned()}
 }
 
-// known reports whether a width is available to fold at.
 func (w intWidth) known() bool { return w.bits != 0 }
 
-// unsigned reports whether the operators whose meaning depends on signedness
-// (`/`, `%`, `>>`, and the ordering comparisons) take their unsigned reading.
 func (w intWidth) unsigned() bool { return w.known() && !w.signed }
 
-// trunc reduces v to what the target would hold in this width, sign-extending
-// a signed result so the int64 the literal carries reads back as that value.
 func (w intWidth) trunc(v int64) int64 {
 	if !w.known() || w.bits >= 64 {
 		return v
@@ -412,11 +289,6 @@ func (w intWidth) trunc(v int64) int64 {
 	return int64(uint64(v) << shift >> shift)
 }
 
-// shiftMask is the mask a shift count takes: `count & 31` for a 32-bit or
-// sub-i32 operand, `count & 63` for a 64-bit one. With no declared width the
-// i64 rule applies — Go would instead yield 0 for any count at or above the
-// width and for every negative count, so `const A: i32 = 1 << 64` folded to 0
-// where the same expression evaluates to 1 at runtime.
 func (w intWidth) shiftMask() uint64 {
 	if !w.known() || w.bits > 32 {
 		return 63
@@ -424,14 +296,6 @@ func (w intWidth) shiftMask() uint64 {
 	return 31
 }
 
-// foldNumberBinary handles every operator the language defines on
-// integers, returning either a NumberLit or BoolLit depending on
-// the operator. Division and modulo by zero are caught here so the
-// program never compiles with a poison value baked in.
-//
-// Every arithmetic result is truncated to w, so an INTERMEDIATE overflow
-// wraps exactly as it would at runtime rather than being carried in 64 bits
-// and silently landing back in range.
 func foldNumberBinary(n *ast.Binary, w intWidth, l, r int64) (ast.Expr, error) {
 	num := func(v int64) (ast.Expr, error) {
 		return &ast.NumberLit{P: n.P, Value: w.trunc(v)}, nil
@@ -530,7 +394,6 @@ func foldFloatBinary(n *ast.Binary, l, r float64) (ast.Expr, error) {
 	return nil, fmt.Errorf("operator `%s` not allowed in float constant expressions", n.Op)
 }
 
-// constError places err, met folding cd's initialiser, at the declaration.
 func constError(cd *ast.ConstDecl, err error) error {
 	msg := err.Error()
 	if e, ok := err.(*Error); ok {
@@ -539,14 +402,6 @@ func constError(cd *ast.ConstDecl, err error) error {
 	return &Error{Pos: cd.P, Path: cd.SourceModule, Msg: "const " + cd.Name + ": " + msg}
 }
 
-// checkLiteralRange judges every integer literal written in a const's
-// initialiser against the declared type before anything folds. Folding wraps
-// at the declared width, as `+`, `-` and `*` do at run time, so a literal that
-// is itself too wide for the type has already wrapped by the time the result
-// could be inspected. The walk mirrors the checker's settleIntSigned — the
-// sign lives on the enclosing unary, and arithmetic operands take the const's
-// type — so a `let` and a `const` refuse the same spellings with the same
-// E047.
 func checkLiteralRange(cd *ast.ConstDecl) []error {
 	declared, hasType := cd.Type.(ast.NumberType)
 	var errs []error
@@ -554,13 +409,9 @@ func checkLiteralRange(cd *ast.ConstDecl) []error {
 		t := declared
 		switch {
 		case lit.Width != 0 && !lit.IsFloat:
-			// A typed suffix pins the width in the parser, so the const's
-			// declared type never applies to the literal: judge it against
-			// the type its suffix names.
 			t = ast.NumberType{Width: lit.Width, Signed: !lit.IsUnsigned}
 		case typed && hasType:
 		case lit.ExceedsU64:
-			// Nothing holds it; name the type it would otherwise fold at.
 			t = ast.NumberType{Width: 64, Signed: true}
 		default:
 			return
@@ -572,11 +423,6 @@ func checkLiteralRange(cd *ast.ConstDecl) []error {
 	return errs
 }
 
-// walkIntLits visits the integer literals of a constant expression the way
-// settleIntSigned reaches them: `negated` is whether the literal sits under
-// an odd number of unary minuses, `typed` whether the const's declared type
-// still applies to it — an operand of a comparison or a `!` does not take
-// the const's type, an operand of an arithmetic operator does.
 func walkIntLits(e ast.Expr, negated, typed bool, visit func(lit *ast.NumberLit, negated, typed bool)) {
 	switch x := e.(type) {
 	case *ast.NumberLit:
@@ -601,15 +447,6 @@ func walkIntLits(e ast.Expr, negated, typed bool, visit func(lit *ast.NumberLit,
 	}
 }
 
-// settleConstLit checks a const's resolved literal against its declared type
-// and, when they agree, stamps the declared width onto the literal node.
-//
-// litType reports the DEFAULT reading of a literal (i32, f32), not the width
-// the declared type asks for, so a numeric const settles to its declaration
-// the way a `let` initialiser does rather than being compared against that
-// default. Stamping matters as much as accepting: the substituter inlines this
-// literal node at every reference, so without a width an i64 const would reach
-// the IR as an `i32.const` and an f64 one as an f32 (#5477).
 func settleConstLit(want ast.Type, val ast.Expr) error {
 	switch w := want.(type) {
 	case ast.NumberType:
@@ -637,7 +474,6 @@ func settleConstLit(want ast.Type, val ast.Expr) error {
 				return err
 			}
 		}
-		// An empty literal has nothing to infer its element from.
 		lit.ElemType = w.Elem
 		return nil
 	case ast.TupleType:
@@ -652,8 +488,6 @@ func settleConstLit(want ast.Type, val ast.Expr) error {
 		}
 		return nil
 	case ast.StructType:
-		// The checker settles each field of the inlined literal at its
-		// declared type, as it does a written one.
 		if lit, ok := val.(*ast.StructLit); ok && lit.TypeName == w.Name {
 			return nil
 		}
@@ -664,9 +498,6 @@ func settleConstLit(want ast.Type, val ast.Expr) error {
 	return nil
 }
 
-// litType returns the ast.Type that matches a folded literal: a scalar
-// kind, or an array / tuple of them. nil for an empty array literal with
-// no stamped element type, which has no type of its own.
 func litType(e ast.Expr) ast.Type {
 	switch x := e.(type) {
 	case *ast.ArrayLit:
@@ -702,53 +533,36 @@ func litType(e ast.Expr) ast.Type {
 	return nil
 }
 
-// substituter walks the post-modload AST replacing Ident nodes
-// whose name matches a folded const with a fresh copy of the const's
-// literal. The literal nodes are immutable so sharing pointers
-// would be safe, but the checker will eventually annotate Binary /
-// Unary nodes with downstream metadata; cloning the literal keeps
-// each substitution position independent.
 type substituter struct {
 	values     map[string]ast.Expr
 	assets     *embed.Set
 	targetOS   string
 	targetArch string
 	errs       []error
-	// module is the module of the body being walked, for its diagnostics.
-	module string
+	module     string
 }
 
-// foldIfCond folds an `if` whose condition substitution made literal.
 func foldIfCond(st ast.Stmt) {
 	if x, ok := st.(*ast.If); ok {
 		x.Cond = foldLiteralCond(x.Cond)
 	}
 }
 
-// isTargetCall reports whether c is a zero-argument call of the named
-// target builtin. A call with arguments is left for the checker, whose
-// arity error names the declared signature.
 func isTargetCall(c *ast.Call, name string) bool {
 	id, ok := c.Callee.(*ast.Ident)
 	return ok && id.Name == name && len(c.Args) == 0
 }
 
-// isAssetCall reports whether c calls __fern_asset or __fern_asset_bytes. It
-// matches on the callee name alone so that a malformed use (wrong arity, a
-// computed name) is still recognised and reported as such, rather than
-// falling through to the checker as a call to an undefined function.
 func isAssetCall(c *ast.Call) bool {
 	n := calleeName(c)
 	return n == assetBuiltin || n == assetBytesBuiltin
 }
 
-// isAssetsCall reports whether c calls __fern_assets or __fern_assets_bytes.
 func isAssetsCall(c *ast.Call) bool {
 	n := calleeName(c)
 	return n == assetsBuiltin || n == assetsBytesBuiltin
 }
 
-// assetBytes reports whether an asset call is a bytes form.
 func assetBytes(c *ast.Call) bool {
 	n := calleeName(c)
 	return n == assetBytesBuiltin || n == assetsBytesBuiltin
@@ -761,13 +575,6 @@ func calleeName(c *ast.Call) string {
 	return ""
 }
 
-// resolveAsset turns one __fern_asset("name") call into the string literal
-// holding that asset's text, or one __fern_asset_bytes("name") call into the
-// u8[] literal holding its bytes.
-//
-// The name must be a literal: the substitution happens at compile time, so
-// there is no later point at which a computed name could be resolved. Saying
-// that plainly beats letting it reach the checker as an undefined function.
 func resolveAsset(c *ast.Call, assets *embed.Set) (ast.Expr, error) {
 	fn := calleeName(c)
 	if len(c.Args) != 1 {
@@ -797,15 +604,12 @@ func resolveAsset(c *ast.Call, assets *embed.Set) (ast.Expr, error) {
 	return &ast.StringLit{P: c.P, Value: data}, nil
 }
 
-// notText refuses a text-form asset whose file is not valid UTF-8.
 func notText(p ast.Position, fn string, assets *embed.Set, name string) error {
 	return fmt.Errorf("%s: %s: embedded asset %q under %s is not valid UTF-8 — read it as u8[] with %s_bytes", p, fn, name, assets.Root(), fn)
 }
 
 var u8Type = ast.NumberType{Width: 8, Signed: false}
 
-// bytesLit is the u8[] literal holding data, one element per byte. The
-// element type is stamped so an empty file needs no annotation.
 func bytesLit(p ast.Position, data string) *ast.ArrayLit {
 	elems := make([]ast.Expr, len(data))
 	for i := 0; i < len(data); i++ {
@@ -814,17 +618,6 @@ func bytesLit(p ast.Position, data string) *ast.ArrayLit {
 	return &ast.ArrayLit{P: p, Elems: elems, ElemType: u8Type}
 }
 
-// resolveAssets turns `__fern_assets()` into an array literal of
-// `(name, text)` tuples, or `__fern_assets_bytes()` into one of
-// `(name, bytes)` tuples, one per embedded asset. The text form refuses the
-// bundle when any file in it is not valid UTF-8, naming that file.
-//
-// Order is embed.Set.Names(), which is sorted, so the emitted program is
-// byte-identical across hosts — a filesystem-order walk would not be.
-//
-// Every asset lands in the binary whether or not any __fern_asset call
-// names it. That is inherent to enumeration rather than an oversight: the
-// point is to reach assets whose names the program does not know.
 func resolveAssets(c *ast.Call, assets *embed.Set) (ast.Expr, error) {
 	fn := calleeName(c)
 	if len(c.Args) != 0 {
@@ -853,12 +646,6 @@ func resolveAssets(c *ast.Call, assets *embed.Set) (ast.Expr, error) {
 			content,
 		}})
 	}
-	// ElemType is stamped rather than left for the checker to infer,
-	// because an empty bundle produces an empty ArrayLit and the checker
-	// rejects that with "E020: empty array literal needs a type
-	// annotation" — pointing at whatever consumes the call, not at the
-	// call. Embedding a directory that happens to hold no files is
-	// legitimate; the loop should just not execute.
 	return &ast.ArrayLit{
 		P:        c.P,
 		Elems:    elems,
@@ -866,10 +653,6 @@ func resolveAssets(c *ast.Call, assets *embed.Set) (ast.Expr, error) {
 	}, nil
 }
 
-// foldLiteralCond folds a condition built from string and bool literals
-// (`==`, `!=`, `&&`, `||`, `!`), the shape a branch on `target_os()` has
-// once the call is a literal. Any other operand leaves the condition as
-// it is: numbers keep their width semantics for the IR fold.
 func foldLiteralCond(e ast.Expr) ast.Expr {
 	switch x := e.(type) {
 	case *ast.Binary:
@@ -899,9 +682,6 @@ func isLiteralOperand(e ast.Expr) bool {
 	return false
 }
 
-// PruneDeadArms drops the arm each `if` on a literal never takes, so the
-// capability gates and the shake judge only the arm a target runs. It runs
-// after the checker: a dead arm is still type-checked.
 func PruneDeadArms(prog *ast.Program) {
 	ast.WalkProgram(prog, func(n ast.Node) bool {
 		if x, ok := n.(*ast.If); ok && !x.IsAssert {
@@ -911,9 +691,6 @@ func PruneDeadArms(prog *ast.Program) {
 	})
 }
 
-// pruneLiteralIf drops the arm an `if` on a literal never takes: the live
-// arm stays under `if (true)`, the shape the IR fold erases, so a block's
-// scope is kept and nothing is spliced into the enclosing one.
 func pruneLiteralIf(x *ast.If) {
 	b, ok := x.Cond.(*ast.BoolLit)
 	if !ok {
@@ -935,11 +712,6 @@ func pruneLiteralIf(x *ast.If) {
 	x.Else = nil
 }
 
-// visit is the ScopeWalker hook: a const read not shadowed by a binder
-// (#8443) becomes its literal, a target or asset builtin its value, and an
-// assignment to a const is the only pass left to say so, since Fold clears
-// prog.Consts before the checker runs. It returns whether the walker should
-// descend into the expression's children.
 func (s *substituter) visit(slot *ast.Expr, w *ast.ScopeWalker) bool {
 	switch x := (*slot).(type) {
 	case *ast.Ident:
@@ -975,9 +747,6 @@ func (s *substituter) visit(slot *ast.Expr, w *ast.ScopeWalker) bool {
 			return false
 		}
 	case *ast.Assign:
-		// An assignment target is an lvalue, so a const named there is not a
-		// value to substitute; rewriting it produced `assignment target
-		// *ast.NumberLit is not an lvalue the parser can produce` (#8443).
 		if id, ok := x.Target.(*ast.Ident); ok {
 			if _, isConst := s.values[id.Name]; isConst && !w.IsBound(id.Name) {
 				s.errs = append(s.errs, &Error{Pos: id.P, Path: s.module, Msg: "cannot assign to const " + id.Name})
@@ -989,12 +758,6 @@ func (s *substituter) visit(slot *ast.Expr, w *ast.ScopeWalker) bool {
 	return true
 }
 
-// cloneLit returns a fresh literal carrying the same value as src but a
-// position taken from the substitution site, copying an array or tuple
-// deeply. Doing a fresh allocation lets the checker / IR pipeline
-// annotate each occurrence independently without aliasing surprises.
-// An array is marked Const: the copy is in the tree, not in memory, and
-// the IR may place every evaluation of it in one static array.
 func cloneLit(src ast.Expr, pos ast.Position) ast.Expr {
 	switch v := src.(type) {
 	case *ast.ArrayLit:
@@ -1017,9 +780,6 @@ func cloneLit(src ast.Expr, pos ast.Position) ast.Expr {
 		}
 		return &ast.StructLit{P: pos, TypeName: v.TypeName, Fields: fields, TypeArgs: v.TypeArgs}
 	case *ast.NumberLit:
-		// Width / IsUnsigned carry the declared type settleConstLit stamped on
-		// the const's literal; ExceedsI64 says how to read a Value past i64
-		// max. Each is part of the value, not of the site.
 		return &ast.NumberLit{P: pos, Value: v.Value, Raw: v.Raw, Width: v.Width, IsUnsigned: v.IsUnsigned, ExceedsI64: v.ExceedsI64}
 	case *ast.FloatLit:
 		return &ast.FloatLit{P: pos, Value: v.Value, Width: v.Width}

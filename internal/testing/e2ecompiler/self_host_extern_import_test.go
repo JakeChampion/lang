@@ -11,18 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternImportRunsUnderWasmtime is the self-host P4b gate
-// (bring-your-own WIT, docs/WIT-BRING-YOUR-OWN.md): the self-hosted wasm
-// backend lowers an `@import` extern call to a real core wasm function import
-// of the declared (interface, wit-name), and the world-driven composer wires
-// it into a component that validates and runs under wasmtime. The self-host
-// mirror of TestExternImportScalarRunsUnderWasmtime (the Go P4b gate).
-//
-// The program declares `wasi:random/random@0.2.0` `get-random-u64` (a scalar
-// `() -> i64` extern, no memory) and calls it, then writes a fixed string and
-// exits 0. The composition path is the Go ComposeFromWorldAuto against the
-// embedded fern world (the self-host composer has its own gates); what's under
-// test here is the self-host *codegen* of the extern import + call.
 func TestSelfHostExternImportRunsUnderWasmtime(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -35,8 +23,6 @@ func TestSelfHostExternImportRunsUnderWasmtime(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
-	// Stage the self-host front end + wasm backend, plus a component-io driver
-	// that emits the io-wrapped run core from source on stdin.
 	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
@@ -53,8 +39,6 @@ function main(): i32 {
 		t.Fatal("self-host wasm emitter produced 0 bytes")
 	}
 
-	// Codegen gate: the extern lowered to a concrete core wasm import of the
-	// declared (interface, wit-name).
 	if !bytes.Contains(watBytes, []byte("wasi:random/random@0.2.0")) {
 		t.Errorf("emitted core is missing the imported interface")
 	}
@@ -62,7 +46,6 @@ function main(): i32 {
 		t.Errorf("emitted core is missing the imported function")
 	}
 
-	// Assemble the WAT to a core module, then compose against the fern world.
 	watPath := filepath.Join(dir, "core.wat")
 	if err := os.WriteFile(watPath, watBytes, 0o644); err != nil {
 		t.Fatalf("write wat: %v", err)

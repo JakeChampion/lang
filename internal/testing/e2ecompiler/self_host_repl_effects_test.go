@@ -10,10 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestSelfHostREPL drives `-repl` through one session: expressions print their
-// value, declarations and `let`s carry to later lines, a void call prints
-// nothing of its own, a function declared again replaces the first, and an
-// error is reported without ending the session.
 func TestSelfHostREPL(t *testing.T) {
 	in := strings.Join([]string{
 		"1 + 2 * 3",
@@ -87,8 +83,6 @@ func TestSelfHostREPL(t *testing.T) {
 	}
 }
 
-// A REPL whose stdlib root is spelled with `..` loads the stdlib as the
-// cleaned spelling does (#12398): a float prints as its value, not `<f64>`.
 func TestSelfHostREPLStdlibRootWithDotDot(t *testing.T) {
 	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-repl", e2eharness.SelfHostStdlibRoot(t)+"/../stdlib/./")
 	cmd.Stdin = strings.NewReader("2.5\n")
@@ -99,8 +93,6 @@ func TestSelfHostREPLStdlibRootWithDotDot(t *testing.T) {
 	}
 }
 
-// effectsRun writes src as main.fern and returns `-effects`' stdout and exit
-// status.
 func effectsRun(t *testing.T, src string) (string, int) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "main.fern")
@@ -114,10 +106,6 @@ func effectsRun(t *testing.T, src string) (string, int) {
 	return stdout.String() + stderr.String(), cmd.ProcessState.ExitCode()
 }
 
-// TestSelfHostEffects pins `-effects` on a program using each edge the graph
-// draws: a method call, a function passed as a value (an escape), a call
-// through a parameter (an indirect call), a lambda that escapes, and a
-// constructor call, which is neither.
 func TestSelfHostEffects(t *testing.T) {
 	src := `struct Logger { path: string }
 
@@ -196,8 +184,6 @@ main  fs,log  (example: main → run → save → Logger.log → write_file)
 		t.Errorf("exit %d\n%s", code, firstDifference(out, want))
 	}
 
-	// A call through a function held in a struct field is a call through a
-	// value too.
 	field := `struct Route { handler: () => void }
 
 function shout(): void {
@@ -217,7 +203,6 @@ function main(): i32 {
 		t.Errorf("a call through a function field is not charged:\n%s", out)
 	}
 
-	// A program that does not check is refused with its diagnostics.
 	if out, code := effectsRun(t, "function main(): i32 { return \"s\"; }\n"); code != 1 || !strings.Contains(out, "error[E002]") {
 		t.Errorf("exit %d\n%s", code, out)
 	}

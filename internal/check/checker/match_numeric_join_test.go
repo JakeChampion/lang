@@ -41,8 +41,6 @@ func TestMatchNumericJoinRetainsConcreteArms(t *testing.T) {
 	}
 }
 
-// Equal defaults are not equal commitments: a literal's default f64/i32 must
-// not erase the other arm's concrete width, even inside a tuple, array or enum argument.
 func TestUnifyIfArmsCommitsLiteralContext(t *testing.T) {
 	for _, pair := range [][2]ast.Type{
 		{ast.FloatType{Polymorphic: true}, ast.FloatType{Width: 64}},

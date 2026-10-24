@@ -1,6 +1,6 @@
-// A fresh array handed to a function that may return it bare is released
-// after the call: the callee's return takes its own count, so the caller's
-// temp is either the result's second owner or garbage (#10140).
+
+
+
 function first(x: i32[]): i32[] { return x; }
 function or_default(x: i32[], d: boolean): i32[] {
     if (d) { return [9, 9, 9]; }

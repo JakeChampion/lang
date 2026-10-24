@@ -6,17 +6,6 @@ import (
 	"testing"
 )
 
-// The parser's monomorphiser keys a multi-parameter instance by joining the
-// concrete argument spellings with `__`, and reads the pieces back out of
-// that key (and out of a clone's mangled name) when it builds the clone,
-// its methods, a field's type, a generic's bindings from a clone value, and a
-// generic enum's clone. A piece can hold `__` of its own: a module-qualified
-// type or a nested clone. #11677: `Call[i32, far.Far, i32]` split into four
-// pieces for three parameters and bound `B` to `far`. split_key regroups the
-// tokens by what the program declares; this program covers each site with a
-// module-qualified struct, a module-qualified enum, a nested clone beside a
-// module-qualified generic clone, and a generic enum. The total is the
-// interpreter's.
 const genericKeySplitModule = `pub struct Far { max: i32 }
 pub struct FarBox[T] { inner: T }
 pub enum FarPick { Left, Right(i32) }

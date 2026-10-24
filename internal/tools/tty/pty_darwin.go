@@ -10,9 +10,6 @@ import (
 	"unsafe"
 )
 
-// OpenPTY is the Darwin half of the helper documented in pty_linux.go. XNU
-// spells the same three steps differently: grant, unlock, then ask for the
-// slave's path by name rather than by number.
 func OpenPTY() (master, slave *os.File, err error) {
 	const (
 		tiocptygrant = 0x20007454

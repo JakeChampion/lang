@@ -10,15 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/component"
 )
 
-// p3StreamRoundtripCore exercises the WASI Preview-3 `stream<u8>` channel inside
-// one task: it imports the canon glue under "" — `tr` (task.return u32),
-// `snew` (stream.new, ()->i64), `swrite` (stream.write, (writable, ptr, count)->
-// status), `sread` (stream.read, (readable, ptr, count)->status) — and
-// ("mem","m") the shared memory. `run` ()->() does: h = stream.new(); rd = lo(h)
-// (readable); wr = hi(h) (writable); write [10,20,12] @ mem[0..2]; POST the read
-// of 3 bytes into mem[8..10] first; then write the 3 bytes (read-before-write so
-// the stackful transfer resolves); then task.return(mem[8]+mem[9]+mem[10] = 42).
-// Generated from WAT via wasm-tools 1.240.
 var p3StreamRoundtripCore = []byte{
 	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x13, 0x04, 0x60,
 	0x01, 0x7f, 0x00, 0x60, 0x00, 0x01, 0x7e, 0x60, 0x03, 0x7f, 0x7f, 0x7f,
@@ -41,19 +32,8 @@ var p3StreamRoundtripCore = []byte{
 	0x02, 0x72, 0x64, 0x02, 0x02, 0x77, 0x72,
 }
 
-// TestWasmP3StreamRoundtrip is the WASI Preview-3 `stream<T>` gate, assembled
-// through the Go composer (component.BuildStreamRoundtripComponent): a consumer
-// creates a `stream<u8>`, posts a read for 3 bytes, writes 3 bytes through the
-// writable end (read-before-write so the stackful transfer resolves), sums the
-// bytes it read, and re-returns the total from its own async export `run`. Runs
-// under wasmtime's async features → 42 (10+20+12). This converts the proven
-// stream write/read mechanics into a permanent, CI-tested artifact and exercises
-// the full stream canon-builtin set (stream.new / stream.write / stream.read) end
-// to end — the stream counterpart of TestWasmP3FutureRoundtrip, completing the
-// future/stream channel pair at the composer level. See
-// docs/WASI-PREVIEW3-ASYNC-PLAN.md.
 func TestWasmP3StreamRoundtrip(t *testing.T) {
-	skipIfPreview2Missing(t) // ensures wasmtime on PATH
+	skipIfPreview2Missing(t)
 
 	comp := component.BuildStreamRoundtripComponent(p3StreamRoundtripCore, p3PendMemCore, component.CValtypeU8, component.CValtypeU32)
 	dir := t.TempDir()

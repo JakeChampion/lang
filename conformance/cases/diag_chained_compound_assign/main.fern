@@ -1,5 +1,5 @@
-// A compound assignment stands alone: it neither joins a chain of `=`
-// nor carries one, so `a = b += 5;` is a P001 at the `+=`.
+
+
 function main(): i32 {
     let a = 0;
     let b = 1;

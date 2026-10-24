@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// A lambda or nested function inside a generic function sees the encloser's
-// type parameters and their bounds: `T.make()` and a bounded method on a
-// captured `T` resolve there as in the body (#10404).
 var typeParamInClosureCases = []struct {
 	name, main string
 	want       int

@@ -31,7 +31,6 @@ pub function run(): void {
   invalid(count.decrement(kept), 100);
   invalid(count.decrement(decremented), 101);
   let malformed: count.Value[] = [count.Value { family: 0, delta: -1 }, count.Value { family: 1, delta: -1 }, count.Value { family: 1, delta: 1 }, count.Value { family: 2, delta: -2 }, count.Value { family: 2, delta: 1 }, count.Value { family: 3, delta: 0 }, count.Value { family: -1, delta: 0 }, count.Value { family: 2, delta: -2147483648 }];
-  // Codes 102..109 identify the eight malformed input cases.
   let code = 102;
   for v in malformed {
     invalid(v, code);
@@ -44,10 +43,8 @@ pub function run(): void {
   flags(count.decrement_flags(kept), -1, -1, -1, -1, -1, 241);
   flags(count.decrement_flags(decremented), -1, -1, -1, -1, -1, 242);
   flags(count.compare(kept, 0), 0, 1, 0, 0, 1, 243);
-  // INT_MIN - 1 overflows, while every kept count still compares less.
   flags(count.compare(kept, 1), 0, -1, 0, -1, 1, 244);
   flags(count.compare(shared, 1), 0, 0, 0, 0, 0, 245);
-  // Original count 2 becomes exactly 1; larger shared counts do not.
   flags(count.compare(decremented, 1), -1, 0, 0, 0, 0, 246);
   flags(count.compare(kept, -2147483648), -1, 0, 0, 0, 0, 247);
   flags(count.compare(kept, -1), -1, -1, -1, 0, -1, 248);

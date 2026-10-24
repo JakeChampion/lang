@@ -12,8 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Also compile the interpreter with the current backend. Direct CLI tests
-// below cover the installed stage1 interpreter built by the older pin.
 func runBuilderTextInterpreter(t *testing.T, compiler string, runner []string, target, stdlib string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -27,8 +25,6 @@ func runBuilderTextInterpreter(t *testing.T, compiler string, runner []string, t
 	if err != nil {
 		t.Fatal(err)
 	}
-	// interp_run has no module loader. Exact expected strings already prove
-	// validity; the native fixture additionally calls std/utf8's validator.
 	source := strings.Replace(string(data), "import \"std/utf8\";\n", "", 1)
 	source = strings.Replace(source, "  if (!utf8.is_valid_utf8(first) || !utf8.is_valid_utf8(second)) { return false; }\n", "", 1)
 	cmd = runX86_64Bin(runner, bin)
@@ -52,8 +48,6 @@ func runBuilderTextComponent(t *testing.T, compiler string, runner []string, std
 	if out, err := exec.Command("wasmtime", "run", bin).CombinedOutput(); err != nil {
 		t.Fatalf("component run: %v\n%s", err, out)
 	}
-	// wasi:cli/run does not emit the command module's exit-time census.
-	// Native/core tests below check allocation balance on this fixture.
 }
 
 func TestSelfHostBuilderText(t *testing.T) {

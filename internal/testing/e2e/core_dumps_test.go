@@ -1,11 +1,3 @@
-// `proc_waitpid_status` and `disable_core_dumps` (#11765) end to end.
-//
-// The program reaps a child that exits 5 and one that dies of SIGTERM, and
-// checks the raw wait words (5 << 8, and 15) where `proc_waitpid` would have
-// decoded both to the shell's one number. It then disables its own core dumps
-// and dies of SIGQUIT, whose default action dumps core: run with the core
-// limit raised, the parent's wait must report the death without the core bit.
-// Given an argument it stops before the raise and exits 0.
 package e2e
 
 import (
@@ -23,7 +15,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Each failing step returns its own code.
 const coreDumpsSource = `function main(): i32 {
     let a: i32 = proc_fork();
     if (a < 0) { return 2; }
@@ -43,10 +34,6 @@ const coreDumpsSource = `function main(): i32 {
 }
 `
 
-// checkNoCore runs cmd with the soft core limit raised as far as the hard one
-// allows and checks it died of SIGQUIT without dumping core. qemu-user writes
-// the guest's core itself, consulting the limit and not the dumpable flag, so
-// an emulated run is held only to the wait status.
 func checkNoCore(t *testing.T, cmd *exec.Cmd, emulated bool) {
 	t.Helper()
 	dir := t.TempDir()
@@ -68,8 +55,6 @@ func checkNoCore(t *testing.T, cmd *exec.Cmd, emulated bool) {
 	}
 }
 
-// checkStatuses runs the program with an argument, which stops it before the
-// raise, and checks it got that far.
 func checkStatuses(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
 	out, err := cmd.CombinedOutput()
@@ -92,8 +77,6 @@ func TestArm64CoreDumps(t *testing.T) {
 	checkNoCore(t, runArm64Bin(qemu, bin), qemu != "")
 }
 
-// Only an Apple Silicon host can run the Mach-O build; anywhere else the
-// build is what is checked.
 func TestArm64DarwinCoreDumps(t *testing.T) {
 	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetArm64Darwin, coreDumpsSource, nil)
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
@@ -103,8 +86,6 @@ func TestArm64DarwinCoreDumps(t *testing.T) {
 	checkNoCore(t, exec.Command(bin), false)
 }
 
-// The interpreter cannot fork, so it reaps nothing. Its death by SIGQUIT is
-// not checked: the Go runtime turns that signal into a goroutine dump.
 func TestInterpCoreDumps(t *testing.T) {
 	src := `function main(): i32 {
     if (proc_waitpid_status(0 - 1) != 0 - 10) { return 2; }
@@ -119,7 +100,6 @@ func TestInterpCoreDumps(t *testing.T) {
 	checkStatuses(t, exec.Command(buildLangBinForInterp(t), "-interp", p))
 }
 
-// Both wasm worlds refuse both builtins at the capability scan.
 func TestWASMCoreDumpsRefused(t *testing.T) {
 	for _, tc := range []struct{ builtin, capability, src string }{
 		{"disable_core_dumps", "rlimit", `function main(): i32 { if (disable_core_dumps()) { return 0; } return 1; }`},

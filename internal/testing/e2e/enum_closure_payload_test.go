@@ -9,12 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestEnumClosurePayloadIsReleased compiles EnumClosurePayloadProgram with
-// the Go compiler for x86-64, arm64 and wasm and requires a balanced leak
-// census. Before the fix the generated enum drop skipped a closure payload,
-// so every enum-held closure stranded its pair and env (#11349); the
-// program's overwrite-inside-the-arm case segfaults on x86-64 unless the
-// match holds the box its arm reassigns.
 func TestEnumClosurePayloadIsReleased(t *testing.T) {
 	fern := buildLangBinForInterp(t)
 	src := filepath.Join(t.TempDir(), "enumclo.fern")

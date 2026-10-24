@@ -12,17 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternRecordResultNestedCustomProvider is the P4c nested-record *result*
-// gate (docs/WIT-BRING-YOUR-OWN.md): an `@import` extern returns a record with a
-// nested record field, lifted into a Fern struct whose nested field is a pointer
-// to an inner struct. The canonical ABI flattens the nested record inline (p.x,
-// p.y, q.x, q.y in the return area); the wrapper allocs the outer struct and a
-// separate inner struct per nested field, fills each from the area, and stores
-// the inner pointer in the outer slot (ir.ExternRecordField.Nested + the
-// recursive materialization in buildExternRecordResultWrapper).
-//
-// The provider exports `make-line: func(x0, y0, x1, y1: s32) -> line` over
-// `record line { p: point, q: point }`; the Fern side reads l.p.x + l.q.y etc.
 func TestExternRecordResultNestedCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -49,8 +38,6 @@ func TestExternRecordResultNestedCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// make-line returns the nested record indirectly: a 16-byte area
-	// (p.x@0, p.y@4, q.x@8, q.y@12) via cabi_realloc, returning its pointer.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))

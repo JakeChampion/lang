@@ -1,18 +1,3 @@
-// basenc.fern — GNU-compatible `basenc`.
-//
-//   basenc --ENCODING [-d] [-i] [-w COLS] [FILE]
-//
-// The superset `base64` and `base32` are single-alphabet cuts of: the
-// two base64 alphabets, base58, the two base32 ones, base16, the two
-// bit orders of base2, and z85. All ten drive the one codec in
-// `lib/base.fern`; this file chooses which.
-//
-// The encoding is mandatory and its absence is reported before
-// anything else about the operands — `basenc a b` is `missing encoding
-// type`, not `extra operand`. The declaration order in `declare()` is
-// GNU's, because the ambiguity list prints candidates in it: `--=x`
-// names all thirteen in that order, `--base` the seven `base*` ones and
-// `--base3` the two base32 ones.
 import "std/string";
 import "std/array";
 import "./lib/gnu";
@@ -95,8 +80,6 @@ function help_text(): string {
   return out;
 }
 
-// The encoding an option id selects. Called once the scan has run, so
-// the LAST `--base*` on the command line is the one that decides.
 function codec_for(id: i32): base.Codec {
   if (id == opt_base64()) {
     return base.base64();

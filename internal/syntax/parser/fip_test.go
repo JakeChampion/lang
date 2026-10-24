@@ -5,14 +5,6 @@ import (
 	"testing"
 )
 
-// `fip` / `fbip` are contextual modifiers (`fip function …` / `pub fbip
-// function …`, optionally graded `fip(2) function …`) that stamp
-// FuncDecl.Fip / .Fbip / .FipAllowance — the checker then verifies the shape
-// rules (E053) and the IR verifies the emitted allocation budget (E068).
-// Because they are contextual (only consumed when the whole modifier shape
-// directly precedes `function`), both stay usable as ordinary identifiers
-// everywhere else.
-
 func TestParseFipModifier(t *testing.T) {
 	prog, err := Parse(`fip function f(own a: i32[]): i32[] { return a; }
 pub fip function g(x: i32): i32 { return x; }
@@ -40,8 +32,6 @@ function h(): i32 { return 0; }`)
 }
 
 func TestFipUsableAsIdentifier(t *testing.T) {
-	// `fip` is contextual: as a local variable / parameter name it must still
-	// parse fine (no keyword reservation).
 	if _, err := Parse(`function f(): i32 { let fip: i32 = 3; return fip + 1; }`); err != nil {
 		t.Errorf("`fip` as a local name should parse: %v", err)
 	}
@@ -76,8 +66,6 @@ function h(): i32 { return 0; }`)
 	}
 }
 
-// Graded forms: `fip(n)` / `fbip(n)` parse the allowance into
-// FuncDecl.FipAllowance; the bare forms stay allowance 0.
 func TestParseGradedFipAllowance(t *testing.T) {
 	prog, err := Parse(`fip(2) function f(x: i32): i32 { return x; }
 pub fbip(1) function g(x: i32): i32 { return x; }
@@ -105,8 +93,6 @@ fip function h(x: i32): i32 { return x; }`)
 	}
 }
 
-// `fip` and `fbip` are mutually exclusive — combining them (either order,
-// graded or not) is a parse error.
 func TestParseFipFbipMutuallyExclusive(t *testing.T) {
 	for _, src := range []string{
 		`fip fbip function f(): i32 { return 0; }`,
@@ -125,9 +111,6 @@ func TestParseFipFbipMutuallyExclusive(t *testing.T) {
 }
 
 func TestFbipUsableAsIdentifier(t *testing.T) {
-	// `fbip` is contextual: as a function / local name it must still parse
-	// (no keyword reservation), including a CALL `fbip(2)` that looks like
-	// the graded modifier shape but is not followed by `function`.
 	if _, err := Parse(`function fbip(x: i32): i32 { return x + 1; }
 function f(): i32 { let fbip: i32 = 3; return fbip + 1; }
 function main(): i32 { return fbip(2); }`); err != nil {

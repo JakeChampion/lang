@@ -7,18 +7,6 @@ import (
 	"testing"
 )
 
-// genStructOfGenEnumIRCase is a self-host program where a generic STRUCT's type
-// argument is a generic ENUM — `Box[Opt[i32]]` — the mirror of the
-// genenum-of-genstruct combo. This was the last composite generic combination on
-// still bailing (#3694): the struct monomorphiser ran first and built the
-// malformed key `Box__Opt[i32]` (brackets — the inner `Opt[i32]` is a generic
-// enum the struct pass's mg_ty couldn't mangle), so the clone was dropped and the
-// module bailed. Two struct-pass changes close it: sanitize_key rewrites a
-// bracketed enum arg to a symbol-safe `Box__Opt__i32`, and the
-// `Box { v: Sm(5) }` literal takes its instantiation from its `Box[Opt[i32]]`
-// annotation (ms_expr_to). The enum pass — unchanged — then clones `Opt__i32` from the kept
-// `v: Opt[i32]` field and keys the inner `Sm(5)`/match arms. Native
-// monomorphises these; each oracle is the native-interp value, kept <= 120.
 type genStructOfGenEnumIRCase struct {
 	name     string
 	src      string
@@ -26,21 +14,18 @@ type genStructOfGenEnumIRCase struct {
 }
 
 var genStructOfGenEnumIRCases = []genStructOfGenEnumIRCase{
-	// The issue repro: a generic struct of a generic enum, i32 payload.
 	{"box_of_opt_i32", `struct Box[T] { v: T }
 enum Opt[U] { Sm(U), Nn }
 function main(): i32 {
     let b: Box[Opt[i32]] = Box { v: Sm(5) };
     match (b.v) { Sm(n) => { return n; }, Nn => { return 0; } }
 }`, 5},
-	// string payload — method dispatch on the unwrapped string.
 	{"box_of_opt_string", `struct Box[T] { v: T }
 enum Opt[U] { Sm(U), Nn }
 function main(): i32 {
     let b: Box[Opt[string]] = Box { v: Sm("hey") };
     match (b.v) { Sm(s) => { return s.len(); }, Nn => { return 0; } }
 }`, 3},
-	// two-field struct wrapping the enum, both fields read.
 	{"pair_of_opt", `struct Pair[T] { a: T, b: T }
 enum Opt[U] { Sm(U), Nn }
 function main(): i32 {
@@ -49,8 +34,6 @@ function main(): i32 {
     let y: i32 = match (p.b) { Sm(n) => n, Nn => 0 };
     return x + y;
 }`, 10},
-	// built-in Result as the enum error type inside the struct — the source
-	// enum carried in a generic struct field, propagated through a match.
 	{"box_of_result", `struct Box[T] { v: T }
 enum Opt[U] { Sm(U), Nn }
 function main(): i32 {
@@ -60,8 +43,6 @@ function main(): i32 {
 }`, 42},
 }
 
-// TestSelfHostGenStructOfGenEnumIRX86_64 runs each case through the self-host
-// asm_run driver.
 func TestSelfHostGenStructOfGenEnumIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -95,9 +76,6 @@ func TestSelfHostGenStructOfGenEnumIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostGenStructOfGenEnumWasmIR is the wasm sibling: both monomorphisers
-// are target-independent parser passes, so the wasm IR backend gets these for
-// free. Each case asserts the same oracle exit code.
 func TestSelfHostGenStructOfGenEnumWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range genStructOfGenEnumIRCases {

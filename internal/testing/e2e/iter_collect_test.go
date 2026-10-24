@@ -9,26 +9,16 @@ import (
 	"testing"
 )
 
-// `collect` — the canonical terminal of an iterator chain (#2709): drains an
-// `Iterator[T]` into a fresh `T[]`. The inline cases write it as a bounded
-// generic collector (`T` recovered by bound-driven inference on the native side,
-// erased + monomorphised on `I` for the self-host IR path) and pin the routing /
-// genericity (i32 + a boolean element type) on every native backend AND the
-// self-host IR path; a native module test drives core/iter's `collect` method. (The keyed `Map` sink `to_map` is deferred — see the
-// note in core/iter.fern: a generic `Map[K, V]` in a generic body hits the same
-// abstract-key dispatch gap as the generic `Set[T]` in #2671.)
 var iterCollectCases = []struct {
 	name string
 	main string
 	want int
 }{
-	// collect an i32 range into i32[]; sum(0..4) + len = 6 + 4 = 10.
 	{"collect-i32", `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 struct RangeIter { cur: i32, end: i32 }
 impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
 function collect[T, I: Iterator[T]](it: I): T[] { let out: T[] = []; let cur = it; let go = true; while (go) { match (cur.next()) { Some(t) => { out = out.append(t.0); cur = t.1; }, None => { go = false; }, } } return out; }
 function main(): i32 { let xs = collect(RangeIter { cur: 0, end: 4 }); let s = 0; for x in xs { s = s + x; } return s + xs.len(); }`, 10},
-	// the SAME generic collect at T=boolean: collect 3 trues, count them → 3.
 	{"collect-bool", `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 struct BoolSeq { n: i32 }
 impl Iterator[boolean] for BoolSeq { function next(self: Self): Option[(boolean, Self)] { if (self.n <= 0) { return None; } return Some((true, BoolSeq { n: self.n - 1 })); } }
@@ -36,7 +26,6 @@ function collect[T, I: Iterator[T]](it: I): T[] { let out: T[] = []; let cur = i
 function main(): i32 { let xs = collect(BoolSeq { n: 3 }); let c = 0; for b in xs { if (b) { c = c + 1; } } return c; }`, 3},
 }
 
-// TestNativeIterCollect runs the inline collect cases on interp / x86-64 / wasm.
 func TestNativeIterCollect(t *testing.T) {
 	for _, tc := range iterCollectCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -58,7 +47,6 @@ func TestNativeIterCollect(t *testing.T) {
 	}
 }
 
-// TestNativeIterCollectArm64 is the arm64 leg (CI-gated; qemu).
 func TestNativeIterCollectArm64(t *testing.T) {
 	for _, tc := range iterCollectCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -74,8 +62,6 @@ func TestNativeIterCollectArm64(t *testing.T) {
 	}
 }
 
-// TestNativeIterCollectModule drives the shipped `core/iter` `collect` over the
-// real `of` (ArrayIter) and `range` (Range) iterators, oracle-checked.
 func TestNativeIterCollectModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
@@ -99,8 +85,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostIterCollectIRX86_64 routes each inline collect case through the
-// self-hosted x86-64 IR driver, pins routing to "ir", and oracle-checks it.
 func TestSelfHostIterCollectIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -134,7 +118,6 @@ func TestSelfHostIterCollectIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostIterCollectIRWasm runs the same inline collect cases through the wasm IR backend.
 func TestSelfHostIterCollectIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host iter-collect wasm IR e2e")

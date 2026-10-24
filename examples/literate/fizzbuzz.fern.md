@@ -58,7 +58,7 @@ function main(): i32 {
   let i: i32 = 1;
   while (i <= 15) {
     <<classify one number>>
-    putchar(10);  // newline
+    putchar(10);
     i = i + 1;
   }
   return 0;
@@ -72,13 +72,13 @@ indentation:
 ```fern
 <<classify one number>>=
 if (divisible(i, 15)) {
-  putchar(70); putchar(66);   // FB
+  putchar(70); putchar(66);
 } else if (divisible(i, 3)) {
-  putchar(70);                // F
+  putchar(70);
 } else if (divisible(i, 5)) {
-  putchar(66);                // B
+  putchar(66);
 } else {
-  putchar(46);                // .
+  putchar(46);
 }
 ```
 

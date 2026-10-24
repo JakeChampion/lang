@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// A struct whose field is an array of structs (`Bag { es: P[] }`) must release
-// that field — each element box, then the buffer — when the struct dies, and
-// only drop its count while a second owner still holds the struct (#2649).
-//
-// The shared program is the one that catches a wrong answer to "sole owner?":
-// a release that frees a shared buffer's elements shows up as a corrupt
-// read-back or an rc underflow rather than as a leak.
 var structDropArrArrFreeProg = `struct P { x: i32, y: i32 }
 struct Bag { es: P[], n: i32 }
 function main(): i32 {
@@ -29,14 +22,6 @@ function main(): i32 {
     return 0;
 }`
 
-// A live second owner across the drop, and ELEMENT reads rather than a bare
-// `.len()`: `c` still reads the elements a wrongly-taken sole-owner release
-// would free.
-//
-// `acc` is pinned exactly rather than bounded. A freed element box is rewritten
-// by the next iteration's fresh literal, so a wrong release reads back plausible
-// data and lands somewhere in range; only the exact value separates that from a
-// correct run.
 var structDropArrArrSharedProg = `struct P { x: i32, y: i32 }
 struct Bag { es: P[], n: i32 }
 function take(b: Bag): i32 { return b.es[0].x + b.es.len(); }
@@ -85,16 +70,10 @@ func TestSelfHostStructDropArrArrFreeIRX86_64(t *testing.T) {
 		}
 	}
 
-	// Each round's `b` dies at the end of the loop body and releases `es`.
 	run(t, structDropArrArrFreeProg, "struct_drop_arrarr_free", 0)
-	// A live second owner across the drop: the release must decrement without
-	// touching the elements `c` still reads.
 	run(t, structDropArrArrSharedProg, "struct_drop_arrarr_free_shared", 0)
 }
 
-// TestSelfHostStructDropArrArrFreeIRArm64 runs both programs on the arm64
-// census: the typed lowering releases the struct-array field through its own
-// drop helper, so the proof here is the balance and the exact read-back.
 func TestSelfHostStructDropArrArrFreeIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

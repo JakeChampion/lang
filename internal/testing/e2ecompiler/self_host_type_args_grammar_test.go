@@ -9,11 +9,6 @@ import (
 	"testing"
 )
 
-// Explicit type arguments in an expression are written only before a call's
-// `(` or a struct literal's `{`, as the native parser has it (#11777). Anywhere
-// else the bracket is an index, and a type keyword inside it is a P001 at that
-// keyword from both front ends: `Tag[i32].One(1)` is not a variant
-// construction, and `id[i32]` is not a function value.
 func TestSelfHostTypeArgsGrammar(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	const prog = "enum Tag[T] { One(T), Empty }\nstruct Box[T] { v: T }\nfunction id[T](x: T): T { return x; }\nfunction main(): i32 {\n  let r: i32 = 0;\n  %s\n  return r;\n}\n"
@@ -53,7 +48,6 @@ func TestSelfHostTypeArgsGrammar(t *testing.T) {
 		if err := os.WriteFile(src, []byte(fmt.Sprintf(prog, stmt)), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		// The `i32` inside the expression's bracket, past the two-space indent.
 		col := 2 + strings.LastIndex(stmt, "[i32]") + 2
 		want := fmt.Sprintf(":6:%d: error[P001]", col)
 		if out, err := check(h.cli, src, h.stdlib); err == nil || !strings.Contains(out, want) {

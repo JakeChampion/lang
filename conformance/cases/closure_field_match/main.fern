@@ -1,26 +1,26 @@
-// `match` on a call through a CLOSURE-TYPED STRUCT FIELD. The self-host refused
-// the whole module: the scrutinee's Option/Result type is recovered by a cascade
-// over the callee shape, and for a field access it keys the registry by
-// "<StructType>.<method>" — but a field holding a function is not a method, so
-// the lookup missed and the arm bailed.
-//
-// The declared field type already names the return: `run: (C) => Result[C, string]`.
-// StructFieldDecl.fn_ret records that spelling, and decl_field_fn_ret reads it, so
-// the fix asks the declaration when the registry misses — the struct-field twin of
-// the ParamDecl.fn_ret that already seeds closure_opt_rets for a closure PARAM.
-//
-// Positions, so a future narrowing is visible:
-//   direct    — `st.run(c)`, the plain spelling.
-//   elem      — `sts[i].run(c)`, which is what tests/proposals/pipeline.fern
-//               actually writes. It reaches the struct through an INDEX, so it
-//               depends on expr_struct_type resolving an indexed struct array to
-//               its element type; it refused identically before the fix.
-//   opt       — a field returning Option[T] rather than Result, both arms.
-//   err       — the Err arm, so a fix that only recovered Ok is visible.
-//   method    — a control: an ordinary METHOD returning Result on the same struct,
-//               which went through the registry and lowered before this change.
-//
-// Sentinels are 251-253, above the `% 113` the success path returns.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 struct C { value: i32 }
 struct S { name: string, run: (C) => Result[C, string] }
 struct O { name: string, pick: (i32) => Option[i32] }
@@ -41,7 +41,7 @@ function (s: S) twice(c: C): Result[C, string] {
     return Ok(C { value: c.value + 2 });
 }
 
-// The bail shape: a closure-typed field called directly.
+
 function direct(i: i32): i32 {
     let st: S = S { name: "b", run: bump };
     match (st.run(C { value: i })) {
@@ -51,7 +51,7 @@ function direct(i: i32): i32 {
     return 253;
 }
 
-// pipeline.fern's own spelling: the struct reached through an array index.
+
 function elem(i: i32): i32 {
     let sts: S[] = [S { name: "b", run: bump }, S { name: "r", run: refuse }];
     let acc: i32 = 0;
@@ -66,7 +66,7 @@ function elem(i: i32): i32 {
     return acc;
 }
 
-// An Option-returning field, both arms.
+
 function opt(i: i32): i32 {
     let o: O = O { name: "h", pick: halve };
     let acc: i32 = 0;
@@ -81,7 +81,7 @@ function opt(i: i32): i32 {
     return acc;
 }
 
-// The Err arm on its own, so a fix recovering only Ok is caught.
+
 function err(i: i32): i32 {
     let st: S = S { name: "r", run: refuse };
     match (st.run(C { value: i })) {
@@ -91,7 +91,7 @@ function err(i: i32): i32 {
     return 253;
 }
 
-// Control: an ordinary METHOD on the same struct, which lowered before the fix.
+
 function method(i: i32): i32 {
     let st: S = S { name: "b", run: bump };
     match (st.twice(C { value: i })) {

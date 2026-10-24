@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// charMethodCases exercise std/i32's byte classifiers on a `u8` receiver
-// (to_ascii_lower/upper, is_ascii_digit/alpha/alnum/lower/upper/hex_digit),
-// the ones std/string calls now that `s[i]` yields u8 (#5629). A
-// fold returns a u8, so the cases that return one widen explicitly — Fern has
-// no implicit unsigned widening. Cross-checked vs Go.
 var charMethodCases = []struct {
 	name string
 	src  string
@@ -26,8 +21,6 @@ var charMethodCases = []struct {
 	{"to_ascii_string", "import \"std/i32\"; function main(): i32 { let c: u8 = 65; return c.to_ascii_string()[0] as i32; }", 65},
 }
 
-// TestSelfHostCharMethodsX86_64 compiles the char-method programs with
-// the self-hosted load driver and checks exit codes.
 func TestSelfHostCharMethodsX86_64(t *testing.T) {
 	l := newStdlibLoader(t)
 	for _, tc := range charMethodCases {
@@ -42,8 +35,6 @@ func TestSelfHostCharMethodsX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostSortX86_64 proves the self-hosted compiler compiles core/cmp's
-// `own`-consuming `sort_in_place` and the result sorts.
 func TestSelfHostSortX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
@@ -58,12 +49,11 @@ func TestSelfHostSortX86_64(t *testing.T) {
 		cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
 	}
 	_ = cmd.Run()
-	if code := cmd.ProcessState.ExitCode(); code != 109 { // min 1 * 100 + max 9
+	if code := cmd.ProcessState.ExitCode(); code != 109 {
 		t.Errorf("sort_in_place result exited %d, want 109 (min=1, max=9)", code)
 	}
 }
 
-// TestSelfHostCharMethodsArm64 — CI-gated arm64 counterpart.
 func TestSelfHostCharMethodsArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range charMethodCases {
@@ -78,7 +68,6 @@ func TestSelfHostCharMethodsArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostSortArm64 — CI-gated arm64 counterpart.
 func TestSelfHostSortArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)

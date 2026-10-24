@@ -1,6 +1,3 @@
-// array_append — grow-and-drop churn: the allocator, the geometric regrow and
-// the reference-counting traffic on an owned array, with nothing else in the
-// loop.
 function build(n: i32): i32[] {
   let xs: i32[] = [];
   let i: i32 = 0;

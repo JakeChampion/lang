@@ -55,8 +55,6 @@ function main(): i32 {
 `, strings.Repeat("x", n), n, n)
 		cases = append(cases, struct{ Name, Source string }{fmt.Sprintf("bytes%d", n), src})
 	}
-	// A read of a descriptor that is not open is an error, never the end of
-	// the stream, and leaves nothing allocated.
 	cases = append(cases, struct{ Name, Source string }{"invalid-fd", read + `function main(): i32 {
     let i: i32 = 0;
     while (i < 32) {

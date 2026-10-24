@@ -11,23 +11,10 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// The self-host's `ow_fresh_builtins` (compiler/checker.fern) derives
-// the fresh-owner set for USER functions from the module it is checking, the
-// same way native's `isOwnedExpr` does. The BUILTIN half it cannot derive:
-// builtins carry no declaration in the module, so the self-host hard-codes the
-// names that pass native's rule — a pointer result and no pointer parameter,
-// so the result cannot be a handed-back borrow of an argument.
-//
-// Nothing tied that list to the table it mirrors. A builtin gaining a pointer
-// result, or losing its last pointer parameter, silently makes the self-host
-// reject `f(builtin())` at an `own` parameter with an E051 native accepts —
-// a diagnostic that exists in one compiler and not the other.
 func TestSelfHostFreshOwnedBuiltinsMatchChecker(t *testing.T) {
 	fern := parseFernFreshOwnedBuiltins(t, "../../../compiler/checker.fern")
 	native := nativeFreshOwnedBuiltins(t)
 
-	// Guard the gate itself: an anchor that moved, or a table that stopped
-	// registering builtins, would otherwise compare two empty sets and pass.
 	if len(fern) < 8 {
 		t.Fatalf("only %d builtin names parsed out of ow_fresh_builtins (%v) — has the list moved or been reshaped?", len(fern), sortedNames(fern))
 	}
@@ -47,8 +34,6 @@ func TestSelfHostFreshOwnedBuiltinsMatchChecker(t *testing.T) {
 	}
 }
 
-// parseFernFreshOwnedBuiltins reads the hard-coded `let out: string[] = [ ... ]`
-// literal at the head of ow_fresh_builtins.
 func parseFernFreshOwnedBuiltins(t *testing.T, path string) map[string]bool {
 	t.Helper()
 	src, err := os.ReadFile(path)
@@ -70,19 +55,6 @@ func parseFernFreshOwnedBuiltins(t *testing.T, path string) map[string]bool {
 	return out
 }
 
-// nativeFreshOwnedBuiltins recomputes signatureResultBorrows over the checker's
-// builtin signature table: a pointer result, and no pointer parameter. Builtins
-// carry no body, so the signature rule is what decides them on both sides —
-// computeResultBorrows only ever speaks for a function whose body it saw.
-//
-// This covers the FuncSigs-derived half of isOwnedExpr only. The rule's second
-// arm (every pointer parameter declared `own`) is vacuous for builtins today
-// because ownFuncs holds user functions alone; nothing here would notice if
-// that changed. Its freshOwnedProducers half is pinned separately, below.
-//
-// Method builtins are excluded: they are reached through a receiver, which is
-// a pointer argument the self-host's rule never sees, and ow_fresh_builtins
-// likewise skips every function with a receiver.
 func nativeFreshOwnedBuiltins(t *testing.T) map[string]bool {
 	t.Helper()
 	const probe = `function main(): i32 { return 0; }`

@@ -1,17 +1,9 @@
-// Independent normal-x86 decrement instruction syntax. This program is data,
-// not an effect certificate. A semantic checker must call program on its own
-// complete text, refuse reachable kind 0 instructions and prove every path.
 import "./ssadecrementtext" as text;
 import "./ssainlineuniqueisa" as registers;
 import "./ssaproofnames" as names;
 import "./util";
 import "std/string";
 
-// kind: 0 unsupported, 1 label, 2 register move, 3 load, 4 store,
-// 5 self TEST32, 6 TEST8 bit zero, 7 CMP32 immediate, 8 CMP64 floor,
-// 9 SUB32 one, 10 branch, 11 plain RET, 12 exact underflow-counter INC32.
-// Width is in bits. Register numbers
-// use the independent ISA table; offsets are signed byte displacements.
 pub struct Op { kind: i32, width: i32, source: i32, destination: i32, base: i32, offset: i32, immediate: i32, condition: string, target: i32 }
 
 pub struct Program { ops: Op[], register_entry: i32, unguarded_entry: i32, error: string }
@@ -135,9 +127,6 @@ function decode(line: string, labels: names.Names): Op {
   if (branch(name)) {
     return Op { ...empty(10), condition: name, target: names.unique_position(labels, rest) };
   }
-  // The admitted addressing form has only displacement(base). Commas in
-  // indexed addressing therefore make an unsupported instruction, not a
-  // partially decoded load with the index silently discarded.
   let args = rest.split(",");
   if (args.len() != 2) {
     return empty(0);
@@ -152,10 +141,6 @@ function failure(error: string): Program {
   return Program { ops: [], register_entry: -1, unguarded_entry: -1, error: error };
 }
 
-// Instruction positions correspond exactly to selected lines, including
-// labels. Branches resolve once through a bounded index of this same body.
-// Unsupported operations remain kind 0, even in zero/one/free paths. Empty
-// error means only selection and branch binding succeeded, never execution.
 pub function program(output: string, entry: string): Program {
   let body = text.select(output, entry);
   if (body.error != "") {

@@ -1,6 +1,3 @@
-// Negative coverage for the corpus format gate. The real corpus passes,
-// so TestConformanceCorpusFormat alone cannot show the check would catch
-// anything — these synthetic cases exercise each rejection.
 package e2e
 
 import (
@@ -13,8 +10,8 @@ import (
 func TestCheckCaseFormatRejections(t *testing.T) {
 	tests := []struct {
 		name  string
-		files map[string]string // relative path → contents; "" for a directory
-		want  string            // required substring of the single problem
+		files map[string]string
+		want  string
 	}{
 		{
 			name:  "typo'd sidecar",
@@ -107,7 +104,6 @@ func TestCheckCaseFormatRejections(t *testing.T) {
 			want:  "which is what omitting it means — delete it",
 		},
 
-		// The waiver rules.
 		{
 			name:  "contains mode with no waiver",
 			files: map[string]string{"main.fern": "", "match": "contains"},
@@ -192,9 +188,6 @@ func TestCheckCaseFormatRejections(t *testing.T) {
 	}
 }
 
-// waiverOK is a complete, valid waiver — used both as the fixture for
-// rules that need a case to be otherwise clean, and as the subject of
-// the "waiver on a case that does not weaken" rejection.
 const waiverOK = "waiver: harness-limit\nreason: the runner cannot observe this\n"
 
 func TestCheckCaseFormatAccepts(t *testing.T) {

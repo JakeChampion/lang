@@ -9,10 +9,6 @@ import (
 	"testing"
 )
 
-// unionMergedPaths returns the repo-relative paths .gitattributes marks
-// `merge=union`, which is the list every check below derives from rather than
-// repeating. A hand-kept copy of a list that lives somewhere else is the drift
-// this package exists to catch.
 func unionMergedPaths(t *testing.T) []string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("..", "..", "..", ".gitattributes"))
@@ -43,8 +39,6 @@ func unionMergedPaths(t *testing.T) []string {
 	return out
 }
 
-// registryKeys returns a registry file's row KEYS — the first
-// whitespace-separated field of every non-comment line.
 func registryKeys(t *testing.T, path string) (keys []string) {
 	t.Helper()
 	f, err := os.Open(path)
@@ -69,16 +63,6 @@ func registryKeys(t *testing.T, path string) (keys []string) {
 	return keys
 }
 
-// `merge=union` keeps BOTH sides of a colliding line, which is exactly right
-// for two PRs appending different rows and exactly wrong for two PRs giving one
-// row different values — that yields a duplicated key.
-//
-// Nothing else would notice. Every reader of these files builds a map keyed on
-// the row name (censusRowNames in this package), so a duplicate collapses to
-// whichever row was read
-// last, silently, and the census gates keep passing while pinning a verdict
-// nobody chose. That is the whole cost of the union attribute, so it is paid
-// here rather than left to be discovered.
 func TestUnionMergedRegistriesHaveNoDuplicateKeys(t *testing.T) {
 	for _, rel := range unionMergedPaths(t) {
 		t.Run(rel, func(t *testing.T) {
@@ -105,9 +89,6 @@ func TestUnionMergedRegistriesHaveNoDuplicateKeys(t *testing.T) {
 	}
 }
 
-// Every `merge=union` path must exist. A stale pattern silences nothing and
-// looks like coverage — the same false-green shape as a workflow filter naming
-// a lane that no longer runs.
 func TestUnionMergedPathsExist(t *testing.T) {
 	for _, rel := range unionMergedPaths(t) {
 		if _, err := os.Stat(filepath.Join("..", "..", "..", rel)); err != nil {

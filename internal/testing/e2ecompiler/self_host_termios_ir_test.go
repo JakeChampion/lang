@@ -8,20 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/tools/tty"
 )
 
-// selfHostTermiosSource drives `termios_get(fd)` and `termios_set(fd, when,
-// words)` through the self-host's lowering: the `termios_get` and
-// `termios_set` ops and the Fern runtime leaves behind them, which is one
-// TCGETS into a 24-element word array and the TCSETS family back out of one.
-//
-// Every failure returns its own exit code; nothing is printed, so the test
-// needs no stdout comparison and the program can run with a terminal on fd 0
-// where a pipe would answer ENOTTY to everything.
-//
-// The assertions are chosen so a wrong request number or a mispacked struct
-// cannot pass: the length is the target's, VINTR on a fresh pseudo-terminal is
-// ^C, clearing ECHO changes lflag by exactly that bit and the value comes
-// back, restoring the original returns it, and both a short array and an
-// out-of-range action are refused.
 const selfHostTermiosSource = `function main(): i32 {
     match (termios_get(0)) {
         Err(_) => { return 10; },
@@ -47,11 +33,6 @@ const selfHostTermiosSource = `function main(): i32 {
 }
 `
 
-// runOnPty runs cmd with a fresh pseudo-terminal as its stdin, which is the
-// only way the probe above reaches anything: every one of its calls answers
-// ENOTTY on a pipe. The master is drained so a child that wrote more than a
-// terminal holds could not deadlock — this one writes nothing, and the drain
-// costs nothing.
 func runOnPty(t *testing.T, cmd *exec.Cmd) (string, int) {
 	t.Helper()
 	master, slave, err := tty.OpenPTY()
@@ -66,8 +47,6 @@ func runOnPty(t *testing.T, cmd *exec.Cmd) (string, int) {
 		slave.Close()
 		t.Fatalf("start: %v", err)
 	}
-	// The parent's copy goes as soon as the child holds it, or a read of the
-	// master would never see the end of the output.
 	slave.Close()
 	done := make(chan struct{})
 	go func() {
@@ -88,10 +67,6 @@ func runOnPty(t *testing.T, cmd *exec.Cmd) (string, int) {
 	return out.String(), cmd.ProcessState.ExitCode()
 }
 
-// TestSelfHostTermiosIR is the x86-64 IR leg: the two ops lower to calls into
-// the Fern-compiled __fern_termios_get / __fern_termios_set, which assemble
-// the flag words a byte at a time — tcflag_t is unsigned where __load_i32 is
-// signed, so a word with its top bit set would arrive negative.
 func TestSelfHostTermiosIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -117,8 +92,6 @@ func TestSelfHostTermiosIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostTermiosArm64IR is the arm64 leg of the same programme, through
-// asm_ir_run -target arm64-linux under qemu.
 func TestSelfHostTermiosArm64IR(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

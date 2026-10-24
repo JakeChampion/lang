@@ -1,8 +1,8 @@
-// `if let` reads the shared pattern grammar (#5356): every pattern form a
-// `match` accepts works in its head.
-//
-// Braceless then-branch: the desugar wraps a bare statement in the
-// block a match arm body needs.
+
+
+
+
+
 enum Box { Full(i32), Empty }
 function main(): i32 {
   let b: Box = Full(8);

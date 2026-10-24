@@ -1,18 +1,7 @@
 package e2e
 
-// A `for` header takes a destructuring pattern (#6096), the same one
-// `let (a, b) = e;` takes. Which loop it lowers to is chosen by the iterand's
-// type — an array binds the pattern against each element, a Map against each
-// entry — so both halves have to run, and the Map half is the control that must
-// not regress.
-
 import "testing"
 
-// Every shape the shared pattern grammar can put in the header: a plain pair, a
-// wider arity, a nested element, a `_` discard, an iterand that is a call rather
-// than a name, and `continue` inside a labelled loop (which must still advance
-// the index). The Map legs pin the entry cursor: insertion order, a nested
-// value pattern, and a `break` that leaves the walk early.
 const foreachPatternProg = `
 import "core/map";
 
@@ -75,11 +64,6 @@ function main(): i32 {
 }
 `
 
-// The lowering is swapped in where a block's statements are checked, so every
-// position a statement can sit in has to reach it: a lambda body, a
-// block-expression, a braceless branch body (the parser wraps the loop in a
-// Block so this one is a statement of something), a match arm, and one pattern
-// loop inside another.
 const foreachPatternNestingProg = `
 function apply(f: () => i32): i32 {
     return f();
@@ -148,10 +132,6 @@ func TestForEachPatternNestingWasm(t *testing.T) {
 	}
 }
 
-// The iterand is type-checked once to choose the loop and again as part of the
-// lowering that binds it, so a non-trivial iterand must settle identically both
-// times: a generic call, a call whose argument is a capturing lambda, and a
-// Map-returning call (the cursor's receiver is an expression, not a name).
 const foreachPatternIterandProg = `
 import "core/map";
 

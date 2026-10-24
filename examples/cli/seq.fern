@@ -1,23 +1,6 @@
-// seq.fern — print a sequence of integers, like `seq(1)`.
-//
-//   seq LAST              1, 2, ... LAST
-//   seq FIRST LAST        FIRST .. LAST  (step +1)
-//   seq FIRST STEP LAST   FIRST, FIRST+STEP, ... not past LAST
-//
-//   -s STR   separator between numbers (default newline)
-//   -w       equal-width, zero-padded to the widest value
-//
-//   $ ./seq 5
-//   $ ./seq 2 2 10
-//   $ ./seq -s , 1 5      ->  1,2,3,4,5
-//
-// Showcases: positional integer operands, descending sequences
-// (negative step), `-w` width computation.
 import "std/string";
 import "std/i32";
 
-// Width (in characters, including a leading '-') of an i32 rendered
-// as decimal — used by -w to zero-pad every value to the widest.
 function width_of(n: i32): i32 {
   return n.to_string().len();
 }
@@ -71,9 +54,6 @@ function main(): i32 {
     return 1;
   }
 
-  // Compute pad width from the two endpoints (good enough for the
-  // common ranges; GNU seq scans every value, but endpoints bound
-  // the digit count for a monotonic sequence).
   let pad: i32 = 0;
   if (equal_width) {
     pad = width_of(first);
@@ -85,7 +65,6 @@ function main(): i32 {
   let out: string = "";
   let n: i32 = first;
   let count: i32 = 0;
-  // Ascending when step > 0, descending when step < 0.
   while (step > 0 && n <= last || step < 0 && n >= last) {
     let piece: string = n.to_string();
     if (equal_width) {

@@ -2,11 +2,6 @@ import "std/test";
 import "std/http";
 import "std/json";
 
-// tests/stdlib/http_json_of_test.fern — std/http's typed JSON answers:
-// `json_of` and `json_of_status` serialise a value through its `json.Json`
-// impl and set the media type, so a handler answers a struct without
-// spelling the encoding itself.
-
 @derive(json.Json)
 struct User { id: i32, name: string, admin: boolean }
 

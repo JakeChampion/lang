@@ -11,18 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternVariantF32ArmParamCustomProvider covers the S2 f32 arm
-// (#5327): `variant nv { i(s32), f(f32) }`. The canonical join of two 32-bit
-// arms is i32, but the self-host has no distinct f32 — it stores the f32
-// payload widened to an 8-byte f64 in the variant box — so the wrapper's f-arm
-// read is a demote+reinterpret bridge (f64.load, f32.demote_f64,
-// i32.reinterpret_f32) branched per-arm on the box's struct_id, while the i arm
-// keeps the plain i32.load. (A uniform-f32 variant — whose canonical join is an
-// f32 signature slot — and an f32 arm mixed with a 64-bit arm stay deferred.)
-//
-// `take: func(e: nv) -> s32`: i(x) -> x, f(y) -> trunc(y * 4). The self-host
-// passes I(7) (-> 7) and F(1.5) (-> 6, only if the f32 bits survive the i32
-// join).
 func TestSelfHostExternVariantF32ArmParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -50,9 +38,6 @@ func TestSelfHostExternVariantF32ArmParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// take receives the variant flattened to (disc:i32, payload:i32). The f
-	// arm's f32 is carried in the i32 join as its raw bits, recovered via
-	// f32.reinterpret_i32.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (func (export "local:test/sink@0.1.0#take") (param $disc i32) (param $p i32) (result i32)
@@ -143,16 +128,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostExternVariantF32ArmResultCustomProvider is the result-side
-// mirror: a `variant nv { i(s32), f(f32) }` lifted into a self-host enum
-// `Nv { I(i32), F(f32) }`. The i32 join is returned indirectly (disc:u8 @0,
-// payload:i32 @4); the wrapper branches on the disc — the f arm's payload is
-// the f32's raw bits, bridged into the box's 8-byte f64 slot
-// (f32.reinterpret_i32 then f64.promote_f32) so the S1 f64.load match bind
-// recovers the float; the i arm keeps the plain i32 copy.
-//
-// `classify: func(n: s32) -> nv`: n<10 -> i(7), else -> f(2.5). The self-host
-// `match` checks each arm's payload at its own type.
 func TestSelfHostExternVariantF32ArmResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -180,9 +155,6 @@ func TestSelfHostExternVariantF32ArmResultCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// classify returns the variant indirectly in the canonical memory layout: an
-	// 8-byte area (disc:u8 @0, payload @4) via cabi_realloc, 4-aligned. i=0/f=1.
-	// The f arm stores the f32 payload as its raw bits in the i32 slot.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))

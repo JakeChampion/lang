@@ -6,16 +6,6 @@ import (
 	"testing"
 )
 
-// A rotation builds two nodes out of two dying ones: `rot` takes
-// Two(Two(a, b), c) apart and builds Two(a, Two(b, c)). The parent dies
-// before the inner construction, which is not the one it can serve, so its
-// token waits in the parent's own local for the outer construction while
-// the child's serves the inner. When a block could hold only one token,
-// the parent's was released and each rotation allocated once.
-//
-// `shared` keeps the previous tree alive across each round, so `rot` must
-// copy the two nodes it rebuilds and leave the old tree's value intact;
-// `unrot` then has `rot`'s fresh result to itself.
 func rotationReuseSrc(rounds int, shared bool) string {
 	keep := ""
 	check := "false"
@@ -66,7 +56,6 @@ function main(): i32 {
 func checkRotationReuse(t *testing.T, target string, run censusRun) {
 	t.Helper()
 	census := func(rounds int, shared bool) int64 {
-		// A wasm core module hands main's result back on stdout.
 		stdout, stderr, exit := run(t, rotationReuseSrc(rounds, shared))
 		if exit != 0 || strings.TrimSpace(stdout) != "" && strings.TrimSpace(stdout) != "0" {
 			t.Fatalf("%s rounds=%d shared=%v: exit %d, stdout %q, want 0; stderr: %s", target, rounds, shared, exit, stdout, stderr)

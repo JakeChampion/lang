@@ -2,14 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the unsigned range/diff helpers added to std/u32 and
-// std/u64: abs_diff (larger minus smaller — always fits, no wrap) and the range
-// predicates is_in_range (half-open) / is_between (inclusive). The MAX-value
-// cases are essential: they only pass if every backend uses UNSIGNED
-// comparison for u32/u64 `<` / `>=` (a signed compare would treat u32::MAX /
-// u64::MAX as negative and mis-answer the range checks). Returns 42 iff every
-// check holds across interp / x86-64 / wasm / arm64; results are unsigned /
-// boolean (no Option), so the wasmbin enum-i64 gap doesn't apply.
 const uintAbsDiffRangeProg = `
 import "std/u32";
 import "std/u64";

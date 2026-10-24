@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-// withAliasingCases are the shapes `arr.with(i, v)` has to keep apart: in
-// each one a second value covers the receiver's buffer, so a write in
-// place that skipped the owner count would be visible through it. Every
-// expected value is the one the compiled backends produce (probed with
-// `fern -target x86-64-linux -run`), so this is the oracle's contract
-// and not just the interpreter agreeing with itself. #7287.
 var withAliasingCases = []struct {
 	name string
 	src  string
@@ -27,8 +21,6 @@ var withAliasingCases = []struct {
 		want: 19,
 	},
 	{
-		// The receiver stays live after the call, so the result has to
-		// be a copy even though only one binding holds the buffer.
 		name: "receiver still live after the call",
 		src: `function main(): i32 {
 			let a: i32[] = [1, 2, 3];
@@ -69,9 +61,6 @@ var withAliasingCases = []struct {
 		want: 19,
 	},
 	{
-		// The map's in-place insert is the store the assignment cannot
-		// account for: it hands back the same *Map, so the assignment's
-		// retain and release cancel.
 		name: "alias through a map value",
 		src: `function main(): i32 {
 			let a: i32[] = [1, 2, 3];
@@ -110,8 +99,6 @@ var withAliasingCases = []struct {
 		want: 19,
 	},
 	{
-		// The parameter is a second owner while the caller's binding is
-		// still live, so a write through it must not reach the caller.
 		name: "write through a parameter",
 		src: `function f(p: i32[]): i32 {
 			p = p.with(0, 9);
@@ -170,8 +157,6 @@ var withAliasingCases = []struct {
 		want: 781,
 	},
 	{
-		// An append still covers the receiver's slots, so a later write
-		// through the shorter view must not reach the longer one.
 		name: "with after an append off the same buffer",
 		src: `function main(): i32 {
 			let a: i32[] = [1, 2, 3];
@@ -182,8 +167,6 @@ var withAliasingCases = []struct {
 		want: 149,
 	},
 	{
-		// A borrowed view covers the owner's buffer, so the owner's
-		// write must not reach it.
 		name: "slice view of the receiver",
 		src: `function main(): i32 {
 			let a: i32[] = [1, 2, 3, 4];
@@ -194,8 +177,6 @@ var withAliasingCases = []struct {
 		want: 29,
 	},
 	{
-		// The alias dies with the block, so the write after it is
-		// unshared again.
 		name: "alias then scope exit",
 		src: `function main(): i32 {
 			let a: i32[] = [1, 2, 3];
@@ -210,8 +191,6 @@ var withAliasingCases = []struct {
 		want: 78,
 	},
 	{
-		// An argument already evaluated is a live reference while a
-		// later argument runs statements that reassign the binding.
 		name: "argument evaluated before a block that reassigns it",
 		src: `function h(p: i32[], q: i32): i32 { return p[0] * 10 + q; }
 		function main(): i32 {
@@ -237,10 +216,6 @@ var withAliasingCases = []struct {
 		want: 992,
 	},
 	{
-		// An in-place write hands the Map-rc paths the array carries from
-		// the element it replaces to the one it stores. Without that the
-		// stored map looks unshared and its next insert mutates the copy
-		// the array holds.
 		name: "map stored by an in-place element write",
 		src: `function main(): i32 {
 			let a: Map[i32, i32][] = [map_new(8), map_new(8)];
@@ -253,8 +228,6 @@ var withAliasingCases = []struct {
 		want: 59,
 	},
 	{
-		// The caller's binding is dead at the call, so the write inside
-		// the callee lands in the caller's buffer — invisibly.
 		name: "reassign through a callee",
 		src: `function setz(w: i32[], i: i32, v: i32): i32[] { w = w.with(i, v); return w; }
 		function main(): i32 {
@@ -266,11 +239,6 @@ var withAliasingCases = []struct {
 	},
 }
 
-// The oracle must give the same answer whether or not the in-place write
-// fired, so every case runs under all three FERN_INTERP_ARRAY_COW modes:
-// the counted default, `copy` (never in place — the cross-check
-// baseline), and `verify` (in place, with a live-scope scan that refuses
-// the write on an under-count).
 func TestArrayWithValueSemantics(t *testing.T) {
 	for _, mode := range []string{"", "copy", "verify"} {
 		name := mode
@@ -290,10 +258,6 @@ func TestArrayWithValueSemantics(t *testing.T) {
 	}
 }
 
-// Writing every element of an n-element array costs O(n) element copies,
-// not O(n²) (#7287). Counting copies rather than timing keeps the
-// assertion deterministic on a shared runner: the quadratic shape copies
-// n² elements, which is far outside every bound below.
 func TestArrayWithIsLinear(t *testing.T) {
 	fill := func(n int) int {
 		t.Helper()
@@ -321,9 +285,6 @@ func TestArrayWithIsLinear(t *testing.T) {
 	}
 }
 
-// `copy` mode is only a useful cross-check if it really disables the
-// in-place write, and the default mode is only useful if it really takes
-// it. Assert both, so neither can quietly become the other.
 func TestArrayWithModesDiffer(t *testing.T) {
 	src := `function main(): i32 {
 		let a: i32[] = [];
@@ -347,9 +308,6 @@ func TestArrayWithModesDiffer(t *testing.T) {
 	})
 }
 
-// An update chain assigned back to its receiver reads the receiver's slot
-// in an outer link, after the inner link has run. The slot must still
-// hold the old buffer's elements then, so the move is not taken (#9702).
 func TestArrayWithChainOuterReadSeesTheOldValue(t *testing.T) {
 	for _, tc := range []struct {
 		name string

@@ -1,55 +1,3 @@
-// runcon.fern — GNU-compatible `runcon`.
-//
-//   runcon CONTEXT COMMAND [args]
-//   runcon [-c] [-u USER] [-r ROLE] [-t TYPE] [-l RANGE] COMMAND [args]
-//
-// With neither CONTEXT nor COMMAND it prints the calling process's own
-// security context, and that is the one thing it does on a kernel
-// without SELinux — where every other invocation is
-// `runcon may be used only on a SELinux kernel` and exit 125.
-//
-// The argument shape reads oddly until the order is written out. It is:
-//
-//   1. no operands at all      print getcon() and exit 0, whatever
-//                              options were given — `runcon -t x` and
-//                              `runcon --` both print the context
-//   2. no -u -r -t -l -c       the first operand is the CONTEXT
-//   3. nothing left            `no command specified`, with the usage
-//                              line, exit 125
-//   4. no SELinux kernel       the refusal above, WITHOUT a usage line
-//
-// Options do not permute: glibc's optstring is `+r:t:u:l:c`, so the first
-// operand ends the scan and `runcon foo -x` runs `-x`. Giving one of the
-// four valued options twice is `multiple roles` / `multiple types` /
-// `multiple users` / `multiple levelranges`, reported where it is met
-// and so ahead of everything above.
-//
-// Exit status is gnulib's command-runner set: 125 for runcon's own
-// failures, 126 for a command that cannot be invoked, 127 for one that
-// cannot be found.
-//
-// ---- what this does NOT do -------------------------------------------------
-//
-// Running the command is not implemented, because three separate pieces
-// of it are blocked on runtime primitives Fern does not have:
-//
-//   - execvp(3) passes the command NAME as the child's argv[0], and
-//     `proc_exec` forces argv[0] to be the resolved path it was handed,
-//     so the child would see a different argv[0] than GNU gives it;
-//   - `-c` computes the transition context from getfilecon(3) of the
-//     command, an extended-attribute read with no primitive at all;
-//   - security_check_context(3) writes a context into selinuxfs and
-//     reads the kernel's verdict back off the SAME descriptor, which
-//     `write_file` cannot do, so `invalid context: %s` is unreachable.
-//
-// So an invocation that would run something reports
-// `runcon: running a command in a security context is not supported on
-// this system` and exits 125 — after the SELinux check, which means a
-// kernel without SELinux never reaches it and the corpus compares byte
-// for byte. The options are all DECLARED regardless, because their
-// getopt behaviour is observable whether or not the command runs: a
-// required argument, a place in the prefix space, and a position in the
-// ambiguity list.
 import "std/string";
 import "std/array";
 import "./lib/gnu";
@@ -75,7 +23,6 @@ function opt_compute(): i32 {
   return 5;
 }
 
-// EXIT_CANCELED: runcon itself failed, as against the command failing.
 function canceled(): i32 {
   return 125;
 }
@@ -105,16 +52,11 @@ function help_text(): string {
   return out;
 }
 
-// One diagnostic and exit, with no usage line: the faults runcon reports
-// for itself rather than for how it was called.
 function die(msg: string): void {
   gnu.error(msg);
   exit(canceled());
 }
 
-// Which of the four valued options has already been seen. They are
-// tracked separately from their values because an EMPTY value counts:
-// `runcon -r '' -r ''` is `multiple roles`.
 struct Seen { role: boolean, type_: boolean, user: boolean, range: boolean }
 
 function note(seen: Seen, id: i32): Seen {
@@ -194,7 +136,6 @@ pub function main(): i32 {
 
   let first_command: i32 = 0;
   if (!any(seen) && !compute) {
-    // The lone operand is the CONTEXT, which leaves nothing to run.
     first_command = 1;
   }
   if (first_command >= operands.len()) {

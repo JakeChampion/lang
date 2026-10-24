@@ -4,17 +4,10 @@ import "std/http/requestid";
 import "std/mock_platform";
 import "std/option";
 
-// tests/stdlib/http_requestid_test.fern — std/http/requestid: a fresh id
-// when the request brings none, the one it brings when that is well
-// formed, a replacement when it is not, the same id on the request the
-// handler sees and on the response, and the id's spelling.
-
 function header(resp: HttpResponse, name: string): string {
   return resp.headers.get(name).unwrap_or("-");
 }
 
-// The handler answers the id it saw, so the test can compare it with the
-// response's.
 function echo(req: HttpRequest, plat: mock_platform.MockPlatform): Result[HttpResponse, dyn http.ToResponse] {
   use req <- requestid.stamped(req, plat);
   return Ok(http.ok(requestid.of(req)));

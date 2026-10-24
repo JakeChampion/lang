@@ -25,17 +25,10 @@ func checkSource(t *testing.T, src string) error {
 	return err
 }
 
-// A generic struct literal no field value pins is an ordinary
-// under-inference, reported as E040 by the checker (#6813). Unification
-// binds the parameter to ITSELF in that case, so the arg looks inferred
-// and the failure used to survive to monomorph's re-check as a
-// "compiler bug" naming the mangled `Stack__T`.
 func TestUnderInferredGenericStructLitIsE040(t *testing.T) {
 	const decls = "struct Stack[T] { items: T[] }\nstruct Tagged[T] { n: i32 }\n"
 	bad := []string{
-		// `[]` pins nothing.
 		`function main(): i32 { let s = Stack { items: [] }; return 0; }`,
-		// A phantom parameter no field mentions at all.
 		`function main(): i32 { let t = Tagged { n: 1 }; return t.n; }`,
 	}
 	for _, body := range bad {
@@ -47,20 +40,16 @@ func TestUnderInferredGenericStructLitIsE040(t *testing.T) {
 		if !strings.Contains(err.Error(), "could not infer type parameter T for struct") {
 			t.Errorf("error %q is not the E040 inference message\nsrc: %s", err.Error(), body)
 		}
-		// The mangled name is monomorph's business and must never appear.
 		if strings.Contains(err.Error(), "Stack__") || strings.Contains(err.Error(), "Tagged__") {
 			t.Errorf("error %q leaks a mangled name\nsrc: %s", err.Error(), body)
 		}
 	}
 
-	// A parameter an ENCLOSING generic declaration binds is a real
-	// instantiation, left for the eventual monomorphic clone.
 	ok := []string{
 		`function wrap[T](x: T): i32 { let s = Stack { items: [x] }; return s.items.len(); }
 function main(): i32 { return wrap(7); }`,
 		`function wrap[U](x: U): i32 { let s: Stack[U] = Stack { items: [x] }; return s.items.len(); }
 function main(): i32 { return wrap(7); }`,
-		// Both remedies E040 names must actually work.
 		`function main(): i32 { let s = Stack[i32] { items: [] }; return s.items.len(); }`,
 		`function main(): i32 { let s: Stack[i32] = Stack { items: [] }; return s.items.len(); }`,
 	}
@@ -71,21 +60,8 @@ function main(): i32 { return wrap(7); }`,
 	}
 }
 
-// A generic function named where a VALUE is expected is refused with E040
-// (#7040). Instantiating one from an expected function type is not implemented
-// anywhere — ast.Ident has no TypeArgs, and monomorph's collectCalls only walks
-// *ast.Call, so a generic named outside callee position is never queued — and
-// what the two callers saw before this was neither a refusal nor a compile:
-//
-//	from a non-generic caller: E038 naming `(i32, T) => T`, a type the source
-//	never wrote;
-//	from inside a generic binding the same parameter name: unified vacuously,
-//	accepted, then `monomorph: re-check failed (compiler bug): undefined
-//	identifier "skip"` — an internal error for an unsupported construct.
 func TestGenericFuncAsValueIsE040(t *testing.T) {
 	const decls = "function skip[T](s: i32, a: T): T { return a; }\n"
-	// A function type the value is wanted at instantiates a generic (see
-	// generic_fn_value_test.go); E040 is for a position with none.
 	bad := []string{
 		`function main(): i32 { let f = skip; return 0; }`,
 		`function main(): i32 { let fs = [skip]; return 0; }`,
@@ -99,16 +75,11 @@ func TestGenericFuncAsValueIsE040(t *testing.T) {
 		if !strings.Contains(err.Error(), "cannot be used as a value") {
 			t.Errorf("error %q is not the E040 generic-as-value message\nsrc: %s", err.Error(), body)
 		}
-		// The internal error this replaces must never come back.
 		if strings.Contains(err.Error(), "compiler bug") {
 			t.Errorf("error %q is still an internal error\nsrc: %s", err.Error(), body)
 		}
 	}
 
-	// CALLEE position is where a generic name belongs, and the eta-expansion
-	// the diagnostic recommends has to actually work. A parameter shadowing a
-	// module-level generic (#6302) must still reach the parameter rather than
-	// drawing E040 for a type parameter the call site never mentions.
 	ok := []string{
 		`function main(): i32 { return skip(1, 7); }`,
 		`function inner[T](acc: T, f: (i32, T) => T): T { return f(1, acc); }
@@ -124,10 +95,6 @@ function main(): i32 { return apply(7, (x: i32) => x + 1); }`,
 	}
 }
 
-// `id[Box](b)` names a user-defined type argument. The parser keeps a lone name
-// in the bracket as an index, so the checker retags it once the base is known
-// to be a generic function and the name a type (#7040). A name that is not a
-// type is still refused as a generic used as a value.
 func TestCallTypeArgNamingUserType(t *testing.T) {
 	const decls = `struct Box { n: i32 }
 enum Shape { Sq(i32) }
@@ -139,7 +106,6 @@ function k(x: i32): i32 { return x; }
 		`function main(): i32 { match (id[Shape](Sq(2))) { Sq(n) => { return n; } } }`,
 		`function f[T](a: T): T { return id[T](a); }
 function main(): i32 { return f(3); }`,
-		// A parameter shadowing the generic is indexed as written.
 		`function apply(id: ((i32) => i32)[], i: i32): i32 { return id[i](3); }
 function main(): i32 { return apply([k], 0); }`,
 	}
@@ -162,16 +128,6 @@ function main(): i32 { return apply([k], 0); }`,
 	}
 }
 
-// The remedy E040 names has to WORK. A method on a generic receiver carries
-// the receiver's type parameters ahead of its own in one list, and a written
-// `[i32]` bound that list from the front — so the advised `.pair[i32](...)`
-// pinned the RECEIVER's first parameter, left the method's own as unbound as
-// before, and the same E040 came back (#9896). A short written list now names
-// the method's own parameters; a full one still means the whole list.
-//
-// The inference half is here too: `Full(9)` pins the payload's T and says
-// nothing about E, so without the destination it answered with a bare `Box`
-// that bound U nowhere — E040 on a call that needs no annotation at all.
 func TestMethodTypeArgsNameTheMethodsOwnParams(t *testing.T) {
 	const decls = `enum Box[T, E] { Full(T), Blank(E) }
 struct Pair[T, E] { a: T, b: E }
@@ -185,20 +141,10 @@ function take(b: Box[i32, string]): i32 {
 }
 `
 	ok := []string{
-		// Inference alone: the parameter's `Box[U, E]` has E settled from the
-		// receiver, so the payload settles U.
 		`function main(): i32 { let b: Box[i32, string] = Full(5); return take(b.pair(Full(9))); }`,
-		// The spelling E040 advises.
 		`function main(): i32 { let b: Box[i32, string] = Full(5); return take(b.pair[i32](Full(9))); }`,
-		// A full list still means the whole list, receiver parameters first.
 		`function main(): i32 { let b: Box[i32, string] = Full(5); return take(b.pair[i32, string, i32](Full(9))); }`,
-		// A STRUCT receiver reaches the same rule by a different route: its
-		// dispatch replaces the call's type arguments with the receiver's
-		// before any of this runs, so the written list has to be read from
-		// what the source wrote rather than from what is left there.
 		`function main(): i32 { let p: Pair[i32, string] = Pair[i32, string] { a: 1, b: "x" }; return p.pick[i32](5); }`,
-		// And with nothing written, the receiver's arguments still name the
-		// leading parameters.
 		`function main(): i32 { let p: Pair[i32, string] = Pair[i32, string] { a: 1, b: "x" }; return p.pick(5); }`,
 	}
 	for _, src := range ok {
@@ -206,25 +152,12 @@ function take(b: Box[i32, string]): i32 {
 			t.Errorf("should type-check, got: %v\nsrc: %s", err, src)
 		}
 	}
-	// The destination fills what the payload left OPEN — it does not overrule
-	// what the payload pinned. `Ok(n)` with an i32 `n` returned as
-	// `Result[i64, i32]` pins T = i32 from the payload while the destination
-	// says i64, and the widening that settles that runs downstream of the
-	// constructor, reached only while the type is still incomplete. Completing
-	// it from the contradicting destination answered `Result[i32, i32]` and
-	// turned the return into a type error (the interp oracle of
-	// TestSelfHostOptMakeI64IR, which is where this showed up).
 	widening := `function g(n: i32): Result[i64, i32] { return Ok(n); }
 function main(): i32 { match (g(40)) { Ok(v) => { return (v / 8) as i32; }, Err(e) => { return e; } } }`
 	if err := checkSource(t, widening); err != nil {
 		t.Errorf("an i32 payload widening to its destination's i64 should type-check, got: %v", err)
 	}
 
-	// A short list still has to be CHECKED against the argument: naming the
-	// method's own parameter is not the same as ignoring it. And the report
-	// names what the parameter came to MEAN — `Box[string, string]`, the
-	// written U with E from the receiver — rather than the declared
-	// `Box[U, E]`, which says nothing about why this argument was refused.
 	badSrc := `function main(): i32 { let b: Box[i32, string] = Full(5); return take(b.pair[string](Full(9))); }`
 	err := checkSource(t, decls+badSrc)
 	if err == nil {
@@ -233,10 +166,6 @@ function main(): i32 { match (g(40)) { Ok(v) => { return (v / 8) as i32; }, Err(
 	if !strings.Contains(err.Error(), "expected Box[string, string], got Box[i32, string]") {
 		t.Errorf("error %q does not name the substituted parameter type", err.Error())
 	}
-	// It has to stay a refusal when the mistyped value has a destination that
-	// accepts it: completing the constructor from the destination is what
-	// surfaces the contradiction, and the numeric-widening exception above must
-	// not swallow this one.
 	annotated := `function main(): i32 {
     let b: Box[i32, string] = Full(5);
     let x: Box[string, string] = b.pair[string](Full(9));
@@ -245,11 +174,6 @@ function main(): i32 { match (g(40)) { Ok(v) => { return (v / 8) as i32; }, Err(
 	if err := checkSource(t, decls+annotated); err == nil {
 		t.Errorf("an i32 payload reaching a Box[string, string] should not type-check")
 	}
-	// Arity is the WRITTEN list's on both receivers. A struct receiver's stamp
-	// has replaced n.TypeArgs by the time the check runs, so counting that
-	// measured the receiver's parameters and a surplus argument went
-	// unreported — on the enum receiver, which keeps its written list, the
-	// same call was refused.
 	surplus := []string{
 		`function main(): i32 { let p: Pair[i32, string] = Pair[i32, string] { a: 1, b: "x" }; return p.pick[i32, string, i32, f64](5); }`,
 		`function main(): i32 { let b: Box[i32, string] = Full(5); return take(b.pair[i32, string, i32, f64](Full(9))); }`,
@@ -266,11 +190,6 @@ function main(): i32 { match (g(40)) { Ok(v) => { return (v / 8) as i32; }, Err(
 	}
 }
 
-// E040 at a call site must name a spelling the user can write (#6796). A
-// method call reaches the check rewritten onto `__method_<Type>_<method>`,
-// and the diagnostic used to advise `__method_Holder_make[i32](...)` — a
-// symbol no program can name — for a failure whose real one-line fix is
-// `h.make[i32]()`.
 func TestE040CallSiteAdvisesAWritableSpelling(t *testing.T) {
 	const decls = `struct Holder { n: i32 }
 enum Wrap { A, B }
@@ -280,21 +199,14 @@ function (w: Wrap) pick[T](): T[] { return []; }
 function empty[T](): T[] { return []; }
 `
 	bad := []struct{ body, want string }{
-		// A free function is named as written, unchanged.
 		{`function main(): i32 { let xs = empty(); return 0; }`,
 			"could not infer type parameter T for empty — supply it explicitly at the call site (e.g. empty[i32](...))"},
-		// A method is named `Type.method`, and the suggested spelling
-		// attaches the type args to the method name.
 		{`function main(): i32 { let h = Holder { n: 1 }; let xs = h.make(); return 0; }`,
 			"could not infer type parameter T for Holder.make — supply it explicitly at the call site (e.g. .make[i32](...))"},
-		// The owner/method split is at the FIRST underscore, so a
-		// multi-word method name survives intact.
 		{`function main(): i32 { let h = Holder { n: 1 }; let xs = h.read_all(); return 0; }`,
 			"for Holder.read_all — supply it explicitly at the call site (e.g. .read_all[i32](...))"},
-		// An enum receiver mangles the same way.
 		{`function main(): i32 { let w = A; let xs = w.pick(); return 0; }`,
 			"for Wrap.pick — supply it explicitly at the call site (e.g. .pick[i32](...))"},
-		// The arity half of E040 shares the rendering.
 		{`function main(): i32 { let h = Holder { n: 1 }; let xs = h.make[i32, i32](); return 0; }`,
 			"Holder.make takes 1 type argument but was given 2"},
 		{`function main(): i32 { return empty[i32, i32]().len(); }`,
@@ -309,14 +221,11 @@ function empty[T](): T[] { return []; }
 		if !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("error %q does not contain %q\nsrc: %s", err.Error(), tc.want, tc.body)
 		}
-		// The mangled name is the checker's own bookkeeping.
 		if strings.Contains(err.Error(), "__method_") {
 			t.Errorf("error %q leaks a mangled name\nsrc: %s", err.Error(), tc.body)
 		}
 	}
 
-	// Both remedies E040 names must actually work, on a method as well as
-	// on a free function.
 	ok := []string{
 		`function main(): i32 { let h = Holder { n: 1 }; let xs = h.make[i32](); return xs.len(); }`,
 		`function main(): i32 { let h = Holder { n: 1 }; let xs: i32[] = h.make(); return xs.len(); }`,
@@ -330,9 +239,6 @@ function empty[T](): T[] { return []; }
 	}
 }
 
-// An assignment's target pins a generic call's result the way a `let`
-// annotation or a `return` does (#12093): a free function, a method, and
-// an associated function, each with nothing else to infer from.
 func TestAssignmentTargetPinsTypeArgs(t *testing.T) {
 	const decls = `struct Holder { n: i32 }
 struct Box[T] { items: T[] }
@@ -351,17 +257,12 @@ function empty[T](): T[] { return []; }
 			t.Errorf("should type-check, got: %v\nsrc: %s", err, body)
 		}
 	}
-	// The target's type is an expectation, not a cast: a call whose result
-	// cannot be the target's type is still refused.
 	bad := `function main(): i32 { let n: i32 = 1; n = empty(); return n; }`
 	if err := checkSource(t, decls+bad); err == nil {
 		t.Errorf("expected an error assigning an array to an i32, got none")
 	}
 }
 
-// An assignment target stamps a call's type arguments as a `let` annotation
-// does: map_new's bare `Map` result takes the key and value types the lowering
-// reads for the key kind.
 func TestAssignmentTargetStampsMapNewTypeArgs(t *testing.T) {
 	prog, err := parser.Parse(`function main(): i32 { let m: Map[string, i32] = map_new(4); m = map_new(8); return 0; }`)
 	if err != nil {
@@ -391,17 +292,11 @@ func TestAssignmentTargetStampsMapNewTypeArgs(t *testing.T) {
 	}
 }
 
-// Construction-site type arguments on a struct literal (#6812): the
-// written instantiation seeds the field checks and outranks any
-// destination annotation, and its arity is validated against the decl.
 func TestStructLitConstructionSiteTypeArgs(t *testing.T) {
 	const decls = "struct Box[T] { val: T }\nstruct Stack[T] { items: T[] }\nstruct Point { x: i32 }\n"
 	ok := []string{
-		// The plain case inference would also have reached.
 		`function main(): i32 { let b = Box[i32] { val: 1 }; return b.val; }`,
-		// The case inference cannot reach: no field value pins T.
 		`function main(): i32 { let s = Stack[i32] { items: [] }; return s.items.len(); }`,
-		// Agreeing with the destination is fine.
 		`function main(): i32 { let b: Box[i64] = Box[i64] { val: 1 }; return 0; }`,
 	}
 	for _, body := range ok {
@@ -415,8 +310,6 @@ func TestStructLitConstructionSiteTypeArgs(t *testing.T) {
 			"Box takes 1 type argument but was given 2"},
 		{`function main(): i32 { let p = Point[i32] { x: 1 }; return 0; }`,
 			"Point takes 0 type arguments but was given 1"},
-		// The written args, not the destination, drive the literal — so a
-		// disagreement is a plain assignment error rather than a silent retype.
 		{`function main(): i32 { let b: Box[i64] = Box[i32] { val: 1 }; return 0; }`,
 			"expected Box[i64], got Box[i32]"},
 		{`function main(): i32 { let b = Box[i32] { val: "x" }; return 0; }`,
@@ -434,14 +327,6 @@ func TestStructLitConstructionSiteTypeArgs(t *testing.T) {
 	}
 }
 
-// TestGenericStructLitFieldCheckedAgainstDestination covers a generic struct
-// literal whose field value conflicts with an explicit destination
-// instantiation — `let b: Box[i32] = Box { v: "x" }`. Checking the field only
-// against the free parameter `T` (which unifies to `string`) lets the mismatch
-// slip past and crashes monomorph re-check with a confusing "compiler bug".
-// The destination seeds the type-arg substitution, so it's a clean E043 at
-// check time — while genuinely valid
-// instantiations and unannotated inference still pass.
 func TestGenericStructLitFieldCheckedAgainstDestination(t *testing.T) {
 	mustErr := func(src, want string) {
 		t.Helper()
@@ -460,32 +345,22 @@ func TestGenericStructLitFieldCheckedAgainstDestination(t *testing.T) {
 			t.Errorf("expected no error for %q, got: %v", src, err)
 		}
 	}
-	// Mismatch is caught at check time with the substituted type in the
-	// message (`i32`, not the bare `T`), not deferred to monomorph.
 	mustErr(`struct Box[T] { v: T } function main(): i32 { let b: Box[i32] = Box { v: "x" }; return b.v; }`,
 		`field "v": expected i32, got string`)
 	mustErr(`struct Pair[A, B] { a: A, b: B } function main(): i32 { let p: Pair[i32, string] = Pair { a: "x", b: 1 }; return 0; }`,
 		`field "a": expected i32, got string`)
-	// Valid instantiations and unannotated inference are unaffected.
 	mustOK(`struct Box[T] { v: T } function main(): i32 { let b: Box[i32] = Box { v: 5 }; return b.v; }`)
 	mustOK(`struct Box[T] { v: T } function main(): i32 { let b: Box[string] = Box { v: "x" }; return b.v.len(); }`)
 	mustOK(`struct Box[T] { v: T } function main(): i32 { let b = Box { v: "x" }; return 0; }`)
-	// A generic struct parameter is the destination too, whatever the
-	// callee's body reads (#10262).
 	mustErr(`struct Box[T] { v: T } function take(b: Box[string]): i32 { return 0; } function main(): i32 { return take(Box { v: 3 }); }`,
 		`field "v": expected string, got i32`)
 	mustOK(`struct Box[T] { v: T } function take(b: Box[i64]): i64 { return b.v; } function main(): i32 { let n: i64 = take(Box { v: 5 }); return 0; }`)
-	// A generic parameter's own T is still to be inferred, so it seeds
-	// nothing; an enclosing declaration's T does (#12739).
 	mustOK(`struct Box[T] { v: T } function take[T](b: Box[T]): T { return b.v; } function main(): i32 { return take(Box { v: 3 }); }`)
 	mustOK(`struct Box[T] { v: T } function wrap[T](x: T): Box[T] { let b: Box[T] = Box { v: x }; return b; } function main(): i32 { return wrap(3).v; }`)
 	mustErr(`struct Box[T] { v: T } function wrap[T](x: T): i32 { let b: Box[T] = Box { v: 3 }; return 0; } function main(): i32 { return wrap(3); }`,
 		`field "v": expected T, got i32`)
 }
 
-// TestArrayLitElementReadsElementDestination: an array literal's elements
-// take the element type of its destination, not the array type, so a generic
-// call in one completes its type arguments from the element (#10266).
 func TestArrayLitElementReadsElementDestination(t *testing.T) {
 	pre := `trait C[T] { function c(self: Self): T; } struct A { n: i32 } impl C[i32] for A { function c(self: Self): i32 { return self.n; } } function f[T, I: C[T]](i: I): T { return i.c(); } `
 	if err := checkSource(t, pre+`function main(): i32 { let ys: i32[] = [f(A { n: 2 }), 3]; return ys[0]; }`); err != nil {
@@ -500,9 +375,6 @@ func TestArrayLitElementReadsElementDestination(t *testing.T) {
 	}
 }
 
-// TestGenericStructLitInfersThroughArrayField: an array-literal field binds
-// the parameter its element type fixes, as any other field value does, and an
-// empty one binds nothing and settles at what the other fields fix (#10269).
 func TestGenericStructLitInfersThroughArrayField(t *testing.T) {
 	decls := `struct W[T] { items: T[] } struct P[T] { a: T[], b: T } `
 	for _, body := range []string{
@@ -526,15 +398,6 @@ func TestGenericStructLitInfersThroughArrayField(t *testing.T) {
 	}
 }
 
-// TestGenericStructLitNestedInstantiation locks the fix for a regression
-// the destination-seeding above (#3763) introduced: a nested struct literal
-// whose field type reuses the SAME generic name re-seeded its type-args from
-// the OUTER destination left in c.expectedType, instead of from its own
-// field type. `let b: Box[Box[i32]] = Box { v: Box { v: 42 } }` wrongly bound
-// the inner Box's T to Box[i32] (not i32) and reported a spurious
-// `field "v": expected Box[i32], got i32`. The field value is now checked
-// against its substituted field type, so nested generics check cleanly — while
-// a genuine nested mismatch is still caught.
 func TestGenericStructLitNestedInstantiation(t *testing.T) {
 	mustOK := func(src string) {
 		t.Helper()
@@ -553,59 +416,33 @@ func TestGenericStructLitNestedInstantiation(t *testing.T) {
 			t.Errorf("for %q: want error containing %q, got: %v", src, want, err)
 		}
 	}
-	// The regression repro: nested same-named generic now checks cleanly.
 	mustOK(`struct Box[T] { v: T } function main(): i32 { let b: Box[Box[i32]] = Box { v: Box { v: 42 } }; return b.v.v; }`)
-	// Three levels deep, still clean.
 	mustOK(`struct Box[T] { v: T } function main(): i32 { let b: Box[Box[Box[i32]]] = Box { v: Box { v: Box { v: 7 } } }; return b.v.v.v; }`)
-	// A nested generic with a different element type.
 	mustOK(`struct Box[T] { v: T } function main(): i32 { let b: Box[Box[string]] = Box { v: Box { v: "x" } }; return b.v.v.len(); }`)
-	// A genuine mismatch in the inner literal is still reported.
 	mustErr(`struct Box[T] { v: T } function main(): i32 { let b: Box[Box[i32]] = Box { v: Box { v: "x" } }; return 0; }`,
 		`field "v": expected i32, got string`)
-	// A numeric-literal field value settles to the CONCRETE (substituted)
-	// field type, not the bare parameter: an i64-magnitude literal in a
-	// Box[i64] field must widen to i64 rather than being left i32 and then
-	// rejected by the seeded sub[T]=i64. (#3763 also regressed this.)
 	mustOK(`struct Box[T] { v: T } function main(): i32 { let b: Box[i64] = Box { v: 1234567890123 }; if (b.v == 1234567890123) { return 0; } return 1; }`)
 }
 
-// TestOperatorClassMismatchNoRedundantShareError covers the cascade where an
-// arithmetic/bitwise operator with a wrong-class operand (e.g. a string where
-// an integer is required) stacked TWO E009s: one from the per-operand
-// requireInteger/requireFloat check, then a redundant "both operands must
-// share a … type" follow-on. The follow-on now fires only when both operands
-// ARE the right class but differ in width/signedness — the case where its
-// `use as` hint is actually actionable.
 func TestOperatorClassMismatchNoRedundantShareError(t *testing.T) {
 	count := func(src string) int {
 		err := checkSource(t, src)
 		if err == nil {
 			t.Fatalf("expected a type error for %q, got none", src)
 		}
-		// Each case's only diagnostic is the operator error itself, so the
-		// total diagnostic count is the E009 count.
 		return strings.Count(err.Error(), "type error at")
 	}
-	// One wrong-class operand → exactly one E009 (no redundant "share" line).
 	if n := count(`function main(): i32 { let x: i32 = 1 - "b"; return 0; }`); n != 1 {
 		t.Errorf("int op with string operand: %d E009s, want 1", n)
 	}
 	if n := count(`function main(): i32 { let s: string = "a"; return s & 1; }`); n != 1 {
 		t.Errorf("bitwise op with string operand: %d E009s, want 1", n)
 	}
-	// Both operands the right class but mismatched width/signedness → the
-	// "share a … type" hint is still emitted (it's actionable via `as`).
 	if n := count(`function main(): i32 { let a: i32 = 1; let b: u32 = 2; return a - b; }`); n != 1 {
 		t.Errorf("i32/u32 mismatch: %d E009s, want 1 (the share hint)", n)
 	}
 }
 
-// TestUnknownTypeReported covers E064: a nominal type reference that names
-// no declared type is now flagged at the annotation, instead of being
-// silently accepted (and only surfacing as a confusing E002/E003 cascade,
-// or not at all). It fires in every annotation position and recurses into
-// composite types — while leaving valid built-ins, declared types, and
-// in-scope type parameters untouched.
 func TestUnknownTypeReported(t *testing.T) {
 	mustE064 := func(src string) {
 		t.Helper()
@@ -620,18 +457,14 @@ func TestUnknownTypeReported(t *testing.T) {
 			t.Errorf("expected no error for %q, got: %v", src, err)
 		}
 	}
-	// Every annotation position rejects an undefined name.
 	mustE064(`function f(a: Wibble): i32 { return 0; }`)
 	mustE064(`function f(): Wibble { return 0; }`)
 	mustE064(`function main(): i32 { let x: Wibble = 0; return 0; }`)
 	mustE064(`struct S { f: Wibble }`)
 	mustE064(`enum E { A(Wibble) }`)
-	// Recurses into composite types (array / tuple / nested).
 	mustE064(`function main(): i32 { let a: Wibble[] = []; return 0; }`)
 	mustE064(`function f(): (i32, Wibble) { return (0, 0); }`)
-	// `bool` is a common slip — the real type is `boolean`.
 	mustE064(`function main(): i32 { let x: bool = 0; return 0; }`)
-	// Valid: built-ins, declared types, and in-scope type parameters.
 	mustOK(`function id[T](x: T): T { return x; }`)
 	mustOK(`struct P { x: i32 } function getx(p: P): i32 { return p.x; }`)
 	mustOK(`struct Box[T] { v: T } function main(): i32 { let b: Box[i32] = Box { v: 7 }; return b.v; }`)
@@ -639,16 +472,6 @@ func TestUnknownTypeReported(t *testing.T) {
 	mustOK(`function main(): i32 { let n: i32 = 1; let b: boolean = true; if (b) { return n; } return 0; }`)
 }
 
-// A LAMBDA's parameter and return annotations are declarations too, and the
-// two reporters that walk a body — E064's and `dyn`'s — visited `*ast.Var`
-// alone, so neither ever reached one. `((x: Wibble) => 1)` was accepted
-// outright: no E064, and not even the indirect cascade, because nothing
-// resolves an unknown lambda parameter into a later mismatch (#7004).
-//
-// A nested `function` declaration goes through the same node set. The valid
-// rows matter as much as the invalid ones: an arrow lambda written without a
-// return type has none to check, and reporting on a synthesised one would
-// reject every `(x) => e` in the corpus.
 func TestUnknownTypeReachesLambdaAnnotations(t *testing.T) {
 	for name, src := range map[string]string{
 		"lambda param":         `function main(): i32 { let f = ((x: Wibble) => 1); return 0; }`,
@@ -677,8 +500,6 @@ func TestUnknownTypeReachesLambdaAnnotations(t *testing.T) {
 	}
 }
 
-// The `dyn` reporter shares that node set, so it gains the same reach: an
-// unknown trait on a lambda parameter went unreported for the same reason.
 func TestDynTraitReachesLambdaAnnotations(t *testing.T) {
 	src := `function main(): i32 { let f = ((x: dyn Bogus) => 1); return 0; }`
 	err := checkSource(t, src)
@@ -690,9 +511,6 @@ func TestDynTraitReachesLambdaAnnotations(t *testing.T) {
 	}
 }
 
-// A trait object satisfies a generic bound on its own trait: `dyn Shape` is
-// a `T: Shape`, in a bare argument and inside a Result's error slot alike,
-// as `http.respond` over a `Result[HttpResponse, dyn http.ToResponse]` needs.
 func TestDynTraitObjectSatisfiesItsBound(t *testing.T) {
 	src := `trait Shape { function area(self: Self): i32; }
 struct Sq { s: i32 }
@@ -703,7 +521,6 @@ function main(): i32 { let d: dyn Shape = Sq { s: 3 }; let r: Result[i32, dyn Sh
 	if err := checkSource(t, src); err != nil {
 		t.Errorf("expected no error, got: %v", err)
 	}
-	// A dyn object of another trait is still refused.
 	other := `trait Shape { function area(self: Self): i32; }
 trait Named { function name(self: Self): string; }
 struct Sq { s: i32 }
@@ -719,10 +536,6 @@ function main(): i32 { let d: dyn Named = Sq { s: 3 }; return doubled(d); }`
 	}
 }
 
-// A `use` callback returns what the callee's callback slot returns, not what
-// the enclosing function does: the rest of the block after `use v <- mk(3)`
-// is typed as the `(i32) => dyn Shape` it is passed as, so a struct in its
-// `return` boxes into the dyn where the enclosing `i32` would refuse it.
 func TestUseCallbackReturnsWhatTheSlotReturns(t *testing.T) {
 	src := `trait Shape { function area(self: Self): i32; }
 struct Sq { s: i32 }
@@ -736,8 +549,6 @@ function main(): i32 { return a(); }`
 	if err := checkSource(t, src); err != nil {
 		t.Errorf("expected no error, got: %v", err)
 	}
-	// A body returning the enclosing function's type where the slot wants
-	// another is refused against the slot.
 	wrong := `function mk(n: i32, k: (i32) => string): i32 { return k(n).len(); }
 function a(): i32 {
     use v <- mk(3);
@@ -753,13 +564,6 @@ function main(): i32 { return a(); }`
 	}
 }
 
-// TestBinaryOperandErrorNoCascade guards two bugs in one: a binary
-// expression with an already-errored operand (here `q()`, an undefined
-// identifier, whose type is nil) must not emit a *second*, cascading E009
-// "operator requires …" diagnostic, nor format the nil operand type into
-// that message as the literal Go garbage `%!s(<nil>)`. checkExpr on a
-// Binary bails when either operand failed to type, so only the root cause
-// is reported and no malformed type string leaks out.
 func TestBinaryOperandErrorNoCascade(t *testing.T) {
 	check := func(src string) (errCount, nilFmt int) {
 		err := checkSource(t, src)
@@ -786,14 +590,6 @@ func TestBinaryOperandErrorNoCascade(t *testing.T) {
 	}
 }
 
-// TestChainedMethodCallErrorReportedOnce guards against a diagnostic
-// duplication: a method-call chain `n.foo().bar()` whose inner `n.foo()` is
-// invalid (here, a method call on a non-struct i32) reported the inner E043
-// twice — once when the outer call checked its receiver, then again when the
-// generic callee path re-checked the same target. The receiver is now typed
-// once per call site, and a receiver that fails to type bails before dispatch,
-// so the diagnostic is emitted exactly once. The receivers that DO type are
-// TestMethodReceiverCheckedOnce.
 func TestChainedMethodCallErrorReportedOnce(t *testing.T) {
 	count := func(src string) int {
 		err := checkSource(t, src)
@@ -808,47 +604,27 @@ func TestChainedMethodCallErrorReportedOnce(t *testing.T) {
 	if n := count(`function main(): i32 { let n: i32 = 5; return n.a().b().c(); }`); n != 1 {
 		t.Errorf("triple chain: E043 reported %d times, want 1", n)
 	}
-	// A single (non-chained) bad method call was always reported once —
-	// pin that it still is, so the fix didn't suppress the lone diagnostic.
 	if n := count(`function main(): i32 { let n: i32 = 5; return n.foo(); }`); n != 1 {
 		t.Errorf("single call: E043 reported %d times, want 1", n)
 	}
 }
 
-// TestUnannotatedBigLiteralDefaultsToI64 covers #3676: an unannotated integer
-// literal that doesn't fit i32 defaults to i64 (option 2), not the usual i32.
-// The inferred type is asserted indirectly through assignability — a binding
-// whose value is past i32 range is i64, so storing it into an i32 slot is
-// rejected (E003), while a small literal stays i32 and assigns fine, and an
-// i64 slot accepts it.
 func TestUnannotatedBigLiteralDefaultsToI64(t *testing.T) {
-	// Past i32 max → i64, so i64-context assignment is fine...
 	if err := checkSource(t, `function main(): i32 { let x = 2147483648; let y: i64 = x; return (y / 1000000000) as i32; }`); err != nil {
 		t.Errorf("big unannotated literal should be i64 (assignable to i64), got: %v", err)
 	}
-	// ...but i32-context assignment is now an error (no implicit narrowing).
 	err := checkSource(t, `function main(): i32 { let x = 2147483648; let y: i32 = x; return y; }`)
 	if err == nil || !strings.Contains(err.Error(), "i64") {
 		t.Errorf("big unannotated literal in i32 slot should error with i64 mention, got: %v", err)
 	}
-	// A literal that fits i32 still defaults to i32 (unchanged) — assigns fine.
 	if err := checkSource(t, `function main(): i32 { let x = 5; let y: i32 = x; return y; }`); err != nil {
 		t.Errorf("small unannotated literal should stay i32, got: %v", err)
 	}
-	// A negative literal past i32 min also widens to i64.
 	if err := checkSource(t, `function main(): i32 { let x = -5000000000; let y: i64 = x; return (y / 1000000000) as i32; }`); err != nil {
 		t.Errorf("big negative unannotated literal should be i64, got: %v", err)
 	}
 }
 
-// TestUnannotatedCompoundWithBigLiteralDefaultsToI64 covers #8668: the #3676
-// widening reads through a literal-only init, not only a bare literal. Before
-// it, `let t = 3 - 4611686018427387904` left the binary polymorphic, nothing
-// settled it, and the literal lowered at the i32 default as 0 — so `t` was 3
-// with no diagnostic, where the bare literal widens and an operand already
-// committed to i32 gets E047. The width is asserted through assignability as
-// in the bare-literal test: an i64 slot accepts the binding, an i32 slot
-// refuses it.
 func TestUnannotatedCompoundWithBigLiteralDefaultsToI64(t *testing.T) {
 	const big = "4611686018427387904"
 	widened := []string{
@@ -867,29 +643,20 @@ func TestUnannotatedCompoundWithBigLiteralDefaultsToI64(t *testing.T) {
 			t.Errorf("%s: into an i32 slot should be E003 naming i64, got: %v", decl, err)
 		}
 	}
-	// The compound is settled at i64, so its wide literal passes the range
-	// check there instead of being judged against i32.
 	if err := checkSource(t, "function main(): i32 { let t = 3 - "+big+"; let f = (3 - "+big+") as f64; return 0; }"); err != nil {
 		t.Errorf("compound with a wide literal should check clean, got: %v", err)
 	}
-	// A compound of small literals keeps the i32 default.
 	if err := checkSource(t, "function main(): i32 { let t = 3 - 4; let u: i32 = t; return u; }"); err != nil {
 		t.Errorf("small compound should stay i32, got: %v", err)
 	}
-	// A literal too wide even for i64 is refused against the i64 the compound
-	// settles at, not silently wrapped.
 	err := checkSource(t, "function main(): i32 { let t = 3 - 18446744073709551616; return 0; }")
 	if err == nil || !strings.Contains(err.Error(), "does not fit in i64") {
 		t.Errorf("past-u64 literal in a compound should be E047 naming i64, got: %v", err)
 	}
-	// An operand already committed to i32 is not widened behind its back.
 	err = checkSource(t, "function main(): i32 { let a: i32 = 3; let t = a - "+big+"; return 0; }")
 	if err == nil || !strings.Contains(err.Error(), "does not fit in i32") {
 		t.Errorf("wide literal beside an i32 operand should stay E047 naming i32, got: %v", err)
 	}
-	// A generic call whose T is pinned by nothing but the literal is still
-	// polymorphic here, so its T-typed arguments are part of the tree — the
-	// annotated `let t: i64 = id(...)` already settles them the same way.
 	const id = "function id[T](v: T): T { return v; } "
 	if err := checkSource(t, id+"function main(): i32 { let t = id("+big+"); let u: i64 = t; return 0; }"); err != nil {
 		t.Errorf("generic call on a wide literal should be i64, got: %v", err)
@@ -903,13 +670,6 @@ func TestUnannotatedCompoundWithBigLiteralDefaultsToI64(t *testing.T) {
 	}
 }
 
-// TestUnannotatedCompositeInitWidensElementToI64 covers #8722: the #3676 /
-// #8668 widening reaches the ELEMENTS of an unannotated tuple / array init.
-// Before it, `let t = (1, 4611686018427387904)` typed the wide element i32 and
-// lowered it truncated to 0 with no diagnostic, while `-interp` computed the
-// full value — a silent wrong answer, and a native-vs-self-host divergence.
-// Widths are asserted through assignability: the widened element goes into an
-// i64 slot and refuses an i32 one, and a small element still keeps i32.
 func TestUnannotatedCompositeInitWidensElementToI64(t *testing.T) {
 	const big = "4611686018427387904"
 	widened := []struct{ decl, read string }{
@@ -932,8 +692,6 @@ func TestUnannotatedCompositeInitWidensElementToI64(t *testing.T) {
 			t.Errorf("%s: %s into an i32 slot should be E003 naming i64, got: %v", c.decl, c.read, err)
 		}
 	}
-	// Only the element the literal is in widens; its neighbours keep the i32
-	// default, and a composite of small literals is untouched.
 	kept := []struct{ decl, read string }{
 		{`let t = (1, ` + big + `);`, "t.0"},
 		{`let t = (1, 2);`, "t.1"},
@@ -944,13 +702,9 @@ func TestUnannotatedCompositeInitWidensElementToI64(t *testing.T) {
 			t.Errorf("%s: %s should stay i32, got: %v", c.decl, c.read, err)
 		}
 	}
-	// An element that is not a literal tree settles nothing: an i32 binding
-	// read into a tuple stays i32 even beside a widened neighbour.
 	if err := checkSource(t, "function main(): i32 { let a: i32 = 3; let t = (a, "+big+"); let u: i32 = t.0; let v: i64 = t.1; return u; }"); err != nil {
 		t.Errorf("committed element beside a widened one should stay i32, got: %v", err)
 	}
-	// A literal too wide even for i64 is refused against the i64 the element
-	// settles at, rather than silently wrapping at the i32 default.
 	for _, src := range []string{
 		"let t = (18446744073709551616, 1);",
 		"let xs = [18446744073709551616];",
@@ -962,11 +716,6 @@ func TestUnannotatedCompositeInitWidensElementToI64(t *testing.T) {
 	}
 }
 
-// TestGenericCallScrutineeWidensLiteralBoundT covers #8722: a generic call in
-// scrutinee position settles a type parameter its literal arguments alone bind
-// the way an unannotated `let` initialiser does. `match (pick(1, 2^62))` bound
-// T at the i32 default, so the payload compared against the same wide literal
-// was refused as E041. A typed argument still pins T.
 func TestGenericCallScrutineeWidensLiteralBoundT(t *testing.T) {
 	const big = "4611686018427387904"
 	const decls = "function pick[T](a: T, b: T): Option[T] { return Some(b); } "
@@ -978,7 +727,6 @@ func TestGenericCallScrutineeWidensLiteralBoundT(t *testing.T) {
 			t.Errorf("%s: should settle T at i64, got: %v", body, err)
 		}
 	}
-	// Small literals keep the default, and a typed argument pins T.
 	for _, body := range []string{
 		`match (pick(1, 2)) { Some(v) => { let u: i32 = v; }, None => { } }`,
 		`let x: i32 = 1; match (pick(x, 2)) { Some(v) => { let u: i32 = v; }, None => { } }`,
@@ -989,12 +737,6 @@ func TestGenericCallScrutineeWidensLiteralBoundT(t *testing.T) {
 	}
 }
 
-// A generic call's result can carry T anywhere — `pair[A, B](a: A, b: B):
-// (A, B)` — so the widening restamps the TypeArgs entry a wide literal pins
-// and re-derives the result from it (#8668): the binding is `(i64, string)`,
-// not a tuple whose first element the monomorphiser defaults to i32 while a
-// comparison against the same literal widens its own side to i64 (that was
-// E041 "cannot compare i32 with i64" on `p.0 == 4611686018427387904`).
 func TestGenericCallResultCarryingWideLiteralTWidens(t *testing.T) {
 	const big = "4611686018427387904"
 	const decls = "function pair[A, B](a: A, b: B): (A, B) { return (a, b); } function both[T](a: T, b: T): (T, T) { return (a, b); } "
@@ -1002,9 +744,7 @@ func TestGenericCallResultCarryingWideLiteralTWidens(t *testing.T) {
 		`let p = pair(` + big + `, "hello"); let q: i64 = p.0;`,
 		`let p = pair(` + big + `, "hello"); if (p.0 == ` + big + ` && p.1 == "hello") { return 1; }`,
 		`let p = pair("hello", ` + big + `); let q: i64 = p.1;`,
-		// Every literal bound to the same T settles with it.
 		`let q = both(1, ` + big + `); let a: i64 = q.0; let b: i64 = q.1;`,
-		// A small literal keeps the default.
 		`let p = pair(5, "x"); let q: i32 = p.0;`,
 	}
 	for _, src := range accepted {
@@ -1015,7 +755,6 @@ func TestGenericCallResultCarryingWideLiteralTWidens(t *testing.T) {
 	rejected := []struct{ src, want string }{
 		{`let p = pair(` + big + `, "hello"); let q: i32 = p.0;`, "got i64"},
 		{`let q = both(1, ` + big + `); let a: i32 = q.0;`, "got i64"},
-		// An argument with a type of its own pins T; the literal is judged there.
 		{`let a: i32 = 1; let q = both(a, ` + big + `);`, "does not fit in i32"},
 	}
 	for _, c := range rejected {
@@ -1026,11 +765,6 @@ func TestGenericCallResultCarryingWideLiteralTWidens(t *testing.T) {
 	}
 }
 
-// TestArrayArgumentIsItsElementsDestination: an array parameter is the
-// destination its argument's literal elements are read at, as an annotated
-// `let` is. `take([Same { a: 1, b: 2 }])` was E038, the literal typed Same[i32]
-// on its own, and a field an i64 settles clashed with the literal-bound `a` as
-// E043 (#10270).
 func TestArrayArgumentIsItsElementsDestination(t *testing.T) {
 	const decls = "struct Same[T] { a: T, b: T } function take(xs: Same[i64][]): i32 { return xs.len(); } "
 	for _, body := range []string{
@@ -1051,11 +785,6 @@ func TestArrayArgumentIsItsElementsDestination(t *testing.T) {
 	}
 }
 
-// A generic struct literal whose fields contradict each other has no
-// instantiation, so E043 is its only diagnostic: the local it initialises
-// reads as untyped, as it does for an unbound parameter (E040) and on the
-// self-host. It used to take its first field's instantiation, which every use
-// of the local then reported again (#10453).
 func TestClashingGenericStructLiteralDoesNotCascade(t *testing.T) {
 	const decls = "struct Same[T] { a: T, b: T } function take1(x: Same[i64]): i32 { return 1; } "
 	for _, body := range []string{
@@ -1078,10 +807,6 @@ func TestClashingGenericStructLiteralDoesNotCascade(t *testing.T) {
 	}
 }
 
-// A typed value binds a type parameter ahead of an untyped literal written
-// before it, and the literal settles at that type: `Same { a: 1, b: y }` with
-// `y: i64` is a Same[i64], and `pair(1, y)` a pair at i64 (#10453). The
-// literal used to bind T at i32 first, and the typed value then clashed.
 func TestTypedValueBindsAheadOfEarlierLiteral(t *testing.T) {
 	const decls = "struct Same[T] { a: T, b: T } function take1(x: Same[i64]): i32 { return 1; } function pair[T](a: T, b: T): T { return a; } "
 	for _, body := range []string{
@@ -1107,12 +832,6 @@ func TestTypedValueBindsAheadOfEarlierLiteral(t *testing.T) {
 	}
 }
 
-// A generic struct local whose type argument only untyped literals bind takes
-// ONE width, as an integer literal local does (#10123): the first use that
-// fixes it decides — a field read at a typed destination, or the whole local
-// where a Same[i64] is wanted — and a second, different width is E003
-// (#10453). Native read such a local at any width field by field, and refused
-// it whole as a Same[i32].
 func TestGenericStructLiteralLocalTakesOneWidth(t *testing.T) {
 	const decls = "struct Same[T] { a: T, b: T } function take1(x: Same[i64]): i32 { return 1; } function take(xs: Same[i64][]): i32 { return 1; } "
 	for _, body := range []string{
@@ -1138,14 +857,6 @@ func TestGenericStructLiteralLocalTakesOneWidth(t *testing.T) {
 	}
 }
 
-// TestGenericCallLiteralBoundTSettlesByPosition covers #10176: a type
-// parameter only untyped literals bind stays open until the position reading
-// the call settles it. A destination names its width, through a field read of
-// the result too; a comparison or arithmetic with no typed side takes the
-// default, i64 when a literal has no i32 reading. `if (both(1, 2^62).1 ==
-// 2^62)` was E041, `let z: i64 = both(1, 2^62).1` truncated the value to 0,
-// and an i32 destination settled nothing, so `let x: i32 = id(2^32 + 2)` ran
-// as 2 where the bare literal is E047.
 func TestGenericCallLiteralBoundTSettlesByPosition(t *testing.T) {
 	const big = "4611686018427387904"
 	const decls = "struct Box[T] { v: T } function box[T](v: T): Box[T] { return Box { v: v }; } " +
@@ -1183,7 +894,6 @@ func TestGenericCallLiteralBoundTSettlesByPosition(t *testing.T) {
 		}
 	}
 
-	// The settle restamps the call itself, so lowering reads the same width.
 	stamped := []struct {
 		body string
 		call func(ast.Stmt) *ast.Call
@@ -1219,10 +929,6 @@ func TestGenericCallLiteralBoundTSettlesByPosition(t *testing.T) {
 	}
 }
 
-// A generic call in CALLEE position has no destination of its own, so a type
-// parameter only literals bind takes i64 when one has no i32 reading, as an
-// unannotated `let` init does. Left at the i32 default it truncated on native
-// (#11488).
 func TestGenericCallInCalleePositionWidensByLiteral(t *testing.T) {
 	src := `function make[T](seed: T): (i32) => T { return (k: i32): T => seed; }
 function main(): i32 { let b = make(5000000000)(2); return 0; }`
@@ -1244,10 +950,6 @@ function main(): i32 { let b = make(5000000000)(2); return 0; }`
 	}
 }
 
-// A lambda or nested function inside a generic function sees the encloser's
-// type parameters and bounds: `T.make()` and `y.get()` on a captured `T` check
-// there as in the body, and a method the bounds do not provide is still refused
-// (#10404).
 func TestTypeParamBoundsReachClosures(t *testing.T) {
 	const decls = `trait Mk { function make(): Self; function get(self: Self): i32; }
 trait Other { function other(self: Self): i32; }
@@ -1278,14 +980,6 @@ function main(): i32 { return f[W](W { v: 1 }); }`)
 	}
 }
 
-// An unannotated local bound to a generic struct literal whose type argument
-// only literals bind is a Same[i64] when one of them has no i32 reading, and
-// both field literals settle at i64 (#10453). Typing it Same[i32] truncated the
-// wide field on every native backend with no diagnostic.
-// The widening reaches a literal inside an array literal, whose elements it
-// settles at the widened type (the monomorph re-check refused it as
-// Same__i32[] against Same__i64[]), and never a literal that writes its own
-// instantiation: `Same[i32] { …, b: 2^62 }` is E047 (#10453).
 func TestGenericStructLiteralWideningInArrayAndWritten(t *testing.T) {
 	const decls = "struct Same[T] { a: T, b: T } "
 	if err := checkSource(t, decls+"function main(): i32 { let xs = [Same { a: 1, b: 4611686018427387904 }]; let r: i64 = xs[0].b; return 0; }"); err != nil {
@@ -1295,7 +989,6 @@ func TestGenericStructLiteralWideningInArrayAndWritten(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "does not fit in i32") {
 		t.Errorf("written Same[i32] with a wide field: want the literal refused, got %v", err)
 	}
-	// A field that holds the parameter inside a composite widens it too.
 	for _, decl := range []string{
 		"struct Stack[T] { items: T[] } function main(): i32 { let q = Stack { items: [4611686018427387904] }; let r: i64 = q.items[0]; return 0; }",
 		"struct Tagged[T] { p: (T, string) } function main(): i32 { let q = Tagged { p: (4611686018427387904, \"x\") }; let r: i64 = q.p.0; return 0; }",
@@ -1314,11 +1007,6 @@ func TestGenericStructLiteralWideningInArrayAndWritten(t *testing.T) {
 	}
 }
 
-// A typed integer rebinds only what the literal's own fields bound: a struct
-// update whose base fixed T at i32 still reports the typed field (#10453).
-// An array whose typed element widens a literal sibling is that widening's
-// type in either order, and a literal-bound struct local's copy and closure
-// capture share its width.
 func TestTypedFieldRebindStaysInsideTheLiteral(t *testing.T) {
 	const decls = "struct Same[T] { a: T, b: T } "
 	err := checkSource(t, decls+"function main(): i32 { let q = Same { a: 1, b: 2 }; let y: i64 = 8589934592; let w = Same { ...q, b: y }; return 0; }")
@@ -1343,9 +1031,6 @@ func TestTypedFieldRebindStaysInsideTheLiteral(t *testing.T) {
 	}
 }
 
-// A generic struct literal nested in another's field infers its own type
-// arguments: the outer field's `Box[T]` names a parameter nothing has bound
-// yet, so it fixes nothing (#10895). A clash across the nesting is still E043.
 func TestNestedGenericStructLiteralInfersItsOwnArgs(t *testing.T) {
 	const decls = "struct Box[T] { v: T } struct Outer[T] { b: Box[T] } struct Two[T] { b: Box[T], c: T } " +
 		"struct List[T] { tail: Option[List[T]], head: T } struct C[T] { v: T } struct B[T] { c: C[T] } struct A[T] { b: B[T] } "
@@ -1362,8 +1047,6 @@ func TestNestedGenericStructLiteralInfersItsOwnArgs(t *testing.T) {
 			t.Errorf("%s: rejected, want accepted: %v", body, err)
 		}
 	}
-	// A generic call in such a field keeps the destination: it is all the
-	// call has to infer its result's parameter from.
 	if err := checkSource(t, "struct Holder[T] { xs: T[], z: T } function emptyArr[A](): A[] { return []; } "+
 		"function f[T](t: T): Holder[T] { let h = Holder { xs: emptyArr(), z: t }; return h; } "+
 		"function main(): i32 { let h = f(7); return h.z; }"); err != nil {
@@ -1398,7 +1081,6 @@ func TestGenericStructLiteralLocalWidensByLiteral(t *testing.T) {
 			t.Errorf("field %s: literal settled at width %d, want 64", f.Name, lit.Width)
 		}
 	}
-	// Literals that all read at i32 leave the default alone.
 	narrow, err := parser.Parse("struct Same[T] { a: T, b: T } function main(): i32 { let q = Same { a: 1, b: 2 }; return 0; }")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -1411,11 +1093,6 @@ func TestGenericStructLiteralLocalWidensByLiteral(t *testing.T) {
 	}
 }
 
-// A comparison's result is a boolean, so nothing outside it ever settles its
-// operands: two polymorphic sides take the default at the comparison itself,
-// and a wide literal on either side makes that default i64 (#8668) instead of
-// truncating to the i32 both sides lowered at — `4611686018427387904 > 1` was
-// false on native and true on the interpreter.
 func TestPolymorphicComparisonWithBigLiteralSettlesAtI64(t *testing.T) {
 	const big = "4611686018427387904"
 	cases := []struct {
@@ -1447,14 +1124,12 @@ func TestPolymorphicComparisonWithBigLiteralSettlesAtI64(t *testing.T) {
 			}
 		})
 	}
-	// A committed i32 side still refuses the literal it cannot hold.
 	err := checkSource(t, "function main(): i32 { let a: i32 = 1; if (a < "+big+") { return 1; } return 0; }")
 	if err == nil || !strings.Contains(err.Error(), "does not fit in i32") {
 		t.Errorf("wide literal beside an i32 operand should stay E047 naming i32, got: %v", err)
 	}
 }
 
-// varInit returns the initialiser of `let <name> = …;` in main.
 func varInit(t *testing.T, prog *ast.Program, name string) ast.Expr {
 	t.Helper()
 	for _, fn := range prog.Funcs {
@@ -1471,11 +1146,6 @@ func varInit(t *testing.T, prog *ast.Program, name string) ast.Expr {
 	return nil
 }
 
-// The wasm reactor builtins (wasm_timer_pollable / wasm_block) are
-// registered as FuncSigs and type-check: wasm_timer_pollable takes an
-// i64 duration and returns an i32 pollable handle; wasm_block takes a
-// pollable and returns i32. (Runtime is wasm-only — Preview-2
-// pollables — but the signatures are checked on every backend.)
 func TestWasmReactorBuiltinSigs(t *testing.T) {
 	ok := `function main(): i32 {
     let p: i32 = wasm_timer_pollable(1000000);
@@ -1486,9 +1156,6 @@ func TestWasmReactorBuiltinSigs(t *testing.T) {
 	}
 }
 
-// read_dir_ino(path) answers Result[DirEntry[], IoError]: each element's
-// name is a string and its ino an i64, and DirEntry is a built-in a program
-// may not declare again.
 func TestReadDirInoSig(t *testing.T) {
 	ok := `function main(): i32 {
     match (read_dir_ino(".")) {
@@ -1517,29 +1184,14 @@ function main(): i32 { return 0; }`,
 	}
 }
 
-// A generic enum whose type parameter is determined by a payload at a
-// non-leading position — in particular a function-typed payload whose
-// result is the type parameter — must infer that parameter from the
-// payload that actually pins it, not by positionally pairing the
-// type-arg slot with the leading constructor argument — that pairing
-// binds `T` to the first (i32-literal) argument and reports `Box[i32]`
-// where `Box[string]` is expected.
-// See docs/GENERIC-VARIANT-FN-PAYLOAD-INFERENCE-GAP.md.
 func TestVariantTypeParamFromFnPayload(t *testing.T) {
 	ok := []string{
-		// T comes from the second, function-typed payload; the leading
-		// i32 literal must not capture T.
 		`enum Box[T] { Mk(i32, (i32) => T), Nil }
 function f(): Box[string] { return Box.Mk(7, (x: i32) => "hi"); }
 function main(): i32 { match (f()) { Mk(n, g) => { return n; }, Nil => { return 0; }, } }`,
-		// Same shape, T = i32 from the function result (the originally
-		// "accidentally working" case must keep working).
 		`enum Box[T] { Mk(i32, (i32) => T), Nil }
 function f(): Box[i32] { return Box.Mk(1, (x: i32) => x); }
 function main(): i32 { match (f()) { Mk(n, g) => { return n; }, Nil => { return 0; }, } }`,
-		// Leading literal that itself needs widening from the
-		// destination, alongside a function payload that pins T — both
-		// refreshes must hold simultaneously.
 		`enum Box2[T] { Mk(i64, (i32) => T), Nil }
 function f(): Box2[string] { return Box2.Mk(1234567890123, (x: i32) => "hi"); }
 function main(): i32 { match (f()) { Mk(n, g) => { return 0; }, Nil => { return 0; }, } }`,
@@ -1565,10 +1217,6 @@ func TestGoodPrograms(t *testing.T) {
 	}
 }
 
-// A bare variant struct literal in a struct-field initializer should
-// implicitly widen to its union type, the same way it already does in
-// `let x: Union = Variant{...}`, returns, and call arguments. Before
-// the fix this reported `field "left": expected Tree, got Leaf`.
 func TestUnionWidenInStructField(t *testing.T) {
 	src := `struct Leaf { v: i32 }
 struct Node { left: Tree, right: Tree }
@@ -1585,10 +1233,6 @@ function main(): i32 {
 	}
 }
 
-// A union-member struct literal given to a variant constructor widens to the
-// union the destination's payload slot names, as it does assigned to the union
-// directly: `return Some(A { … })` from a function returning `Option[U]`
-// (#12875). A struct outside the union still does not fit.
 func TestUnionWidenInVariantPayload(t *testing.T) {
 	src := `struct A { n: i32 }
 struct B { s: string }
@@ -1654,28 +1298,18 @@ func TestTypeErrors(t *testing.T) {
 	}
 }
 
-// Composite `==` / `!=` must be structural equality via the type's
-// `Eq` impl, not silent heap-pointer identity. A struct/enum that does
-// not implement `Eq` is rejected (with a derive hint); arrays/slices/
-// tuples are rejected (no structural eq yet); a type that does
-// implement `Eq` type-checks (and desugars to `a.eq(b)`).
-// Error-converting `?`: a `Result[_, E]` propagated through a function
-// returning `Result[_, dyn Trait]` is accepted when E implements Trait
-// (boxing E into `dyn Trait`), and rejected otherwise. See #3234.
 func TestTryConvertErrToDyn(t *testing.T) {
 	const hdr = `trait Error { function message(self: Self): string; }
 struct NotFound { what: string }
 impl Error for NotFound { function message(self: Self): string { return self.what; } }
 function find(): Result[i32, NotFound] { return Err(NotFound { what: "x" }); }
 `
-	// Accepted: NotFound implements Error.
 	if err := checkSource(t, hdr+`function h(): Result[i32, dyn Error] {
   let v: i32 = find()?;
   return Ok(v);
 }`); err != nil {
 		t.Errorf("error-converting `?` (NotFound→dyn Error) should type-check, got: %v", err)
 	}
-	// Rejected: Plain does not implement Error.
 	err := checkSource(t, `trait Error { function message(self: Self): string; }
 struct Plain { x: i32 }
 function find(): Result[i32, Plain] { return Err(Plain { x: 1 }); }
@@ -1684,8 +1318,6 @@ function main(): i32 { return 0; }`)
 	if err == nil || !strings.Contains(err.Error(), "`?` cannot box Plain into dyn Error: Plain does not implement Error") {
 		t.Errorf("`?` with a non-implementing error type should be rejected, naming the missing impl, got: %v", err)
 	}
-	// Accepted (multi-trait dyn error): Both implements EVERY trait in
-	// `dyn A + B`, so the error converts via the impl-all gate.
 	if err := checkSource(t, `trait A { function a(self: Self): i32; }
 trait B { function b(self: Self): i32; }
 struct Both { n: i32 }
@@ -1696,8 +1328,6 @@ function h(): Result[i32, dyn A + B] { let v: i32 = find()?; return Ok(v); }
 function main(): i32 { return 0; }`); err != nil {
 		t.Errorf("error-converting `?` into a multi-trait `dyn A + B` should type-check, got: %v", err)
 	}
-	// Rejected (multi-trait, missing one): OnlyA implements A but not B, so it
-	// does not convert into `dyn A + B`.
 	err = checkSource(t, `trait A { function a(self: Self): i32; }
 trait B { function b(self: Self): i32; }
 struct OnlyA { n: i32 }
@@ -1710,11 +1340,6 @@ function main(): i32 { return 0; }`)
 	}
 }
 
-// From-based error-converting `?`: a `Result[_, E1]` propagated through a
-// function returning `Result[_, E2]` is accepted when E2 has an associated
-// `from(E1): E2` (`impl From[E1] for E2`), mapping `Err(e)` to
-// `Err(E2.from(e))`. Rejected when no such `from` (and no `dyn`) exists.
-// See #2674.
 func TestTryConvertErrViaFrom(t *testing.T) {
 	const hdr = `trait From[T] { function from(v: T): Self; }
 struct IoErr { code: i32 }
@@ -1728,7 +1353,6 @@ function read(): Result[i32, IoErr] { return Err(IoErr { code: 1 }); }
 }`); err != nil {
 		t.Errorf("From-based error-converting `?` should type-check, got: %v", err)
 	}
-	// No `from(IoErr)` on the target and no dyn → rejected.
 	err := checkSource(t, `struct IoErr { code: i32 }
 struct AppErr { msg: i32 }
 function read(): Result[i32, IoErr] { return Err(IoErr { code: 1 }); }
@@ -1739,9 +1363,6 @@ function main(): i32 { return 0; }`)
 	}
 }
 
-// Arithmetic operators `+ - * /` on a composite type desugar to its
-// conventionally-named method (add/sub/mul/div); a composite without the
-// method is rejected with a clear E009. See #2706.
 func TestCompositeArithmeticOverload(t *testing.T) {
 	const ops = `struct V { x: i32 }
 function (self: V) add(o: V): V { return V { x: self.x + o.x }; }
@@ -1757,8 +1378,6 @@ function (self: V) div(o: V): V { return V { x: self.x / o.x }; }
 }`); err != nil {
 		t.Errorf("composite arithmetic with add/sub/mul/div should type-check, got: %v", err)
 	}
-	// The remaining binary operators overload too: `%`→rem, `&`→bitand,
-	// `|`→bitor, `^`→bitxor, `<<`→shl, `>>`→shr. See #2706.
 	const bitOps = `struct F { b: i32 }
 function (self: F) rem(o: F): F { return F { b: self.b % o.b }; }
 function (self: F) bitand(o: F): F { return F { b: self.b & o.b }; }
@@ -1775,20 +1394,14 @@ function (self: F) shr(o: F): F { return F { b: self.b >> o.b }; }
 }`); err != nil {
 		t.Errorf("composite %% & | ^ << >> should type-check, got: %v", err)
 	}
-	// A composite without the operator method is rejected.
 	err := checkSource(t, `struct W { x: i32 }
 function main(): i32 { let a: W = W{x:1}; let b: W = W{x:2}; let c: W = a + b; return c.x; }`)
 	if err == nil || !strings.Contains(err.Error(), `operator "+" is not defined for W`) {
 		t.Errorf("struct without `add` should be rejected with an operator-overload hint, got: %v", err)
 	}
-	// Numeric arithmetic is unaffected (the overload path only fires for
-	// struct/enum operands).
 	if err := checkSource(t, `function main(): i32 { return 2 + 3 * 4 - 1; }`); err != nil {
 		t.Errorf("numeric arithmetic should still type-check, got: %v", err)
 	}
-	// Unary `-` on a composite routes to `neg`; `ops` has no `neg`, so it
-	// is rejected; a type WITH `neg` type-checks; numeric unary minus is
-	// unaffected. See #2706.
 	if err := checkSource(t, ops+`function main(): i32 { let a: V = V{x:5}; let b: V = -a; return b.x; }`); err == nil ||
 		!strings.Contains(err.Error(), "unary `-` is not defined for V") {
 		t.Errorf("unary `-` on a struct without `neg` should be rejected with a hint, got: %v", err)
@@ -1803,34 +1416,24 @@ function main(): i32 { let a: V = V{x:5}; let b: V = -a; return b.x; }`); err !=
 	}
 }
 
-// Operator overloading over a trait-bounded TYPE PARAMETER: `a + b` / `-a` where
-// `a`/`b` have type `T` and `T`'s bound provides the op's trait method desugars
-// to `a.add(b)` / `a.neg()` resolved via the bound — the #2706 generic-numeric
-// benefit. A type param whose bound lacks the method falls through to the usual
-// E009.
 func TestOperatorOverloadOverTypeParam(t *testing.T) {
 	const traits = `trait Add { function add(self: Self, o: Self): Self; }
 trait Mul { function mul(self: Self, o: Self): Self; }
 trait Neg { function neg(self: Self): Self; }
 trait Arith: Add + Mul + Neg {}
 `
-	// Binary `+` / `*` (including nested) over a type param bound by the traits.
 	if err := checkSource(t, traits+`function poly[T: Arith](a: T, b: T): T { return (a + b) * a; }
 function main(): i32 { return 0; }`); err != nil {
 		t.Errorf("binary operators over a trait-bounded type param should type-check, got: %v", err)
 	}
-	// Unary `-` over a `Neg`-bounded type param.
 	if err := checkSource(t, traits+`function negate[T: Neg](a: T): T { return -a; }
 function main(): i32 { return 0; }`); err != nil {
 		t.Errorf("unary `-` over a Neg-bounded type param should type-check, got: %v", err)
 	}
-	// A direct supertrait bound (`T: Add`) is enough for `+`.
 	if err := checkSource(t, traits+`function plus[T: Add](a: T, b: T): T { return a + b; }
 function main(): i32 { return 0; }`); err != nil {
 		t.Errorf("`+` over an Add-bounded type param should type-check, got: %v", err)
 	}
-	// A type param whose bound does NOT provide the op's method is rejected
-	// (falls through to the numeric path's E009).
 	err := checkSource(t, `trait Show { function show(self: Self): i32; }
 function bad[T: Show](a: T, b: T): T { return a + b; }
 function main(): i32 { return 0; }`)
@@ -1839,9 +1442,6 @@ function main(): i32 { return 0; }`)
 	}
 }
 
-// An ordering on a bounded TYPE PARAMETER needs a bound that supplies `cmp`,
-// and stays E009 without one; equality needs no bound. Each instance then
-// compares at its own type (#12697).
 func TestComparisonOverTypeParam(t *testing.T) {
 	const traits = `trait Ord { function cmp(self: Self, o: Self): i32; }
 trait Eq { function eq(self: Self, o: Self): boolean; }
@@ -1892,9 +1492,6 @@ function main(): i32 { let a: P = P{x:1}; let b: P = P{x:1}; if (a == b) { retur
 			t.Errorf("%q: error %q does not contain %q", c.src, err.Error(), c.want)
 		}
 	}
-	// Ordering operators on composites route to `Ord::cmp`; without
-	// an Ord impl they're rejected, arrays/tuples are rejected, and a
-	// type with Ord type-checks.
 	const ordI32 = `trait Ord { function cmp(self: Self, other: Self): i32; }
 impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }
 `
@@ -1917,7 +1514,6 @@ function main(): i32 { let a: P = P{x:1}; let b: P = P{x:2}; if (a < b) { if (b 
 		t.Errorf("composite ordering with derived Ord should type-check, got: %v", err)
 	}
 
-	// With Eq derived, composite == type-checks cleanly.
 	ok := eqI32 + `@derive(Eq) struct P { x: i32, y: i32 }
 @derive(Eq) enum E { A, B(i32) }
 function main(): i32 {
@@ -1930,10 +1526,6 @@ function main(): i32 {
 	}
 }
 
-// Methods declared on a generic struct / enum receiver bind the
-// receiver's type variables implicitly (`T` in `Box[T]`), so they
-// type-check and dispatch per instantiation. A receiver type-arg that
-// names a real type stays concrete.
 func TestGenericReceiverMethods(t *testing.T) {
 	ok := []string{
 		`struct Box[T] { v: T }
@@ -1945,13 +1537,10 @@ function main(): i32 { let p: Pair[i32, i32] = Pair { fst: 3, snd: 4 }; return p
 		`enum Opt[T] { Nil, Has(T) }
 function (o: Opt[T]) unwrap_or(d: T): T { match (o) { Has(x) => { return x; }, Nil => { return d; } } }
 function main(): i32 { let o: Opt[i32] = Has(9); return o.unwrap_or(0); }`,
-		// A receiver type-arg naming a real struct is a concrete
-		// instantiation, not a type variable.
 		`struct Foo { v: i32 }
 struct Box[T] { v: T }
 function (b: Box[Foo]) deep(): i32 { return b.v.v; }
 function main(): i32 { let b: Box[Foo] = Box { v: Foo { v: 5 } }; return b.deep(); }`,
-		// Element-polymorphic receivers: owned array `T[]` and slice `[T]`.
 		`function (xs: T[]) first(): T { return xs[0]; }
 function main(): i32 { let a: i32[] = [3, 4]; return a.first(); }`,
 		`function (xs: [T]) head(): T { return xs[0]; }
@@ -1961,8 +1550,6 @@ function main(): i32 { let a: i32[] = [7, 8]; let s: [i32] = a[0:2]; return s.he
     while (i < xs.len()) { if (p(xs[i])) { n = n + 1; } i = i + 1; } return n; }
 function pos(x: i32): boolean { return x > 0; }
 function main(): i32 { let a: i32[] = [1, 0 - 1, 2]; return a.count_where(pos); }`,
-		// Method-level type param: `map[U]` introduces U (inferred from
-		// the argument) alongside the receiver's T.
 		`struct Box[T] { v: T }
 function (b: Box[T]) map[U](f: (T) => U): Box[U] { return Box { v: f(b.v) }; }
 function (b: Box[T]) get(): T { return b.v; }
@@ -1976,25 +1563,15 @@ function main(): i32 { let b: Box[i32] = Box { v: 7 }; let c: Box[boolean] = b.m
 	}
 }
 
-// Return-position type inference (#2668): a generic function whose type
-// parameter appears only in its result type (not in any argument) can
-// have that parameter inferred from the destination — the `let x: T =`
-// annotation or the enclosing `return`'s declared type. Without a
-// destination there's nothing to infer from, so it must still error.
 func TestReturnPositionInference(t *testing.T) {
 	ok := []string{
-		// T bound from a `let` annotation.
 		`function empty[T](): T[] { return []; }
 function main(): i32 { let xs: i32[] = empty(); return xs.len(); }`,
-		// T bound through a `return` whose function result is concrete.
 		`function empty[T](): T[] { return []; }
 function strs(): string[] { return empty(); }
 function main(): i32 { return strs().len(); }`,
-		// Argument-driven binding still wins when both are present; the
-		// destination is merely consulted for *unbound* parameters.
 		`function wrap[T](x: T): T[] { return [x]; }
 function main(): i32 { let xs: i32[] = wrap(5); return xs.len(); }`,
-		// Generic struct result inferred from the destination.
 		`struct Box[T] { v: T }
 function make_box[T](v: T): Box[T] { return Box { v: v }; }
 function main(): i32 { let b: Box[i32] = make_box(3); return b.v; }`,
@@ -2005,8 +1582,6 @@ function main(): i32 { let b: Box[i32] = make_box(3); return b.v; }`,
 		}
 	}
 
-	// No destination to infer from → the unbound parameter must still be
-	// reported as un-inferable.
 	bad := `function empty[T](): T[] { return []; }
 function main(): i32 { empty(); return 0; }`
 	err := checkSource(t, bad)
@@ -2018,19 +1593,6 @@ function main(): i32 { empty(); return 0; }`
 	}
 }
 
-// Phase 5 of docs/PRELUDE-TO-MODULES.md retired the auto-injected
-// prelude: stdlib methods are no longer in scope unless their module
-// is imported. A program that calls `.split` without `import
-// "std/string";` should get a clean type error rather than silently
-// resolving against an implicit prelude.
-// TestUseWithoutAnnotationDoesNotPanicFormatting guards the regression
-// where a `use x <- f()` with no binding annotation, whose callback
-// parameter type the checker couldn't infer (inferUseParam bails with
-// E032), left the synthesised callback's first param nil. Formatting
-// that callback's function type for the follow-on E038 diagnostic then
-// dereferenced nil, surfacing as `got %!s(PANIC=...)` instead of a
-// readable type. The diagnostic must mention the `use` failure and never
-// contain a PANIC marker.
 func TestUseWithoutAnnotationDoesNotPanicFormatting(t *testing.T) {
 	src := `function withResource(cb: () => i32): i32 { return cb(); }
 function g(): i32 { use x <- withResource(); return 0; }
@@ -2055,9 +1617,6 @@ func TestUnimportedStdlibMethodIsRejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a type error for .split() without import \"std/string\", got nil")
 	}
-	// The diagnostic names the method and the module that would define it.
-	// "field access on non-struct value of type string" describes neither
-	// the call the user wrote nor the import they are missing.
 	for _, want := range []string{`no method "split" on string`, "add `import \"std/string\"`"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not contain %q", err.Error(), want)
@@ -2065,8 +1624,6 @@ func TestUnimportedStdlibMethodIsRejected(t *testing.T) {
 	}
 }
 
-// The checker should accumulate multiple errors and report them all in
-// a single diag.Errors aggregate.
 func TestMultipleErrorsAreReported(t *testing.T) {
 	src := `function f(): i32 {
 		return true;
@@ -2085,12 +1642,6 @@ func TestMultipleErrorsAreReported(t *testing.T) {
 	}
 }
 
-// User code can't redeclare a built-in type. Letting it through
-// silently miscompiles — the IR's pair-form lowering and several
-// runtime helpers hard-code the canonical variant order
-// (Some=0/None=1, Ok=0/Err=1), so a swapped user `enum Option {
-// None, Some(T) }` would diverge between pair-form and heap-form
-// returns.
 func TestReservedBuiltinNamesCannotBeShadowed(t *testing.T) {
 	cases := []struct {
 		name string
@@ -2110,7 +1661,6 @@ func TestReservedBuiltinNamesCannotBeShadowed(t *testing.T) {
 			function main(): i32 { return 0; }`},
 		{"HttpResponse", `struct HttpResponse { status: i32, body: string }
 			function main(): i32 { return 0; }`},
-		// Reserved whatever kind takes the name (#10855).
 		{"Span", `enum Span { Empty, Wide(f64, string) }
 			function main(): i32 { return 0; }`},
 		{"Option", `struct Option { n: i32 }
@@ -2128,19 +1678,11 @@ func TestReservedBuiltinNamesCannotBeShadowed(t *testing.T) {
 			if !strings.Contains(err.Error(), c.name) {
 				t.Errorf("error %q does not name %q", err.Error(), c.name)
 			}
-			// IsReservedName is the public-facing query the
-			// rest of the codebase consults; it must agree
-			// with what the checker actually rejects. Pinning
-			// them together here keeps the two paths from
-			// drifting.
 			if !IsReservedName(c.name) {
 				t.Errorf("IsReservedName(%q) returned false but the checker rejects it", c.name)
 			}
 		})
 	}
-	// Also assert the helper returns false for things that
-	// AREN'T reserved — a sanity check that the helper isn't
-	// just `return true`.
 	for _, name := range []string{"Foo", "Bar", "main", "x"} {
 		if IsReservedName(name) {
 			t.Errorf("IsReservedName(%q) returned true for a user-name", name)
@@ -2148,7 +1690,6 @@ func TestReservedBuiltinNamesCannotBeShadowed(t *testing.T) {
 	}
 }
 
-// std/json declares JsonValue, so a program's own enum may take the name.
 func TestJsonValueIsNotReserved(t *testing.T) {
 	if err := checkSource(t, `enum JsonValue { JNull }
 function main(): i32 { let v: JsonValue = JNull; return 0; }`); err != nil {
@@ -2156,9 +1697,6 @@ function main(): i32 { let v: JsonValue = JNull; return 0; }`); err != nil {
 	}
 }
 
-// A redeclared builtin is reported once. An injected declaration naming it
-// with type arguments (ChunkProducer's `Option[u8[]]`) finds the user's
-// shape once the builtin is dropped, and that is not a second error.
 func TestReservedShadowIsReportedOnce(t *testing.T) {
 	err := checkSource(t, "enum Option { A, B }\nfunction main(): i32 { return 0; }\n")
 	if err == nil || !strings.Contains(err.Error(), "reserved built-in name") {
@@ -2178,8 +1716,6 @@ func TestBuiltinPutchar(t *testing.T) {
 	}
 }
 
-// The socket and stdin builtins std/net and std/io replaced are not
-// builtins any more: a call to one is an unknown name.
 func TestRetiredIoBuiltinsAreUnknown(t *testing.T) {
 	for _, src := range []string{
 		`function f(): u8[] { return tcp_recv(3, 16); }`,
@@ -2225,11 +1761,7 @@ func TestFloatArithmeticTypechecks(t *testing.T) {
 
 func TestFloatRejectsMixedArithmetic(t *testing.T) {
 	cases := []string{
-		// Concrete-int variable + float literal still errors —
-		// no implicit widening from i32 to float. The user must
-		// cast: `(x as float) + 1.5`.
 		`function f(x: i32): f32 { return x + 1.5; }`,
-		// `%` is integer-only.
 		`function f(x: f32): f32 { return x % 1.0; }`,
 	}
 	for _, src := range cases {
@@ -2239,12 +1771,6 @@ func TestFloatRejectsMixedArithmetic(t *testing.T) {
 	}
 }
 
-// Polymorphic integer literals get promoted to the float type
-// when one side of an arithmetic / comparison op is a concrete
-// float — unlike concrete-int variables, which still need an
-// explicit cast. This is the same trick `commonIntegerWidth`
-// pulls (poly side wins from concrete side), generalised to
-// the cross-class int-literal → float-context promotion.
 func TestPolyIntLiteralPromotesToFloat(t *testing.T) {
 	cases := []string{
 		`function f(x: f32): f32 { return x + 1; }`,
@@ -2273,9 +1799,6 @@ func TestStringEqualityTypechecks(t *testing.T) {
 	}
 }
 
-// `s[i]` yields the byte type `u8`, not `i32` (#5629). A byte flowing
-// into i32 arithmetic needs an explicit `as i32` — there is no implicit
-// unsigned widening.
 func TestStringIndexReturnsByte(t *testing.T) {
 	src := `function f(): u8 {
 		let s: string = "abc";
@@ -2319,10 +1842,6 @@ func TestLenRejectsNumber(t *testing.T) {
 	}
 }
 
-// `.len()` resolves through method dispatch on string, array,
-// and slice receivers. Verifies the generic-T substitution the
-// dispatch path stamps for slice tracks the receiver's element
-// type without surfacing a `ParamType` leak in the error path.
 func TestLenOnSlice(t *testing.T) {
 	src := `function f(): i32 {
 		let xs: i32[] = [1, 2, 3, 4];
@@ -2334,10 +1853,6 @@ func TestLenOnSlice(t *testing.T) {
 	}
 }
 
-// `len` is no longer a free builtin — only the method form
-// `x.len()` resolves. Calling it as a free function must surface
-// the same "cannot find" diagnostic any unknown name
-// would.
 func TestFreeLenIsRejected(t *testing.T) {
 	cases := []string{
 		`function f(): i32 { let s: string = "hi"; return len(s); }`,
@@ -2372,9 +1887,6 @@ func TestStringCmpFlagSet(t *testing.T) {
 	}
 }
 
-// With two candidates equally close, the suggestion is the nearest local,
-// then the first function by name, every run, as the self-host picks
-// (#13041). The candidates came from a map, so the pick changed run to run.
 func TestUndefinedIdentifierSuggestionBreaksTiesTheSameWay(t *testing.T) {
 	for _, c := range []struct{ src, want string }{
 		{"function f(): i32 {\n\tlet x: i32 = 1;\n\tlet y: i32 = 2;\n\treturn n;\n}", "y"},
@@ -2453,9 +1965,6 @@ func TestUndefinedIdentifierNoSuggestionWhenFar(t *testing.T) {
 	}
 }
 
-// E043 unknown-field joins the sound fix family (#4413 Rec §3): both
-// the field-ACCESS and struct-LITERAL sites attach a respelling fix
-// anchored at the field NAME token, and applying it fixes the program.
 func TestUnknownFieldFixApplies(t *testing.T) {
 	cases := []struct {
 		name string
@@ -2506,10 +2015,6 @@ func TestUnknownFieldFixApplies(t *testing.T) {
 	}
 }
 
-// A misspelt METHOD call routes through the unknown-field path; the
-// receiver's registered method names join the candidates, so
-// `p.puzh(2)` suggests the `push` method (the field set alone offers
-// nothing that close). Applying it fixes the program.
 func TestUnknownMethodFixSuggestsMethod(t *testing.T) {
 	src := "struct P { x: i32 }\n" +
 		"pub function (p: P) push(v: i32): i32 { return p.x + v; }\n" +
@@ -2552,9 +2057,6 @@ func TestUnknownMethodFixSuggestsMethod(t *testing.T) {
 	}
 }
 
-// The E001 near-miss fix is MACHINE-APPLICABLE (#4413 Rec §3): applying
-// the suggested replacement over its span must yield a program that
-// parses AND checks cleanly — the soundness bar for attaching one.
 func TestUndefinedIdentifierFixApplies(t *testing.T) {
 	src := `function f(): i32 {
 	let counter: i32 = 0;
@@ -2573,7 +2075,6 @@ func TestUndefinedIdentifierFixApplies(t *testing.T) {
 	if ce.Fix == nil {
 		t.Fatal("expected a fix")
 	}
-	// Apply: replace Length bytes at (Line, Col) with Replacement.
 	lines := strings.Split(src, "\n")
 	ln := lines[ce.Fix.Pos.Line-1]
 	col := ce.Fix.Pos.Col - 1
@@ -2601,11 +2102,6 @@ func TestStructTypechecks(t *testing.T) {
 	}
 }
 
-// Fields are immutable after construction (E048): an `obj.field = v`
-// assignment is rejected. This is the enforcement half of the
-// immutable-data-structures migration — the fix is a struct-update
-// (`p = Point { ...p, x: 10 }`), which TestStructTypechecks above
-// shows still type-checks.
 func TestFieldAssignmentRejected(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 		function main(): i32 {
@@ -2622,8 +2118,6 @@ func TestFieldAssignmentRejected(t *testing.T) {
 	}
 }
 
-// Compound field assignment (`a.v += n`) desugars to `a.v = a.v + n`,
-// so it is rejected the same way as a plain field assignment.
 func TestCompoundFieldAssignmentRejected(t *testing.T) {
 	src := `struct Acc { v: i32 }
 		function main(): i32 {
@@ -2636,9 +2130,6 @@ func TestCompoundFieldAssignmentRejected(t *testing.T) {
 	}
 }
 
-// A nested field path (`o.inner.x = v`) is also a FieldAccess target
-// and is rejected; the fix nests a struct-update
-// (`o = Outer { ...o, inner: Inner { ...o.inner, x: v } }`).
 func TestNestedFieldAssignmentRejected(t *testing.T) {
 	src := `struct Inner { x: i32 }
 		struct Outer { inner: Inner }
@@ -2652,11 +2143,6 @@ func TestNestedFieldAssignmentRejected(t *testing.T) {
 	}
 }
 
-// Capture write-back of a REFERENCE-shaped variable is rejected
-// (E049): a closure whose env holds a pointer could close a cycle by
-// pointing back at a value that points at the closure. This is the
-// capture half of immutability enforcement (E048 is the field half).
-// Scalar captures stay legal (see TestScalarCaptureWriteBackAllowed).
 func TestPointerCaptureWriteBackRejected(t *testing.T) {
 	src := `function main(): i32 {
 		let name: string = "a";
@@ -2671,8 +2157,6 @@ func TestPointerCaptureWriteBackRejected(t *testing.T) {
 	}
 }
 
-// A nested closure writing a reference-typed variable captured from
-// two levels up is still rejected.
 func TestNestedPointerCaptureWriteBackRejected(t *testing.T) {
 	src := `function main(): i32 {
 		let acc: i32[] = [];
@@ -2690,9 +2174,6 @@ func TestNestedPointerCaptureWriteBackRejected(t *testing.T) {
 	}
 }
 
-// A closure may capture a value whose type is a type parameter of the
-// enclosing function: it is concrete once the function is instantiated,
-// so E044 is for a captured `void` alone.
 func TestClosureCapturesGenericValue(t *testing.T) {
 	if err := checkSource(t, `function apply[S](init: S, f: (S) => i32): i32 {
     let run: () => i32 = (): i32 => f(init);
@@ -2712,18 +2193,6 @@ function main(): i32 {
 	}
 }
 
-// The ENCLOSING scope's store into a captured variable is E049 too when the
-// value can reach a closure (#8440). E049 used to guard only the inside of the
-// closure, but the capture is shared by reference — closureconv gives it a heap
-// cell — so `g = f` where `f` captures `g` closes cell -> closure -> env -> cell
-// with no diagnostic, and reference counting cannot collect that. The capture
-// cell is the last mutable heap slot in the language (E048 fields, E056
-// elements, E057 cell payloads), so this is the store that decides whether the
-// collector-free invariant holds.
-//
-// Every spelling here was confirmed to leak unboundedly before the rule: each
-// builds the cycle through a different container between the cell and the
-// closure.
 func TestOuterRebindReachingCapturedClosureRejected(t *testing.T) {
 	cases := []struct{ name, src string }{
 		{"direct", `function main(): i32 {
@@ -2812,8 +2281,6 @@ func TestOuterRebindReachingCapturedClosureRejected(t *testing.T) {
 	}
 }
 
-// The rule applies one level down too: a `let` local to a closure, captured by
-// a closure nested inside it, is the same shared cell one frame in.
 func TestNestedClosureLocalRebindRejected(t *testing.T) {
 	src := `function main(): i32 {
 		let outer: () => i32 = (): i32 => {
@@ -2829,10 +2296,6 @@ func TestNestedClosureLocalRebindRejected(t *testing.T) {
 	}
 }
 
-// A captured variable declared AFTER the store that supersedes it is still
-// covered: the capture set is not complete until the whole function is
-// checked, so the rule cannot be decided at the store. Here the second
-// iteration stores the lambda that captures `g`.
 func TestOuterRebindRejectedWhenClosureIsDeclaredLater(t *testing.T) {
 	src := `function main(): i32 {
 		let g: () => i32 = (): i32 => { return 1; };
@@ -2850,10 +2313,6 @@ func TestOuterRebindRejectedWhenClosureIsDeclaredLater(t *testing.T) {
 	}
 }
 
-// The rule asks what the STORED value can reach, not whether the variable is
-// captured: a captured value that cannot name a function cannot be the
-// closure, so the by-reference rebinds #5301 / #2896 exist to support stay
-// legal. Each of these was confirmed to reclaim fully at run time.
 func TestOuterRebindOfFunctionFreeCaptureAllowed(t *testing.T) {
 	cases := []struct{ name, src string }{
 		{"string", `function main(): i32 {
@@ -2881,8 +2340,6 @@ func TestOuterRebindOfFunctionFreeCaptureAllowed(t *testing.T) {
 			n = 99;
 			return f();
 		}`},
-		// A generic declaration is read at its arguments: Some's payload in
-		// Option[i32] is an i32, not a parameter that might be a function.
 		{"generic-enum-of-scalar", `struct S { o: Option[i32] }
 		function main(): i32 {
 			let s: S = S { o: Some(1) };
@@ -2897,8 +2354,6 @@ func TestOuterRebindOfFunctionFreeCaptureAllowed(t *testing.T) {
 			b = Box { v: 2 };
 			return f();
 		}`},
-		// The stored value's type is judged, not the variable's: a struct that
-		// reaches no function stored into a captured dyn closes nothing.
 		{"struct-into-dyn", `trait Shape { function area(self: Self): i32; }
 		struct Sq { s: i32 }
 		impl Shape for Sq { function area(self: Self): i32 { return self.s; } }
@@ -2916,12 +2371,6 @@ func TestOuterRebindOfFunctionFreeCaptureAllowed(t *testing.T) {
 	}
 }
 
-// A closure LITERAL is the one right-hand side the rule reads by value flow
-// rather than by type: the checker just built it, so it knows what it
-// captures. One that captures neither the target nor anything that could hold
-// a closure has no edge back to the cell, and swapping a captured callback on
-// a flag stays legal — the shape `self_host_annotate_consumers_ir_test.go`
-// already relies on.
 func TestFreshClosureLiteralRebindOfCapturedVariableAllowed(t *testing.T) {
 	src := `function main(): i32 {
 		let flip: boolean = false;
@@ -2935,9 +2384,6 @@ func TestFreshClosureLiteralRebindOfCapturedVariableAllowed(t *testing.T) {
 	}
 }
 
-// The literal exception is only as wide as the literal's captures. A literal
-// that captures the target itself, or captures anything whose type could hold
-// a closure leading back to it, is refused like any other value.
 func TestClosureLiteralThatCapturesIsStillRejected(t *testing.T) {
 	cases := []struct{ name, src string }{
 		{"captures_target", `function main(): i32 {
@@ -2961,9 +2407,6 @@ func TestClosureLiteralThatCapturesIsStillRejected(t *testing.T) {
 	}
 }
 
-// A closure-typed variable NO closure captures has no shared cell, so
-// rebinding it closes nothing and stays legal — the rule is about the cell,
-// not about function-typed variables.
 func TestRebindOfUncapturedClosureVariableAllowed(t *testing.T) {
 	src := `function main(): i32 {
 		let g: () => i32 = (): i32 => { return 1; };
@@ -2976,11 +2419,6 @@ func TestRebindOfUncapturedClosureVariableAllowed(t *testing.T) {
 	}
 }
 
-// A closure body's own local that shadows a captured outer name is not the
-// captured variable, so storing a closure into it is legal. Names are not
-// unique until shadowrename (which runs after the checker), so the rule pairs
-// a store with a DECLARATION node rather than a spelling; matching on the name
-// would reject this.
 func TestShadowingLocalIsNotTheCapturedVariable(t *testing.T) {
 	src := `function main(): i32 {
 		let g: () => i32 = (): i32 => { return 1; };
@@ -2998,9 +2436,6 @@ func TestShadowingLocalIsNotTheCapturedVariable(t *testing.T) {
 	}
 }
 
-// Scalar capture write-back stays legal — an i32/i64/f32/f64 capture
-// can't hold a reference, so it can't form a cycle. This is the
-// stateful "counter closure": each call increments the env's count.
 func TestScalarCaptureWriteBackAllowed(t *testing.T) {
 	src := `function makeCounter(): () => i32 {
 		let count: i32 = 0;
@@ -3019,9 +2454,6 @@ func TestScalarCaptureWriteBackAllowed(t *testing.T) {
 	}
 }
 
-// Reading a reference capture stays legal — only write-back is banned.
-// The closure's own params / locals are not captures and remain
-// assignable.
 func TestCaptureReadAndLocalAssignStillAllowed(t *testing.T) {
 	src := `function main(): i32 {
 		let n: i32 = 5;
@@ -3037,9 +2469,6 @@ func TestCaptureReadAndLocalAssignStillAllowed(t *testing.T) {
 	}
 }
 
-// Enforcement bans only post-construction mutation, not recursive
-// types: an immutable recursive tree (the self-host parser's own
-// AST shape) must still construct and type-check.
 func TestImmutableRecursiveTypeStillCompiles(t *testing.T) {
 	src := `struct Leaf { v: i32 }
 		struct Node { left: Tree, right: Tree }
@@ -3083,12 +2512,6 @@ func TestUnknownLoopLabelRejected(t *testing.T) {
 	}
 }
 
-// A let-else whose else branch ends in a canonical `loop { … }` counts as
-// diverging (E022 accepts it) without needing an explicit trailing
-// return/break/continue after the loop — the same conservative
-// "unconditional loop never falls through" treatment funcBodyExits
-// already gives literal-true While, now keyed off the dedicated Loop
-// node instead of pattern-matching a BoolLit condition.
 func TestLetElseAcceptsDivergentLoop(t *testing.T) {
 	src := `enum Opt { Has(i32), Nil }
 		function f(o: Opt): i32 {
@@ -3123,22 +2546,14 @@ func TestIfExprRejectsBranchTypeMismatch(t *testing.T) {
 	}
 }
 
-// Bare `None` in an if-expression arm gets its type args
-// from the other arm, so `if (cond) { Some(x) } else { None }`
-// resolves as `Option[i32]` rather than failing the strict
-// equality check the IfExpr handler used to apply. Same for
-// the symmetric position (None in Then) and for Result.
 func TestIfExprUnifiesBareEnumWithSpecifiedArm(t *testing.T) {
 	cases := []string{
-		// None in the Else arm.
 		`function f(b: boolean): Option[i32] {
 			return if (b) { Some(7) } else { None };
 		}`,
-		// None in the Then arm (symmetric position).
 		`function f(b: boolean): Option[i32] {
 			return if (b) { None } else { Some(7) };
 		}`,
-		// Result with bare Err in the Then arm — same shape.
 		`function f(b: boolean): Result[i32, i32] {
 			return if (b) { Err(0) } else { Ok(1) };
 		}`,
@@ -3150,9 +2565,6 @@ func TestIfExprUnifiesBareEnumWithSpecifiedArm(t *testing.T) {
 	}
 }
 
-// Genuinely mismatched branches still error — the unification
-// only kicks in for the "one side has no Args" case at a
-// matching enum name.
 func TestIfExprStillRejectsActualBranchMismatch(t *testing.T) {
 	cases := []string{
 		`function f(b: boolean): i32 { return if (b) { 1 } else { true }; }`,
@@ -3165,13 +2577,6 @@ func TestIfExprStillRejectsActualBranchMismatch(t *testing.T) {
 	}
 }
 
-// Postfix `?` produces the unwrapped Some payload type.
-// A non-variant call returning Option[T] must not be refreshed by
-// postSettleType's Call branch as Option[<arg type>]; the gate has to
-// distinguish variant constructors from regular function calls. The
-// minimal repro is a function whose
-// first param is an array type — the arg-rebuild would turn
-// `Option[i32]` into e.g. `Option[boolean[]]`.
 func TestNonVariantCallReturningGenericEnum(t *testing.T) {
 	cases := []string{
 		`function f(p: boolean[]): Option[i32] { return None; }
@@ -3198,7 +2603,6 @@ func TestOptionTryTypechecks(t *testing.T) {
 	}
 }
 
-// `?` rejected when the receiver type is not Option[_].
 func TestOptionTryRejectsNonOption(t *testing.T) {
 	src := `function f(): Option[i32] {
 		let n: i32 = 5;
@@ -3210,8 +2614,6 @@ func TestOptionTryRejectsNonOption(t *testing.T) {
 	}
 }
 
-// `?` rejected when the surrounding function doesn't return
-// Option — the early-return target wouldn't unify.
 func TestOptionTryRejectsNonOptionReturn(t *testing.T) {
 	src := `function f(m: Map[i32, i32]): i32 {
 		let v: i32 = m.get(1)?;
@@ -3222,8 +2624,6 @@ func TestOptionTryRejectsNonOptionReturn(t *testing.T) {
 	}
 }
 
-// `?` on a Result[T, E] yields T and requires the enclosing
-// function to return Result[_, E] for some success type.
 func TestResultTryTypechecks(t *testing.T) {
 	src := `function inner(): Result[i32, i32] { return Ok(42); }
 function outer(): Result[i32, i32] {
@@ -3235,7 +2635,6 @@ function outer(): Result[i32, i32] {
 	}
 }
 
-// Surrounding function must also return Result.
 func TestResultTryRejectsNonResultReturn(t *testing.T) {
 	src := `function inner(): Result[i32, i32] { return Ok(42); }
 function outer(): i32 {
@@ -3247,8 +2646,6 @@ function outer(): i32 {
 	}
 }
 
-// Source's E must match the enclosing function's E. No
-// auto-conversion (no Rust-style From shim).
 func TestResultTryRejectsErrTypeMismatch(t *testing.T) {
 	src := `function inner(): Result[i32, i32] { return Ok(42); }
 function outer(): Result[i32, string] {
@@ -3260,9 +2657,6 @@ function outer(): Result[i32, string] {
 	}
 }
 
-// `match` in expression position: arms must agree on a single
-// type, exhaustiveness still required, payload bindings are in
-// scope inside arm bodies.
 func TestMatchExprTypechecks(t *testing.T) {
 	src := `function f(o: Option[i32]): i32 {
 		return match (o) {
@@ -3301,21 +2695,12 @@ function pick(): i32 {
 	}
 }
 
-// Typed numeric literal suffixes resolve to concrete types at
-// parse time. The checker stamps NumberLit/FloatLit Width based
-// on the suffix so binary-op + assignment paths treat them as
-// non-polymorphic, removing the need for `as` casts in
-// expressions like `Circle(r: f32) when r <= 0f32 =>`.
 func TestNumericLiteralSuffixesTypecheck(t *testing.T) {
 	for _, src := range []string{
-		// var-init context confirms suffix-stamped literals carry
-		// the right concrete type without any `as` cast.
 		`function f(): i32 { let x: i64 = 42i64; return 0; }`,
 		`function f(): i32 { let x: u8 = 7u8; return 0; }`,
 		`function f(): i32 { let x: f64 = 1.5f64; return 0; }`,
-		// f32 suffix on integer-shaped text → float literal.
 		`function f(): i32 { let x: f32 = 42f32; return 0; }`,
-		// Compares against suffixed literal — no `as` cast needed.
 		`enum Shape { Circle(f32), Square(f32) }
 function classify(s: Shape): i32 {
 	match (s) {
@@ -3332,17 +2717,12 @@ function classify(s: Shape): i32 {
 	}
 }
 
-// Suffix mismatch surfaces as an assignment error, not a silent
-// truncation.
 func TestNumericLiteralSuffixesRejectMismatch(t *testing.T) {
 	if err := checkSource(t, `function f(): i32 { let x: i32 = 42i64; return 0; }`); err == nil {
 		t.Error("expected error: assigning i64 literal to i32 var")
 	}
 }
 
-// `arr.append(v)` is a generic method on T[]. The receiver's Elem
-// flows into the registered ParamType("T") signature, so the
-// argument and return types substitute correctly.
 func TestArrayPushTypechecks(t *testing.T) {
 	for _, src := range []string{
 		`function f(): i32 { let xs: string[] = []; xs = xs.append("a"); return xs.len(); }`,
@@ -3354,13 +2734,6 @@ func TestArrayPushTypechecks(t *testing.T) {
 	}
 }
 
-// Wide-stride arrays (i64[], f64[]) have no append helper wired
-// up yet — checker rejects with a clear pointer at the storage
-// class rather than producing broken wat.
-// 8-byte int strides (i64 / u64) now route to a separate
-// `__array_append_i64` wat helper. f64 is still gated — its
-// 8-byte slot needs its own f64.store helper which isn't wired
-// up yet.
 func TestArrayPushI64StridePasses(t *testing.T) {
 	for _, src := range []string{
 		`function f(): i32 { let xs: i64[] = [1i64, 2i64]; xs = xs.append(3i64); return 0; }`,
@@ -3379,8 +2752,6 @@ func TestArrayPushF64StridePasses(t *testing.T) {
 	}
 }
 
-// Sub-i32 stride: 1-byte (u8) routes to its own lang-prelude
-// append helper.
 func TestArrayPushSubI32StridePasses(t *testing.T) {
 	for _, src := range []string{
 		`function f(): i32 { let xs: u8[] = []; xs = xs.append(7u8); return 0; }`,
@@ -3391,7 +2762,6 @@ func TestArrayPushSubI32StridePasses(t *testing.T) {
 	}
 }
 
-// Argument type must match the receiver's Elem.
 func TestArrayPushRejectsArgTypeMismatch(t *testing.T) {
 	src := `function f(): i32 { let xs: string[] = []; xs = xs.append(1); return xs.len(); }`
 	if err := checkSource(t, src); err == nil {
@@ -3399,8 +2769,6 @@ func TestArrayPushRejectsArgTypeMismatch(t *testing.T) {
 	}
 }
 
-// Wildcard `_` arm covers exhaustiveness for the same shape that
-// would otherwise need every variant listed.
 func TestMatchExprWildcardCoversExhaustiveness(t *testing.T) {
 	src := `enum Light { Red, Green, Yellow }
 function pick(): i32 {
@@ -3435,28 +2803,19 @@ func TestStructLitMissingField(t *testing.T) {
 	}
 }
 
-// A value-returning function that can fall off the end without a return
-// is rejected (E052). Without the check it type-checks and crashes at
-// runtime with a void value where a struct was expected — F4 in
-// docs/ADVERSARIAL-REVIEW-2026-06.md.
 func TestMissingReturnRejected(t *testing.T) {
 	for _, src := range []string{
-		// one-armed if: falls through when b is false
 		`struct P { x: i32, y: i32 }
 		function f(b: boolean): P {
 			if (b) { return P { x: 10, y: 20 }; }
 		}`,
-		// no return at all
 		`function g(): i32 { let x = 1; }`,
-		// if/else where only one arm returns
 		`function h(b: boolean): i32 {
 			if (b) { return 1; } else { let z = 2; }
 		}`,
-		// match whose wildcard arm doesn't return: an unmatched tag falls through
 		`function sw(n: i32): i32 {
 			match (n) { 0 => { return 0; }, 1 => { return 1; }, _ => { let z = 2; } }
 		}`,
-		// an if on a literal false never takes its only arm
 		`function never(): i32 {
 			if (false) { return 1; }
 		}`,
@@ -3472,44 +2831,31 @@ func TestMissingReturnRejected(t *testing.T) {
 	}
 }
 
-// Forms that DO return on every path (or never fall through) must NOT
-// trip E052 — guarding against false positives that would reject valid
-// code. Covers if/else both-return, exhaustive match, infinite loop, and
-// void functions.
 func TestMissingReturnAcceptsDivergentForms(t *testing.T) {
 	for _, src := range []string{
-		// if/else both return
 		`function f(b: boolean): i32 {
 			if (b) { return 1; } else { return 2; }
 		}`,
-		// an if on a literal takes one arm: the one the fold leaves of a
-		// branch on the target
 		`function hosted(): i32 {
 			if (true) { return 1; }
 		}`,
 		`function dialled(): i32 {
 			if (false) { let z = 1; } else { return 2; }
 		}`,
-		// trailing return after a one-armed if
 		`function g(b: boolean): i32 {
 			if (b) { return 1; }
 			return 0;
 		}`,
-		// infinite loop never falls through
 		`function loops(): i32 {
 			while (true) { let x = 1; }
 		}`,
-		// canonical `loop` never falls through either
 		`function loops2(): i32 {
 			loop { let x = 1; }
 		}`,
-		// match with wildcard, every arm returns
 		`function sw(n: i32): i32 {
 			match (n) { 0 => { return 0; }, _ => { return 1; } }
 		}`,
-		// void function may fall through
 		`function v(n: i32): void { let x = n + 1; }`,
-		// plain trailing return
 		`function id(n: i32): i32 { return n; }`,
 	} {
 		if err := checkSource(t, src); err != nil {
@@ -3526,10 +2872,6 @@ func TestStructLitWrongFieldType(t *testing.T) {
 	}
 }
 
-// A struct-update literal `P { ...base, y: v }` relaxes the
-// completeness rule: naming only a subset of fields is fine because
-// the base supplies the rest. (A plain `P { y: v }` would be rejected
-// for the missing x — see TestStructLitMissingField.)
 func TestStructUpdateAllowsSubsetFields(t *testing.T) {
 	src := `struct P { x: i32, y: i32 }
 		function f(): P {
@@ -3541,7 +2883,6 @@ func TestStructUpdateAllowsSubsetFields(t *testing.T) {
 	}
 }
 
-// A pure-copy struct-update `P { ...base }` (no overrides) checks clean.
 func TestStructUpdatePureCopyChecks(t *testing.T) {
 	src := `struct P { x: i32, y: i32 }
 		function f(): P {
@@ -3553,8 +2894,6 @@ func TestStructUpdatePureCopyChecks(t *testing.T) {
 	}
 }
 
-// The struct-update base must have the same struct type as the
-// literal — a mismatched base is rejected.
 func TestStructUpdateRejectsWrongBaseType(t *testing.T) {
 	src := `struct P { x: i32, y: i32 }
 		struct Q { z: i32 }
@@ -3567,8 +2906,6 @@ func TestStructUpdateRejectsWrongBaseType(t *testing.T) {
 	}
 }
 
-// An override naming a field the struct doesn't have is still
-// rejected, even with a base present.
 func TestStructUpdateRejectsUnknownOverrideField(t *testing.T) {
 	src := `struct P { x: i32, y: i32 }
 		function f(): P {
@@ -3612,7 +2949,6 @@ func TestNestedFunctionRecordsCaptures(t *testing.T) {
 	if _, err := Check(prog); err != nil {
 		t.Fatal(err)
 	}
-	// The inner function statement is the third statement in outer.
 	body := prog.Funcs[0].Body.Stmts
 	var inner *ast.FuncDecl
 	for _, s := range body {
@@ -3629,15 +2965,6 @@ func TestNestedFunctionRecordsCaptures(t *testing.T) {
 	}
 }
 
-// A nested function's name is bound in the scope that declares it and
-// nowhere else. It used to be written into the program-wide signature table
-// under its bare name, so a top-level function sharing the name — declared
-// before or after — resolved to the nested signature at every other call
-// site (#9005: `ssarc.at(p, block, point, target)` drew E004 against a
-// nested `at(x)` in checker.fern).
-// An annotated array destination accepts a generic call whose `T[]` result
-// is still polymorphic, like a tuple or scalar destination does; a concrete
-// element type that differs stays refused (#9003).
 func TestArrayDestinationBindsGenericElement(t *testing.T) {
 	accepted := map[string]string{
 		"literal argument": `function wrap[T](x: T): T[] { return [x]; }
@@ -3693,28 +3020,21 @@ func TestNestedFunctionNameDoesNotShadowTopLevel(t *testing.T) {
 	}
 }
 
-// Pointer-shaped captures (string, T[], [T], structs, enums,
-// tuples, function values) all type-check now — their 4-byte
-// heap reference fits in the same env-slot scalars use.
 func TestPointerCapturesTypecheck(t *testing.T) {
 	cases := []string{
-		// string
 		`function outer(s: string): i32 {
 			function inner(): i32 { return s.len(); }
 			return inner();
 		}`,
-		// T[] (i32 array)
 		`function outer(xs: i32[]): i32 {
 			function inner(): i32 { return xs.len(); }
 			return inner();
 		}`,
-		// struct
 		`struct Pt { x: i32, y: i32 }
 		function outer(p: Pt): i32 {
 			function inner(): i32 { return p.x + p.y; }
 			return inner();
 		}`,
-		// enum
 		`function outer(o: Option[i32]): i32 {
 			function inner(): i32 {
 				return match (o) {
@@ -3746,8 +3066,6 @@ func TestMethodTypechecksAndRewritesCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	// The method should be hoisted to a mangled name and registered
-	// in info.Methods.
 	mangled, ok := info.Methods["Point.sum"]
 	if !ok {
 		t.Fatal("Methods map missing Point.sum")
@@ -3755,8 +3073,7 @@ func TestMethodTypechecksAndRewritesCall(t *testing.T) {
 	if mangled != "__method_Point_sum" {
 		t.Errorf("mangled = %q, want \"__method_Point_sum\"", mangled)
 	}
-	// The call site `p.sum()` should be rewritten to a regular call.
-	main := prog.Funcs[1] // sum was renamed but stays index 0; main is index 1
+	main := prog.Funcs[1]
 	for _, fn := range prog.Funcs {
 		if fn.Name == "main" {
 			main = fn
@@ -3777,11 +3094,6 @@ func TestMethodTypechecksAndRewritesCall(t *testing.T) {
 }
 
 func TestMethodAcceptsBuiltinReceivers(t *testing.T) {
-	// `i32` (a built-in numeric receiver) is permitted — it's how the
-	// prelude declares `i32.to_string()` etc. An array receiver is
-	// permitted both element-polymorphic and pinned to one element type;
-	// the latter is what std/array's `avg` / `join` need, and declaring
-	// one is not a power the stdlib holds alone.
 	if err := checkSource(t, `function (xs: i32[]) total(): i32 { return 0; }
 function main(): i32 { let a: i32[] = [1]; return a.total(); }`); err != nil {
 		t.Errorf("concrete-element array receiver should be accepted, got: %v", err)
@@ -3790,8 +3102,6 @@ function main(): i32 { let a: i32[] = [1]; return a.total(); }`); err != nil {
 function main(): i32 { return 0; }`); err != nil {
 		t.Errorf("concrete-element slice receiver should be accepted, got: %v", err)
 	}
-	// The element-polymorphic form is accepted (see
-	// TestGenericReceiverMethods for the positive cases).
 	if err := checkSource(t, `function (xs: T[]) first(): T { return xs[0]; }
 function main(): i32 { let a: i32[] = [1]; return a.first(); }`); err != nil {
 		t.Errorf("element-polymorphic array receiver should be accepted, got: %v", err)
@@ -3799,11 +3109,6 @@ function main(): i32 { let a: i32[] = [1]; return a.first(); }`); err != nil {
 }
 
 func TestNestedArrayReceiverRejected(t *testing.T) {
-	// Dispatch binds the receiver's element in one step, so a `T[][]`
-	// receiver would bind T to the inner array and resolve one level too
-	// deep. Refused at the declaration, and the body still walks — the
-	// receiver is hoisted anyway, so there is no `undefined identifier`
-	// cascade under the real diagnostic.
 	err := checkSource(t, `function (xs: T[][]) flat(): i32 { return xs.len(); }`)
 	if err == nil {
 		t.Fatal("expected error for nested-array receiver")
@@ -3817,11 +3122,6 @@ func TestNestedArrayReceiverRejected(t *testing.T) {
 }
 
 func TestConcreteArrayReceiverRejectsOtherElementType(t *testing.T) {
-	// The "Array" namespace is keyed on the method NAME, so a
-	// concrete-element method claims `Array.total` for every array and a
-	// `string[]` receiver reaches it. That is an unresolved method on the
-	// receiver, not a bad "argument 1" — the receiver was hoisted into the
-	// argument list by the dispatch rewrite, a slot the caller never wrote.
 	err := checkSource(t, `function (xs: i32[]) total(): i32 { return 0; }
 function main(): i32 { let s: string[] = ["a"]; return s.total(); }`)
 	if err == nil {
@@ -3850,10 +3150,6 @@ func TestMethodCallOnUnknownMethodErrors(t *testing.T) {
 	}
 }
 
-// Variant constructors type-check argument count + payload types.
-// A named-field variant can be matched with `Rect { w, h }` (any field
-// order), binding each field by name; the checker validates the names and
-// reorders to declaration order. See docs/NAMED-FIELD-VARIANTS.md.
 func TestNamedFieldVariantMatch(t *testing.T) {
 	good := `enum Shape { Circle { r: i32 }, Rect { w: i32, h: i32 } }
 function area(s: Shape): i32 {
@@ -3869,10 +3165,6 @@ function main(): i32 { return area(Rect(3, 4)); }`
 	}
 }
 
-// A named-field variant pattern takes the struct pattern's two forms: a
-// `field: local` rename and a trailing `..` leaving fields out, at the arm,
-// nested in a payload, and in `if let`. `..` covers the
-// omitted fields, so an arm using it still exhausts its variant.
 func TestNamedFieldVariantRenameAndRest(t *testing.T) {
 	src := `enum Shape { Circle { r: i32 }, Rect { w: i32, h: i32 } }
 function area(s: Shape): i32 {
@@ -3917,8 +3209,6 @@ function main(): i32 { return area(Rect(3, 4)) + width(Circle(1)) + nested(None)
 	if _, err := Check(prog); err != nil {
 		t.Fatalf("named-field variant rename / `..` should type-check: %v", err)
 	}
-	// The arm is settled into declaration order: the renamed local sits at
-	// its field's position and the omitted field binds `_`.
 	m, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Match)
 	if !ok {
 		t.Fatalf("area body[0] = %T, want *ast.Match", prog.Funcs[0].Body.Stmts[0])
@@ -3939,8 +3229,6 @@ function main(): i32 { return area(Rect(3, 4)) + width(Circle(1)) + nested(None)
 	}
 }
 
-// A struct pattern naming no field (`Pt { .. }`) in a payload slot is still a
-// struct pattern; the parser used to leave it looking positional (E035).
 func TestStructPatternRestOnlyInPayloadSlot(t *testing.T) {
 	src := `struct Pt { x: i32, y: i32 }
 enum H { S(Pt), N(i32) }
@@ -3961,27 +3249,21 @@ func TestNamedFieldVariantMatchErrors(t *testing.T) {
 		src  string
 		want string
 	}{
-		// unknown field in pattern
 		{`enum E { V { a: i32 } }
 function f(e: E): i32 { match (e) { V { b } => { return b; }, } return 0; }
 function main(): i32 { return 0; }`, "has no field"},
-		// missing a field
 		{`enum E { V { a: i32, b: i32 } }
 function f(e: E): i32 { match (e) { V { a } => { return a; }, } return 0; }
 function main(): i32 { return 0; }`, "must bind all"},
-		// named pattern on a positional variant
 		{`enum E { V(i32) }
 function f(e: E): i32 { match (e) { V { a } => { return a; }, } return 0; }
 function main(): i32 { return 0; }`, "positional payloads"},
-		// a field named twice, once renamed
 		{`enum E { V { a: i32, b: i32 } }
 function f(e: E): i32 { match (e) { V { a, a: x, .. } => { return x; }, } return 0; }
 function main(): i32 { return 0; }`, "bound more than once"},
-		// `..` leaves fields out but does not make an unknown one legal
 		{`enum E { V { a: i32, b: i32 } }
 function f(e: E): i32 { match (e) { V { c: x, .. } => { return 0; }, } return 0; }
 function main(): i32 { return 0; }`, "has no field"},
-		// a refutable field sub-pattern does not cover its variant
 		{`enum E { V { a: i32, b: i32 }, W }
 function f(e: E): i32 { return match (e) { V { a: 0, .. } => 1, W => 2 }; }
 function main(): i32 { return 0; }`, "does not cover variant V"},
@@ -4027,8 +3309,6 @@ func TestEnumVariantConstructorTypeChecks(t *testing.T) {
 	}
 }
 
-// Non-exhaustive matches (missing a variant, no wildcard) are
-// rejected with a diagnostic naming the missing variant.
 func TestMatchExhaustivenessChecked(t *testing.T) {
 	src := `enum Light { Red, Green, Yellow }
 		function main(): i32 {
@@ -4048,8 +3328,6 @@ func TestMatchExhaustivenessChecked(t *testing.T) {
 	}
 }
 
-// A wildcard arm satisfies exhaustiveness even when not every
-// variant is listed explicitly.
 func TestMatchWildcardCoversMissingVariants(t *testing.T) {
 	src := `enum Light { Red, Green, Yellow }
 		function main(): i32 {
@@ -4065,8 +3343,6 @@ func TestMatchWildcardCoversMissingVariants(t *testing.T) {
 	}
 }
 
-// String-literal match arms are accepted (they lower to an OpStrEq
-// if-else-if chain); the mandatory `_` covers the open string domain (#4407).
 func TestStringLiteralMatchAccepted(t *testing.T) {
 	src := `function classify(s: string): i32 {
 			match (s) {
@@ -4081,8 +3357,6 @@ func TestStringLiteralMatchAccepted(t *testing.T) {
 	}
 }
 
-// A string match, like any non-enum match, needs an unguarded `_` arm —
-// the string domain is open, so it can never be exhausted by literals (E030).
 func TestStringLiteralMatchNonExhaustiveRejected(t *testing.T) {
 	src := `function main(): i32 {
 			let s: string = "x";
@@ -4101,9 +3375,6 @@ func TestStringLiteralMatchNonExhaustiveRejected(t *testing.T) {
 	}
 }
 
-// Unguarded `true` and `false` arms close a boolean's domain, in the
-// statement and the expression form alike; one missing or guarded does not
-// (#6685).
 func TestBoolLiteralMatchTrueFalseCloses(t *testing.T) {
 	ok := map[string]string{
 		"statement":  `function f(b: boolean): i32 { match (b) { true => { return 1; }, false => { return 2; } } }`,
@@ -4138,8 +3409,6 @@ func TestBoolLiteralMatchTrueFalseCloses(t *testing.T) {
 	}
 }
 
-// A literal arm whose type doesn't match the scrutinee is rejected (E035):
-// an i32 literal on a string match is a type error, not a fallthrough.
 func TestStringLiteralMatchTypeMismatchRejected(t *testing.T) {
 	src := `function main(): i32 {
 			let s: string = "x";
@@ -4159,9 +3428,6 @@ func TestStringLiteralMatchTypeMismatchRejected(t *testing.T) {
 	}
 }
 
-// Match arm bindings count must match the variant's payload
-// arity, mirroring how variant construction validates argument
-// counts at the constructor site.
 func TestMatchPayloadArityChecked(t *testing.T) {
 	src := `enum E { A, B(i32, i32) }
 		function main(): i32 {
@@ -4177,10 +3443,6 @@ func TestMatchPayloadArityChecked(t *testing.T) {
 	}
 }
 
-// Generic enums infer their type arguments from the constructor's
-// payload types: `Some(42)` resolves T to `i32`, so the
-// resulting type is `Option[i32]`. The right-hand side of an
-// assignment with a wrong concrete type fails at the slot.
 func TestGenericVariantInfersTypeArgs(t *testing.T) {
 	good := `function main(): i32 {
 			let o: Option[i32] = Some(42);
@@ -4198,11 +3460,6 @@ func TestGenericVariantInfersTypeArgs(t *testing.T) {
 	}
 }
 
-// Payload-less variants on generic enums (`None`) can flow into
-// any concrete instantiation of the same enum because the
-// constructor itself can't determine the type arguments — the
-// surrounding context (var annotation, return type, function
-// arg slot) supplies them.
 func TestPayloadlessGenericVariantFlowsIntoContext(t *testing.T) {
 	src := `function find(): Option[i32] { return None; }
 		function main(): i32 {
@@ -4214,9 +3471,6 @@ func TestPayloadlessGenericVariantFlowsIntoContext(t *testing.T) {
 	}
 }
 
-// Match arms substitute the scrutinee's concrete type arguments
-// into payload bindings: matching `Option[i32]` types
-// `Some(v)` so that `v` is `i32`, not the abstract `T`.
 func TestMatchSubstitutesTypeArgs(t *testing.T) {
 	src := `function main(): i32 {
 			let o: Option[i32] = Some(7);
@@ -4231,25 +3485,7 @@ func TestMatchSubstitutesTypeArgs(t *testing.T) {
 	}
 }
 
-// Wrong-arity instantiations (missing or extra type arguments)
-// are rejected at the type position before any value-level
-// checking happens.
-// `usize + i32` (and the reverse) auto-widens the concrete-int
-// side to usize so prelude pointer math stays readable —
-// `base + idx * stride` doesn't need `(idx as usize) * (stride
-// as usize)` boilerplate. Mixed signedness is allowed only
-// when one side is usize; signed/unsigned at other widths
-// still errors out so accidental conversions stay loud.
-//
-// The raw-memory helpers (`__alloc`, `__load_ptr`, `__store_ptr`,
-// `__memcpy`, `__memset`) declare their pointer params + result as
-// `usize`. User code that wants to feed pointer-shaped values (string,
-// Map handles, T[], [T], structs) into them must now use an EXPLICIT
-// `as usize` / `as i32` cast — the implicit usize bypass is gated to
-// stdlib context so it can't silently carry type confusion in user
-// code. See docs/ADVERSARIAL-REVIEW-2026-06.md (F2).
 func TestUsizePreludeHelpersRequireExplicitCastInUserCode(t *testing.T) {
-	// Explicit casts: type-check cleanly.
 	for _, src := range []string{
 		`function f(a: string, b: string, n: i32): i32 {
     __memcpy(a as usize, b as usize, n);
@@ -4264,19 +3500,15 @@ func TestUsizePreludeHelpersRequireExplicitCastInUserCode(t *testing.T) {
 			t.Errorf("explicit-cast form should type-check: %q\ngot: %v", src, err)
 		}
 	}
-	// Implicit usize hop in user code: rejected (the bypass is closed).
 	for _, src := range []string{
-		// string -> usize with no cast
 		`function f(a: string, b: string, n: i32): i32 {
     __memcpy(a, b, n);
     return 0;
 }`,
-		// usize -> i32 with no cast
 		`function f(): i32 {
     let buf: i32 = __alloc(16);
     return buf;
 }`,
-		// the soundness exploit: routing i64 -> usize -> i32
 		`function f(): i32 {
     let big: i64 = 5000000000i64;
     let p: usize = big;
@@ -4309,8 +3541,6 @@ func TestUsizeAutowidensWithSignedInt(t *testing.T) {
 	}
 }
 
-// The auto-widen relaxation is scoped to usize: other
-// signed/unsigned width mismatches must still error out.
 func TestSignednessMismatchStillErrorsAtOtherWidths(t *testing.T) {
 	src := `function f(a: u32, b: i32): u32 {
     return a + b;
@@ -4331,12 +3561,6 @@ func TestGenericEnumArityChecked(t *testing.T) {
 	}
 }
 
-// `use n <- generic_fn(args...);` must infer `n`'s type by
-// solving the callee's type parameters from the args, then
-// applying the substitution to the callback's first param.
-// Stamping the raw parameter type straight onto `n` leaves
-// it as `T` for generic callees, breaking subsequent uses
-// like `n + 1`.
 func TestUseInfersBindingTypeFromGenericCallee(t *testing.T) {
 	src := `function each[T](items: T[], cb: (T) => i32): i32 {
     return cb(items[0]);
@@ -4351,10 +3575,6 @@ function main(): i32 {
 	}
 }
 
-// Generic inference works through enum-typed args too — e.g.
-// when the callback takes the unwrapped payload of an
-// `Option[T]` arg, T is resolved by unifying the actual
-// Option[i32] arg against the param `Option[T]`.
 func TestUseInfersFromEnumPayloadGeneric(t *testing.T) {
 	src := `function try_opt[T](opt: Option[T], cb: (T) => i32): i32 {
     if let Some(v) = opt { return cb(v); }
@@ -4370,12 +3590,6 @@ function main(): i32 {
 	}
 }
 
-// When inference can't pin every relevant type parameter
-// (the callback's first param references a T that doesn't
-// appear in any non-callback parameter position), the
-// checker must reject the `use` rather than silently
-// stamping the unresolved ParamType — which would cascade
-// into confusing type errors at every use of the binding.
 func TestUseRejectsUninferableGenericCallee(t *testing.T) {
 	src := `function mystery[T](cb: (T) => i32): i32 {
     return 0;
@@ -4393,11 +3607,6 @@ function main(): i32 {
 	}
 }
 
-// Array-method dispatch: a receiver method on an array, whether it pins one
-// element type (`(xs: i32[]) sum()`) or is element-polymorphic, registers as
-// an `Array.<name>` entry in `Info.Methods` under the `__method_Array_<name>`
-// mangling the IR and every backend already resolve. std/array declares its
-// whole surface this way; nothing is discovered from a name pattern.
 func TestArrayMethodDispatchRegistersReceiverMethods(t *testing.T) {
 	prog, err := parser.Parse(`function (xs: string[]) join2(sep: string): string { return ""; }
 function (xs: T[]) sum2(): i32 { return 0; }
@@ -4412,14 +3621,7 @@ function main(): i32 { return 0; }`)
 	cases := []struct {
 		key, mangled string
 	}{
-		// Synthetic, registered by hand (IR-intercepted). The
-		// value-returning `append` is the public spelling; the
-		// mutable-looking `push` name was withdrawn (the mangled
-		// lowering __method_Array_push is unchanged).
 		{"Array.append", "__method_Array_push"},
-		// Declared with a receiver — concrete element type and
-		// element-polymorphic reach the same namespace and the same
-		// mangling.
 		{"Array.join2", "__method_Array_join2"},
 		{"Array.sum2", "__method_Array_sum2"},
 	}
@@ -4435,9 +3637,6 @@ function main(): i32 { return 0; }`)
 	}
 }
 
-// A free function named like the mangled symbol (`__method_Array_<name>`) is
-// only a function: array methods are receiver declarations, and nothing is
-// discovered from a name pattern.
 func TestArrayMethodNamePatternDoesNotDispatch(t *testing.T) {
 	prog, err := parser.Parse(`function __method_Array_ghost(xs: i32[]): i32 { return 0; }
 function main(): i32 { return 0; }`)
@@ -4453,12 +3652,6 @@ function main(): i32 { return 0; }`)
 	}
 }
 
-// TestInfoGenericsAggregatesFuncsAndStructs — the kind-agnostic
-// `Info.Generics` map (IMPROVEMENTS.md #10) should contain every
-// generic function AND every generic struct declared in the
-// program. Lets passes consult one map for "is this name a
-// generic decl?" instead of running parallel paths over
-// `GenericFuncs` / `GenericStructs`.
 func TestInfoGenericsAggregatesFuncsAndStructs(t *testing.T) {
 	src := `struct Box[T] { v: T }
 struct Pair[A, B] { first: A, second: B }
@@ -4477,7 +3670,6 @@ function main(): i32 {
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	// Generics aggregates both kinds.
 	for _, name := range []string{"Box", "Pair", "id", "pick"} {
 		decl, ok := info.Generics[name]
 		if !ok {
@@ -4491,13 +3683,9 @@ function main(): i32 {
 			t.Errorf("Generics[%q].GenericTypeParams() unexpectedly empty", name)
 		}
 	}
-	// Non-generic `main` is NOT in the map.
 	if _, ok := info.Generics["main"]; ok {
 		t.Error(`Generics["main"] should not exist (main has no type params)`)
 	}
-	// Each entry's kind-specific map agrees on the same decl
-	// pointer — no divergence between the typed maps and the
-	// kind-agnostic view.
 	for name, decl := range info.Generics {
 		if fn, ok := decl.(*ast.FuncDecl); ok {
 			if info.GenericFuncs[name] != fn {
@@ -4513,14 +3701,8 @@ function main(): i32 {
 	}
 }
 
-// TestQualifiedVariantReferences — `Color.Red`-style references
-// let two enums declare the same variant name and disambiguate at
-// the use site. Was IMPROVEMENTS.md #15. Replaces the old decl-
-// time "variant declared in both" error, which used to force the
-// user to rename one of them.
 func TestQualifiedVariantReferences(t *testing.T) {
 	good := []string{
-		// Two enums declaring the same variant — coexist.
 		`enum Color { Red, Green, Blue }
 		enum Status { Red, Yellow }
 		function main(): i32 {
@@ -4528,7 +3710,6 @@ func TestQualifiedVariantReferences(t *testing.T) {
 			let s: Status = Status.Red;
 			return 0;
 		}`,
-		// Match-arm qualifier on a clashing variant.
 		`enum A { Foo(i32), Bar }
 		enum B { Foo(i32), Baz }
 		function main(): i32 {
@@ -4539,7 +3720,6 @@ func TestQualifiedVariantReferences(t *testing.T) {
 			}
 			return 0;
 		}`,
-		// Qualified call with payload.
 		`enum Shape { Circle(i32), Square(i32) }
 		function main(): i32 {
 			let s: Shape = Shape.Circle(7);
@@ -4549,8 +3729,6 @@ func TestQualifiedVariantReferences(t *testing.T) {
 			}
 			return 0;
 		}`,
-		// Single-variant-name case stays working — no qualifier
-		// required, no regression.
 		`enum Light { Red, Green, Yellow }
 		function main(): i32 {
 			let l: Light = Red;
@@ -4572,8 +3750,6 @@ func TestQualifiedVariantReferences(t *testing.T) {
 		src  string
 		want string
 	}{
-		// Bare reference to a variant declared in two enums — must
-		// qualify.
 		{
 			`enum A { Foo, Bar }
 			enum B { Foo, Baz }
@@ -4583,7 +3759,6 @@ func TestQualifiedVariantReferences(t *testing.T) {
 			}`,
 			"declared in multiple enums",
 		},
-		// Bare call form too.
 		{
 			`enum A { Foo(i32) }
 			enum B { Foo(i32) }
@@ -4593,7 +3768,6 @@ func TestQualifiedVariantReferences(t *testing.T) {
 			}`,
 			"declared in multiple enums",
 		},
-		// Qualifier names an enum that doesn't have that variant.
 		{
 			`enum A { Foo }
 			enum B { Bar }
@@ -4603,7 +3777,6 @@ func TestQualifiedVariantReferences(t *testing.T) {
 			}`,
 			"no variant",
 		},
-		// Match-arm qualifier disagrees with scrutinee.
 		{
 			`enum A { Foo }
 			enum B { Foo }
@@ -4629,22 +3802,10 @@ func TestQualifiedVariantReferences(t *testing.T) {
 	}
 }
 
-// TestAmbiguousVariantHintIsSpellable pins that E036's "qualify the
-// reference" hint names enums the way a reader can WRITE them.
-//
-// The cases above are all single-file, where every enum name is already
-// its source spelling. Across modules the checker holds the mangled
-// `lib__Kind`, and the diagnostic printed that: an identifier no program
-// can contain, which also leaks a private module's internal name. The
-// candidate was picked as `variantOf[name][0]` too, so a reference in
-// one module was told to qualify with an enum from another.
 func TestAmbiguousVariantHintIsSpellable(t *testing.T) {
 	const libEnum = "pub enum Kind { Text, Number }\n"
 	const otherEnum = "pub enum Kind { Text, Blah }\n"
 
-	// lib imports other, so both Kinds are candidates for lib's own bare
-	// `Text` — an ambiguity lib can actually resolve, and the only kind
-	// #6951 still reports.
 	t.Run("prefers the reader's own module", func(t *testing.T) {
 		err, _ := checkFiles(t, map[string]string{
 			"main.fern": "import \"./lib\";\n" +
@@ -4660,8 +3821,6 @@ func TestAmbiguousVariantHintIsSpellable(t *testing.T) {
 		if strings.Contains(msg, "__") {
 			t.Errorf("diagnostic names a mangled enum:\n%s", msg)
 		}
-		// lib declares the reference, so lib's own enum is the one to
-		// suggest — and inside lib it is spelled bare.
 		if !strings.Contains(msg, "e.g. `Kind.Text`") {
 			t.Errorf("hint should qualify with the referring module's own enum:\n%s", msg)
 		}
@@ -4694,13 +3853,6 @@ func TestAmbiguousVariantHintIsSpellable(t *testing.T) {
 	})
 }
 
-// TestVariantDiagnosticsNeverNameMangledEnums covers the rest of the
-// enum-naming surface E036/E029 print. Every case is the same defect as
-// the hint above: across modules the checker holds `lib__Kind`, and a
-// message echoing it names an identifier no program can contain while
-// exposing a private module's internal name. The single-file cases
-// elsewhere in this file cannot catch any of it — there the stored name
-// IS the source spelling.
 func TestVariantDiagnosticsNeverNameMangledEnums(t *testing.T) {
 	const main = "import \"./lib\";\nfunction main(): i32 { return lib.go(); }\n"
 
@@ -4710,8 +3862,6 @@ func TestVariantDiagnosticsNeverNameMangledEnums(t *testing.T) {
 		want []string
 	}{
 		{
-			// E029, enum-qualifier branch: an arm qualifies with a
-			// different enum than the scrutinee.
 			name: "qualifier does not match scrutinee",
 			lib: `pub enum Kind { Text, Number }
 pub enum Other { Text, Blah }
@@ -4728,7 +3878,6 @@ pub function go(): i32 {
 			want: []string{`qualifier "Other" does not match scrutinee enum Kind`},
 		},
 		{
-			// E036, qualified reference to a variant the enum lacks.
 			name: "no such variant on the qualified enum",
 			lib: `pub enum Kind { Text, Number }
 
@@ -4740,7 +3889,6 @@ pub function go(): i32 {
 			want: []string{`enum Kind has no variant "Missing"`},
 		},
 		{
-			// E036, payload-bearing variant referenced payload-less.
 			name: "qualified variant needs its payload",
 			lib: `pub enum Kind { Text, Number(i32) }
 
@@ -4773,39 +3921,24 @@ pub function go(): i32 {
 	}
 }
 
-// TestCastAsTypeAscription — the `as` operator doubles as a
-// zero-cost type-annotation form. Bare `None`, `[]`, partially-
-// inferred variant constructors, etc. all get a place to pin a
-// concrete type inline where there's no `let x: T = ...` site
-// for inference to flow from.
 func TestCastAsTypeAscription(t *testing.T) {
 	good := []string{
-		// Payload-less variant: only the destination type can fix
-		// the type arg.
 		`function main(): i32 {
 			let x: Option[i32] = None as Option[i32];
 			return 0;
 		}`,
-		// Partially-inferred Result — Ok(1) pins T but not E.
 		`function main(): i32 {
 			let r: Result[i32, string] = Ok(1) as Result[i32, string];
 			return 0;
 		}`,
-		// Empty array literal — `[]` carries no element type
-		// without an outside anchor.
 		`function main(): i32 {
 			let a: i32[] = [] as i32[];
 			return a.len() as i32;
 		}`,
-		// Same-shape ascription (i.e. inner already concretely
-		// typed): a no-op annotation, but should still type-check.
 		`function main(): i32 {
 			let x: Option[i32] = Some(1) as Option[i32];
 			return 0;
 		}`,
-		// Ascription threaded directly into a call argument —
-		// the original motivation. Without it, callers have to
-		// invent a `none_i32()` helper.
 		`function takes(o: Option[i32]): i32 { return 0; }
 		function main(): i32 {
 			return takes(None as Option[i32]);
@@ -4821,9 +3954,6 @@ func TestCastAsTypeAscription(t *testing.T) {
 		src  string
 		want string
 	}{
-		// Genuinely incompatible types still error — ascription
-		// isn't a transmute, it just exposes the existing
-		// `assignable` rule inline.
 		{
 			`function main(): i32 {
 				let x: Option[i32] = "hi" as Option[i32];
@@ -4851,11 +3981,6 @@ func TestCastAsTypeAscription(t *testing.T) {
 	}
 }
 
-// TestCheckContextCancellationShortCircuits — pre-cancelled
-// context returns ctx.Err() without running the body-check
-// loop. The LSP rests on this so a new edit can cancel an
-// in-flight type-check (docs/IDE-COMPILATION-RESEARCH.md
-// Rec §1).
 func TestCheckContextCancellationShortCircuits(t *testing.T) {
 	prog, err := parser.Parse(`function f(): i32 { return 1; }
 function g(): i32 { return 2; }`)
@@ -4873,9 +3998,6 @@ function g(): i32 { return 2; }`)
 	}
 }
 
-// TestCheckContextBackgroundBehavesLikeOldCheck — non-cancellable
-// context matches the original `Check(prog)` API behaviour.
-// Regression sentinel against breaking the wrapper.
 func TestCheckContextBackgroundBehavesLikeOldCheck(t *testing.T) {
 	prog, err := parser.Parse(`function main(): i32 { return 42; }`)
 	if err != nil {
@@ -4890,11 +4012,6 @@ func TestCheckContextBackgroundBehavesLikeOldCheck(t *testing.T) {
 	}
 }
 
-// serveStubDecls stands in for std/serve's entries and the helpers the
-// synthesised main of a handler program calls, under the names modload
-// gives them.
-// hostStubDecls stands in for std/platform's `Host` in a program checked
-// without the stdlib; a handler's platform parameter is typed by it directly.
 const hostStubDecls = `struct platform__Host { reactor: i32 }
 function platform__host(): platform__Host { return platform__Host { reactor: 0 }; }
 `
@@ -4913,8 +4030,6 @@ function serve__run_with_shutdown[S](port: i32, opts: serve__Config, init: S, ha
 function serve____port_from_env(name: string, def: i32): i32 { return def; }
 `
 
-// A target without processes (wasm32-wasi) gets the single-process entries
-// of the same arity; the hosted targets and an unnamed one the supervisor.
 func TestSynthesisedHandleMainFollowsTargetProcesses(t *testing.T) {
 	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None }`
 	cases := []struct{ name, src, target, entry string }{
@@ -4948,9 +4063,6 @@ function shutdown(reason: string): void { print(reason); }`, "arm64-darwin", "se
 	}
 }
 
-// config_get is the environment wherever the target has one; only the
-// proxy world keeps the builtin, and Info records the target so a later
-// re-check (monomorph) applies the same rule.
 func TestConfigGetFollowsTheTargetsEnvironment(t *testing.T) {
 	const src = `function main(): i32 { match (config_get("GREETING")) { Some(v) => { return 0; }, None => { return 1; } } }`
 	for _, tc := range []struct{ target, callee string }{
@@ -4987,11 +4099,6 @@ func TestConfigGetFollowsTheTargetsEnvironment(t *testing.T) {
 	}
 }
 
-// TestSynthesisedHandleMainRunsInitFirst pins the
-// docs/PLATFORM-RESEARCH.md Rec §3 init() ordering: when the
-// program defines both `handle` and `init`, the auto-main
-// synthesis prepends a call to `init()` BEFORE the
-// serve accept loop.
 func TestSynthesisedHandleMainRunsInitFirst(t *testing.T) {
 	prog, err := parser.Parse(serveStubDecls + `function init(): void { print("starting"); }
 function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
@@ -5030,9 +4137,6 @@ function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
 	}
 }
 
-// TestSynthesisedHandleMainNoInitElidesPrepend — backward
-// compat: programs without init() still get the original
-// single-stmt synth main (just the serve return).
 func TestSynthesisedHandleMainNoInitElidesPrepend(t *testing.T) {
 	prog, err := parser.Parse(serveStubDecls + `function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
     return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None };
@@ -5058,11 +4162,6 @@ func TestSynthesisedHandleMainNoInitElidesPrepend(t *testing.T) {
 	}
 }
 
-// A value-returning `init` paired with a state-taking `handle` is the
-// two-phase lifecycle of docs/PLATFORM-RESEARCH.md Rec §3: the
-// synthesised main hands `init()`'s result to `serve.supervise_with`,
-// which owns it in each worker's loop frame and threads it through every
-// request. No `init();` statement of its own — the value IS the call.
 func TestSynthesisedHandleMainThreadsInitState(t *testing.T) {
 	prog, err := parser.Parse(serveStubDecls + `function init(): i32 { return 7; }
 function handle(hits: i32, req: HttpRequest, plat: platform__Host): (i32, HttpResponse) {
@@ -5112,9 +4211,6 @@ function handle(hits: i32, req: HttpRequest, plat: platform__Host): (i32, HttpRe
 	}
 }
 
-// `init` may take the platform and answer the serve options beside the
-// state (#9854): the synthesised main hands it `__init_platform()`,
-// destructures the pair, and serves with both.
 func TestSynthesisedHandleMainTakesInitOptions(t *testing.T) {
 	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None }`
 	t.Run("options beside the state", func(t *testing.T) {
@@ -5178,9 +4274,6 @@ function handle(req: HttpRequest, plat: platform__Host): HttpResponse { return `
 			t.Fatalf("the options argument calls %v with %d args, want init()", opts.Callee, len(opts.Args))
 		}
 	})
-	// std/serve's Config is known by its module: under an alias it is
-	// still the config, and a struct of the program's own named Config is
-	// a state like any other.
 	t.Run("the config under an alias", func(t *testing.T) {
 		prog, _, err := modload.LoadSource(`import "std/http";
 import "std/platform";
@@ -5238,9 +4331,6 @@ function handle(hits: i32, req: HttpRequest, plat: platform__Host): (i32, HttpRe
 	}
 }
 
-// A `shutdown` hook sends the synthesised main to the `_shutdown` entry,
-// handed the default options and the hook; a hook whose state parameter
-// disagrees with the handler's is E075.
 func TestSynthesisedHandleMainWiresShutdown(t *testing.T) {
 	const decls = serveStubDecls
 	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None }`
@@ -5293,16 +4383,10 @@ function shutdown(reason: string): void { print(reason); }`, "", "`shutdown` tak
 	}
 }
 
-// A handler answering a Result is renamed and wrapped: `handle` keeps the
-// plain shape every consumer calls, and the wrapper hands the user's answer
-// to std/http's `respond` (or `respond_with` with state).
 func TestResultHandlerIsAdapted(t *testing.T) {
 	const decls = serveStubDecls + `function respond(r: Result[HttpResponse, string]): HttpResponse { return HttpResponse { status: 500, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None }; }
 function respond_with(pair: (i32, Result[HttpResponse, string])): (i32, HttpResponse) { return (pair.0, respond(pair.1)); }
 `
-	// The dyn cases load std/error as a program does, so the trait reaches
-	// the matcher under its bundled name; an alias and a program's own
-	// `trait Error` pin the two spellings that must not match it.
 	const dynDecls = serveStubDecls + `struct Oops { why: string }
 impl err.Error for Oops { function message(self: Self): string { return self.why; } }
 function respond_error(r: Result[HttpResponse, dyn err.Error], plat: platform__Host): HttpResponse { return HttpResponse { status: 500, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None }; }
@@ -5379,10 +4463,6 @@ function handle(n: i32, req: HttpRequest, plat: platform__Host): (i32, Result[Ht
 	}
 }
 
-// The two halves have to agree about state. A handler that takes one
-// with nothing producing it, and an `init` that produces one with
-// nothing taking it, are both E075 — the second used to be accepted
-// with the value silently dropped.
 func TestHandlerInitStateMismatchIsRejected(t *testing.T) {
 	const decls = serveStubDecls
 	cases := map[string]string{
@@ -5411,9 +4491,6 @@ function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
 	}
 }
 
-// A user-written `main` owns its own wiring: pairing init and handle
-// some other way there is that program's business, so the rule that
-// governs the synthesised main does not reach it.
 func TestHandlerInitStateMismatchAllowedUnderUserMain(t *testing.T) {
 	err := checkSource(t, hostStubDecls+`function init(): i32 { return 7; }
 function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
@@ -5425,11 +4502,6 @@ function main(): i32 { return init(); }`)
 	}
 }
 
-// The wasi-http entry is compiler-owned: `__fern_wasi_handle(req)`, which
-// hands `handle` the host platform, is synthesised for any program with a
-// two-parameter handler, whether or not that program also has a `main`.
-// The wasi-http wrapper is hand-written wasm, so it calls that instead of
-// instantiating a handler generic over its platform itself.
 func TestWasiHandleIsSynthesisedForHandlers(t *testing.T) {
 	const decls = serveStubDecls
 	const handler = `function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
@@ -5472,8 +4544,6 @@ func TestWasiHandleIsSynthesisedForHandlers(t *testing.T) {
 	}
 }
 
-// A program that declares the entry itself keeps its own: the synthesis
-// fills a gap, it does not overwrite a definition.
 func TestWasiHandleNotSynthesisedOverUserDefinition(t *testing.T) {
 	prog, err := parser.Parse(serveStubDecls + `function __fern_wasi_handle(req: HttpRequest): HttpResponse { return handle(req, platform__Host { reactor: 7 }); }
 function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
@@ -5496,7 +4566,6 @@ function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
 	}
 }
 
-// funcNamesOf is the failure-message helper for the two tests above.
 func funcNamesOf(prog *ast.Program) []string {
 	out := make([]string, 0, len(prog.Funcs))
 	for _, fn := range prog.Funcs {
@@ -5505,10 +4574,6 @@ func funcNamesOf(prog *ast.Program) []string {
 	return out
 }
 
-// TestUserDefinedMainSkipsSynthEvenWithInit — when the user
-// writes their own main(), the synth-main path is skipped
-// entirely. User's main has the freedom to call init() (or
-// not) wherever they choose.
 func TestUserDefinedMainSkipsSynthEvenWithInit(t *testing.T) {
 	prog, err := parser.Parse(hostStubDecls + `function init(): void { print("starting"); }
 function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
@@ -5528,14 +4593,6 @@ function main(): i32 { return 0; }`)
 	}
 }
 
-// A tuple return whose elements are individually assignable (but not
-// equal) to the declared element types should type-check. The
-// motivating case is the cursor idiom (docs/CURSOR-IDIOM.md): a
-// reader declared `(Option[i32], i32)` returns a bare `None` in its
-// EOF arm, which types as `(Option, i32)`. Before assignable learned
-// to recurse into tuples, the bare-`None` element only widened to
-// `Option[i32]` at a top-level return, never inside a tuple, so this
-// rejected with an E002 tuple mismatch.
 func TestTupleReturnWidensBareEnumElement(t *testing.T) {
 	src := `function read(pos: i32, n: i32): (Option[i32], i32) {
     if (pos >= n) { return (None, pos); }
@@ -5550,9 +4607,6 @@ function main(): i32 {
 	}
 }
 
-// The tuple-assignability recursion must still reject a genuine
-// element mismatch — it widens bare enums, it doesn't make tuples
-// universally assignable.
 func TestTupleReturnStillRejectsElementMismatch(t *testing.T) {
 	src := `function f(): (i32, string) {
     return (1, 2);
@@ -5562,11 +4616,6 @@ func TestTupleReturnStillRejectsElementMismatch(t *testing.T) {
 	}
 }
 
-// A union-member struct literal in a tuple-literal return widens
-// (wraps) to the declared union element — `return (A { … }, cur);`
-// from a function declared `(AB, Cur)`. maybeWrapForUnion recurses
-// into TupleLit elements; the *Result-struct → tuple-return migration
-// of the self-host tree (#4406) leans on this.
 func TestTupleReturnWrapsUnionElement(t *testing.T) {
 	src := `struct A { x: i32 }
 struct B { y: i32 }
@@ -5585,15 +4634,6 @@ function main(): i32 {
 	}
 }
 
-// The `dyn` object-safety check reaches a local `let` wherever it nests.
-// walkVarTypes used to recurse by hand and descend only into blocks, so it
-// never saw a declaration in an else-if chain (an *ast.If sits directly in the
-// Else slot, not a Block) or in any expression-nested position — E021 was
-// silently NOT reported there. It now walks the tree the same way
-// resolveTypesInBlock does after #6996.
-//
-// Each case must be the trait's only mention: the check dedupes per trait, so
-// a second occurrence in a plain `if` would mask the miss.
 func TestObjectSafetyReachesNestedVarDecls(t *testing.T) {
 	const trait = "trait Eq { function eq(self: Self, other: Self): boolean; }\n"
 	for name, src := range map[string]string{
@@ -5631,10 +4671,6 @@ function main(): i32 { return pick(1); }`,
 	}
 }
 
-// A struct-pattern field carrying a SUB-PATTERN (`P { x: 0, y }`) makes the
-// arm REFUTABLE. A struct has one shape, so a plain struct arm always matches
-// and satisfies exhaustiveness on its own; a refutable field does not, and the
-// match needs a fallback the way a literal scrutinee does.
 func TestStructFieldSubPatternChecks(t *testing.T) {
 	const decls = "enum E { A(i32), B }\nstruct P { x: i32, y: i32 }\nstruct W { e: E, n: i32 }\n"
 	bad := map[string]struct{ src, code string }{
@@ -5667,8 +4703,6 @@ func TestStructFieldSubPatternChecks(t *testing.T) {
 		"variant field covering every variant plus a fallback": `function f(w: W): i32 {
   match (w) { W { e: A(v), n } => { return v + n; }, W { e: B(), n } => { return n; } }
 }`,
-		// A sibling struct arm is a fallback too, not just `_`
-		// (TestStructFieldSubPatternAcceptsWildcardFallback covers that one).
 		"sub-pattern binds in the arm scope": `function f(w: W): i32 {
   match (w) { W { e: A(v), n } => { return v + n; }, W { e, n } => { return n; } }
 }`,
@@ -5685,14 +4719,6 @@ func TestStructFieldSubPatternChecks(t *testing.T) {
 	}
 }
 
-// A trailing `_` is the natural catch-all for a refutable field sub-pattern,
-// and it must be accepted. It is dead by construction — a struct has one
-// shape, so the merged arm matches every value — but only because the desugar
-// COPIED its body into the merged arm's inner match, which is what makes that
-// match total. Reporting it unreachable would leave no way to spell the
-// fallback at all: without the `_` the inner match is non-exhaustive (E030),
-// with it the arm was E026. ast.MatchArm.FallConsumed marks the copy so
-// reachability can tell the two apart.
 func TestStructFieldSubPatternAcceptsWildcardFallback(t *testing.T) {
 	const decls = "enum E { A(i32), B }\nstruct W { e: E, n: i32 }\nstruct P { x: i32, y: i32 }\n"
 	for name, body := range map[string]string{
@@ -5710,8 +4736,6 @@ func TestStructFieldSubPatternAcceptsWildcardFallback(t *testing.T) {
 		})
 	}
 
-	// The suppression is narrow: a `_` after an ordinary irrefutable struct
-	// arm is still unreachable, because no desugar copied its body anywhere.
 	err := checkSource(t, decls+`function f(p: P): i32 {
   match (p) { P { x, y } => { return x + y; }, _ => { return 0; } }
 }`)
@@ -5723,11 +4747,6 @@ func TestStructFieldSubPatternAcceptsWildcardFallback(t *testing.T) {
 	}
 }
 
-// A merged arm's GUARD can name a sibling plain slot, not only the bindings
-// its own sub-pattern introduces. The nested-pattern desugar rebinds plain
-// slots inside the arm BODY, and the guard runs first, so `when n > m` drew
-// E001 on `m`. The guard is now wrapped in the same BlockExpr the value form
-// uses, which puts the slots in scope without renaming anything.
 func TestMergedArmGuardSeesSiblingSlots(t *testing.T) {
 	const decls = "enum Res { Ok2(i32), Err2(i32) }\nenum W { V(Res, i32), None2 }\nstruct P { x: i32, y: i32 }\n"
 	for name, body := range map[string]string{
@@ -5752,8 +4771,6 @@ func TestMergedArmGuardSeesSiblingSlots(t *testing.T) {
 		})
 	}
 
-	// The wrap is a real scope, so a lambda parameter inside the guard still
-	// shadows the slot — which renaming the identifiers would have broken.
 	if err := checkSource(t, decls+`function f(w: W): i32 {
   match (w) {
     V(Ok2(n), m) when ((m: i32): boolean => m > 100)(n) => { return n; },
@@ -5765,9 +4782,6 @@ func TestMergedArmGuardSeesSiblingSlots(t *testing.T) {
 	}
 }
 
-// A struct that implements all of a trait's methods with matching
-// signatures type-checks, and the impl is recorded in Info.Impls.
-// See docs/TRAITS.md.
 func TestTraitConformanceAccepted(t *testing.T) {
 	src := `trait Display { function to_string(self: Self): string; }
 struct Point { x: i32, y: i32 }
@@ -5788,10 +4802,6 @@ function main(): i32 { let p: Point = Point { x: 1, y: 2 }; let s: string = p.to
 	}
 }
 
-// A trait method with a default body is inherited by an impl that omits
-// it: the impl conforms even though it only provides the abstract
-// method, and the default is materialised as a receiver method on the
-// impl type. An impl may still override the default. See docs/TRAITS.md.
 func TestTraitDefaultMethodConformance(t *testing.T) {
 	src := `trait Greet {
     function name(self: Self): string;
@@ -5822,19 +4832,14 @@ function main(): i32 {
 	if !info.Impls["Greet"]["Dog"] || !info.Impls["Greet"]["Cat"] {
 		t.Errorf("both impls should conform, got %+v", info.Impls)
 	}
-	// Dog inherits the default `greeting`; it must be hoisted as a method.
 	if info.Methods["Dog.greeting"] == "" {
 		t.Errorf("inherited default `greeting` should be registered for Dog, got %+v", info.Methods["Dog.greeting"])
 	}
-	// Cat's explicit override must still be the registered method.
 	if info.Methods["Cat.greeting"] == "" {
 		t.Errorf("overriding `greeting` should be registered for Cat")
 	}
 }
 
-// A default method whose body references a still-abstract trait method
-// works through a bounded generic: `announce[T: Greet]` calls
-// `x.greeting()`, which monomorphises to the inherited default.
 func TestTraitDefaultMethodViaBound(t *testing.T) {
 	src := `trait Greet {
     function name(self: Self): string;
@@ -5849,11 +4854,6 @@ function main(): i32 { let d: Dog = Dog { age: 1 }; let s: string = announce(d);
 	}
 }
 
-// Associated types: a trait declares `type Item;`, an impl binds it, and
-// A generic-trait bound (`function f[T: From[i32]]`) substitutes the
-// bound's args into the trait method signature, so a `T.from(v)` call in
-// the body type-checks against `from(v: i32): T`. Wrong arity and a type
-// argument that doesn't implement the trait are rejected. See docs/TRAITS.md.
 func TestGenericTraitBound(t *testing.T) {
 	const hdr = `trait From[T] { function from(v: T): Self; }
 struct Celsius { deg: i32 }
@@ -5866,21 +4866,17 @@ function main(): i32 {
 }`); err != nil {
 		t.Errorf("bounded generic over a generic trait should type-check, got: %v", err)
 	}
-	// Wrong bound-arg arity.
 	err := checkSource(t, hdr+`function describe[T: From[i32, i64]](proto: T): T { return proto; }
 function main(): i32 { return 0; }`)
 	if err == nil || !strings.Contains(err.Error(), "takes 1 type argument") {
 		t.Errorf("wrong bound-arg arity should be rejected, got: %v", err)
 	}
-	// A type argument that doesn't implement the bound trait.
 	err = checkSource(t, hdr+`struct Plain { x: i32 }
 function describe[T: From[i32]](proto: T, v: i32): T { return T.from(v); }
 function main(): i32 { let p: Plain = Plain { x: 0 }; return describe(p, 5).x; }`)
 	if err == nil || !strings.Contains(err.Error(), "does not implement trait From") {
 		t.Errorf("non-implementing type argument should be rejected, got: %v", err)
 	}
-	// Mismatched bound args: the type implements From[i32] but the bound
-	// requires From[i64] — precise satisfaction rejects it.
 	err = checkSource(t, hdr+`function describe[T: From[i64]](proto: T, v: i64): T { return T.from(v); }
 function main(): i32 {
   let z: Celsius = Celsius { deg: 0 };
@@ -5891,23 +4887,16 @@ function main(): i32 {
 	}
 }
 
-// A generic trait (`trait Container[T]`) binds its type parameters per
-// impl (`impl Container[i32] for B`); the conformance check substitutes
-// them, so the impl's concrete method signature lines up. A wrong arity
-// is rejected. See docs/TRAITS.md.
 func TestGenericTraitConformance(t *testing.T) {
 	ok := []string{
-		// receiver method returning the trait param
 		`trait Container[T] { function get(self: Self): T; }
 struct B { v: i32 }
 impl Container[i32] for B { function get(self: Self): i32 { return self.v; } }
 function main(): i32 { let b: B = B { v: 7 }; return b.get(); }`,
-		// associated function taking the trait param, returning Self
 		`trait From[T] { function from(v: T): Self; }
 struct C { d: i32 }
 impl From[i32] for C { function from(v: i32): Self { return C { d: v }; } }
 function main(): i32 { return C.from(9).d; }`,
-		// two type parameters
 		`trait Pair[A, B] { function fst(self: Self): A; function snd(self: Self): B; }
 struct P { a: i32, b: i32 }
 impl Pair[i32, i32] for P { function fst(self: Self): i32 { return self.a; } function snd(self: Self): i32 { return self.b; } }
@@ -5918,7 +4907,6 @@ function main(): i32 { let p: P = P { a: 1, b: 2 }; return p.fst() + p.snd(); }`
 			t.Errorf("generic-trait program should type-check, got: %v\nsrc:\n%s", err, src)
 		}
 	}
-	// Wrong arity: impl omits the trait's type argument.
 	err := checkSource(t, `trait Container[T] { function get(self: Self): T; }
 struct B { v: i32 }
 impl Container for B { function get(self: Self): i32 { return self.v; } }
@@ -5926,8 +4914,6 @@ function main(): i32 { return 0; }`)
 	if err == nil || !strings.Contains(err.Error(), "takes 1 type argument") {
 		t.Errorf("generic-trait impl with wrong arity should be rejected, got: %v", err)
 	}
-	// Mismatched binding: impl's method type doesn't match the substituted
-	// trait param (Container[i32] but get returns boolean).
 	err = checkSource(t, `trait Container[T] { function get(self: Self): T; }
 struct B { v: i32 }
 impl Container[i32] for B { function get(self: Self): boolean { return true; } }
@@ -5937,9 +4923,6 @@ function main(): i32 { return 0; }`)
 	}
 }
 
-// the projection `Self::Item` / `T::Item` resolves to the binding — both
-// for a concrete method call and through a bounded generic. See
-// docs/ASSOCIATED-TYPES.md.
 func TestAssociatedTypesAccepted(t *testing.T) {
 	src := `trait Iterator {
     type Item;
@@ -5962,16 +4945,6 @@ function main(): i32 {
 	}
 }
 
-// A PARAMETRIC impl may bind an associated type to its OWN type parameter
-// (`impl[T] Carrier for Box[T] { type Ok = T; }`) — the shape every existing
-// case missed, all of which bind a concrete type on a non-generic impl.
-//
-// Three things have to line up for it, and each case below fails without one:
-// the binding's `T` must resolve to the impl's ParamType (not a same-named
-// StructType, which printed the identical-looking "returns T but expression is
-// T"); the projection must substitute the base's type arguments (`Box[i32]::Ok`
-// is i32, not T); and a binding may be a composite of the parameter or name a
-// parameter other than the first.
 func TestAssociatedTypesGenericImplBinding(t *testing.T) {
 	cases := []struct {
 		name string
@@ -6046,10 +5019,6 @@ function main(): i32 {
 	}
 }
 
-// The resolved projection is load-bearing, not merely silent: a parametric
-// impl's binding has to reach the use site as the base's type argument, so a
-// destination of the wrong type is still an error. A checker that resolved
-// `Box[i32]::Ok` to a free `T` would accept both of these.
 func TestAssociatedTypesGenericImplBindingObservable(t *testing.T) {
 	cases := []struct {
 		src  string
@@ -6091,12 +5060,6 @@ function main(): i32 {
 	}
 }
 
-// A projection in a PARAMETER resolves once an earlier argument has pinned
-// its base. `first[H: Holder](h: H): H::Item` — a projection in the RESULT —
-// has worked since associated types landed, because the generic-call path
-// resolves the result after substitution. Parameters had no equivalent, so
-// `pick[H: Holder](h: H, d: H::Item)` compared argument 2 against an
-// unresolved `H::Item` and rejected every value.
 func TestAssociatedTypesProjectionInParameter(t *testing.T) {
 	cases := []struct {
 		name string
@@ -6125,18 +5088,6 @@ function main(): i32 {
     return pick(b, 0);
 }`},
 		{
-			// A generic ENUM base is the case monomorph does not flatten: it
-			// keeps one generic decl, so no mangled instantiation gets a
-			// synthesised concrete impl and the parametric impl carrying the
-			// binding is dropped. The projection has to be resolved while
-			// monomorph substitutes, or the re-check sees a bare `E[i32]::Item`
-			// it can no longer look up.
-			//
-			// The DIRECT `e.get(1)` is load-bearing for a reason that is not
-			// this test's subject: #9308 means a parametric impl on a generic
-			// enum is unreachable through a bound unless the method is also
-			// called directly. Without that call the program fails on #9308
-			// instead, which would make this case test the wrong thing.
 			name: "parametric impl on a generic enum",
 			src: `trait Holder { type Item; function get(self: Self, d: Self::Item): Self::Item; }
 enum E[T] { A(T), B }
@@ -6161,9 +5112,6 @@ function main(): i32 {
 	}
 }
 
-// The resolved parameter type is the real one, so a wrong argument is still
-// rejected — and named as the bound type rather than as the projection. A fix
-// that merely stopped comparing projections would accept both of these.
 func TestAssociatedTypesProjectionInParameterObservable(t *testing.T) {
 	const prelude = `trait Holder { type Item; function get(self: Self, d: Self::Item): Self::Item; }
 struct Box[T] { v: T }
@@ -6195,13 +5143,6 @@ function pick[H: Holder](h: H, d: H::Item): H::Item { return h.get(d); }
 	}
 }
 
-// An array literal's elements are checked against the destination's element
-// type. settleNumeric stamps that element type onto the literal so the IR
-// picks the right stride, and postSettleType reports the stamp back as the
-// literal's type — so stamping unconditionally made every literal CLAIM
-// whatever it was checked against, and the comparison then trivially passed.
-// `let xs: i32[] = ["ab", "cd"]` type-checked, and an `i32[]` parameter handed
-// one summed strings as integers (exit 224 on x86-64, no diagnostic).
 func TestArrayLiteralElementsAreChecked(t *testing.T) {
 	cases := []struct{ name, src, want string }{
 		{"let destination", `function main(): i32 { let xs: i32[] = ["ab", "cd"]; return xs.len(); }`,
@@ -6212,10 +5153,6 @@ function main(): i32 { return total(["ab", "cd"]); }`,
 		{"argument, numeric literals into string[]", `function take(xs: string[]): i32 { return xs.len(); }
 function main(): i32 { return take([1, 2, 3]); }`,
 			"expected string[], got i32[]"},
-		// A polymorphic FLOAT element settles only to a float destination.
-		// Against an integer one it is a mismatch — `let x: i64 = 1.5` is
-		// already E003 as a scalar, and the array literal must not be the one
-		// way round it.
 		{"float literals into i64[]", `function main(): i32 { let xs: i64[] = [1.5, 2.5]; return xs.len(); }`,
 			"expected i64[], got f64[]"},
 		{"float literal into u8[]", `function main(): i32 { let xs: u8[] = [1.5]; return xs.len(); }`,
@@ -6223,8 +5160,6 @@ function main(): i32 { return take([1, 2, 3]); }`,
 		{"float literals into an i64[] argument", `function total(xs: i64[]): i32 { return xs.len(); }
 function main(): i32 { return total([1.5, 2.5]); }`,
 			"expected i64[], got f64[]"},
-		// A declared i32 VARIABLE is not a literal: storing it into a u8[]
-		// narrows it, which takes an `as u8` as `let x: u8 = b` does (#11392).
 		{"i32 variable into u8[]", `function f(b: i32): i32 { let xs: u8[] = [b]; return xs.len(); }
 function main(): i32 { return f(300); }`,
 			"expected u8[], got i32[]"},
@@ -6245,33 +5180,21 @@ function main(): i32 { return g(65); }`,
 	}
 }
 
-// The controls: settling a POLYMORPHIC element to the destination's width is
-// what the stamp is for, and an empty literal has no element to contradict it.
-// A fix that simply stopped stamping would break all of these.
 func TestArrayLiteralSettlingStillWorks(t *testing.T) {
 	srcs := []string{
 		`function main(): i32 { let xs: i64[] = [1, 2, 3]; return xs.len(); }`,
 		`function main(): i32 { let xs: u8[] = [1, 2, 3]; return xs.len(); }`,
 		`function main(): i32 { let xs: f64[] = [1.5, 2.5]; return xs.len(); }`,
-		// int-to-float promotion: a polymorphic INTEGER element settles into a
-		// float destination, which is the direction that must stay legal.
 		`function main(): i32 { let xs: f64[] = [1, 2]; return xs.len(); }`,
 		`function main(): i32 { let xs: f32[] = [1.5, 2.5]; return xs.len(); }`,
 		`function main(): i32 { let xs: i32[] = []; return xs.len(); }`,
 		`function main(): i32 { let xs: string[] = ["a", "b"]; return xs.len(); }`,
 		`function total(xs: i64[]): i32 { return xs.len(); }
 function main(): i32 { return total([1, 2, 3]); }`,
-		// A NESTED literal settles element-wise. The first cut of
-		// elemSettleable compared the outer literal's already-inferred
-		// `i32[]` element against `f64[]` as a concrete mismatch and
-		// rejected this, which broke `settle-nested-array-ok` on main.
 		`function main(): i32 { let xs: f64[][] = [[1], [2]]; return 0; }`,
 		`function main(): i32 { let xs: f64[][][] = [[[1]], [[2]]]; return 0; }`,
-		// A callee's type parameter is the call's to infer, so a literal
-		// argument settles to it.
 		`function count[T](xs: T[]): i32 { return xs.len(); }
 function main(): i32 { return count([1, 2, 3]); }`,
-		// A literal local is still a literal, and a cast variable is a u8.
 		`function main(): i32 { let k = 5; let xs: u8[] = [k, 1]; return xs.len(); }`,
 		`function f(b: i32): i32 { let xs: u8[] = [b as u8, 2]; return xs.len(); }
 function main(): i32 { return f(3); }`,
@@ -6281,8 +5204,6 @@ function main(): i32 { return f(3); }`,
 			t.Errorf("should type-check: %v\n%s", err, src)
 		}
 	}
-	// The enclosing declaration's own type parameter is opaque in its body,
-	// so a literal of concrete elements does not fit it (#12656).
 	bad := `function build[T](): i32 { let local: T[] = [1, 2, 3]; return local.len(); }
 function main(): i32 { return 0; }`
 	if err := checkSource(t, bad); err == nil || !strings.Contains(err.Error(), "expected T[], got i32[]") {
@@ -6295,19 +5216,14 @@ func TestAssociatedTypesErrors(t *testing.T) {
 		src  string
 		want string
 	}{
-		// impl omits the associated-type binding
 		{`trait It { type Item; function next(self: Self): Self::Item; }
 struct B { v: i32 }
 impl It for B { function next(self: Self): Self::Item { return self.v; } }
 function main(): i32 { return 0; }`, "must bind associated type"},
-		// impl binds an undeclared associated type
 		{`trait It { type Item; function next(self: Self): Self::Item; }
 struct B { v: i32 }
 impl It for B { type Item = i32; type Extra = i32; function next(self: Self): Self::Item { return self.v; } }
 function main(): i32 { return 0; }`, "does not declare"},
-		// dyn over a trait with an UNPINNED associated type is not
-		// object-safe (pinning it — `dyn It[Item = i32]` — is object-safe;
-		// see TestDynAssocTypeChecker).
 		{`trait It { type Item; function next(self: Self): Self::Item; }
 struct B { v: i32 }
 impl It for B { type Item = i32; function next(self: Self): Self::Item { return self.v; } }
@@ -6326,9 +5242,6 @@ function main(): i32 { return 0; }`, "is not pinned"},
 	}
 }
 
-// A supertrait (`trait Ord: Eq`) lets a `T: Ord` bound call the
-// supertrait's methods on T, and requires every `impl Ord for X` to also
-// have `impl Eq for X`. See docs/TRAITS.md.
 func TestTraitSupertraitAccepted(t *testing.T) {
 	src := `trait Eq { function eq(self: Self, other: Self): boolean; }
 trait Ord: Eq { function lt(self: Self, other: Self): boolean; }
@@ -6351,18 +5264,15 @@ func TestTraitSupertraitErrors(t *testing.T) {
 		src  string
 		want string
 	}{
-		// impl Ord for P without impl Eq for P.
 		{`trait Eq { function eq(self: Self, other: Self): boolean; }
 trait Ord: Eq { function lt(self: Self, other: Self): boolean; }
 struct P { x: i32 }
 impl Ord for P { function lt(self: Self, other: Self): boolean { return self.x < other.x; } }
 function main(): i32 { return 0; }`, "supertrait of Ord"},
-		// supertrait names a nonexistent trait.
 		{`trait Ord: Nope { function lt(self: Self, other: Self): boolean; }
 struct P { x: i32 }
 impl Ord for P { function lt(self: Self, other: Self): boolean { return true; } }
 function main(): i32 { return 0; }`, "unknown supertrait"},
-		// cyclic supertrait graph.
 		{`trait A: B { function fa(self: Self): i32; }
 trait B: A { function fb(self: Self): i32; }
 function main(): i32 { return 0; }`, "cyclic supertrait"},
@@ -6379,8 +5289,6 @@ function main(): i32 { return 0; }`, "cyclic supertrait"},
 	}
 }
 
-// Implementing a trait for a built-in numeric type is allowed when the
-// trait is local (orphan rule satisfied by the trait being local).
 func TestTraitImplForBuiltinType(t *testing.T) {
 	src := `trait Tag { function tag(self: Self): string; }
 impl Tag for i32 { function tag(self: Self): string { return "i32"; } }
@@ -6433,9 +5341,6 @@ function main(): i32 { return 0; }`, "trait method \"f\" redeclared"},
 	}
 }
 
-// A bounded generic body may call trait methods on its type param;
-// a call site whose concrete type argument implements the bound
-// type-checks. See docs/TRAITS.md (Phase 2).
 func TestBoundedGenericAccepted(t *testing.T) {
 	src := `trait Display { function to_string(self: Self): string; }
 struct Point { x: i32 }
@@ -6452,7 +5357,6 @@ func TestBoundedGenericErrors(t *testing.T) {
 		src  string
 		want string
 	}{
-		// Type argument doesn't implement the bound.
 		{`trait Display { function to_string(self: Self): string; }
 struct A { x: i32 }
 struct B { y: i32 }
@@ -6460,16 +5364,13 @@ impl Display for A { function to_string(self: Self): string { return "a"; } }
 function show[T: Display](v: T): string { return v.to_string(); }
 function main(): i32 { let b: B = B { y: 1 }; let s: string = show(b); return 0; }`,
 			"does not implement trait Display"},
-		// Method not provided by any bound on the type param.
 		{`trait Display { function to_string(self: Self): string; }
 function show[T: Display](v: T): string { return v.bogus(); }
 function main(): i32 { return 0; }`,
 			"no method \"bogus\" on type parameter T"},
-		// Unbounded type param: calling a method on it is rejected.
 		{`function show[T](v: T): string { return v.to_string(); }
 function main(): i32 { return 0; }`,
 			"add a trait bound"},
-		// Unknown trait in a bound.
 		{`function show[T: Nope](v: T): i32 { return 0; }
 function main(): i32 { return 0; }`,
 			"unknown trait \"Nope\" in bound"},
@@ -6486,20 +5387,15 @@ function main(): i32 { return 0; }`,
 	}
 }
 
-// @derive only accepts the three derivable traits; deriving a struct
-// whose field type doesn't implement the trait is a clean error. See
-// docs/TRAITS.md.
 func TestDeriveErrors(t *testing.T) {
 	cases := []struct {
 		src  string
 		want string
 	}{
-		// Non-derivable user trait.
 		{`trait Foo { function bar(self: Self): i32; }
 @derive(Foo)
 struct S { x: i32 }
 function main(): i32 { return 0; }`, "only Eq, Display, Debug, Ord, Hash, Json, FromJson, and Default are derivable"},
-		// Unknown trait in derive.
 		{`@derive(Nope)
 struct S { x: i32 }
 function main(): i32 { return 0; }`, "unknown trait"},
@@ -6516,18 +5412,10 @@ function main(): i32 { return 0; }`, "unknown trait"},
 	}
 }
 
-// @derive(Eq/Ord/Hash) on a type whose field (or variant payload) type
-// does not implement the derived trait is ONE positioned E021 at the
-// deriving decl — not the position-less per-field E043 garbage the
-// ill-typed synthesized body used to surface (#5392). Conformance uses
-// the same sources as the E021 bound check: an explicit impl, a derive
-// on the field's type, or a receiver-method set covering the trait.
 func TestDeriveFieldConformancePreCheck(t *testing.T) {
 	const ordTrait = "trait Ord { function cmp(self: Self, other: Self): i32; }\n"
 	const ordI32 = "impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }\n"
 
-	// Broken derive: exactly one E021, positioned at the struct decl
-	// (line 3 — never 0:0), with the self-explanatory message.
 	err := checkSource(t, ordTrait+"@derive(Ord)\nstruct Foo { x: i32, y: i32 }\nfunction main(): i32 { return 0; }")
 	if err == nil {
 		t.Fatal("expected E021 for underivable @derive(Ord), got nil")
@@ -6554,20 +5442,15 @@ func TestDeriveFieldConformancePreCheck(t *testing.T) {
 		t.Errorf("position = %d:%d, want line 3 with a non-zero column", ce.Pos.Line, ce.Pos.Col)
 	}
 
-	// Enum variant payload names the variant.
 	err = checkSource(t, "trait Eq { function eq(self: Self, other: Self): boolean; }\n@derive(Eq)\nenum E { A, B(i32) }\nfunction main(): i32 { return 0; }")
 	if err == nil || !strings.Contains(err.Error(), "cannot @derive(Eq) for E: variant B payload of type i32 does not implement Eq") {
 		t.Errorf("enum payload gap: got %v", err)
 	}
 
-	// All three conformance sources keep a derive clean: an explicit
-	// impl, a field type with its own derive, and an inherent method set.
 	for _, src := range []string{
 		ordTrait + ordI32 + "@derive(Ord)\nstruct Foo { x: i32 }\nfunction main(): i32 { return 0; }",
 		ordTrait + ordI32 + "@derive(Ord)\nstruct Outer { inner: Inner }\n@derive(Ord)\nstruct Inner { a: i32 }\nfunction main(): i32 { return 0; }",
 		ordTrait + "struct Bar { a: i32 }\nfunction (self: Bar) cmp(other: Bar): i32 { return 0; }\n@derive(Ord)\nstruct Foo { b: Bar }\nfunction main(): i32 { return 0; }",
-		// A generic struct's type-param field is bound-checked per
-		// instantiation, not by the pre-check.
 		ordTrait + ordI32 + "@derive(Ord)\nstruct Box[T] { v: T, n: i32 }\nfunction main(): i32 { let b: Box[i32] = Box { v: 1, n: 2 }; if (b < b) { return 1; } return 0; }",
 	} {
 		if err := checkSource(t, src); err != nil {
@@ -6576,16 +5459,6 @@ func TestDeriveFieldConformancePreCheck(t *testing.T) {
 	}
 }
 
-// TestDeriveFieldPreCheckCoversEveryFieldWiseTrait walks every derivable
-// trait whose synthesised body calls the trait method on each field. All
-// of them compose the same way, so all of them must draw the SAME
-// positioned E021 when a field does not conform — a kind that reaches
-// synthesis instead emits `self.f.<method>()` against a type without it,
-// which surfaces as a position-less E043 blaming a missing *field* named
-// after the trait's method (0:0, no file). The gate originally covered
-// only Eq/Ord/Hash, so Display/Debug/Json each had that hole.
-//
-// A kind added to the synthesis switch but not the gate fails here.
 func TestDeriveFieldPreCheckCoversEveryFieldWiseTrait(t *testing.T) {
 	for _, c := range []struct{ kind, decl string }{
 		{"Eq", "trait Eq { function eq(self: Self, other: Self): boolean; }"},
@@ -6618,26 +5491,19 @@ func TestDeriveFieldPreCheckCoversEveryFieldWiseTrait(t *testing.T) {
 		if !strings.Contains(ce.Error(), want) {
 			t.Errorf("@derive(%s): message %q does not contain %q", c.kind, ce.Error(), want)
 		}
-		// The whole point of the gate is a real source position.
 		if ce.Pos.Line != 4 || ce.Pos.Col == 0 {
 			t.Errorf("@derive(%s): position = %d:%d, want line 4 with a non-zero column", c.kind, ce.Pos.Line, ce.Pos.Col)
 		}
 	}
 
-	// Default is deliberately NOT gated by the field-conformance
-	// pre-check: it composes through zero literals and `Type.default()`
-	// rather than a call on the field value, and reports its own gap.
 	err := checkSource(t, "trait Default { function default(): Self; }\n@derive(Default)\nstruct Foo { b: (i32, i32) }\nfunction main(): i32 { return 0; }")
 	if err == nil || !strings.Contains(err.Error(), "which has no default; implement Default by hand") {
 		t.Errorf("@derive(Default) keeps its own dedicated diagnostic, got: %v", err)
 	}
 }
 
-// @derive on a generic enum and @derive(Ord) on an enum are rejected
-// with clear messages (both are follow-ups). See docs/TRAITS.md.
 func TestDeriveEnumErrors(t *testing.T) {
 	cases := []struct{ src, want string }{
-		// Only Eq/Display/Ord are derivable — a user-defined trait is not.
 		{`trait Foo { function foo(self: Self): boolean; }
 @derive(Foo)
 enum E { A, B }
@@ -6651,10 +5517,6 @@ function main(): i32 { return 0; }`, "only Eq, Display, Debug, Ord, Hash, Json, 
 	}
 }
 
-// TestDeriveGenericEnum — `@derive` on a generic enum synthesises a
-// parametric impl `impl[T: Trait] Trait for E[T]`, so the derived
-// methods type-check field-wise through the bound and monomorphise per
-// instantiation.
 func TestDeriveGenericEnum(t *testing.T) {
 	src := `trait Eq { function eq(self: Self, other: Self): boolean; }
 impl Eq for i32 { function eq(self: i32, other: i32): boolean { return self == other; } }
@@ -6670,23 +5532,15 @@ function main(): i32 {
 	}
 }
 
-// `@derive(Hash)` synthesises a field/variant-wise `hash(): i32`,
-// composing through each field's own `Hash` impl. A struct, an enum, and
-// a generic struct all derive; a field whose type doesn't implement Hash
-// is a clean error (the derived method's `[T: Hash]` bound, or the
-// missing primitive impl, is unsatisfied). See docs/TRAITS.md.
 func TestDeriveHash(t *testing.T) {
 	const hashTrait = `trait Hash { function hash(self: Self): i32; }
 impl Hash for i32 { function hash(self: Self): i32 { return self; } }
 `
 	ok := []string{
-		// Plain struct.
 		hashTrait + `@derive(Hash) struct P { x: i32, y: i32 }
 function main(): i32 { let p: P = P { x: 1, y: 2 }; return p.hash(); }`,
-		// Enum (tag-seeded, payload-folded).
 		hashTrait + `@derive(Hash) enum E { A, B(i32), C(i32, i32) }
 function main(): i32 { let e: E = C(1, 2); return e.hash(); }`,
-		// Generic struct: parametric `impl[T: Hash] Hash for Box[T]`.
 		hashTrait + `@derive(Hash) struct Box[T] { v: T }
 function main(): i32 { let b: Box[i32] = Box { v: 7 }; return b.hash(); }`,
 	}
@@ -6696,7 +5550,6 @@ function main(): i32 { let b: Box[i32] = Box { v: 7 }; return b.hash(); }`,
 		}
 	}
 
-	// A field whose type has no Hash impl cannot derive Hash.
 	bad := hashTrait + `struct NoHash { z: i32 }
 @derive(Hash) struct S { n: NoHash }
 function main(): i32 { return 0; }`
@@ -6705,30 +5558,19 @@ function main(): i32 { return 0; }`
 	}
 }
 
-// `@derive(Default)` synthesises a `default()` associated function that
-// builds a type's zero value, called as `Type.default()`. Scalars use
-// their zero literal; nominal fields delegate to their own `default()`
-// (composition); a generic field uses the bound `T.default()`; an enum
-// defaults to its first variant. A field type with no default is a clean
-// error. See docs/TRAITS.md.
 func TestDeriveDefault(t *testing.T) {
 	const defTrait = `trait Default { function default(): Self; }
 `
 	ok := []string{
-		// Plain struct of scalars.
 		defTrait + `@derive(Default) struct P { x: i32, y: string, f: boolean }
 function main(): i32 { let p: P = P.default(); return p.x + p.y.len(); }`,
-		// Composition: a nominal field delegates to its own default().
 		defTrait + `@derive(Default) struct Inner { n: i32 }
 @derive(Default) struct Outer { i: Inner, k: i32 }
 function main(): i32 { let o: Outer = Outer.default(); return o.i.n + o.k; }`,
-		// Enum defaults to its first variant.
 		defTrait + `@derive(Default) enum E { A, B(i32) }
 function main(): i32 { let e: E = E.default(); match (e) { A => { return 0; }, B(n) => { return n; } } }`,
-		// Enum whose first variant carries payloads (each defaulted).
 		defTrait + `@derive(Default) enum E { First(i32, i32), Second }
 function main(): i32 { let e: E = E.default(); match (e) { First(a, b) => { return a + b; }, Second => { return 9; } } }`,
-		// Generic struct: parametric `impl[T: Default] Default for Box[T]`.
 		defTrait + `@derive(Default) struct Inner { n: i32 }
 @derive(Default) struct Box[T] { v: T }
 function main(): i32 { let b: Box[Inner] = Box.default(); return b.v.n; }`,
@@ -6740,10 +5582,8 @@ function main(): i32 { let b: Box[Inner] = Box.default(); return b.v.n; }`,
 	}
 
 	bad := []struct{ src, want string }{
-		// A field whose type has no derivable default (array).
 		{defTrait + `@derive(Default) struct S { xs: i32[] }
 function main(): i32 { return 0; }`, "no default"},
-		// An enum whose first variant has a non-defaultable payload.
 		{defTrait + `@derive(Default) enum E { A([i32]), B }
 function main(): i32 { return 0; }`, "no default"},
 	}
@@ -6759,27 +5599,18 @@ function main(): i32 { return 0; }`, "no default"},
 	}
 }
 
-// `@derive(Json)` synthesises a field/variant-wise `to_json(): string`
-// (canonical JSON text), composing through each field's own `Json` impl.
-// A struct, an enum (externally tagged), a generic struct, and a nested
-// struct all derive; a field whose type doesn't implement Json is a clean
-// error. See docs/TRAITS.md.
 func TestDeriveJson(t *testing.T) {
 	const jsonTrait = `trait Json { function to_json(self: Self): string; }
 impl Json for i32 { function to_json(self: Self): string { return "0"; } }
 impl Json for string { function to_json(self: Self): string { return self; } }
 `
 	ok := []string{
-		// Plain struct.
 		jsonTrait + `@derive(Json) struct P { x: i32, y: i32 }
 function main(): i32 { let p: P = P { x: 1, y: 2 }; let s: string = p.to_json(); return 0; }`,
-		// Enum: unit, single-payload, multi-payload arms all synthesise.
 		jsonTrait + `@derive(Json) enum E { A, B(i32), C(i32, i32) }
 function main(): i32 { let e: E = C(1, 2); let s: string = e.to_json(); return 0; }`,
-		// Generic struct: parametric impl[T: Json] Json for Box[T].
 		jsonTrait + `@derive(Json) struct Box[T] { v: T }
 function main(): i32 { let b: Box[string] = Box { v: "hi" }; let s: string = b.to_json(); return 0; }`,
-		// Nested derived struct composes through the field's to_json.
 		jsonTrait + `@derive(Json) struct Inner { n: i32 }
 @derive(Json) struct Outer { a: Inner, tag: string }
 function main(): i32 { let o: Outer = Outer { a: Inner { n: 5 }, tag: "x" }; let s: string = o.to_json(); return 0; }`,
@@ -6790,7 +5621,6 @@ function main(): i32 { let o: Outer = Outer { a: Inner { n: 5 }, tag: "x" }; let
 		}
 	}
 
-	// A field whose type has no Json impl cannot derive Json.
 	bad := jsonTrait + `struct NoJson { z: i32 }
 @derive(Json) struct S { n: NoJson }
 function main(): i32 { return 0; }`
@@ -6799,8 +5629,6 @@ function main(): i32 { return 0; }`
 	}
 }
 
-// @derive(FromJson)'s decoder is std/json's: the checker refuses it, on a
-// struct or an enum, without std/json in the program.
 func TestDeriveFromJson(t *testing.T) {
 	const fromJsonTrait = `enum JsonValue { JNull }
 trait FromJson { function from_json_value(v: JsonValue): Result[Self, string]; }
@@ -6823,48 +5651,34 @@ function main(): i32 { return 0; }`, "the decoder is std/json's"},
 	}
 }
 
-// Associated functions: a trait method with no `self` receiver
-// (`function f(): Self`) is called as `Type.f(args)` rather than
-// `value.f(args)` — the constructor / static-method shape. The impl
-// provides it; `Self` resolves to the impl type.
 func TestAssociatedFunctions(t *testing.T) {
 	ok := []string{
-		// Zero-arg constructor on a struct.
 		`trait Zero { function zero(): Self; }
 struct Point { x: i32, y: i32 }
 impl Zero for Point { function zero(): Self { return Point { x: 0, y: 0 }; } }
 function main(): i32 { let p: Point = Point.zero(); return p.x + p.y; }`,
-		// Constructor with arguments.
 		`trait Ctor { function make(a: i32, b: i32): Self; }
 struct Point { x: i32, y: i32 }
 impl Ctor for Point { function make(a: i32, b: i32): Self { return Point { x: a, y: b }; } }
 function main(): i32 { let p: Point = Point.make(3, 4); return p.x + p.y; }`,
-		// Associated function on an enum.
 		`trait Empty { function empty(): Self; }
 enum Opt { Nothing, Just(i32) }
 impl Empty for Opt { function empty(): Self { return Nothing; } }
 function main(): i32 { let o: Opt = Opt.empty(); match (o) { Nothing => { return 0; }, Just(n) => { return n; } } }`,
-		// Result chains directly: `T.f().field`.
 		`trait Zero { function zero(): Self; }
 struct P { x: i32 }
 impl Zero for P { function zero(): Self { return P { x: 9 }; } }
 function main(): i32 { return P.zero().x; }`,
-		// Generic associated dispatch: `T.f()` on a bounded type param,
-		// resolved per monomorphisation.
 		`trait Zero { function zero(): Self; }
 struct P { x: i32 }
 impl Zero for P { function zero(): Self { return P { x: 0 }; } }
 function mk[T: Zero](): T { return T.zero(); }
 function main(): i32 { let p: P = mk(); return p.x; }`,
-		// Generic associated dispatch with an argument.
 		`trait From { function of(n: i32): Self; }
 struct Box { v: i32 }
 impl From for Box { function of(n: i32): Self { return Box { v: n }; } }
 function build[T: From](n: i32): T { return T.of(n); }
 function main(): i32 { let b: Box = build(7); return b.v; }`,
-		// The trait's parameter names an enum: the signature is resolved
-		// like every other type position, so the argument (an EnumType)
-		// matches it rather than the parser's bare StructType spelling.
 		`enum V { A(i32), B }
 trait Mk { function mk(v: V): Result[Self, string]; }
 struct Box { v: i32 }
@@ -6879,16 +5693,13 @@ function main(): i32 { let b: Result[Box, string] = build[Box](A(7)); return 0; 
 	}
 
 	bad := []struct{ src, want string }{
-		// Calling a `self`-taking method as `Type.method()`.
 		{`struct Point { x: i32 }
 function (p: Point) getx(): i32 { return p.x; }
 function main(): i32 { return Point.getx(); }`, "is a method; call it on a value"},
-		// An impl missing the trait's associated function.
 		{`trait Zero { function zero(): Self; }
 struct Point { x: i32 }
 impl Zero for Point { }
 function main(): i32 { return 0; }`, "missing method"},
-		// Associated-function signature mismatch.
 		{`trait Ctor { function make(a: i32): Self; }
 struct Point { x: i32 }
 impl Ctor for Point { function make(a: string): Self { return Point { x: 0 }; } }
@@ -6906,36 +5717,22 @@ function main(): i32 { return 0; }`, "wrong signature"},
 	}
 }
 
-// `dyn Trait` (runtime trait objects): a concrete impl-ing type coerces
-// to `dyn Trait`, a trait method dispatches dynamically, and the
-// negative cases (non-impl coercion, object-unsafe trait, unknown
-// method, unknown trait) are rejected. See docs/DYN-TRAITS.md.
 func TestDynTraitChecker(t *testing.T) {
 	const prelude = `trait Shape { function area(self: Self): i32; }
 struct Circle { r: i32 }
 impl Shape for Circle { function area(self: Self): i32 { return self.r; } }
 `
-	// Accepted: coerce a Circle to dyn Shape, dispatch area().
 	if err := checkSource(t, prelude+`
 function f(d: dyn Shape): i32 { return d.area(); }
 function main(): i32 { let d: dyn Shape = Circle { r: 3 }; return f(d); }`); err != nil {
 		t.Fatalf("valid dyn use should check: %v", err)
 	}
 
-	// Accepted: a concrete value coerces to a `dyn Trait` STRUCT FIELD with
-	// no explicit `as dyn Shape` — the struct-field position was missing from
-	// assignable()'s boxing-site list, so this reported a spurious E043 even
-	// though var-init / argument / array-element / return all accept it.
 	if err := checkSource(t, prelude+`struct Holder { shape: dyn Shape, tag: i32 }
 function main(): i32 { let h: Holder = Holder { shape: Circle { r: 4 }, tag: 1 }; return h.shape.area() + h.tag; }`); err != nil {
 		t.Fatalf("implicit concrete->dyn coercion in a struct field should check: %v", err)
 	}
 
-	// Accepted: a concrete value coerces to a `dyn Trait` USER-ENUM variant
-	// payload with no explicit `as dyn Shape` — the variant-payload position
-	// was also missing from the boxing-site list, so this reported a spurious
-	// E036 even though the builtin Ok/Some/Err payloads and struct fields
-	// accept it.
 	if err := checkSource(t, prelude+`enum Box { Wrap(dyn Shape), Empty }
 function main(): i32 { let b: Box = Wrap(Circle { r: 4 }); match (b) { Wrap(d) => { return d.area(); }, Empty => { return 0; } } }`); err != nil {
 		t.Fatalf("implicit concrete->dyn coercion in a variant payload should check: %v", err)
@@ -6973,9 +5770,6 @@ function main(): i32 { let h: Holder = Holder { shape: NoShape { z: 1 } }; retur
 enum Box { Wrap(dyn Shape) }
 function main(): i32 { let b: Box = Wrap(NoShape { z: 1 }); return 0; }`,
 			"payload 0 type NoShape, expected dyn Shape"},
-		// A `str` assigns only to a `str`, so it boxes into a dyn at no site,
-		// even through an impl on `str`: the box would hold the view past
-		// its source.
 		{"str in dyn struct field",
 			`trait Size { function size(self: Self): i32; }
 impl Size for str { function size(self: str): i32 { return self.len(); } }
@@ -6999,13 +5793,6 @@ function main(): i32 { let s: string = "abc"; let v: str = slice_unchecked(s, 0,
 	}
 }
 
-// TestDynGenericTraitChecker exercises generic dyn-trait objects
-// (`dyn Container[i32]`, #2691 trait-spine): a concrete type coerces in
-// iff it impls the trait at the PINNED arguments; the method signature is
-// read with the trait's type params substituted (so `get(): T` returns
-// i32); and the negative cases — argument mismatch, an unpinned generic
-// trait, and a method-result type check against the pinned arg — are
-// rejected.
 func TestDynGenericTraitChecker(t *testing.T) {
 	const prelude = `trait Container[T] { function get(self: Self): T; }
 struct BoxI { v: i32 }
@@ -7013,8 +5800,6 @@ impl Container[i32] for BoxI { function get(self: Self): i32 { return self.v; } 
 struct BoxS { v: i32 }
 impl Container[string] for BoxS { function get(self: Self): string { return "x"; } }
 `
-	// Accepted: BoxI coerces to dyn Container[i32]; get() returns i32, so
-	// it composes in an i32 context.
 	if err := checkSource(t, prelude+`
 function take(d: dyn Container[i32]): i32 { return d.get(); }
 function main(): i32 { let d: dyn Container[i32] = BoxI { v: 7 }; return take(d); }`); err != nil {
@@ -7054,17 +5839,11 @@ function main(): i32 { let d: dyn Container[string] = BoxS { v: 1 }; return 0; }
 	}
 }
 
-// TestDynAssocTypeChecker exercises a `dyn` object over a trait with an
-// associated type pinned (`dyn Producer[Item = i32]`): pinning makes the
-// otherwise object-unsafe trait usable, `Self::Item` in a method signature
-// resolves to the pin, the coercion requires the impl's binding to match the
-// pin, and an unpinned associated type is still rejected.
 func TestDynAssocTypeChecker(t *testing.T) {
 	const prelude = `trait Producer { type Item; function get(self: Self): Self::Item; }
 struct IntBox { v: i32 }
 impl Producer for IntBox { type Item = i32; function get(self: Self): i32 { return self.v; } }
 `
-	// Accepted: pinned to the impl's binding; get() resolves to i32.
 	if err := checkSource(t, prelude+`
 function take(d: dyn Producer[Item = i32]): i32 { return d.get() + 1; }
 function main(): i32 { return take(IntBox { v: 7 }); }`); err != nil {
@@ -7089,12 +5868,6 @@ function main(): i32 { return 0; }`,
 	}
 }
 
-// TestDynMultiTraitChecker exercises multi-trait trait objects
-// (`dyn A + B`, docs/DYN-TRAITS.md): a concrete coerces in iff it impls
-// EVERY trait; a method resolves across the UNION of the traits' method
-// sets; a method declared by two traits is ambiguous; a non-object-safe
-// or unknown trait anywhere in the set errors. Single-trait `dyn A` is
-// unaffected (covered by TestDynTraitChecker).
 func TestDynMultiTraitChecker(t *testing.T) {
 	const prelude = `trait Show { function show(self: Self): i32; }
 trait Sized { function size(self: Self): i32; }
@@ -7104,14 +5877,11 @@ impl Sized for Both { function size(self: Self): i32 { return 1; } }
 struct OnlyShow { v: i32 }
 impl Show for OnlyShow { function show(self: Self): i32 { return self.v; } }
 `
-	// Accepted: Both impls Show AND Sized → coerces to `dyn Show + Sized`,
-	// and a method from EACH trait resolves.
 	if err := checkSource(t, prelude+`
 function f(d: dyn Show + Sized): i32 { return d.show() + d.size(); }
 function main(): i32 { let d: dyn Show + Sized = Both { v: 3 }; return f(d); }`); err != nil {
 		t.Fatalf("valid multi-trait dyn use should check: %v", err)
 	}
-	// Order-insensitive: `dyn Sized + Show` is the same type.
 	if err := checkSource(t, prelude+`
 function main(): i32 { let d: dyn Sized + Show = Both { v: 3 }; return d.show() + d.size(); }`); err != nil {
 		t.Fatalf("order-insensitive multi-trait dyn should check: %v", err)
@@ -7156,10 +5926,6 @@ function main(): i32 { return 0; }`,
 	}
 }
 
-// TestDowncastChecker exercises the `e as? T` fallible downcast
-// (docs/DYN-TRAITS.md §9): a valid downcast of a `dyn Trait` value to a
-// concrete struct/enum that implements the trait checks to `Option[T]`;
-// a non-dyn LHS and a target that doesn't implement the trait error.
 func TestDowncastChecker(t *testing.T) {
 	const prelude = `trait Shape { function area(self: Self): i32; }
 struct Circle { r: i32 }
@@ -7167,7 +5933,6 @@ struct Rect { w: i32, h: i32 }
 impl Shape for Circle { function area(self: Self): i32 { return self.r; } }
 impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } }
 `
-	// Valid downcast: result type Option[Circle], usable through match.
 	if err := checkSource(t, prelude+`
 function describe(s: dyn Shape): i32 {
     let c: Option[Circle] = s as? Circle;
@@ -7177,7 +5942,6 @@ function main(): i32 { return describe(Circle { r: 7 }); }`); err != nil {
 		t.Fatalf("valid downcast should check: %v", err)
 	}
 
-	// Result type flows: the downcast expression IS Option[Circle].
 	prog, err := parser.Parse(prelude + `
 function describe(s: dyn Shape): Option[Circle] { return s as? Circle; }
 function main(): i32 { return 0; }`)
@@ -7187,7 +5951,6 @@ function main(): i32 { return 0; }`)
 	if _, err := Check(prog); err != nil {
 		t.Fatalf("downcast result-type flow should check: %v", err)
 	}
-	// The checker stamped DowncastExpr.Trait for later codegen.
 	ret := prog.Funcs[len(prog.Funcs)-2].Body.Stmts[0].(*ast.Return)
 	if dc, ok := ret.Value.(*ast.DowncastExpr); !ok {
 		t.Fatalf("expected DowncastExpr, got %T", ret.Value)
@@ -7195,12 +5958,6 @@ function main(): i32 { return 0; }`)
 		t.Errorf("DowncastExpr.Trait = %q, want Shape", dc.Trait)
 	}
 
-	// Enum target: the parser wraps a bare `as? Color` name as a
-	// StructType, but the checker rewrites it to EnumType so the result
-	// `Option[Color]` matches a `let c: Option[Color]` annotation (whose
-	// Color resolveType already canonicalised to EnumType). Without the
-	// rewrite this assignment would spuriously E003 ("cannot assign
-	// Option[Color] to Option[Color]" — same spelling, different node).
 	const enumPrelude = `trait Describe { function tag(self: Self): i32; }
 enum Color { Red, Green }
 impl Describe for Color { function tag(self: Self): i32 { return 0; } }
@@ -7246,12 +6003,6 @@ function main(): i32 { return 0; }`,
 	}
 }
 
-// TestDynCoercionRecorded: the checker records each concrete→`dyn Trait`
-// boxing site in Info.DynCoercions with the right (trait, concrete)
-// pair, so compiled-backend IR lowering can box the value with the
-// correct vtable (docs/DYN-TRAITS.md §4.2.1). Covers a var-init
-// coercion and an argument-passing coercion; both must be recorded with
-// Trait="Shape", Concrete="Circle".
 func TestDynCoercionRecorded(t *testing.T) {
 	const src = `trait Shape { function area(self: Self): i32; }
 struct Circle { r: i32 }
@@ -7276,15 +6027,12 @@ function main(): i32 {
 		if dc.Trait != "Shape" || dc.Concrete != "Circle" {
 			t.Errorf("coercion = %+v, want {Shape Circle}", dc)
 		}
-		// The holder is the concrete struct literal, not a dyn value.
 		if _, ok := holder.(*ast.StructLit); !ok {
 			t.Errorf("holder = %T, want *ast.StructLit (the Circle literal)", holder)
 		}
 	}
 }
 
-// A dyn→dyn assignment (no boxing) and a non-dyn destination record
-// nothing — only concrete→dyn sites are coercions.
 func TestDynCoercionNotRecordedForNonBoxing(t *testing.T) {
 	const src = `trait Shape { function area(self: Self): i32; }
 struct Circle { r: i32 }
@@ -7302,16 +6050,11 @@ function main(): i32 { return passthrough(Circle { r: 1 }); }`
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	// Only the `Circle{r:1}` argument to passthrough is a real coercion;
-	// `let e: dyn Shape = d` (dyn→dyn) records nothing.
 	if len(info.DynCoercions) != 1 {
 		t.Fatalf("want exactly 1 coercion (the Circle arg), got %d: %+v", len(info.DynCoercions), info.DynCoercions)
 	}
 }
 
-// A body-less `@import` function (extern WIT binding, P4 —
-// docs/WIT-BRING-YOUR-OWN.md) type-checks: its signature is registered so
-// call sites resolve against it, and its (absent) body is not walked.
 func TestExternImportTypeChecks(t *testing.T) {
 	src := `@import("wasi:random/random@0.2.0", "get-random-u64")
 function get_random(): u64;
@@ -7324,10 +6067,6 @@ function main(): i32 {
 	}
 }
 
-// WIT resource handles (P5 — docs/WIT-BRING-YOUR-OWN.md): a `resource`
-// declaration introduces a nominal handle type; `own R` / `borrow R` (and a
-// bare resource name, which means owned) type-check, an owned handle coerces
-// to a borrow of the same resource, and a plain i32 is NOT a handle.
 func TestResourceHandleChecker(t *testing.T) {
 	const prelude = `@import("wasi:io/poll@0.2.0", "pollable")
 resource Pollable;
@@ -7338,7 +6077,6 @@ function subscribe(ns: u64): own Pollable;
 @import("wasi:io/poll@0.2.0", "[method]pollable.ready")
 function ready(h: borrow Pollable): boolean;
 `
-	// Accepted: own handle from subscribe, lent (own → borrow) to ready.
 	if err := checkSource(t, prelude+`
 function main(): i32 {
 	let p: own Pollable = subscribe(0 as u64);
@@ -7347,7 +6085,6 @@ function main(): i32 {
 }`); err != nil {
 		t.Fatalf("valid resource-handle use should check: %v", err)
 	}
-	// Accepted: a bare resource name is an owned handle.
 	if err := checkSource(t, prelude+`
 function main(): i32 {
 	let p: Pollable = subscribe(0 as u64);
@@ -7407,9 +6144,6 @@ function main(): i32 { return 0; }`,
 	}
 }
 
-// An `@export` function (P6 — docs/WIT-BRING-YOUR-OWN.md) type-checks like any
-// function: its body is checked, and it stays callable from Fern. A generic
-// `@export` is rejected (a world export has one concrete ABI).
 func TestExportChecker(t *testing.T) {
 	if err := checkSource(t, `@export("wasi:cli/run@0.2.0", "run")
 function run(): i32 { return 0; }
@@ -7428,8 +6162,6 @@ function f[T](x: T): T { return x; }`)
 	}
 }
 
-// Calling an extern @import function with the wrong argument arity is a
-// checker error, exactly like an ordinary function.
 func TestExternImportArityMismatch(t *testing.T) {
 	src := `@import("wasi:foo/bar@0.1.0", "do-thing")
 function do_thing(x: i32): i32;
@@ -7442,11 +6174,7 @@ function main(): i32 {
 	}
 }
 
-// E055: a bare statement whose whole expression is a value-returning
-// collection mutator silently discards the new collection (the CoW aliasing
-// bug). It must be reassigned, or explicitly discarded with `let _ = …`.
 func TestUnusedCollectionResultE055(t *testing.T) {
-	// A bare `arr.append(x);` discards the returned array → E055.
 	err := checkSource(t, `function main(): i32 {
 	let a: i32[] = [1];
 	a.append(2);
@@ -7455,7 +6183,6 @@ func TestUnusedCollectionResultE055(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "is unused") {
 		t.Errorf("bare append should be E055, got %v", err)
 	}
-	// Threading the result back is the fix — no error.
 	if err := checkSource(t, `function main(): i32 {
 	let a: i32[] = [1];
 	a = a.append(2);
@@ -7463,7 +6190,6 @@ func TestUnusedCollectionResultE055(t *testing.T) {
 }`); err != nil {
 		t.Errorf("reassigned append should check, got %v", err)
 	}
-	// Explicit discard via `let _ = …` is the opt-out — no error.
 	if err := checkSource(t, `function main(): i32 {
 	let a: i32[] = [1];
 	let _ = a.append(2);
@@ -7471,9 +6197,6 @@ func TestUnusedCollectionResultE055(t *testing.T) {
 }`); err != nil {
 		t.Errorf("let _ discard should check, got %v", err)
 	}
-	// `arr = arr.with(i, v)` (the value-returning replacement for the removed
-	// `arr[i] = v`) is an assignment, not a discarded result — exempt from
-	// E055 (and it is not subscript assignment, so no E056 either).
 	if err := checkSource(t, `function main(): i32 {
 	let a: i32[] = [1, 2];
 	a = a.with(0, 9);
@@ -7481,7 +6204,6 @@ func TestUnusedCollectionResultE055(t *testing.T) {
 }`); err != nil {
 		t.Errorf("a = a.with(...) must check clean, got %v", err)
 	}
-	// Using the result in a larger expression is fine (not a bare statement).
 	if err := checkSource(t, `function main(): i32 {
 	let a: i32[] = [1];
 	return a.append(2)[0];
@@ -7490,12 +6212,7 @@ func TestUnusedCollectionResultE055(t *testing.T) {
 	}
 }
 
-// E056: array elements are immutable after construction — the subscript
-// counterpart of E048 (field immutability). `arr[i] = v` is rejected; the
-// replacement is the value-returning `arr = arr.with(i, v)`. This completes
-// the immutable-data surface (docs/PURE-COLLECTION-API-PLAN.md §3a).
 func TestArrayElementImmutabilityE056(t *testing.T) {
-	// Plain subscript assignment is rejected.
 	err := checkSource(t, `function main(): i32 {
 	let a: i32[] = [1, 2, 3];
 	a[0] = 9;
@@ -7504,7 +6221,6 @@ func TestArrayElementImmutabilityE056(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "subscripts are read-only after construction") {
 		t.Errorf("expected E056 for subscript assignment, got: %v", err)
 	}
-	// Compound subscript assignment (`arr[i] += v` desugars to `arr[i] = arr[i] + v`).
 	err = checkSource(t, `function main(): i32 {
 	let a: i32[] = [1, 2, 3];
 	a[1] += 5;
@@ -7513,7 +6229,6 @@ func TestArrayElementImmutabilityE056(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "subscripts are read-only after construction") {
 		t.Errorf("expected E056 for compound subscript assignment, got: %v", err)
 	}
-	// The replacement form checks clean.
 	if err := checkSource(t, `function main(): i32 {
 	let a: i32[] = [1, 2, 3];
 	a = a.with(0, 9);
@@ -7523,12 +6238,8 @@ func TestArrayElementImmutabilityE056(t *testing.T) {
 	}
 }
 
-// cellElemRefusal is the part of E057's message every refusal carries.
 const cellElemRefusal = "a cell's element must be built from scalars, strings, arrays, tuples, maps, structs and enums"
 
-// E057: Cell[T] is allowed exactly when no value of T can reach a cell — T is
-// built from scalars, strings, arrays, tuples, maps, structs and enums — so a
-// cell can never sit inside its own payload (docs/CELL-TYPE-PLAN.md §2).
 func TestCellElemTypeE057(t *testing.T) {
 	const decls = `import "core/map";
 struct Point { x: i32, name: string }
@@ -7541,7 +6252,7 @@ trait Shape { function area(self: Self): i32; }
 `
 	cases := []struct {
 		name, body string
-		risk       string // "" when admitted, else what the message names
+		risk       string
 	}{
 		{"scalar", `let c: Cell[i32] = cell_new(0); c.set(c.get() + 1);`, ""},
 		{"string", `let c = cell_new("x"); c.set("yy");`, ""},
@@ -7581,9 +6292,6 @@ trait Shape { function area(self: Self): i32; }
 	}
 }
 
-// A type parameter is refused as (part of) a cell's element: it could be
-// instantiated with a function or a cell, and the check does not wait for
-// the instantiation to see which.
 func TestCellElemTypeParamE057(t *testing.T) {
 	for _, src := range []string{
 		"function mk[T](x: T): Cell[T] { return cell_new(x); }",
@@ -7598,12 +6306,6 @@ func TestCellElemTypeParamE057(t *testing.T) {
 	}
 }
 
-// The annotation form of E057 (`Cell[T]` in a field / param / var / return
-// position) must anchor at the annotation's use site, not the synthesized
-// builtin `Cell` decl (whose position is 0:0 — which diag.Format renders
-// without the `error[E057]` prefix, hiding the code from consumers like the
-// self-host checker differential). Pins the position and the code prefix
-// for each annotation position.
 func TestCellElemTypeE057AnnotationPosition(t *testing.T) {
 	cases := []struct {
 		name, src string
@@ -7646,8 +6348,6 @@ func TestCellElemTypeE057AnnotationPosition(t *testing.T) {
 				t.Errorf("E057 anchored at %d:%d, want %d:%d (the annotation site)",
 					found.Pos.Line, found.Pos.Col, tc.line, tc.col)
 			}
-			// The rendered form must carry the code prefix — a zero
-			// position drops it (that was the original bug).
 			rendered := diag.Format("", tc.src, found)
 			if !strings.Contains(rendered, "error[E057]") {
 				t.Errorf("rendered diagnostic missing error[E057] prefix:\n%s", rendered)
@@ -7656,7 +6356,6 @@ func TestCellElemTypeE057AnnotationPosition(t *testing.T) {
 	}
 }
 
-// An extern @import call with a type-mismatched argument is rejected.
 func TestExternImportArgTypeMismatch(t *testing.T) {
 	src := `@import("wasi:foo/bar@0.1.0", "do-thing")
 function do_thing(x: i32): i32;
@@ -7669,8 +6368,6 @@ function main(): i32 {
 	}
 }
 
-// TestNamedArgs covers named-argument resolution: valid reorderings check
-// clean, and the misuse cases produce the right diagnostics.
 func TestNamedArgs(t *testing.T) {
 	good := []string{
 		`function f(a: i32, b: i32, c: i32): i32 { return a; } function main(): i32 { return f(1, c = 3, b = 2); }`,
@@ -7697,12 +6394,7 @@ func TestNamedArgs(t *testing.T) {
 	}
 }
 
-// Display spine (#2696): `print` / `write` / `eprint` accept any value whose
-// type carries a `to_string(): string` (the Display spine), not just string.
-// A non-string argument is rewritten to `arg.to_string()` so it stringifies
-// through the trait before reaching the string-only runtime helper.
 func TestCheckPrintDisplayAccepted(t *testing.T) {
-	// Concrete struct with an inline Display-shaped impl.
 	srcStruct := `trait Display { function to_string(self: Self): string; }
 struct Point { x: i32, y: i32 }
 impl Display for Point { function to_string(self: Self): string { return "p"; } }
@@ -7716,19 +6408,12 @@ function main(): i32 {
 	if err := checkSource(t, srcStruct); err != nil {
 		t.Errorf("print(struct: Display) should typecheck: %v", err)
 	}
-	// A plain string argument still type-checks unchanged.
 	srcStr := `function main(): i32 { print("hi"); write("x"); eprint("y"); return 0; }`
 	if err := checkSource(t, srcStr); err != nil {
 		t.Errorf("print(string) should still typecheck: %v", err)
 	}
 }
 
-// Bound-driven inference (#2691): a type parameter that appears ONLY inside
-// another parameter's parametrised-trait bound (`count[T, I: Iterator[T]]`)
-// is pinned not by an argument or the result but by the impl the bound
-// resolves to. Once `I` is inferred (here `RangeIter`), the bound `Iterator[T]`
-// unifies against `RangeIter`'s `impl Iterator[i32]` to bind `T = i32`.
-// Before this, the checker reported E040 (could not infer type parameter T).
 func TestCheckBoundDrivenInference(t *testing.T) {
 	src := `trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 struct RangeIter { cur: i32, end: i32 }
@@ -7740,9 +6425,6 @@ function main(): i32 { return last(RangeIter { cur: 0, end: 5 }, -1); }`
 	}
 }
 
-// An untyped integer literal argument does not decide a type parameter a
-// bound's impl pins: `has(I64Iter{..}, 2)` is over i64, the literal settling
-// there, not an i32 call the bound then rejects with E021.
 func TestCheckBoundDrivenInferenceBeatsLiteral(t *testing.T) {
 	src := `trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 struct I64Iter { cur: i64 }
@@ -7754,8 +6436,6 @@ function main(): i32 { let v = has(I64Iter { cur: 0 }, 2); let w: i64 = v; if (w
 	}
 }
 
-// A bounded generic `T: Display` may forward its parameter straight to
-// `print`; the trait bound supplies the `to_string` the rewrite needs.
 func TestCheckPrintDisplayGeneric(t *testing.T) {
 	src := `trait Display { function to_string(self: Self): string; }
 function show[T: Display](v: T): void { print(v); }
@@ -7767,9 +6447,6 @@ function main(): i32 { show(Point { x: 1 }); return 0; }`
 	}
 }
 
-// A value whose type has no `to_string` is rejected with a Display-specific
-// diagnostic, and an unbounded generic parameter is rejected the same way
-// (no trait bound supplies the method).
 func TestCheckPrintNonDisplayRejected(t *testing.T) {
 	cases := []struct{ src, want string }{
 		{`struct Point { x: i32 }
@@ -7788,12 +6465,7 @@ function main(): i32 { return 0; }`,
 	}
 }
 
-// Block-expressions (slice 1): an `if`-expr branch with leading
-// statements + a trailing value type-checks to the tail's type; block
-// locals don't leak; a value-less block in value position errors E061;
-// branch-tail types unify (or mismatch → E031).
 func TestBlockExprChecker(t *testing.T) {
-	// Tail type flows: `if (c) { let k = e + 1; k } else { 0 }` is i32.
 	if err := checkSource(t, `function main(): i32 {
 		let e = 5;
 		let x: i32 = if (e > 0) { let k = e + 1; k } else { 0 };
@@ -7802,8 +6474,6 @@ func TestBlockExprChecker(t *testing.T) {
 		t.Errorf("if-block tail-type: unexpected error: %v", err)
 	}
 
-	// String tails unify across branches: one branch `{ ...; "a" }`, the
-	// other a bare `"b"` → string.
 	if err := checkSource(t, `function main(): i32 {
 		let t = 0;
 		let label: string = if (t == 0) { let s = "a"; s } else { "b" };
@@ -7812,7 +6482,6 @@ func TestBlockExprChecker(t *testing.T) {
 		t.Errorf("string-tail unification: unexpected error: %v", err)
 	}
 
-	// match-arm block-expr tail type flows.
 	if err := checkSource(t, `function main(): i32 {
 		let tag = 0;
 		let r: i32 = match (tag) { 0 => { let s = tag + 5; s }, _ => 99 };
@@ -7822,13 +6491,7 @@ func TestBlockExprChecker(t *testing.T) {
 	}
 }
 
-// A block-shaped `defer { … }` / `errdefer { … }` action (#5153) is
-// value-less by design — its result is discarded — so it must NOT trip the
-// E061 "block-expression has no trailing value" check that a value-position
-// void block does. The exemption is scoped to the immediate defer action:
-// a value-position void block anywhere else still errors E061.
 func TestCheckDeferBlockVoidAction(t *testing.T) {
-	// defer / errdefer with a value-less block action: clean.
 	if err := checkSource(t, `function f(): Result[i32, i32] {
 		let x: i32 = 0;
 		defer { x = x + 1; }
@@ -7838,8 +6501,6 @@ func TestCheckDeferBlockVoidAction(t *testing.T) {
 		t.Errorf("defer/errdefer void block action: unexpected error: %v", err)
 	}
 
-	// A value-less block in a genuine value position still errors E061 — the
-	// exemption must not leak beyond the immediate defer action.
 	err := checkSource(t, `function main(): i32 {
 		let y: i32 = { let z = 1; };
 		return y;
@@ -7849,17 +6510,12 @@ func TestCheckDeferBlockVoidAction(t *testing.T) {
 	}
 }
 
-// A value-position block whose statements always exit early (`return` /
-// `break` / `continue`) has type `never` (bottom), NOT `void`: it is
-// assignable to / unifies with any type, so the no-tail forms below
-// type-check instead of hitting E061 / E003 / E031 (#4522).
 func TestBlockExprCheckerNeverDiverges(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
 	}{
 		{
-			// General value-position block with no tail: both paths return.
 			"general-block-all-return",
 			`function f(n: i32): i32 {
 				let x: i32 = { if (n < 0) { return 1; } return 2; };
@@ -7868,8 +6524,6 @@ func TestBlockExprCheckerNeverDiverges(t *testing.T) {
 			function main(): i32 { return f(5); }`,
 		},
 		{
-			// if-expr with both arms divergent → the whole if is `never`,
-			// assignable to i32.
 			"if-expr-both-arms-diverge",
 			`function f(n: i32): i32 {
 				let x: i32 = if (n < 0) { return 1; } else { return 2; };
@@ -7878,8 +6532,6 @@ func TestBlockExprCheckerNeverDiverges(t *testing.T) {
 			function main(): i32 { return f(5); }`,
 		},
 		{
-			// match-expr: a divergent arm unifies with a value arm — the
-			// result type comes from the value arm.
 			"match-arm-diverges",
 			`function f(n: i32): i32 {
 				let x: i32 = match (n) { 0 => { return 100; }, _ => { n * 2 } };
@@ -7888,7 +6540,6 @@ func TestBlockExprCheckerNeverDiverges(t *testing.T) {
 			function main(): i32 { return f(5); }`,
 		},
 		{
-			// No annotation: `never` is inferred, no missing-annotation error.
 			"no-annotation",
 			`function f(n: i32): i32 {
 				let x = { if (n < 0) { return 1; } return 2; };
@@ -7897,8 +6548,6 @@ func TestBlockExprCheckerNeverDiverges(t *testing.T) {
 			function main(): i32 { return f(5); }`,
 		},
 		{
-			// break/continue inside a value block in a loop: the block is
-			// `never`, assignable to the local's type.
 			"break-continue-in-loop",
 			`function main(): i32 {
 				let s: i32 = 0; let i: i32 = 0;
@@ -7957,16 +6606,6 @@ func TestBlockExprCheckerErrors(t *testing.T) {
 	}
 }
 
-// TestDynAssocFnCallIsRejected pins that calling a trait ASSOCIATED function
-// (no `self` receiver) through a `dyn` value is an E021 at the call site.
-// Nothing can dispatch it — an associated function gets no vtable slot, and
-// every lowering consumer skips it, so the checker accepting the call left
-// native emitting an internal `ir:` error and the self-host silently
-// answering 0 (#7398).
-//
-// It also pins what must NOT be reported instead: an `own` on the associated
-// function's first ARGUMENT is not an `own` receiver, so the second call is
-// not a use-after-move (traitSelfIsOwn's `!m.Assoc`).
 func TestDynAssocFnCallIsRejected(t *testing.T) {
 	assoc := `struct Box { v: i32 }
 trait Mk { function make(own b: Box): i32; }
@@ -7990,9 +6629,6 @@ function main(): i32 { return 0; }`
 		t.Errorf("assoc fn's `own` argument read as an `own` receiver: got a use-after-move, %v", err)
 	}
 
-	// Control: a genuine `own self` method IS consuming, so using the
-	// receiver twice is still E050 — the rejection above must not become
-	// "never report a consumed dyn receiver".
 	consuming := `trait Mk { function take(own self: Self): i32; }
 struct P { v: i32 }
 impl Mk for P { function take(own self: Self): i32 { return 1; } }
@@ -8004,21 +6640,11 @@ function main(): i32 { return 0; }`
 	}
 }
 
-// TestBoundedParamAssocFnCallNoPanic guards the sibling of
-// TestDynMethodCallNoSelfParamNoPanic: calling a trait ASSOCIATED function
-// (one with no `self` receiver) through a VALUE whose type is a bounded type
-// parameter. checkExpr sliced the resolved signature's Params[1:] "to drop
-// self", which panicked with `slice bounds out of range [1:0]` on the no-arg
-// form and reported a nonsense arity ("takes 0 arguments but was given 1") on any
-// other. The no-self form is not exotic — std/num's `Num { function zero():
-// Self; }` and std/convert's `From { function from(v: T): Self; }` are both
-// associated functions.
 func TestBoundedParamAssocFnCallNoPanic(t *testing.T) {
 	for _, tc := range []struct {
 		name, src, want string
 	}{
 		{
-			// The shape that panicked: zero-parameter associated function.
 			name: "no-arg",
 			src: `trait Show { function show(): i32; }
 struct P { v: i32 }
@@ -8028,8 +6654,6 @@ function main(): i32 { return pick(P { v: 42 }); }`,
 			want: "associated function",
 		},
 		{
-			// With a parameter the old code did not crash, it mis-reported:
-			// Params[1:] dropped the real argument and blamed the caller.
 			name: "with-arg",
 			src: `trait Show { function show(x: i32): i32; }
 struct P { v: i32 }
@@ -8048,10 +6672,6 @@ function main(): i32 { return pick(P { v: 41 }); }`,
 	}
 }
 
-// TestBoundedParamTraitCallsStillCheck pins the two forms that must keep
-// working, so the associated-function rejection above cannot be widened into
-// them: an ordinary trait METHOD reached through a value, and an associated
-// function reached the way it is meant to be, through the type parameter.
 func TestBoundedParamTraitCallsStillCheck(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{
@@ -8079,11 +6699,6 @@ function main(): i32 { return 42; }`,
 	}
 }
 
-// TestDynMethodCallNoSelfParamIsRejected covers a `dyn Trait` call whose trait
-// signature has no leading `self` param — `function area(): i32;`. That is an
-// ASSOCIATED function, so the call is the E021 of TestDynAssocFnCallIsRejected
-// whether or not it takes arguments, and both spellings are rejected with a
-// source position instead of reaching a lowering that has no slot for them.
 func TestDynMethodCallNoSelfParamIsRejected(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{
 		{
@@ -8117,9 +6732,6 @@ function main(): i32 { return 0; }`,
 	}
 }
 
-// TestDynMethodCallProperPattern confirms the canonical `dyn Trait` shape
-// (explicit `self: Self` + an `impl` block) still type-checks after the
-// self-stripping fix, including a method that takes an extra argument.
 func TestDynMethodCallProperPattern(t *testing.T) {
 	for _, src := range []string{
 		`trait Shape { function area(self: Self): i32; }
@@ -8139,20 +6751,11 @@ function main(): i32 { return describe(Circle { r: 5 }); }`,
 	}
 }
 
-// TestSliceEscapeRejected (E063): returning a `[T]` slice that views
-// function-local storage is a use-after-free — the backing array is
-// reclaimed when the frame unwinds. The checker rejects the cases it
-// can prove are local; see docs/LANGUAGE-DIRECTION.md's slice lifetime
-// contract.
 func TestSliceEscapeRejected(t *testing.T) {
 	for _, src := range []string{
-		// slice of a locally-declared owned array
 		`function f(): [i32] { let xs: i32[] = [1, 2, 3]; return xs[0:2]; }`,
-		// slice of an array literal
 		`function f(): [i32] { return [1, 2, 3][0:2]; }`,
-		// slice bound to a local, then returned
 		`function f(): [i32] { let xs: i32[] = [1, 2, 3]; let s = xs[0:2]; return s; }`,
-		// sub-slice of a local slice that views a local array
 		`function f(): [i32] { let xs: i32[] = [1, 2, 3]; let s = xs[0:3]; return s[0:2]; }`,
 	} {
 		err := checkSource(t, src)
@@ -8169,29 +6772,14 @@ func TestSliceEscapeRejected(t *testing.T) {
 	}
 }
 
-// TestSliceEscapeAllowed: slices the checker can't prove are local must
-// not be flagged. Slices of a parameter / receiver stay valid as long as
-// the caller's owner does; a string view of a param-backed source is
-// likewise fine, through the unchecked producer or the checked
-// `Option[str]` one; returning the owned array itself is a move, not a
-// view.
 func TestSliceEscapeAllowed(t *testing.T) {
 	for _, src := range []string{
-		// slice of a parameter — caller owns the backing array
 		`function f(xs: i32[]): [i32] { return xs[0:2]; }`,
-		// slice of a parameter, bound through a local first
 		`function f(xs: i32[]): [i32] { let s = xs[0:2]; return s; }`,
-		// a string view of a param-backed source outlives the callee:
-		// `slice_unchecked` hands back the bare `str`, the checked
-		// `s[a:b]` wraps the same view in an Option, and an owning
-		// string return takes an explicit materialisation
 		`function f(s: string): str { return slice_unchecked(s, 0, 2); }`,
 		`function f(s: string): Option[str] { return s[0:2]; }`,
 		`function f(s: string): string { return slice_unchecked(s, 0, 2) + ""; }`,
-		// returning the owned array itself is a move
 		`function f(): i32[] { let xs: i32[] = [1, 2, 3]; return xs; }`,
-		// receiver-backed slice (element-polymorphic method): caller owns
-		// the receiver, so the view is valid.
 		`function (xs: T[]) head(): [T] { return xs[0:2]; }
 function main(): i32 { let a: i32[] = [1,2,3]; return a.head()[0]; }`,
 	} {
@@ -8201,8 +6789,6 @@ function main(): i32 { let a: i32[] = [1,2,3]; return a.head()[0]; }`,
 	}
 }
 
-// hasCode reports whether err (or any aggregated sub-error) carries the
-// given stable diagnostic code.
 func hasCode(err error, code string) bool {
 	type coded interface{ Code() string }
 	var walk func(error) bool
@@ -8225,21 +6811,12 @@ func hasCode(err error, code string) bool {
 	return walk(err)
 }
 
-// TestStrViewBorrowAllowed: the `str` view type (#4813). An owned `string`
-// freely borrows INTO a `str` (var init, argument, array element); a `str`
-// flows into a `string` PARAMETER (params are borrowed by default); the
-// string method surface (builtin .len()) dispatches on a view receiver.
 func TestStrViewBorrowAllowed(t *testing.T) {
 	for _, src := range []string{
-		// string → str var init (borrow)
 		`function f(): void { let s: string = "x"; let v: str = s; }`,
-		// string literal → str param
 		`function g(v: str): i32 { return v.len(); } function f(): i32 { return g("abc"); }`,
-		// str → string param (borrowed position)
 		`function t(o: string): i32 { return o.len(); } function f(v: str): i32 { return t(v); }`,
-		// str[] literal from string elements; element method call
 		`function f(): i32 { let vs: str[] = ["ab"]; return vs[0].len(); }`,
-		// str → str passthrough return
 		`function f(v: str): str { return v; }`,
 	} {
 		if err := checkSource(t, src); err != nil {
@@ -8248,16 +6825,9 @@ func TestStrViewBorrowAllowed(t *testing.T) {
 	}
 }
 
-// TestStrViewPromoteRejected: a `str` never silently promotes to an owned
-// `string` — the owning sinks (var init, return) must materialise a fresh
-// copy via .to_owned(). This is the type-level guard for the #4294 bug
-// class: an owned sink may be freed by the RC passes, and freeing a view
-// corrupts the source.
 func TestStrViewPromoteRejected(t *testing.T) {
 	for _, src := range []string{
-		// str → string var init
 		`function f(v: str) { let o: string = v; }`,
-		// str → string return
 		`function f(v: str): string { return v; }`,
 	} {
 		err := checkSource(t, src)
@@ -8271,16 +6841,10 @@ func TestStrViewPromoteRejected(t *testing.T) {
 	}
 }
 
-// TestStrEscapeRejected: E065 (#4814) — a `str` view of function-local
-// string storage must not escape via return; the local's box is reclaimed
-// at exit and the escaped view dangles (the #4294 corruption class).
 func TestStrEscapeRejected(t *testing.T) {
 	for _, src := range []string{
-		// local string returned as a str (direct borrow escape)
 		`function mk(): string { return "a" + "b"; } function f(): str { let s: string = mk(); return s; }`,
-		// view of a local, bound then returned
 		`function mk(): string { return "a" + "b"; } function f(): str { let s: string = mk(); let v: str = s; return v; }`,
-		// chained view-of-view of a local
 		`function mk(): string { return "a" + "b"; } function f(): str { let s: string = mk(); let v: str = s; let w: str = v; return w; }`,
 	} {
 		err := checkSource(t, src)
@@ -8297,19 +6861,12 @@ func TestStrEscapeRejected(t *testing.T) {
 	}
 }
 
-// TestStrEscapeAllowed: param-sourced and 'static (literal) views outlive
-// the function, so returning them is fine; an owned .to_owned() result is
-// a move, not a view.
 func TestStrEscapeAllowed(t *testing.T) {
 	for _, src := range []string{
-		// param passthrough
 		`function f(v: str): str { return v; }`,
-		// param through a local view binding
 		`function f(p: str): str { let v: str = p; return v; }`,
-		// literal directly and via a binding ('static)
 		`function f(): str { return "s"; }`,
 		`function f(): str { let v: str = "s"; return v; }`,
-		// owned fresh call result (a move; call results are not chased)
 		`function mk(): string { return "a" + "b"; } function f(): str { return mk(); }`,
 	} {
 		if err := checkSource(t, src); err != nil {
@@ -8318,34 +6875,16 @@ func TestStrEscapeAllowed(t *testing.T) {
 	}
 }
 
-// TestStrSliceProducesOption: the #5634 checked-slice flip — `s[a:b]`
-// yields `Option[str]`, not a bare `str`. The bounds can be out of range
-// or land inside a code point, and the expression answers `None` for both
-// instead of trapping, so the view only exists once the Option is opened:
-// through a match, through `?`, or through an `Option[str]` sink. The
-// unchecked producer with the old bare-`str` result is
-// `slice_unchecked(s, a, b)`.
-//
-// The rejections are the flip's actual claim. Every one of them was a
-// PASSING program before it, so a regression to the old typing shows up
-// here as six accepted programs rather than as a subtly different type.
 func TestStrSliceProducesOption(t *testing.T) {
 	for _, src := range []string{
-		// binds to an Option sink, annotated or inferred
 		`function f(): void { let s: string = "abcd"; let o: Option[str] = s[1:3]; }`,
 		`function f(): void { let s: string = "abcd"; let o = s[1:3]; }`,
-		// returns as an Option of a caller-owned param's view
 		`function f(s: string): Option[str] { return s[1:3]; }`,
-		// a `str` source slices to the same Option
 		`function f(v: str): Option[str] { return v[0:1]; }`,
-		// the open forms are the same expression
 		`function f(s: string): Option[str] { return s[:3]; }`,
 		`function f(s: string): Option[str] { return s[3:]; }`,
-		// the view comes out through a match...
 		`function f(s: string): i32 { match (s[1:3]) { Some(v) => { return v.len(); }, None => { return 0; } } }`,
-		// ...or through `?`, which the Option result makes legal
 		`function f(s: string): Option[str] { let v: str = s[1:3]?; return Some(v); }`,
-		// the unchecked producer keeps the bare `str` and its read surface
 		`function f(s: string): i32 { return slice_unchecked(s, 1, 3).len(); }`,
 		`function f(s: string): void { print(slice_unchecked(s, 1, 3)); }`,
 	} {
@@ -8354,13 +6893,9 @@ func TestStrSliceProducesOption(t *testing.T) {
 		}
 	}
 	for _, src := range []string{
-		// slice → str binding: the Option is not a view
 		`function f(): void { let s: string = "abcd"; let v: str = s[1:3]; }`,
-		// slice → str return
 		`function f(s: string): str { return s[1:3]; }`,
-		// slice → string return (owning sink, no materialisation)
 		`function f(s: string): string { return s[1:3]; }`,
-		// the string read surface is behind the Option, not on it
 		`function f(s: string): i32 { return s[1:3].len(); }`,
 		`function f(s: string): boolean { return s[0:2] == "ab"; }`,
 		`function f(s: string): void { print(s[1:3]); }`,
@@ -8376,11 +6911,6 @@ func TestStrSliceProducesOption(t *testing.T) {
 	}
 }
 
-// TestStrSliceTypesAsOptionStr reads the settled type off the binding
-// rather than inferring it from what the program is allowed to do with
-// it, for both source spellings. An `Option[str]` and an `Option[string]`
-// accept all the same programs — only the stamped type tells them apart,
-// and the `str` argument is what keeps the view borrowed.
 func TestStrSliceTypesAsOptionStr(t *testing.T) {
 	want := ast.EnumType{Name: "Option", Args: []ast.Type{ast.StrType{}}}
 	for name, src := range map[string]string{
@@ -8413,13 +6943,6 @@ func TestStrSliceTypesAsOptionStr(t *testing.T) {
 	}
 }
 
-// TestStrSliceEscapeRejected: E065 through the slice producer. The bare
-// `s[a:b]` cannot reach a `str`-returning `return` at all since the flip —
-// assignability stops it — so the producer this rule has to see is
-// `slice_unchecked`, which still hands back a view of its source's bytes.
-// Returning one of a function-LOCAL string (bare or through a `str`
-// binding) escapes storage that is reclaimed at exit. Slicing a parameter
-// stays fine (caller-owned backing).
 func TestStrSliceEscapeRejected(t *testing.T) {
 	for _, src := range []string{
 		`function mk(): string { return "a" + "b"; } function f(): str { let s: string = mk(); return slice_unchecked(s, 0, 1); }`,
@@ -8436,18 +6959,10 @@ func TestStrSliceEscapeRejected(t *testing.T) {
 	}
 }
 
-// TestStrMatchArmEscapeRejected: E065 through a match-arm payload binding.
-// Since #5634 `s[a:b]` is an `Option[str]`, so unwrapping it through a
-// match is the ONLY way to name the view it produces — and an arm binding
-// is not a declared local, so before this the whole producer was invisible
-// to the rule and every program below was accepted.
 func TestStrMatchArmEscapeRejected(t *testing.T) {
 	for _, src := range []string{
-		// the Option slice, unwrapped and returned
 		`function mk(): string { return "a" + "b"; } function f(): str { let s: string = mk(); match (s[0:1]) { Some(v) => { return v; }, None => { return ""; } } }`,
-		// two-step: the Option lands in a local first
 		`function mk(): string { return "a" + "b"; } function f(): str { let s: string = mk(); let t = s[0:1]; match (t) { Some(v) => { return v; }, None => { return ""; } } }`,
-		// the arm binding re-bound through a `str` local before the return
 		`function mk(): string { return "a" + "b"; } function f(): str { let s: string = mk(); match (s[0:1]) { Some(v) => { let w: str = v; return w; }, None => { return ""; } } }`,
 	} {
 		err := checkSource(t, src)
@@ -8461,11 +6976,6 @@ func TestStrMatchArmEscapeRejected(t *testing.T) {
 	}
 }
 
-// TestStrMatchArmEscapeAllowed: the arm-binding chase must not fire on a
-// view whose backing outlives the call. A param is caller-owned and a
-// literal is immortal — both stay accepted, including when the arm binding
-// SHADOWS the param it views, which is the case a name-keyed environment
-// is most likely to get wrong.
 func TestStrMatchArmEscapeAllowed(t *testing.T) {
 	for _, src := range []string{
 		`function f(p: string): str { match (p[0:1]) { Some(v) => { return v; }, None => { return ""; } } }`,
@@ -8478,11 +6988,6 @@ func TestStrMatchArmEscapeAllowed(t *testing.T) {
 	}
 }
 
-// TestStrCalleeEscapeRejected: E065 through a callee that returns a view
-// of one of its own parameters. The chase used to stop at any call, so
-// wrapping the producer in a one-line identity function carried the
-// view past the rule — the hole the per-function summary closes. Every
-// shape below returns a pointer into a string reclaimed at exit.
 func TestStrCalleeEscapeRejected(t *testing.T) {
 	const decls = `function mk(): string { return "a" + "b"; }
 function id_view(s: str): str { return s; }
@@ -8491,19 +6996,11 @@ function rec(s: str, n: i32): str { if (n <= 0) { return s; } return rec(s, n - 
 function (s: string) view(): str { return s; }
 `
 	for _, src := range []string{
-		// one hop
 		`function f(): str { let s: string = mk(); return id_view(slice_unchecked(s, 0, 1)); }`,
-		// two hops — the summary has to reach through hop2 to id_view
 		`function f(): str { let s: string = mk(); return hop2(slice_unchecked(s, 0, 1)); }`,
-		// a self-recursive pass-through function: the fixpoint converges
-		// on it rather than looping
 		`function f(): str { let s: string = mk(); return rec(slice_unchecked(s, 0, 1), 3); }`,
-		// method form — the receiver is argument 0 of the hoisted
-		// `__method_string_view`, so it resolves through the same summary
 		`function f(): str { let s: string = mk(); return s.view(); }`,
-		// the arm binding from the checked producer, handed to a callee
 		`function f(): str { let s: string = mk(); match (s[0:1]) { Some(v) => { return id_view(v); }, None => { return ""; } } }`,
-		// the passed-through view parked in a local before the return
 		`function f(): str { let s: string = mk(); let t: str = id_view(slice_unchecked(s, 0, 1)); return t; }`,
 	} {
 		err := checkSource(t, decls+src)
@@ -8517,10 +7014,6 @@ function (s: string) view(): str { return s; }
 	}
 }
 
-// TestStrCalleeEscapeAllowed: the summary is per PARAMETER, not per
-// function, so a callee that takes a local-backed view and returns a
-// different argument stays accepted. Coarsening it to "this function
-// returns some view" would reject every program here.
 func TestStrCalleeEscapeAllowed(t *testing.T) {
 	const decls = `function mk(): string { return "a" + "b"; }
 function id_view(s: str): str { return s; }
@@ -8529,11 +7022,8 @@ function lit_only(a: str): str { return "x"; }
 function (s: string) view(): str { return s; }
 `
 	for _, src := range []string{
-		// the local-backed view is argument 0; only argument 1 escapes
 		`function f(): str { let s: string = mk(); return second(slice_unchecked(s, 0, 1), "lit"); }`,
-		// the callee returns a literal, viewing no argument at all
 		`function f(): str { let s: string = mk(); return lit_only(slice_unchecked(s, 0, 1)); }`,
-		// the passed-through view is param-backed, so it outlives the callee
 		`function f(p: string): str { return id_view(slice_unchecked(p, 0, 1)); }`,
 		`function f(p: string): str { return p.view(); }`,
 	} {
@@ -8543,11 +7033,6 @@ function (s: string) view(): str { return s; }
 	}
 }
 
-// TestSliceCalleeEscapeRejected: E063's half of the same hole. A callee
-// that hands back a view of a parameter is slicing the CALLER's storage,
-// so the result escapes exactly when that argument's storage does — and
-// the argument is chased as storage rather than as a slice value, which
-// is what lets an owned array passed straight in be recognised.
 func TestSliceCalleeEscapeRejected(t *testing.T) {
 	const decls = `function id_sl(x: [i32]): [i32] { return x; }
 function hop(x: [i32]): [i32] { return id_sl(x); }
@@ -8556,22 +7041,11 @@ function idarr(x: i32[]): i32[] { return x; }
 function (xs: T[]) win(): [T] { return xs[0:1]; }
 `
 	for _, src := range []string{
-		// one hop
 		`function f(): [i32] { let a: i32[] = [1, 2, 3]; return id_sl(a[0:2]); }`,
-		// two hops
 		`function f(): [i32] { let a: i32[] = [1, 2, 3]; return hop(a[0:2]); }`,
-		// the local array itself is the argument: chasing it as a slice
-		// value would find nothing, chasing it as storage finds the array
 		`function f(): [i32] { let a: i32[] = [1, 2, 3]; return id_sl(a)[0:1]; }`,
-		// element-polymorphic receiver method over a local array
 		`function f(): [i32] { let a: i32[] = [1, 2, 3]; return a.win(); }`,
-		// the escaping storage is the array LITERAL at argument 1, which
-		// is the one the callee returns
 		`function f(): [i32] { let a: i32[] = [1, 2, 3]; return second(a[0:2], [9]); }`,
-		// a `T[]`-returning callee that hands back a parameter MOVES the
-		// caller's array, so slicing the result views the caller's
-		// storage — which is why every function is summarised and not
-		// just the `[T]`-returning ones
 		`function f(): [i32] { let a: i32[] = [1, 2, 3]; return idarr(a)[0:1]; }`,
 	} {
 		err := checkSource(t, decls+src)
@@ -8585,9 +7059,6 @@ function (xs: T[]) win(): [T] { return xs[0:1]; }
 	}
 }
 
-// TestSliceCalleeEscapeAllowed: param-backed storage survives the call,
-// and a callee that returns an argument other than the local-backed one
-// stays accepted — the same per-parameter precision E065 relies on.
 func TestSliceCalleeEscapeAllowed(t *testing.T) {
 	const decls = `function id_sl(x: [i32]): [i32] { return x; }
 function second(a: [i32], b: [i32]): [i32] { return b; }
@@ -8597,12 +7068,7 @@ function (xs: T[]) win(): [T] { return xs[0:1]; }
 	for _, src := range []string{
 		`function f(p: i32[]): [i32] { return id_sl(p[0:2]); }`,
 		`function f(p: i32[]): [i32] { return p.win(); }`,
-		// argument 0 is local-backed, but the callee returns argument 1
 		`function f(p: i32[]): [i32] { let a: i32[] = [1, 2, 3]; return second(a[0:2], p[0:1]); }`,
-		// an owned `T[]` return MOVES its storage to the caller, so a
-		// function handing back its own local array is not returning a
-		// view at all. Summarising every function makes this reachable;
-		// only reporting against `[T]` returns keeps it accepted.
 		`function f(): i32[] { return mkarr(); }`,
 		`function f(): i32[] { let a: i32[] = [1, 2, 3]; return a; }`,
 	} {
@@ -8612,11 +7078,6 @@ function (xs: T[]) win(): [T] { return xs[0:1]; }
 	}
 }
 
-// TestSlicedTemporaryRejected: a call's result is a TEMPORARY this frame
-// owns, so slicing it and returning the slice dangles exactly as slicing a
-// local does. Binding it first was already rejected — `let t = mkarr();
-// return t[0:1];` — so the gap this closes is precisely the storage without
-// a name, on both rules.
 func TestSlicedTemporaryRejected(t *testing.T) {
 	const decls = `function mkarr(): i32[] { let a: i32[] = [1, 2, 3]; return a; }
 function fresharr(): i32[] { return [1, 2, 3]; }
@@ -8624,13 +7085,9 @@ function mkstr(): string { return "a" + "b"; }
 function (s: string) own_copy(): string { return s + ""; }
 `
 	for _, src := range []string{
-		// the callee hands back a local array it built
 		`function f(): [i32] { return mkarr()[0:1]; }`,
-		// …or an array literal, which is the same storage one step shorter
 		`function f(): [i32] { return fresharr()[0:1]; }`,
-		// the `str` twin: a view of a string the callee allocated
 		`function f(): str { return slice_unchecked(mkstr(), 0, 1); }`,
-		// method form, and the receiver is a local rather than a param
 		`function f(): str { let s: string = mkstr(); return slice_unchecked(s.own_copy(), 0, 1); }`,
 	} {
 		err := checkSource(t, decls+src)
@@ -8644,10 +7101,6 @@ function (s: string) own_copy(): string { return s + ""; }
 	}
 }
 
-// TestSlicedTemporaryAllowed: the storage has to be THIS frame's. A callee
-// that hands back a parameter is handing back the caller's own storage,
-// which outlives the call, and a string literal is immortal however many
-// calls it is passed through.
 func TestSlicedTemporaryAllowed(t *testing.T) {
 	const decls = `function idarr(x: i32[]): i32[] { return x; }
 function idstr(s: string): string { return s; }
@@ -8657,9 +7110,6 @@ function lit(): string { return "hello"; }
 		`function f(p: i32[]): [i32] { return idarr(p)[0:1]; }`,
 		`function f(p: string): str { return slice_unchecked(idstr(p), 0, 1); }`,
 		`function f(p: string): str { return slice_unchecked(p, 0, 1); }`,
-		// a literal is immortal, so a view of one never dangles — this is
-		// the row that fails if `fresh` is set from "not a param" instead
-		// of from storage the callee really built
 		`function f(): str { return slice_unchecked(lit(), 0, 1); }`,
 	} {
 		if err := checkSource(t, decls+src); err != nil {
@@ -8668,12 +7118,6 @@ function lit(): string { return "hello"; }
 	}
 }
 
-// TestStrViewOwnParamRejected: an `own` (consuming) parameter takes
-// ownership of its argument — the callee frees it. A `str` view must never
-// be freed by its holder, so the borrowed-position carve-out does not
-// apply to `own` params (the #4813 tightening): lending a view to a
-// consumer is the #4294 corruption shape. The plain borrowed param in the
-// same program stays accepting.
 func TestStrViewOwnParamRejected(t *testing.T) {
 	src := `function consume(own x: string): i32 { return x.len(); }
 function borrow(x: string): i32 { return x.len(); }
@@ -8685,19 +7129,11 @@ function f(v: str): i32 { return consume(v) + borrow(v); }`
 	if !hasCode(err, "E038") {
 		t.Errorf("want E038 on the own-param position, got %v", err)
 	}
-	// The borrowed position must NOT be flagged: exactly one str mismatch.
 	if n := strings.Count(err.Error(), "expected string, got str"); n != 1 {
 		t.Errorf("want exactly 1 str-arg mismatch (own position only), got %d in %v", n, err)
 	}
 }
 
-// TestPointerReinterpretFromI32Rejected (E069, #5053) locks the rule that a
-// 32-bit-only value (`i32` / `u32`) reinterpreted as a pointer-shaped type
-// (`string`, an array, or a struct) via `as` is a truncation bug — the
-// high 32 bits of the address were lost when the value became i32, so the
-// recovered pointer is corrupt once the heap exceeds 4 GiB. A `usize` source
-// carries the full width and stays allowed (the stdlib's raw-block-to-handle
-// promotion), and a genuine numeric conversion (`i32 as usize`) is unaffected.
 func TestPointerReinterpretFromI32Rejected(t *testing.T) {
 	mustCode := func(src, code string) {
 		t.Helper()
@@ -8716,23 +7152,16 @@ func TestPointerReinterpretFromI32Rejected(t *testing.T) {
 			t.Errorf("expected no error for %q, got: %v", src, err)
 		}
 	}
-	// i32 / u32 reinterpreted as a pointer-shaped type — rejected.
 	mustCode(`function f(k: i32): string { return k as string; } function main(): i32 { return 0; }`, "E069")
 	mustCode(`function f(k: i32): i32[] { return k as i32[]; } function main(): i32 { return 0; }`, "E069")
 	mustCode(`struct P { x: i32 } function f(k: i32): P { return k as P; } function main(): i32 { return 0; }`, "E069")
 	mustCode(`function f(k: u32): string { return k as string; } function main(): i32 { return 0; }`, "E069")
-	// usize source is pointer-width — the correct promotion, still allowed.
 	mustOK(`function f(k: usize): string { return k as string; } function main(): i32 { return 0; }`)
 	mustOK(`function f(k: usize): i32[] { return k as i32[]; } function main(): i32 { return 0; }`)
-	// A plain numeric conversion (not a pointer reinterpret) is unaffected.
 	mustOK(`function main(): i32 { let a: i32 = 5; let b: usize = a as usize; return b as i32; }`)
-	// The forward pointer->i32 narrowing (the __memcpy escape hatch) is not
-	// this rule's target and stays allowed.
 	mustOK(`function main(): i32 { let s: string = "x"; return s as i32; }`)
 }
 
-// TestFloatDefaultWidth pins that a bare float literal with no expected-type
-// pressure defaults to f64: the mismatch messages name f64.
 func TestFloatDefaultWidth(t *testing.T) {
 	mustErr := func(src, want string) {
 		t.Helper()
@@ -8745,28 +7174,14 @@ func TestFloatDefaultWidth(t *testing.T) {
 			t.Errorf("for %q: want error containing %q, got: %v", src, want, err)
 		}
 	}
-	// An f64 is not an f32: the mismatch names both.
 	mustErr(`function main(): i32 { let x: f64 = 1.5; let y: f32 = x; return 0; }`,
 		"expected f32, got f64")
-	// A bare literal defaults to f64 — the unsettled-literal mismatch
-	// message names f64, not f32.
 	mustErr(`function main(): i32 { let s: string = 1.5; return 0; }`,
 		"expected string, got f64")
-	// `double` draws the f64 hint.
 	mustErr(`function f(a: double): i32 { return 0; } function main(): i32 { return 0; }`,
 		"did you mean `f64`?")
 }
 
-// TestRetiredNameSuggestsReplacement pins the migration hint for a name
-// the language has retired (#5634, D9). `string_from_bytes` was split
-// into the unchecked builtin and the validating `std/utf8.from_bytes`,
-// and the old name was removed outright rather than aliased — so the
-// error a caller hits has to point at both halves.
-//
-// The generic near-miss scan cannot do this: `string_from_bytes` ->
-// `string_from_bytes_unchecked` is ten characters of edit distance,
-// well past the respelling threshold, so without the retired-name
-// table the retirement is a dead end.
 func TestRetiredNameSuggestsReplacement(t *testing.T) {
 	prog, err := parser.Parse(`function f(): string {
 		return string_from_bytes([65 as u8]);
@@ -8792,14 +7207,9 @@ func TestRetiredNameSuggestsReplacement(t *testing.T) {
 	if ce.Fix == nil {
 		t.Fatal("expected a machine-applicable fix for a retired name")
 	}
-	// The replacement stays mechanical — it compiles to exactly what
-	// the old name compiled to, so applying the fix is behaviour-
-	// preserving.
 	if ce.Fix.Replacement != "string_from_bytes_unchecked" {
 		t.Errorf("fix replacement = %q, want %q", ce.Fix.Replacement, "string_from_bytes_unchecked")
 	}
-	// ...but the help line also has to mention the checked half, or the
-	// fix quietly steers every caller onto the unchecked path.
 	if !strings.Contains(ce.Fix.Title, "std/utf8.from_bytes") {
 		t.Errorf("fix title = %q, want it to mention std/utf8.from_bytes", ce.Fix.Title)
 	}
@@ -8809,11 +7219,6 @@ func TestRetiredNameSuggestsReplacement(t *testing.T) {
 	}
 }
 
-// `slice_unchecked(s: string, a: i32, b: i32): str` (#5634, slice 3) is an
-// ordinary FuncSigs builtin, so misuse must fall out of the normal call
-// checks: wrong arity is E004, a wrong argument type is E038 naming the
-// position, and the result is `str` — not `string` — so it cannot be bound
-// to an owning sink without materialising.
 func TestSliceUncheckedMisuseRejected(t *testing.T) {
 	bad := []struct{ src, want string }{
 		{`function f(s: string): str { return slice_unchecked(s, 0); }`,
@@ -8838,35 +7243,12 @@ func TestSliceUncheckedMisuseRejected(t *testing.T) {
 		}
 	}
 
-	// The correct call shape type-checks, into a `str` sink.
 	if err := checkSource(t, `function f(s: string): str { return slice_unchecked(s, 0, 1); }
 function main(): i32 { let s: string = "hey"; return f(s).len(); }`); err != nil {
 		t.Errorf("well-typed slice_unchecked call rejected: %v", err)
 	}
 }
 
-// A generic call whose argument is an ARGLESS enum — `Ok(8)` leaves the error
-// type free, unlike `Some(8)` which pins `Option[i32]` — must type-check the
-// same in every position. It did not: as a METHOD-CALL RECEIVER it was
-// rejected with E038 ("expected T, got Result") while the identical
-// expression passed as a `let` initialiser, a bare statement, an operand, and
-// a call argument.
-//
-// The receiver is checked twice (the method-dispatch path types it, then falls
-// through to the generic callee check) and a generic call memoises its
-// inferred TypeArgs, so the second pass arrived with `T` already bound to
-// `Result[i32, i32]` and compared it against the argument's still-argless
-// `Result`. Re-checking has to be idempotent; unifying an argless enum against
-// an existing binding of the same enum is now allowed, since argless is the
-// deliberate "resolve me from context" form and so conflicts with nothing.
-//
-// Found by sweeping fernsmith printable seeds past CI's range (seed 603).
-// A payloadless variant of a generic enum written bare (`Leaf`) types as the
-// argless `Tree`, the same "not yet resolved" form as an under-inferred
-// variant call. In a payload or field position whose expected type is the
-// enum's instantiation (`Tree[K, V]`) it binds nothing and conflicts with
-// nothing — the recursive-tree constructor `Node(Leaf, k, v, Leaf)` must not
-// need a pre-annotated local per empty child.
 func TestBareNullaryVariantUnifiesWithGenericEnumInstantiation(t *testing.T) {
 	const decls = `enum Tree[K, V] { Leaf, Node(Tree[K, V], K, V, Tree[K, V]) }
 struct TMap[K, V] { root: Tree[K, V], size: i32 }
@@ -8884,7 +7266,6 @@ function main(): i32 { let m: TMap[i32, string] = empty(); return m.size; }`},
 			}
 		})
 	}
-	// A DIFFERENT enum's argless form is still a mismatch.
 	t.Run("other enum rejected", func(t *testing.T) {
 		err := checkSource(t, decls+`enum Other { Nil }
 function main(): i32 { let t: Tree[i32, i32] = Node(Nil, 1, 2, Leaf); return 0; }`)
@@ -8894,17 +7275,6 @@ function main(): i32 { let t: Tree[i32, i32] = Node(Nil, 1, 2, Leaf); return 0; 
 	})
 }
 
-// The other direction of the same rule, and for a STRUCT: an argless
-// binding an earlier argument left open is upgraded by a later one that
-// pins it (#8004).
-//
-// `map_new`'s registered result is a bare `Map` on purpose — the
-// "resolve me from context" form. The generic argument loop is a single
-// left-to-right pass, so argument 1 bound T := argless `Map` and
-// argument 2's `(Map[string, i32]) => Map[string, i32]` was then
-// compared against it and rejected. Annotating a local first worked,
-// which is what made it look like an inference gap rather than an
-// ordering one.
 func TestArglessBindingIsUpgradedByALaterArgument(t *testing.T) {
 	const src = `import "core/map";
 function apply[T](x: T, f: (T) => T): T { return f(x); }
@@ -8917,9 +7287,6 @@ function main(): i32 {
 		t.Errorf("argument 2 pins what argument 1 left argless:\n%v", err)
 	}
 
-	// Two genuinely different instantiations still conflict — the
-	// relaxation is about argless-vs-instantiated, not about any two
-	// spellings of the same name.
 	t.Run("mismatched instantiations still rejected", func(t *testing.T) {
 		err := checkSource(t, `import "core/map";
 function apply[T](x: T, f: (T) => T): T { return f(x); }
@@ -8929,17 +7296,12 @@ function main(): i32 {
     let r: Map[string, i32] = apply(a, bump);
     return 0;
 }`)
-		// The report names the parameter as argument 1 pinned it —
-		// `(Map[i32, i32]) => Map[i32, i32]` — rather than the declared
-		// `(T) => T`, which is the half that says why these two conflict.
 		if err == nil || !strings.Contains(err.Error(), "expected (Map[i32, i32]) => Map[i32, i32]") {
 			t.Fatalf("Map[i32, i32] and Map[string, i32] must still conflict, got %v", err)
 		}
 	})
 }
 
-// An empty array literal binds no type parameter: a later argument or the
-// destination does, and the literal is checked against that (#10499).
 func TestEmptyArrayArgumentLeavesTypeParameterOpen(t *testing.T) {
 	for _, tc := range []struct{ name, src, wantErr string }{
 		{"later argument pins it", `function fold[T](x: i32, own acc: T, f: (i32, own T) => T): T { return f(x, acc); }
@@ -8973,14 +7335,6 @@ function main(): i32 { return pair([], 3); }`, "argument 1 to \"pair\": expected
 	}
 }
 
-// A cast around a generic call whose type parameter an ARGUMENT already
-// pins must not retarget the instantiation: `get_or(b, 0, 7i32) as i64`
-// with `b: Box[i32]` is a conversion of an i32 result, not a request for
-// `get_or[i64]`. The destination-driven restamp exists for `id(7) as i64`,
-// where only literals reach T; it used to fire here too because a T bound
-// to plain `i32` is recorded at the default width and read as unsettled
-// (monomorph then rejected its own clone: "expected Box__i64, got
-// Box__i32").
 func TestCastDoesNotRetargetPinnedGenericCall(t *testing.T) {
 	const decls = `struct Box[T] { x: T }
 function get_or2[T](b: Box[T], i: i32, fallback: T): T { if (i == 0) { return b.x; } return fallback; }
@@ -9002,7 +7356,6 @@ function id[T](x: T): T { return x; }
 				t.Fatalf("check: %v", err)
 			}
 			_ = info
-			// The destination must not have rewritten the call's T.
 			ast.WalkProgram(prog, func(n ast.Node) bool {
 				c, ok := n.(*ast.Call)
 				if !ok || len(c.TypeArgs) != 1 {
@@ -9017,7 +7370,6 @@ function id[T](x: T): T { return x; }
 			})
 		})
 	}
-	// The literal-only shape keeps its destination-driven width.
 	t.Run("literal-only call still settles from the cast", func(t *testing.T) {
 		prog, err := parser.Parse(decls + `function main(): i32 { let t: i64 = id(7) as i64; return t as i32; }`)
 		if err != nil {
@@ -9040,10 +7392,6 @@ function id[T](x: T): T { return x; }
 }
 
 func TestGenericArglessEnumArgInMethodReceiver(t *testing.T) {
-	// `g` returns a Box so the receiver position can use a user-defined
-	// method — checkSource resolves no stdlib, so `.to_string()` is not
-	// available here, and using it would test the stdlib rather than the
-	// receiver position.
 	const prelude = `struct Box { n: i32 }
 function (b: Box) get(): i32 { return b.n; }
 function id[T](x: T): T { return x; }
@@ -9069,8 +7417,6 @@ function main(): i32 { return h(g(id(Ok(8i32)))); }`},
 		})
 	}
 
-	// The relaxation must not swallow a REAL conflict: two arguments that pin
-	// the same type parameter to genuinely different instantiations still fail.
 	t.Run("genuine conflict still rejected", func(t *testing.T) {
 		src := `function pair[T](a: T, b: T): i32 { return 0; }
 function main(): i32 {
@@ -9084,11 +7430,6 @@ function main(): i32 {
 	})
 }
 
-// A cast whose operand never typed must not stack a second diagnostic on the
-// first. `undefined_thing as i32` is one typo, and E001 already names it —
-// the follow-on E033 added nothing, and formatted the nil operand type as
-// `%!s(<nil>)` while doing it. The cast still yields its target type so
-// nothing downstream cascades either.
 func TestCastOnUntypedOperandDoesNotCascade(t *testing.T) {
 	for _, tc := range []struct{ name, src, wantCode string }{
 		{"cannot find",
@@ -9117,8 +7458,6 @@ func TestCastOnUntypedOperandDoesNotCascade(t *testing.T) {
 	}
 }
 
-// The genuine cast rejection must survive the suppression above — an operand
-// that DID type, cast to something incompatible, is still E033.
 func TestCastRejectionStillReported(t *testing.T) {
 	err := checkSource(t, `function main(): i32 { let s: string = "x"; return s as boolean; }`)
 	if err == nil {
@@ -9129,15 +7468,6 @@ func TestCastRejectionStillReported(t *testing.T) {
 	}
 }
 
-// A cast with exactly one numeric side is accepted only as a pointer
-// reinterpret — a pointer-shaped value to i32/usize, or back from i32/usize.
-// Everything else has to be E033 HERE, because ir.go's cast lowering asserts
-// it: the branch a rejected shape would reach returns a compiler-bug error,
-// not a diagnostic. `i64 as string` is the shape the roadmap kept filing as a
-// latent i64->string gap; it is rejected on purpose (a 64-bit value
-// reinterpreted as a pointer-shaped handle truncates — E069 — and converting
-// an i64 to text is `.to_string()`), so widening this rule means widening that
-// lowering in the same change.
 func TestOneSidedNumericCastsAreRejectedBeforeIR(t *testing.T) {
 	for _, src := range []string{
 		`function main(): i32 { let n: i64 = 1; let s = n as string; return 0; }`,
@@ -9156,10 +7486,6 @@ func TestOneSidedNumericCastsAreRejectedBeforeIR(t *testing.T) {
 	}
 }
 
-// A union member's type arguments have to match the struct it names
-// (#7737). The desugar turns each member into an enum variant whose
-// payload is that struct type, so a mismatch would otherwise synthesise
-// a payload with the wrong arity and fail somewhere further downstream.
 func TestUnionMemberTypeArgArity(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{
 		{
@@ -9202,9 +7528,6 @@ function main(): i32 { return 0; }`,
 	}
 }
 
-// The suggested fix in the arity message has to be spelled at the
-// member's real arity — a one-parameter example under a two-parameter
-// struct is advice that does not compile.
 func TestUnionArityHintMatchesMemberArity(t *testing.T) {
 	err := checkSource(t, `struct P[A, B] { a: A, b: B }
 struct Lit { v: i32 }
@@ -9218,9 +7541,6 @@ function main(): i32 { return 0; }`)
 	}
 }
 
-// A union whose members are two instantiations of the SAME struct is a
-// duplicate: variants are named after the struct, so both would be
-// `Box`. Pinned because E016.md tells the reader this is the rule.
 func TestUnionRejectsTwoInstantiationsOfOneStruct(t *testing.T) {
 	err := checkSource(t, `struct Box[T] { v: T }
 struct Lit { v: i32 }
@@ -9234,20 +7554,9 @@ function main(): i32 { return 0; }`)
 	}
 }
 
-// TestByteDisplayGateAndDispatchAgree: the `print(x)` Display gate and the
-// `x.to_string()` dispatch it rewrites to must name the receiver the same
-// way. They didn't for `u8`: the gate ran a width switch that only knew 32
-// and 64, so a byte was gated on `u32`'s `to_string` while dispatch looked
-// for `u8`'s — a program with `impl Display for u32` in scope passed the
-// gate and then failed with `no method "to_string" on u8 — add
-// import "std/u32"`, naming the very module it already had. Both now run
-// through `ast.ReceiverTypeName`, so a byte is either accepted by its own
-// impl or refused up front by E038.
 func TestByteDisplayGateAndDispatchAgree(t *testing.T) {
 	const displayTrait = `trait Display { function to_string(self: Self): string; }
 `
-	// A u32 impl does NOT make a byte printable — and the refusal is the
-	// correct E038 naming u8, not a dispatch failure blaming an import.
 	err := checkSource(t, displayTrait+
 		`impl Display for u32 { function to_string(self: Self): string { return "u32"; } }
 function main(): i32 { let s: string = "A"; let b: u8 = s[0]; print(b); return 0; }`)
@@ -9261,7 +7570,6 @@ function main(): i32 { let s: string = "A"; let b: u8 = s[0]; print(b); return 0
 		t.Errorf("gate admitted the call and dispatch then failed on u8: %v", err)
 	}
 
-	// The byte's own impl is what makes it printable.
 	if err := checkSource(t, displayTrait+
 		`impl Display for u8 { function to_string(self: Self): string { return "b"; } }
 function main(): i32 { let s: string = "A"; let b: u8 = s[0]; print(b); return 0; }`); err != nil {
@@ -9269,10 +7577,6 @@ function main(): i32 { let s: string = "A"; let b: u8 = s[0]; print(b); return 0
 	}
 }
 
-// TestUsizeHasItsOwnImplSurface: `usize` registers and satisfies impls under
-// its own name. It used to share u32's, so u32's impl met a `T: Tr` bound at
-// usize, which nothing then provided a method for (#12649), and impls for
-// both widths collided.
 func TestUsizeHasItsOwnImplSurface(t *testing.T) {
 	const tr = `trait Same { function same(self: Self, o: Self): boolean; }
 function need[T: Same](a: T): boolean { return a.same(a); }
@@ -9289,13 +7593,6 @@ function main(): i32 { let u: usize = 3; let w: u32 = 4; if (need(u) && need(w) 
 	}
 }
 
-// A value binding SHADOWS a module-level function of the same name — and
-// that has to hold when the module function is GENERIC (#6302). The
-// generic-call path keys `c.info.GenericFuncs` by bare name, so a fn-typed
-// parameter called `id` resolved to a module `id[T]` and the call was
-// rejected with E040 for a type parameter the call site never mentions.
-// Dropping the `[T]` made the identical program check clean, which is what
-// identified the generic path as the culprit.
 func TestCheckValueBindingShadowsGenericFunc(t *testing.T) {
 	const genericID = `function id[T](x: T): T { return x; }
 function inc(x: i32): i32 { return x + 1; }
@@ -9304,21 +7601,14 @@ function inc(x: i32): i32 { return x + 1; }
 		name string
 		src  string
 	}{
-		// The issue's repro: a fn-typed PARAMETER named after the generic.
 		{"fn-param", `function apply(v: i32, id: (i32) => i32): i32 { return id(v); }
 function main(): i32 { return apply(7, inc); }`},
-		// A local `let` holding a closure, same name.
 		{"local-var", `function main(): i32 { let id: (i32) => i32 = inc; return id(7); }`},
-		// A CAPTURED outer local: the callee resolves through the
-		// captureChain rather than the current scope, the other half of
-		// the resolution order the fix mirrors.
 		{"capture", `function main(): i32 {
 	let id: (i32) => i32 = inc;
 	function call_it(v: i32): i32 { return id(v); }
 	return call_it(7);
 }`},
-		// Shadowed in one function, still callable as the generic in
-		// another — the fix must not disable the generic module-wide.
 		{"shadow-and-generic", `function apply(v: i32, id: (i32) => i32): i32 { return id(v); }
 function plain(v: i32): i32 { return id(v); }
 function main(): i32 { return apply(7, inc) + plain(1); }`},
@@ -9331,8 +7621,6 @@ function main(): i32 { return apply(7, inc) + plain(1); }`},
 		})
 	}
 
-	// Control: the same programs with the module function NON-generic
-	// already checked clean, and must continue to.
 	const plainID = `function id(x: i32): i32 { return x; }
 function inc(x: i32): i32 { return x + 1; }
 `
@@ -9342,19 +7630,10 @@ function main(): i32 { return apply(7, inc); }`); err != nil {
 	}
 }
 
-// The same shadowing rule for a `use` clause's source call (#6302).
-// inferUseParam read `Info.FuncSigs` before the scope, so a `use x <-
-// withRes();` whose `withRes` is a shadowing binding inferred the
-// callback parameter's type from the unrelated MODULE `withRes` — here
-// `i32` instead of `string`. The call itself still dispatched to the
-// binding, so the mismatch surfaced as an E038 naming two signatures the
-// source never put together.
 func TestCheckValueBindingShadowsUseClauseCallee(t *testing.T) {
 	const mods = `function withRes(cb: (i32) => i32): i32 { return cb(4); }
 function taker(f: (string) => i32): i32 { return f("hi"); }
 `
-	// A local `let` shadowing the module function: `x` must bind as
-	// `string`, the shadowing callee's callback parameter type.
 	if err := checkSource(t, mods+`function g(): i32 {
 	let withRes = taker;
 	use x <- withRes();
@@ -9365,7 +7644,6 @@ function main(): i32 { return g(); }`); err != nil {
 		t.Errorf("a `use` source call must resolve to the shadowing binding: %v", err)
 	}
 
-	// A fn-typed PARAMETER shadowing it, same requirement.
 	if err := checkSource(t, mods+`function run(withRes: ((string) => i32) => i32): i32 {
 	use x <- withRes();
 	if (x == "hi") { return 21; }
@@ -9375,40 +7653,23 @@ function main(): i32 { return run(taker); }`); err != nil {
 		t.Errorf("a fn-typed param must shadow the `use` source callee: %v", err)
 	}
 
-	// Unshadowed, the module function is still what a `use` resolves to.
 	if err := checkSource(t, mods+`function g(): i32 { use x <- withRes(); return x + 1; }
 function main(): i32 { return g(); }`); err != nil {
 		t.Errorf("unshadowed `use` regressed: %v", err)
 	}
 }
 
-// TestScalarModuleHintIsFollowable: E043's "add `import …`" hint must name a
-// module that actually declares the method. For `u8` it once named `std/u32`,
-// which declares no u8 methods, so following the advice reproduced the
-// identical error.
-//
-// Bytes reach users constantly (indexing a string yields u8), so this is a
-// common first error. TestByteDisplayGateAndDispatchAgree above already
-// observed the wrong module name in passing while fixing the Display gate;
-// this pins the hint itself.
 func TestScalarModuleHintIsFollowable(t *testing.T) {
 	cases := []struct {
 		name    string
 		decl    string
 		wantMod string
 	}{
-		// u8's to_string is core/cmp's `impl Display for u8`.
 		{"u8 points at core/cmp", `let s: string = "A"; let b: u8 = s[0]; print(b.to_string());`, `core/cmp`},
 		{"u32 still points at std/u32", `let x: u32 = 5; print(x.to_string());`, `std/u32`},
 		{"u64 still points at std/u64", `let x: u64 = 5; print(x.to_string());`, `std/u64`},
-		// usize's to_string is std/u64's, which every usize fits; the hint
-		// named std/u32, which has none.
 		{"usize points at std/u64", `let x: usize = 5; print(x.to_string());`, `std/u64`},
 		{"i64 still points at std/i64", `let x: i64 = 5; print(x.to_string());`, `std/i64`},
-		// A `str` view had NO hint at all: the hint had no case for it,
-		// so the message fell through to the builtin list ("it has: as_bytes,
-		// len") — the outcome that function's own comment forbids, and the one
-		// a reader reaches by FOLLOWING E043 (TestStrToOwnedAdviceIsFollowable).
 		{"str points at std/string", `let s: string = "abcdef"; let v: str = s[0:3]; print(v.to_owned());`, `std/string`},
 	}
 	for _, tc := range cases {
@@ -9425,12 +7686,6 @@ func TestScalarModuleHintIsFollowable(t *testing.T) {
 	}
 }
 
-// TestOneErrorPerMistake: a single bad expression must produce a single
-// diagnostic. Two things keep it that way, and each case below pins one:
-// errfCode drops a diagnostic identical to one already recorded at that
-// position (an operator rejecting BOTH operands for the same reason says it
-// once), and the `as` hint is suppressed unless both operands are integers —
-// the only case where a cast can actually help.
 func TestOneErrorPerMistake(t *testing.T) {
 	count := func(src, needle string) int {
 		t.Helper()
@@ -9456,8 +7711,6 @@ func TestOneErrorPerMistake(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// checkSource renders "type error at L:C: <msg>" without the
-			// code, so count the message shape rather than "E009".
 			if got := count(tc.src, `operator "`); got != tc.want {
 				t.Fatalf("wanted %d operator diagnostics for %s, got %d:\n%v",
 					tc.want, tc.name, got, checkSource(t, tc.src))
@@ -9466,9 +7719,6 @@ func TestOneErrorPerMistake(t *testing.T) {
 	}
 }
 
-// The `as` hint must survive where a cast genuinely helps — two integers
-// that differ in signedness. Suppressing it everywhere would trade one
-// bad message for a missing good one.
 func TestMixedIntegerHintSurvives(t *testing.T) {
 	err := checkSource(t, `function main(): i32 {
     let a: i32 = 1; let b: u32 = 2;
@@ -9483,20 +7733,6 @@ func TestMixedIntegerHintSurvives(t *testing.T) {
 	}
 }
 
-// TestUnknownVariantHintDistinguishesTypoFromCatchAll: two different
-// mistakes reach E014, and the bare "variant %q is not part of enum %s"
-// serves neither.
-//
-// A near-miss wants the right name. A CATCH-ALL written the Rust way
-// (`other => …`) wants to be told that Fern reads a bare ident in arm
-// position as a variant name — the reader meant "everything else, bound to
-// `other`", and there is no binding catch-all at all (`other @ _` is
-// refused by the parser too), so the answer is `_` plus binding the
-// scrutinee first.
-//
-// The catch-all reading is only offered when the name resembles no
-// variant: a near-miss is far likelier to be a typo than a wildcard
-// attempt, and a wrong hint costs more than none.
 func TestUnknownVariantHintDistinguishesTypoFromCatchAll(t *testing.T) {
 	const decl = `enum Ord { Before, After, Equal, Concurrent }
 `
@@ -9526,18 +7762,6 @@ func TestUnknownVariantHintDistinguishesTypoFromCatchAll(t *testing.T) {
 	}
 }
 
-// A qualified variant pattern must mean the same thing in a match EXPRESSION as
-// in a match STATEMENT. It did not: the expression arm loop carried its own copy
-// of the qualifier validation, and that copy was missing the enum-qualifier case
-// while its comment claimed to be "the same qualifier validation as the stmt-form
-// arm loop above". So `Color.Red` on a `Color` scrutinee — the spelling E029's own
-// catalogue entry documents as legal — type-checked as a statement and was
-// rejected as an expression, with a message naming a module the user never wrote
-// (#6576).
-//
-// The self-host checker had it right on both forms all along, so this was the two
-// frontends disagreeing about what the language is, with native as the odd one
-// out. Both call sites now share checkVariantQualifier.
 func TestVariantQualifierSameInStatementAndExpression(t *testing.T) {
 	const enums = "enum Color { Red, Green }\nenum Status { Ok, Err }\n"
 
@@ -9556,29 +7780,19 @@ func TestVariantQualifierSameInStatementAndExpression(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: want an E029 reading %q, got: %v", name, want, err)
 		}
-		// The module branch is the wrong diagnosis for an enum qualifier: it
-		// names a module the user never wrote.
 		if strings.Contains(err.Error(), "names module") {
 			t.Errorf("%s: reported the module-qualifier form, want the enum-mismatch one: %v", name, err)
 		}
-		// `Ok` is not a Color variant either, but the qualifier already says
-		// what is wrong, as the self-host checker reports it.
 		if strings.Contains(err.Error(), "is not part of enum") {
 			t.Errorf("%s: reported E014 beside the E029: %v", name, err)
 		}
 	}
 
-	// The enum-qualifier spelling is legal in BOTH positions. The expression
-	// form is the one that was wrong.
 	mustOK("stmt-enum-qualifier",
 		"function f(c: Color): i32 { match (c) { Color.Red => { return 1; }, Color.Green => { return 2; } } return 0; }")
 	mustOK("expr-enum-qualifier",
 		"function f(c: Color): i32 { return match (c) { Color.Red => 1i32, Color.Green => 2i32 }; }")
 
-	// A qualifier naming a DIFFERENT enum is the real E029, and it must read as
-	// an enum mismatch in both positions. The expression form used to fall
-	// through to the module branch and report `names module "Status"`, which
-	// points at a module that does not exist instead of at the actual mistake.
 	mustE029("stmt-wrong-enum",
 		"function f(c: Color): i32 { match (c) { Status.Ok => { return 1; }, _ => { return 0; } } return 0; }",
 		`qualifier "Status" does not match scrutinee enum Color`)
@@ -9587,13 +7801,6 @@ func TestVariantQualifierSameInStatementAndExpression(t *testing.T) {
 		`qualifier "Status" does not match scrutinee enum Color`)
 }
 
-// A bare name in a payload slot parses as a BINDER — the parser has no
-// types, so it cannot tell `Wrap(Err2)` (test the payload for the
-// payload-less variant `Err2`) from `Wrap(x)` (bind the payload). It read
-// every such slot as a binder, so `Wrap(Err2)` matched EVERY `Wrap` and
-// returned the wrong answer with no diagnostic. The nested spelling that
-// works is the empty parens, `Wrap(Err2())`, so the collision is reported
-// here — where the slot's type is known — pointing at it.
 func TestPayloadlessVariantNameAsPayloadBinderIsRejected(t *testing.T) {
 	const decls = `enum Res { Ok2(i32), Err2 }
 enum Nest { Wrap(Res), Bare }
@@ -9613,12 +7820,6 @@ enum Two { Pair(Res, i32), Nil }
   match (t) { Pair(Err2, k) => { return k; }, _ => { return 1; } }
   return 0;
 }`,
-		// Merged sibling: when another arm of the SAME outer variant nests,
-		// the desugar folds this one into the inner match as a wildcard plus
-		// a synthesised `let Err2 = __nest0;`, so it is no longer a payload
-		// binding by the time the checker runs. It reaches the rule through
-		// ast.MatchArm.SlotBinderName instead. Before that it returned 9 for
-		// `Wrap(Third)`.
 		"merged sibling of a nested arm": `function f(w: Nest): i32 {
   match (w) {
     Wrap(Ok2(n)) => { return n; },
@@ -9665,7 +7866,6 @@ enum Two { Pair(Res, i32), Nil }
   match (t) { Pair(r, k) => { return match (r) { Ok2(n) => n + k, Err2 => k }; }, Nil => { return 0; } }
   return 0;
 }`,
-		// `Bare` is payload-less, but of Nest — not of the slot's enum Res.
 		"variant of another enum": `function f(w: Nest): i32 {
   match (w) { Wrap(Bare) => { return 1; }, Bare => { return 2; } }
   return 0;
@@ -9680,8 +7880,6 @@ enum Two { Pair(Res, i32), Nil }
 	}
 }
 
-// firstErrCode reports the code of the first checker error in err, whether
-// err is a single *Error or a diag.Errors aggregate.
 func firstErrCode(err error) string {
 	var errs diag.Errors
 	if errors.As(err, &errs) {
@@ -9700,25 +7898,7 @@ func firstErrCode(err error) string {
 	return ""
 }
 
-// A rejected method declaration reports its own error and NOTHING ELSE.
-//
-// The dup check rejects the second declaration and moves on, but the losing
-// FuncDecl's body is still walked. Its receiver used to be left un-hoisted —
-// the `Params = append([]ast.Param{*fn.Receiver}, ...)` rewrite sits after the
-// `continue` — so every `self` in that body resolved to nothing and the walk
-// added `E001: undefined identifier "self"` on top of the real error.
-//
-// That second diagnostic is worse than noise when the loser is a stdlib impl:
-// it cites a file the program never imported, at a line the reader cannot act
-// on. Both surviving rejections take that path, so both are pinned here: the
-// same trait declaring one method twice (E006), and an inherent method
-// colliding with a trait-provided one (E074). Two DIFFERENT traits providing
-// one name is no longer rejected at all (#6931).
 func TestRejectedMethodReportsOneError(t *testing.T) {
-	// The LOSING declaration's receiver must be spelled `self` for the
-	// cascade to be visible: that is the identifier the un-hoisted body
-	// fails to resolve. Source order decides which one loses, so the impl
-	// method comes last in both cases.
 	for name, src := range map[string]string{
 		"same trait twice": `trait A { function add(self: Self, n: i32): i32; }
 impl A for i32 { function add(self: Self, n: i32): i32 { return self - n; } }
@@ -9740,20 +7920,9 @@ function main(): i32 { return 0; }`,
 	}
 }
 
-// TestPayloadlessVariantNameAsTupleElemIsRejected covers the same hazard as
-// TestPayloadlessVariantNameAsPayloadBinderIsRejected in a second position: a
-// tuple ELEMENT spelled with a payload-less variant's name. It parses as a
-// binder, so the arm matches every value of that element rather than testing
-// the tag the spelling suggests.
-//
-// With a later arm present, E026 already caught it as collateral ("a preceding
-// arm matches every value"). As the only arm it was silent — `(B, y)` matched
-// `A(5)` and returned 102 — so the diagnostic has to name the cause, not the
-// downstream unreachability.
 func TestPayloadlessVariantNameAsTupleElemIsRejected(t *testing.T) {
 	const decls = "enum E { A(i32), B }\n"
 	bad := map[string]string{
-		// The silent case: irrefutable AND exhaustive, so nothing else fired.
 		"only arm, statement match": `function f(t: (E, i32)): i32 {
   match (t) { (B, y) => { return 100 + y; } }
   return 0;
@@ -9777,9 +7946,6 @@ func TestPayloadlessVariantNameAsTupleElemIsRejected(t *testing.T) {
 			if code := firstErrCode(err); code != "E015" {
 				t.Errorf("code = %q, want E015: %v", code, err)
 			}
-			// The cure the message names has to be a spelling that works —
-			// `(B(), y)` was itself a parse error until tuple elements
-			// accepted variant sub-patterns.
 			for _, want := range []string{"payload-less variant of enum E", "matches every value", "write `B()`"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("want %q in:\n%v", want, err)
@@ -9797,13 +7963,10 @@ func TestPayloadlessVariantNameAsTupleElemIsRejected(t *testing.T) {
   match (t) { (_, y) => { return y; } }
   return 0;
 }`,
-		// `A` is a variant of E but carries a payload, so a bare `A` is an
-		// ordinary binder with no misleading spelling.
 		"variant with a payload": `function f(t: (E, i32)): i32 {
   match (t) { (A, y) => { return y; } }
   return 0;
 }`,
-		// `B` is payload-less, but the element it names is an i32, not E.
 		"name collides on a non-enum element": `function f(t: (i32, i32)): i32 {
   match (t) { (B, y) => { return B + y; } }
   return 0;
@@ -9818,10 +7981,6 @@ func TestPayloadlessVariantNameAsTupleElemIsRejected(t *testing.T) {
 	}
 }
 
-// TestNestedTuplePatternChecks covers the nested tuple element `(a, (b, c))`:
-// the element's own type must be a tuple of the matching arity, every element
-// rule then applies recursively at that depth, and the nested elements decide
-// the arm's refutability.
 func TestNestedTuplePatternChecks(t *testing.T) {
 	const decls = "enum E { A(i32), B }\n"
 	bad := map[string]struct{ src, code string }{
@@ -9841,8 +8000,6 @@ func TestNestedTuplePatternChecks(t *testing.T) {
   match (t) { (a, (a, c)) => { return c; } }
   return 0;
 }`, "E013"},
-		// A nested literal is refutable, so the arm cannot make the match
-		// exhaustive on its own — the same rule a top-level literal follows.
 		"nested literal needs a wildcard arm": {`function f(t: (i32, (i32, i32))): i32 {
   match (t) { (a, (1, c)) => { return a + c; } }
   return 0;
@@ -9865,7 +8022,6 @@ func TestNestedTuplePatternChecks(t *testing.T) {
 	}
 
 	ok := map[string]string{
-		// All-binder nesting is irrefutable, so it needs no wildcard arm.
 		"nested binders are irrefutable": `function f(t: (i32, (i32, i32))): i32 {
   match (t) { (a, (b, c)) => { return a + b + c; } }
   return 0;
@@ -9896,8 +8052,6 @@ func TestNestedTuplePatternChecks(t *testing.T) {
 	}
 }
 
-// A nested destructure position types under the same rules as the top level:
-// each level is a complete destructure of the level above's binder.
 func TestNestedTupleDestructureChecks(t *testing.T) {
 	bad := map[string]struct{ src, code string }{
 		"inner position is not a tuple": {`function f(t: (i32, i32)): i32 {
@@ -9938,8 +8092,6 @@ func TestNestedTupleDestructureChecks(t *testing.T) {
   let ((a, b), (c, d)) = t;
   return a + b + c + d;
 }`,
-		// Every level shares the statement's source position, so the discards
-		// and the hidden per-level temps both need naming that survives it.
 		"discards at two levels": `function f(t: (i32, (i32, i32))): i32 {
   let (_, (_, c)) = t;
   return c;
@@ -9965,8 +8117,6 @@ func TestNestedTupleDestructureChecks(t *testing.T) {
 	}
 }
 
-// A payload slot carrying a sub-pattern types under the element rules, so a
-// mismatch inside a payload draws the same code it would draw at top level.
 func TestTupleVariantPayloadSubPatternChecks(t *testing.T) {
 	const decls = "enum Inner { Ok2(i32), Err2(i32) }\nenum Outer { A(Inner), B }\nenum Wrap { W((i32, i32)), Z(i32) }\n"
 	bad := map[string]struct{ src, code string }{
@@ -9990,8 +8140,6 @@ func TestTupleVariantPayloadSubPatternChecks(t *testing.T) {
   match (t) { (A(Ok2(y)), y) => { return y; }, _ => { return 0; } }
   return 0;
 }`, "E013"},
-		// A payload sub-pattern is refutable at every depth, so the arm cannot
-		// make the match exhaustive on its own.
 		"payload sub-pattern needs a wildcard arm": {`function f(t: (Outer, i32)): i32 {
   match (t) { (A(Ok2(n)), y) => { return n + y; } }
   return 0;
@@ -10014,9 +8162,6 @@ func TestTupleVariantPayloadSubPatternChecks(t *testing.T) {
   match (t) { (A(Ok2(n)), y) => { return n + y; }, _ => { return 0; } }
   return 0;
 }`,
-		// Two arms sharing an outer variant but differing inside its payload:
-		// the tuple pattern stays flat, so the second is reached when the
-		// first's payload test fails.
 		"sibling arms differ inside the payload": `function f(t: (Outer, i32)): i32 {
   match (t) { (A(Ok2(n)), y) => { return n + y; }, (A(Err2(n)), y) => { return n - y; }, _ => { return 0; } }
   return 0;
@@ -10047,10 +8192,6 @@ func TestTupleVariantPayloadSubPatternChecks(t *testing.T) {
 	}
 }
 
-// TestTupleElemVariantPatternChecks covers the variant sub-pattern element
-// `(A(x), y)`: payload arity, tag/type agreement and binder scoping follow the
-// same rules an arm-position `A(x) => …` follows, because both route through
-// resolveVariantBindings.
 func TestTupleElemVariantPatternChecks(t *testing.T) {
 	const decls = "enum E { A(i32), B, C(i32, string) }\n"
 	bad := map[string]struct{ src, code string }{
@@ -10070,7 +8211,6 @@ func TestTupleElemVariantPatternChecks(t *testing.T) {
   match (t) { (A(x), x) => { return x; }, _ => { return 0; } }
   return 0;
 }`, "E013"},
-		// A variant element is refutable, so it cannot make the match exhaustive.
 		"no wildcard arm": {`function f(t: (E, i32)): i32 {
   match (t) { (A(x), y) => { return x + y; } }
   return 0;
@@ -10119,16 +8259,6 @@ func TestTupleElemVariantPatternChecks(t *testing.T) {
 	}
 }
 
-// A `loop` / `while (true)` was treated as diverging whether or not it
-// could break. That is the opposite of conservative: treating a breakable
-// loop as divergent ACCEPTS programs that fall through (#8447). Three
-// rules read the predicate, and all three broke — E052 let a value fall
-// off the end, a `never`-typed block initialised a string from garbage,
-// and `let … else` left the pattern's bindings uninitialised, which is
-// memory-unsafe rather than merely wrong.
-//
-// The two predicates also disagreed with each other on `while (true) {
-// break; }`, which is how the gap survived; they share the rule now.
 func TestBreakableLoopDoesNotDiverge(t *testing.T) {
 	rejected := []struct{ name, src string }{
 		{"value-falls-off-the-end", `function f(n: i32): i32 {
@@ -10165,9 +8295,6 @@ func TestBreakableLoopDoesNotDiverge(t *testing.T) {
 	}
 }
 
-// The other half: a loop that genuinely cannot break still diverges, and
-// a break belonging to an INNER loop must not make the outer one
-// fall-through. `todo;` desugars to `loop { … }` and depends on this.
 func TestNonBreakingLoopStillDiverges(t *testing.T) {
 	accepted := []struct{ name, src string }{
 		{"bare-loop", `function f(): i32 { loop { let x = 1; } }`},
@@ -10195,9 +8322,6 @@ func TestNonBreakingLoopStillDiverges(t *testing.T) {
 				let x: i32 = g();
 			}
 		}`},
-		// The same two exclusions hold inside a block expression: a break
-		// that belongs to a nested loop, or to a lambda's own loop, does not
-		// make the outer loop fall through.
 		{"inner-loop-break-inside-block-expr", `function f(): i32 {
 			loop {
 				let z: i32 = { while (true) { break; } 1 };
@@ -10218,13 +8342,6 @@ func TestNonBreakingLoopStillDiverges(t *testing.T) {
 	}
 }
 
-// A `break` inside a block-, `if`- or `match`-expression targets the
-// enclosing loop like any other — the lowering inlines the block — but
-// loopCanBreak walked statements only, so it never saw one there (#8562).
-// The loop was still reported as diverging, E052 stayed silent, and an
-// `i32` function fell off the end returning garbage. Every case anchors
-// E052 at the function declaration, which is where the missing return is
-// reported.
 func TestBreakInExpressionPositionDoesNotDiverge(t *testing.T) {
 	rejected := []struct{ name, src string }{
 		{"block-expr", `function f(): i32 {
@@ -10252,8 +8369,6 @@ func TestBreakInExpressionPositionDoesNotDiverge(t *testing.T) {
 				let z: i32 = { break; 1 };
 			}
 		}`},
-		// A nested loop's condition runs in the OUTER loop's context, so a
-		// break there leaves the outer loop.
 		{"break-in-nested-while-condition", `function f(): i32 {
 			loop {
 				while ({ break; true }) { }
@@ -10277,8 +8392,6 @@ func TestBreakInExpressionPositionDoesNotDiverge(t *testing.T) {
 	}
 }
 
-// errorWithCode returns the first `code`-coded checker error in err, which
-// may be a single *Error or a diag.Errors list, or nil when there is none.
 func errorWithCode(err error, code string) *Error {
 	var errs diag.Errors
 	if !errors.As(err, &errs) {
@@ -10293,25 +8406,18 @@ func errorWithCode(err error, code string) *Error {
 	return nil
 }
 
-// TestMapIterEscapeRejected: E065 for a MapIter (#9920). A cursor reads its
-// map's columns through a raw pointer, so returning one over a map the
-// function owns hands the caller freed storage. A cursor over a parameter, or
-// a parameter's field, is anchored to the caller's map.
 func TestMapIterEscapeRejected(t *testing.T) {
 	const decls = "struct B { m: Map[i32, i32] }\n"
 	for _, src := range []string{
 		`function f(): MapIter[i32, i32] { let m: Map[i32, i32] = map_new(4); m = m.insert(1, 2); return m.iter(); }`,
 		`function f(): MapIter[i32, i32] { let m: Map[i32, i32] = map_new(4); let it = m.iter(); return it; }`,
 		`function f(): MapIter[i32, i32][] { let m: Map[i32, i32] = map_new(4); return [m.iter()]; }`,
-		// A shadowing declaration in an inner block must not stand in for
-		// the outer binding the return names.
 		`function f(m: Map[i32, i32]): MapIter[i32, i32] {
 	let mm: Map[i32, i32] = map_new(4);
 	let it: MapIter[i32, i32] = mm.iter();
 	if (m.len() > 0) { let it2: MapIter[i32, i32] = m.iter(); let it: MapIter[i32, i32] = it2; }
 	return it;
 }`,
-		// Nor may a reassignment on one path hide the local cursor.
 		`function f(m: Map[i32, i32]): MapIter[i32, i32] {
 	let mm: Map[i32, i32] = map_new(4);
 	let it: MapIter[i32, i32] = m.iter();
@@ -10334,11 +8440,6 @@ func TestMapIterEscapeRejected(t *testing.T) {
 	}
 }
 
-// A struct field is a destination like a `let`: `map_new(4)` in a field takes
-// its key and value types from the field, as it does from a `let` annotation,
-// an argument or a return. It drew E043 ("expected Map[i32, i32], got Map")
-// in a field alone, and the call's type arguments, which the lowering reads
-// for the key kind, were never stamped.
 func TestStructFieldMapNewTakesTheFieldType(t *testing.T) {
 	prog, err := parser.Parse(`struct Box { m: Map[string, i32], tag: i32 }
 function main(): i32 { let b: Box = Box { m: map_new(4), tag: 2 }; return b.tag; }`)
@@ -10365,9 +8466,6 @@ function main(): i32 { let b: Box = Box { m: map_new(4), tag: 2 }; return b.tag;
 	}
 }
 
-// A `handle` threading a state is refused on wasm32-wasi-http with one E075 at
-// the handler, and no serve loop is synthesised there, which reached stdlib
-// code the proxy world cannot run; a stateless handler still checks (#11856).
 func TestWasiHTTPStatefulHandlerIsE075(t *testing.T) {
 	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None }`
 	check := func(src string) (*Info, error) {
@@ -10392,7 +8490,6 @@ func TestWasiHTTPStatefulHandlerIsE075(t *testing.T) {
 	if err == nil || strings.Count(err.Error(), "\n")+1 != 1 || !strings.Contains(err.Error(), "this `handle` takes 1 parameter(s)") {
 		t.Errorf("one-parameter handler: got %v, want one E075", err)
 	}
-	// The pairing rule still holds there: it is the self-host's too.
 	_, err = check(`function init(port: i32): i32 { return port; }
 function handle(req: HttpRequest, plat: platform__Host): HttpResponse { return ` + response + `; }`)
 	if err == nil || !strings.Contains(err.Error(), "`init` takes 1 parameters") {
@@ -10400,8 +8497,6 @@ function handle(req: HttpRequest, plat: platform__Host): HttpResponse { return `
 	}
 }
 
-// A bare call of a payloadless variant is calling a value, as in the
-// self-host (#11922). The bare `R` and the qualified `C.R()` construct it.
 func TestPayloadlessVariantCallIsE038(t *testing.T) {
 	for _, tc := range []struct{ src, typ string }{
 		{`enum C { R, B } function main(): i32 { let c: C = R(); return 0; }`, "C"},
@@ -10423,9 +8518,6 @@ func TestPayloadlessVariantCallIsE038(t *testing.T) {
 	}
 }
 
-// A generic trait's default reads the trait's parameter as the impl's trait
-// argument once inherited: a concrete one, the impl's own parameter, and the
-// second of two (#12109). A body annotation names the parameter too.
 func TestGenericTraitDefaultTakesImplArgs(t *testing.T) {
 	src := `trait Holder[T] {
   function get(self: Self): T;
@@ -10448,8 +8540,6 @@ function main(): i32 {
 	}
 }
 
-// A default with its own type parameter, inherited by an impl that declares a
-// parameter of the same name, keeps the two apart.
 func TestTraitDefaultOwnTypeParamRenamedApart(t *testing.T) {
 	src := `trait Iter[T] {
   function next(self: Self): Option[(T, Self)];
@@ -10483,8 +8573,6 @@ function main(): i32 {
 	}
 }
 
-// `Self` written in a default's body is the impl type, as in a hand-written
-// impl method (#12114).
 func TestTraitDefaultBodySelfIsImplType(t *testing.T) {
 	src := `trait Count {
   function step(self: Self): Self;
@@ -10504,9 +8592,6 @@ function main(): i32 {
 	}
 }
 
-// A parametric impl at a tuple trait argument (`It[(i32, T)]`) reads the
-// impl's own parameter inside the tuple as a parameter, in its inherited
-// defaults as in its written methods.
 func TestTupleTraitArgumentReadsImplParams(t *testing.T) {
 	src := `trait It[T] {
   function next(self: Self): Option[(T, Self)];
@@ -10543,10 +8628,6 @@ function main(): i32 {
 	}
 }
 
-// A struct-union member two unions share is E036 at the variable's
-// initialiser, once: the wrap into the annotated union re-checks the member
-// and reports it, and the variable's own E003 stands down rather than
-// printing the nil type the failed wrap handed back.
 func TestAmbiguousUnionMemberVarInitReportsOnce(t *testing.T) {
 	src := `struct Hold { v: i32 }
 	struct Blank { w: i32 }
@@ -10567,8 +8648,6 @@ func TestAmbiguousUnionMemberVarInitReportsOnce(t *testing.T) {
 	}
 }
 
-// A user method named for a retired Map spelling is the user's own, while one
-// named for a builtin Map method redeclares it.
 func TestMapUserMethodBesideBuiltins(t *testing.T) {
 	const has = `import "core/map";
 function (m: Map[string, i32]) has(k: string): boolean { return k.len() > 0; }

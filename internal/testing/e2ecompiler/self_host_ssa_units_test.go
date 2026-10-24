@@ -69,9 +69,6 @@ graph = ssa.SFunc { name: "loop", nparams: 2, nvals: 3, entry: 7, takes_env: fal
 ] };
 `
 
-// A call to `g(borrowed, counted)` returning a fresh array: the counted
-// argument is supplied like a construction operand, the borrowed one is only
-// read, and the result is a unit of this function's own.
 const unitCall = `
 let callee: ssasem.Contract = contract("g", [sa, sa], [2, 3], sa);
 calls = [callee];
@@ -81,8 +78,6 @@ graph = ssa.SFunc { name: "call", nparams: 2, nvals: 4, entry: 7, takes_env: fal
 ] };
 `
 
-// A string constant and a concatenation are units of this function's own,
-// released when dead; a borrowed string parameter returned is retained.
 const unitString = `
 params = [st]; types = [st, st, st]; result = st; modes = [2];
 graph = ssa.SFunc { name: "concat", nparams: 1, nvals: 3, entry: 7, takes_env: false, blocks: [
@@ -90,9 +85,6 @@ graph = ssa.SFunc { name: "concat", nparams: 1, nvals: 3, entry: 7, takes_env: f
 ] };
 `
 
-// An element read that is still in hand when its array is written: the read
-// takes a unit of its own, so the array moves into the write and the tuple
-// built afterwards takes both without a retain.
 const unitHeld = `
 let pt: typeinfo.Type = typeinfo.TypeTuple { elements: [sa, st] };
 params = [sa, st, i32t]; types = [sa, st, i32t, st, sa, pt]; result = pt; modes = [3, 3, 1];
@@ -101,9 +93,6 @@ graph = ssa.SFunc { name: "held", nparams: 3, nvals: 6, entry: 7, takes_env: fal
 ] };
 `
 
-// The same read dying at the write that consumes its array: held as well,
-// a unit of its own moved into the slot, and the array still moves
-// (#11680; before it the read stayed a borrow, retained into the slot).
 const unitHeldDies = `
 params = [sa, i32t]; types = [sa, i32t, st, sa]; result = sa; modes = [3, 1];
 graph = ssa.SFunc { name: "dies", nparams: 2, nvals: 4, entry: 7, takes_env: false, blocks: [
@@ -111,11 +100,6 @@ graph = ssa.SFunc { name: "dies", nparams: 2, nvals: 4, entry: 7, takes_env: fal
 ] };
 `
 
-// `g(xs[i], xs)` with `xs` dead after the call: the element read is lent to
-// the call beside the array it borrows from, so it is held, a unit of its
-// own dropped after the call, and `xs` moves into the counted slot (#11680;
-// before it, `xs` was retained for the borrow and dropped after the call,
-// #10832).
 const unitLentOwner = `
 calls = [contract("g", [st, sa], [2, 3], sa)];
 params = [sa, i32t]; types = [sa, i32t, st, sa]; result = sa; modes = [3, 1];
@@ -124,9 +108,6 @@ graph = ssa.SFunc { name: "lent", nparams: 2, nvals: 4, entry: 7, takes_env: fal
 ] };
 `
 
-// `g(xs[i], xs)` with `xs` read again after the call: the element read stays
-// a borrow of `xs`, which is retained into the counted slot rather than moved
-// in, and dropped at its last read (#10832).
 const unitLentOwnerKept = `
 calls = [contract("g", [st, sa], [2, 3], sa)];
 params = [sa, i32t]; types = [sa, i32t, st, sa, st]; result = sa; modes = [3, 1];
@@ -135,12 +116,6 @@ graph = ssa.SFunc { name: "lentkept", nparams: 2, nvals: 5, entry: 7, takes_env:
 ] };
 `
 
-// A loop phi over a string: the entry operand a borrowed parameter, the back
-// edge a tuple element read off another borrowed parameter. Both lend the
-// value whole, so the phi owns no unit and neither edge supplies one; the
-// return retains what it hands back. Counting the tuple makes the element a
-// part of a unit the frame releases, so the phi owns one and each edge
-// retains into it.
 const unitLentPhi = `
 params = [pair, st, bt]; types = [pair, st, bt, st, st]; result = st; modes = [2, 2, 1];
 graph = ssa.SFunc { name: "lentphi", nparams: 3, nvals: 5, entry: 7, takes_env: false, blocks: [
@@ -155,13 +130,6 @@ type unitCase struct{ name, setup, check, mutate, want string }
 
 func unitCases() []unitCase {
 	base := []unitCase{
-		// The counted tuple's array element is taken at its read (#11203), so
-		// the tuple is released after its other element's read; the array's
-		// own element is taken at ITS read, since nothing reads the array
-		// again, so the array is released there. The string read off that
-		// element is held, a unit of its own, since the chain borrowing it
-		// is consumed after the element's last read: the element is released
-		// at that read and the string at the return, where the chain ends.
 		{"nested-projections", "", `
 if (!p.payloads[2] || !drops(find(p, 7, 7, 0 - 1), [0])) { return 10; }
 if (!p.payloads[3] || !drops(find(p, 7, 3, 0 - 1), [2])) { return 16; }
@@ -463,7 +431,6 @@ func testUnitsIR(t *testing.T, target string) {
 		if err := os.WriteFile(wat, output, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		// wasmtime hands the guest no host variable it is not told to.
 		run = exec.Command(wasmtime, "run", "--env", e2eharness.SelfHostVerify, wat)
 	}
 	got, err := run.CombinedOutput()

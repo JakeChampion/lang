@@ -58,7 +58,6 @@ function globals(s: string): void {
   mutation(s, "movq %rdi, __fern_heap_ptr(%rip)", "", false);
   mutation(s, "movq __fern_heap_ptr(%rip), %rax", "movl __fern_heap_ptr(%rip), %eax", false);
   mutation(s, "movq __fern_heap_ptr(%rip), %rax", "movq __fern_heap_base(%rip), %rax", true);
-  // A post-store reload observes the current end, not its initial zero.
   mutation(s, "movq %rcx, __fern_heap_end(%rip)", "movq %rcx, __fern_heap_end(%rip)\nmovq __fern_heap_end(%rip), %rax\nsubq %rcx, %rax\ncmpq $0, %rax\njne .Lbad_current", true);
   mutation(s, "movq %rcx, __fern_heap_end(%rip)", "movq %rcx, __fern_heap_end(%rip)\nmovq __fern_heap_end(%rip), %rax\ncmpq $0, %rax\njne .Lbad_current", false);
 }

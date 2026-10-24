@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Uniform union with array payloads (E = A(i32[]) | B(i32[])):
-// the branchless uniform path would flat-dec and leak the array
-// buffer, so this steers to variant-plan and frees it per
-// tag-guarded arm. Churned.
+
+
+
+
+
+
+
 import "core/int";
 enum E { A(i32[]), B(i32[]) }
 function mk(n: i32): E { return A([n, n + 1]); }

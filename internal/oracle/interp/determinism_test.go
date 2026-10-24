@@ -1,25 +1,5 @@
 package interp
 
-// Determinism guard for the tree-walking interpreter.
-//
-// The interpreter is the differential oracle: the TestDifferential_* sweeps
-// (internal/testing/e2e) compare every backend's output against the value the
-// interpreter produces for the same source. That comparison is only
-// sound if the interpreter is itself deterministic — if a program's
-// interpreted result or its stdout could vary run-to-run, the oracle
-// would emit spurious backend "mismatches" (or, worse, mask real ones
-// when the oracle happens to drift the same way). So determinism here
-// underpins the whole fuzzing strategy.
-//
-// The interpreter holds program state in Go maps (struct fields,
-// Map values, function/enum tables, environment frames), and map
-// iteration order is randomized — so anything that observes a map in
-// order (printing a struct, iterating a Map, formatting for output)
-// is a place nondeterminism could leak into either the result Value
-// or the captured stdout. These tests run each program in a fresh
-// interpreter several times and assert both the returned value and
-// the stdout bytes are identical across runs.
-
 import (
 	"bytes"
 	"fmt"
@@ -29,11 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// runCapture parses, checks, registers, and runs main in a fresh
-// interpreter, returning main's value rendered as a stable string
-// plus everything written to stdout. A fresh interpreter per call is
-// deliberate: it ensures run-to-run identity comes from deterministic
-// evaluation, not from shared accumulated state.
 func runCapture(t *testing.T, src string) (val string, stdout string) {
 	t.Helper()
 	prog, err := parser.Parse(src)
@@ -56,17 +31,9 @@ func runCapture(t *testing.T, src string) (val string, stdout string) {
 	if err != nil {
 		t.Fatalf("call main: %v\nsrc:\n%s", err, src)
 	}
-	// Render via %v: the Value types are concrete (Number, String,
-	// …) with stable formatting, so this is a deterministic witness
-	// of the result regardless of the underlying Go type.
 	return fmt.Sprintf("%v", v), buf.String()
 }
 
-// determinismMatrix favours the map-backed evaluation paths most
-// exposed to Go map-iteration-order nondeterminism: struct field
-// access, Map insertion/iteration, closures (captured-env frames),
-// and string building from iterated collections. Each is
-// self-contained (defines main, no imports).
 var determinismMatrix = map[string]string{
 	"arithmetic": `
 function main(): i32 {
@@ -123,12 +90,6 @@ function fact(n: i32): i32 {
 function main(): i32 { return fact(6); }`,
 }
 
-// TestInterpDeterministic runs each program several times in fresh
-// interpreters and asserts both the returned value and the stdout
-// bytes match the first run. A failure means interpreter
-// nondeterminism (most likely map-iteration order observed during
-// evaluation or printing) has leaked into the oracle — which would
-// undermine the differential-testing strategy every backend relies on.
 func TestInterpDeterministic(t *testing.T) {
 	for name, src := range determinismMatrix {
 		name, src := name, src

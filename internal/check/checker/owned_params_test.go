@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// Slice A of the owned/consuming-parameter feature: the affine use-after-move
-// analysis (checkOwnedParams, E050). These tests pin the consume/borrow
-// classification, branch + loop handling, and the parser's contextual `own`.
-
 func wantE050(t *testing.T, name, src string) {
 	t.Helper()
 	err := checkSource(t, src)
@@ -27,17 +23,11 @@ func wantOK(t *testing.T, name, src string) {
 	}
 }
 
-// `sink` CONSUMES its argument (`own`), so passing an owned value to it is a
-// move — the consume tests below rely on that. `peek` BORROWS, so passing an
-// owned value to it is a read, not a move (the precise affine model: only an
-// `own` position consumes).
 const ownPrelude = `enum Lst { Cons(i32), Nil }
 function sink(own xs: i32[]): i32 { return xs[0]; }
 function peek(xs: i32[]): i32 { return xs[0]; }
 function lsink(l: Lst): i32 { return 0; }
 `
-
-// --- E050 should FIRE ----------------------------------------------------
 
 func TestOwnedUseAfterCallConsume(t *testing.T) {
 	wantE050(t, "call-then-use", ownPrelude+`
@@ -54,8 +44,6 @@ function f(own xs: i32[]): i32 {
 }`)
 }
 
-// A match that takes a pointer payload out of an owned scrutinee consumes it;
-// one that only tests the tag, or binds scalars, leaves it whole (#9539).
 const ownBoxPrelude = `enum Box { Str(string), Arr(i32[]), Nil }
 function bsink(b: Box): i32 { return 0; }
 `
@@ -100,8 +88,6 @@ function f(own xs: i32[]): i32 {
 }
 
 func TestOwnedConsumeInThenUsedAfterMerge(t *testing.T) {
-	// then-branch consumes xs but does NOT diverge → after the if, xs may be
-	// moved, so the later use is rejected.
 	wantE050(t, "consume-in-nondiverging-then", ownPrelude+`
 function f(own xs: i32[], c: boolean): i32 {
     let acc: i32 = 0;
@@ -111,8 +97,6 @@ function f(own xs: i32[], c: boolean): i32 {
     return acc + sink(xs);   // E050 on the path where the then-branch ran
 }`)
 }
-
-// --- E050 should NOT fire ------------------------------------------------
 
 func TestOwnedBorrowThenConsumeOK(t *testing.T) {
 	wantOK(t, "borrow*-then-consume", ownPrelude+`
@@ -124,8 +108,6 @@ function f(own xs: i32[]): i32 {
 }
 
 func TestOwnedConsumeInBothDivergingBranchesOK(t *testing.T) {
-	// Each branch consumes xs exactly once and diverges, so there is no path
-	// that uses xs twice.
 	wantOK(t, "diverging-branches", ownPrelude+`
 function f(own xs: i32[], c: boolean): i32 {
     if (c) {
@@ -151,12 +133,6 @@ function f(own xs: i32[]): i32 {
 }`)
 }
 
-// Precise affine model: passing an owned value to a BORROWED parameter is a
-// read, not a move — so it can be passed to a borrowing helper repeatedly and
-// still consumed at the end. (Strict-affine over-approximation would have
-// flagged the second `peek(xs)` as a use-after-move.) This is the idiom the
-// self-host's `own`-threaded builders rely on (`contains_str(out, x)` then
-// `out = out.append(x)`).
 func TestOwnedBorrowArgIsNotConsumeOK(t *testing.T) {
 	wantOK(t, "borrow-arg-not-consume", ownPrelude+`
 function f(own xs: i32[]): i32 {
@@ -166,11 +142,6 @@ function f(own xs: i32[]): i32 {
 }`)
 }
 
-// Read-form borrows: an `own` value READ through a slice, a comparison, a cast,
-// etc. is borrowed (not consumed), so it can still be consumed at the end. The
-// affine walk now classifies those read positions as borrows; without it each
-// was a false use-after-move E050 (the gap that blocked tracking owned locals,
-// which are read through casts / comparisons / slices pervasively).
 func TestOwnedReadFormsAreBorrows(t *testing.T) {
 	wantOK(t, "slice-and-compare-reads", ownPrelude+`
 function takesl(s: [i32]): i32 { return s.len(); }
@@ -189,8 +160,6 @@ function f(own s: string): i32 {
     return t + slen(s);
 }`)
 }
-
-// --- E051: call-site ownership guard -------------------------------------
 
 const ownConsumer = `enum Box { Wrap(i32[]) }
 struct Pair { items: i32[], n: i32 }
@@ -223,8 +192,6 @@ function f(p: Pair): i32 {
 }`)
 }
 
-// A local handed over where it dies is a move (#9541): nothing reads the
-// binding again. The admission is CallArgDeaths', the analysis the IR moves by.
 func TestOwnGuardAllowsLocalAtLastUse(t *testing.T) {
 	for _, tc := range []struct{ name, body string }{
 		{"returned-call", `
@@ -285,7 +252,6 @@ function f(): i32 {
 	}
 }
 
-// Every way the binding can still be read after the call keeps the refusal.
 func TestOwnGuardRejectsLocalStillLive(t *testing.T) {
 	for _, tc := range []struct{ name, body string }{
 		{"read-again", `
@@ -374,14 +340,6 @@ function f(): i32 {
 }`)
 }
 
-// A parameter or local that shadows an `own` function's name is a function
-// VALUE. Its consuming positions come from its own TYPE, not from the global
-// declaration it happens to share a name with — the stdlib's
-// `filter(xs, keep)` was being checked against a user's `keep(own …)` and
-// refusing to compile (#9532).
-// Every argument here is a POINTER, deliberately: a scalar argument is excused
-// by `scalarArgs` regardless of the callee, so a scalar case passes whether or
-// not the shadowing rule works and proves nothing.
 func TestOwnGuardIgnoresShadowingParameter(t *testing.T) {
 	wantOK(t, "shadowing-param", ownConsumer+`
 function filterish(rows: i32[][], consume: (i32[]) => i32): i32 {
@@ -408,10 +366,6 @@ function f(xs: i32[]): i32 {
 }`)
 }
 
-// The consume classifier reads the same table, so a shadowed callee must not
-// mark its argument MOVED either — `xs` is still live on the next line. This is
-// the E050 half of the same bug, and it fires on the exact #9532 shape once the
-// argument is an owned name rather than a scalar.
 func TestOwnGuardShadowedCalleeDoesNotConsume(t *testing.T) {
 	wantOK(t, "shadowing-param-no-consume", ownConsumer+`
 function f(own xs: i32[], consume: (i32[]) => i32): i32 {
@@ -420,7 +374,6 @@ function f(own xs: i32[], consume: (i32[]) => i32): i32 {
 }`)
 }
 
-// A `for` variable shadows for its body, like a parameter or a local.
 func TestOwnGuardIgnoresShadowingLoopVariable(t *testing.T) {
 	wantOK(t, "shadowing-loop-var", ownConsumer+`
 function f(fns: ((i32[]) => i32)[], xs: i32[]): i32 {
@@ -430,8 +383,6 @@ function f(fns: ((i32[]) => i32)[], xs: i32[]): i32 {
 }`)
 }
 
-// A local shadows from its declaration to the end of its block — not before it,
-// and not outside it.
 func TestOwnGuardLocalShadowsOnlyAfterItsDeclaration(t *testing.T) {
 	wantE051(t, "local-shadow-after-call", ownConsumer+`
 function f(xs: i32[]): i32 {
@@ -450,8 +401,6 @@ function f(xs: i32[], c: boolean): i32 {
 }`)
 }
 
-// A match binder shadows for its arm whether or not the scrutinee is owned —
-// the binding exists either way; only the ownership transfer depends on it.
 func TestOwnGuardArmBinderShadowsOnABorrowedScrutinee(t *testing.T) {
 	wantOK(t, "arm-binder-borrowed-scrutinee", `enum Box { B((i32[]) => i32) }
 function consume(own xs: i32[]): i32 { return xs[0]; }
@@ -462,9 +411,6 @@ function f(b: Box, xs: i32[]): i32 {
 }`)
 }
 
-// A binding shadows inside ITS OWN scope. A lambda parameter elsewhere in the
-// function does not make the real call to the global own-func safe, and a
-// whole-function set of shadowed names would silence it.
 func TestOwnGuardShadowElsewhereStillGuardsRealCall(t *testing.T) {
 	wantE051(t, "shadow-elsewhere", ownConsumer+`
 function apply(g: ((i32[]) => i32), zs: i32[]): i32 { return g(zs); }
@@ -474,7 +420,6 @@ function f(xs: i32[]): i32 {
 }`)
 }
 
-// The shadowing rule must not disarm the guard for the real function.
 func TestOwnGuardStillFiresForTheRealFunction(t *testing.T) {
 	wantE051(t, "unshadowed-still-guarded", ownConsumer+`
 function g(xs: i32[]): i32 {
@@ -482,9 +427,6 @@ function g(xs: i32[]): i32 {
 }`)
 }
 
-// A payload-less variant is spelled as a bare name, so it arrives as an Ident
-// where `Wrap([1, 2])` above arrives as a Call. Both are fresh enum values, and
-// the guard admitted only the Call shape (#9517).
 func TestOwnGuardAllowsPayloadlessVariant(t *testing.T) {
 	wantOK(t, "payloadless-variant-arg", `enum Extent { Empty, Wide(i32[]) }
 function eat(own sp: Extent): i32 { return 0; }
@@ -493,8 +435,6 @@ function f(): i32 {
 }`)
 }
 
-// The qualified spelling stays a FieldAccess rather than being rewritten to an
-// Ident, so it needs its own admission.
 func TestOwnGuardAllowsQualifiedPayloadlessVariant(t *testing.T) {
 	wantOK(t, "qualified-payloadless-variant-arg", `enum Extent { Empty, Wide(i32[]) }
 function eat(own sp: Extent): i32 { return 0; }
@@ -503,8 +443,6 @@ function f(): i32 {
 }`)
 }
 
-// The admission is for VARIANTS, not for any bare name that happens to match a
-// declaration: a local of enum type read after the call is still a borrow.
 func TestOwnGuardRejectsEnumLocal(t *testing.T) {
 	wantE051(t, "enum-local-arg", `enum Extent { Empty, Wide(i32[]) }
 function eat(own sp: Extent): i32 { return 0; }
@@ -516,8 +454,6 @@ function f(): i32 {
 }`)
 }
 
-// The positive side of the same contract: a local of enum type at its last use
-// is a move (#9541).
 func TestOwnGuardAllowsEnumLocalAtLastUse(t *testing.T) {
 	wantOK(t, "enum-local-last-use", `enum Extent { Empty, Wide(i32[]) }
 function eat(own sp: Extent): i32 { return 0; }
@@ -527,11 +463,6 @@ function f(): i32 {
 }`)
 }
 
-// A call to a function whose EVERY pointer parameter is `own` returns a
-// freshly-owned result (the callee consumed each pointer input, so it can't
-// hand back a borrowed one) — so it passes the E051 transfer guard. This is
-// the self-host `consume(build(own ops, s))` shape: a threaded `own` array
-// param grown and returned is owned by the caller, transferable onward.
 func TestOwnGuardAllowsAllOwnPtrParamCallResult(t *testing.T) {
 	wantOK(t, "all-own-ptr-param-result", ownConsumer+`
 function build(own ops: i32[], x: i32): i32[] { return ops.append(x); }
@@ -540,9 +471,6 @@ function f(): i32 {
 }`)
 }
 
-// The dual: a function with a BORROWED pointer parameter could return it
-// (`id(xs) -> xs`), so its result is NOT provably owned — transferring it stays
-// E051.
 func TestOwnGuardRejectsBorrowedPtrParamCallResult(t *testing.T) {
 	wantE051(t, "borrowed-ptr-param-result", ownConsumer+`
 function pick(a: i32[], b: i32[]): i32[] { return a; }
@@ -551,10 +479,7 @@ function f(): i32 {
 }`)
 }
 
-// --- parser: contextual `own` --------------------------------------------
-
 func TestParamNamedOwnStillWorks(t *testing.T) {
-	// `own: i32` is a param NAMED own (not a modifier — the next token is `:`).
 	wantOK(t, "param-named-own", `
 function f(own: i32): i32 { return own + 1; }
 function main(): i32 { return f(41); }`)
@@ -567,14 +492,6 @@ function main(): i32 { return f([1, 2]); }`)
 }
 
 func TestOwnedSiblingMatchBindingNameReuseOK(t *testing.T) {
-	// Two sibling matches on OWNED scrutinees whose arm bindings share a name.
-	// The first arm consumes its binding; that must NOT make the second match's
-	// same-named binding look already-moved. Regression: the arm-local binding's
-	// consumed-state leaked through the non-diverging join into the parent set,
-	// so the second `e` was flagged E050. An `own` func is present so the
-	// analysis is active (mirrors a program that imports core/cmp, whose `own`
-	// in-place sorts now activate the guard for every function). Arms must NOT
-	// diverge (no `return`) so the buggy join path is exercised.
 	wantOK(t, "sibling-match-binding-name-reuse", ownConsumer+`
 function mkBox(): Box { return Wrap([1, 2]); }
 function f(): i32 {
@@ -585,29 +502,16 @@ function f(): i32 {
 }`)
 }
 
-// --- consuming methods (`own self`) ---------------------------------------
-
 func TestConsumingMethodsAccepted(t *testing.T) {
-	// An inherent (receiver-clause) consuming method — the recursive `map`
-	// shape. `own self` parses, the receiver hoists to an `own` Params[0], and
-	// the method-call transfer makes `t.inc()` consume the owned binding `t`.
 	wantOK(t, "inherent-own-self", `enum List { Cons(i32, List), Nil }
 function (own xs: List) inc(): List { match (xs) { Cons(h, t) => { return Cons(h + 1, t.inc()); }, Nil => { return Nil; } } }
 function main(): i32 { let ys: List = Cons(1, Nil).inc(); return 0; }`)
 
-	// A consuming method's receiver still goes through the E051 call-site guard:
-	// a BORROWED receiver can't be transferred.
 	wantE051(t, "borrowed-receiver-to-consuming-method", `enum List { Cons(i32, List), Nil }
 function (own xs: List) inc(): List { match (xs) { Cons(h, t) => { return Cons(h + 1, t.inc()); }, Nil => { return Nil; } } }
 function f(borrowed: List): i32 { let ys: List = borrowed.inc(); return 0; }`)
 }
 
-// --- E051 self-reassign move admission (#4873 step 0) --------------------
-
-// A LOCAL passed exactly once, directly, in an `own` position of its own
-// reassignment's RHS is a transfer: the old binding dies at the
-// assignment, so E051 admits it (SelfReassignOwnMoveArg — the IR's
-// callConsumesIdent overwrite-dec skip pairs with the same shape).
 func TestOwnGuardAllowsSelfReassignMove(t *testing.T) {
 	if err := checkSource(t, ownConsumer+`
 struct B { items: i32[] }
@@ -622,8 +526,6 @@ function f(): i32 {
 	}
 }
 
-// A SECOND read of the local anywhere in the same RHS would observe the
-// consumed value — exactly-once is required, so this stays E051.
 func TestOwnGuardRejectsSelfReassignSecondRead(t *testing.T) {
 	wantE051(t, "self-reassign-second-read", ownConsumer+`
 struct B { items: i32[] }
@@ -634,13 +536,6 @@ function f(): i32 {
     return a.items.len();
 }`)
 }
-
-// --- nested function bodies (#7452) --------------------------------------
-//
-// A lambda body and a local function body are STATEMENTS. The walk that
-// reaches them as one flat expression sees the calls but not the assignments
-// around them, so the self-reassign admission — a statement-level fact — went
-// missing exactly one nesting level in.
 
 func TestOwnGuardAllowsSelfReassignMoveInLambda(t *testing.T) {
 	wantOK(t, "self-reassign-in-lambda", ownConsumer+`
@@ -671,8 +566,6 @@ function f(): i32 {
 }`)
 }
 
-// A local function's OWN `own` parameter is owned inside its body, so it may
-// be transferred onward just like a top-level one's.
 func TestOwnGuardAllowsLocalFuncOwnParamTransfer(t *testing.T) {
 	wantOK(t, "local-func-own-param-transfer", ownConsumer+`
 function f(): i32 {
@@ -681,8 +574,6 @@ function f(): i32 {
 }`)
 }
 
-// The rejections still apply inside a nested body — reaching the statements
-// is not the same as exempting them.
 func TestOwnGuardRejectsKeptAliveLocalInLambda(t *testing.T) {
 	wantE051(t, "kept-alive-local-in-lambda", ownConsumer+`
 struct B { items: i32[] }
@@ -708,9 +599,6 @@ function f(own xs: i32[]): i32 {
 }`)
 }
 
-// A nested parameter SHADOWS an outer owned name it repeats: the inner `xs` is
-// a borrowed lambda parameter, so consuming it neither transfers (E051 stands)
-// nor marks the outer `xs` moved.
 func TestOwnedNestedParamShadowsOuter(t *testing.T) {
 	src := ownPrelude + `
 function f(own xs: i32[]): i32 {
@@ -728,13 +616,6 @@ function f(own xs: i32[]): i32 {
 		t.Errorf("shadowed-nested-param: the outer owned xs is untouched by the shadowing parameter, got: %v", err)
 	}
 }
-
-// --- E051 superseded-field move admission (#8186) ------------------------
-//
-// `a = S { ...a, f: g(.., a.f, ..) }` with `a` an `own` param or a local: the
-// store supersedes the one field the call consumes, and nothing can read it
-// in between, so the field transfers (SupersededFieldOwnMoveArgs — the IR's
-// computeFieldOwnMoves keys on the same shape).
 
 const fieldMovePrelude = `struct Cfi { rules: i32[], n: i32 }
 struct Asm { code: i32[], cfi: Cfi }
@@ -766,7 +647,6 @@ function step(own a: Asm, v: i32): Asm {
 }`)
 }
 
-// A BORROWED base keeps its field for the caller — still E051.
 func TestOwnGuardRejectsSupersededFieldMoveOnBorrowedBase(t *testing.T) {
 	wantE051(t, "field-move-borrowed-base", fieldMovePrelude+`
 function step(a: Asm, v: i32): Asm {
@@ -779,8 +659,6 @@ function step(a: Asm, v: i32): Asm {
 }`)
 }
 
-// The base passed to the callee by a SECOND route would read the emptied
-// field slot — still E051.
 func TestOwnGuardRejectsSupersededFieldMoveWithAliasedBase(t *testing.T) {
 	wantE051(t, "field-move-base-also-passed", fieldMovePrelude+`
 function record2(own s: Cfi, a: Asm): Cfi { return Cfi { rules: s.rules.append(a.code.len()), n: s.n + 1 }; }
@@ -790,8 +668,6 @@ function step(own a: Asm): Asm {
 }`)
 }
 
-// A second read of the field anywhere in the literal observes the moved
-// value — still E051.
 func TestOwnGuardRejectsSupersededFieldMoveSecondRead(t *testing.T) {
 	wantE051(t, "field-move-second-read", fieldMovePrelude+`
 function step(own a: Asm): Asm {
@@ -800,8 +676,6 @@ function step(own a: Asm): Asm {
 }`)
 }
 
-// Storing the call's result into a DIFFERENT field leaves the moved field
-// carried by the spread — still E051.
 func TestOwnGuardRejectsSupersededFieldMoveIntoOtherField(t *testing.T) {
 	wantE051(t, "field-move-other-field", `struct Cfi { rules: i32[], n: i32 }
 struct Asm { code: i32[], cfi: Cfi, cfi2: Cfi }
@@ -812,8 +686,6 @@ function step(own a: Asm): Asm {
 }`)
 }
 
-// Binding the literal to a DIFFERENT name keeps the old base alive — still
-// E051.
 func TestOwnGuardRejectsSupersededFieldMoveKeptAliveBase(t *testing.T) {
 	wantE051(t, "field-move-kept-alive-base", fieldMovePrelude+`
 function build(): i32 {
@@ -823,8 +695,6 @@ function build(): i32 {
 }`)
 }
 
-// A nested function's borrowed parameter shadows an outer local of the same
-// name for the body's extent — still E051 inside it.
 func TestOwnGuardRejectsSupersededFieldMoveOnShadowingBorrowedParam(t *testing.T) {
 	wantE051(t, "field-move-nested-borrowed-param", fieldMovePrelude+`
 function build(): i32 {
@@ -836,11 +706,6 @@ function build(): i32 {
     return inner(a).cfi.n;
 }`)
 }
-
-// A call's result is owned when the callee cannot have borrowed it from the
-// caller. Which functions those are is inferred from their returns, so a
-// factory that takes a reference and builds something new is admitted where
-// reading its parameter list alone refused it (#9538).
 
 func TestOwnGuardAcceptsFreshResultFromABorrowingFactory(t *testing.T) {
 	wantOK(t, "fresh-from-borrowing-factory", ownConsumer+`
@@ -882,8 +747,6 @@ function relay(ys: i32[]): i32[] { return passthru(ys); }
 function main(): i32 { return consume(relay([1, 2])); }`)
 }
 
-// A chain that ends in a construction is still fresh, however many borrowing
-// signatures it passes through.
 func TestOwnGuardAcceptsAFreshResultThroughACallChain(t *testing.T) {
 	wantOK(t, "fresh-through-a-chain", ownConsumer+`
 function sized(xs: i32[]): i32[] { return [xs.len()]; }
@@ -891,8 +754,6 @@ function relay(ys: i32[]): i32[] { return sized(ys); }
 function main(): i32 { return consume(relay([1, 2])); }`)
 }
 
-// A cast makes a new scalar, so passing one to a method that can hand its
-// receiver back leaves the result as fresh as the receiver (#11816).
 func TestOwnGuardAcceptsAFreshResultWrittenWithACast(t *testing.T) {
 	wantOK(t, "fresh-written-with-a-cast", ownConsumer+`
 function widen(xs: i64[]): i32[] {
@@ -903,8 +764,6 @@ function widen(xs: i64[]): i32[] {
 function main(): i32 { return consume(widen([1, 2])); }`)
 }
 
-// An element read out of a view of values is a copy, so an accumulator that
-// appends it stays fresh (#11877).
 func TestOwnGuardAcceptsAResultBuiltFromAViewsValues(t *testing.T) {
 	wantOK(t, "built-from-a-views-values", ownConsumer+`
 function bytes(own out: i32[], b: [i32]): i32[] {
@@ -915,7 +774,6 @@ function bytes(own out: i32[], b: [i32]): i32[] {
 function main(): i32 { let a: i32[] = [1, 2]; return consume(bytes(bytes([], a), a)); }`)
 }
 
-// ...but an element that is itself a pointer still borrows.
 func TestOwnGuardRejectsAResultHoldingAPointerElement(t *testing.T) {
 	wantE051(t, "holding-a-pointer-element", `function keep(own ys: string[]): i32 { return ys.len(); }
 function firsts(xs: string[]): string[] {
@@ -926,8 +784,6 @@ function firsts(xs: string[]): string[] {
 function main(): i32 { return keep(firsts(["a"])); }`)
 }
 
-// Recursion is seeded clean rather than pessimistically, so a recursive
-// function that returns only constructions is still a fresh owner.
 func TestOwnGuardAcceptsAFreshResultFromARecursiveFunction(t *testing.T) {
 	wantOK(t, "fresh-from-recursion", ownConsumer+`
 function grow(xs: i32[], k: i32): i32[] {
@@ -937,8 +793,6 @@ function grow(xs: i32[], k: i32): i32[] {
 function main(): i32 { return consume(grow([1, 2], 3)); }`)
 }
 
-// ...but a recursive function that can also return its borrowed parameter is
-// marked through the cycle.
 func TestOwnGuardRejectsARecursiveResultThatCanBeTheParameter(t *testing.T) {
 	wantE051(t, "recursive-result-is-the-parameter", ownConsumer+`
 function last(xs: i32[], k: i32): i32[] {
@@ -948,8 +802,6 @@ function last(xs: i32[], k: i32): i32[] {
 function main(): i32 { return consume(last([1, 2], 3)); }`)
 }
 
-// An `own` parameter is not a borrow: the callee took ownership, so threading
-// it out is still a value the caller can transfer.
 func TestOwnGuardAcceptsAThreadedOwnParameter(t *testing.T) {
 	wantOK(t, "threaded-own-parameter", ownConsumer+`
 function thread(own xs: i32[], k: i32): i32[] {
@@ -959,9 +811,6 @@ function thread(own xs: i32[], k: i32): i32[] {
 function main(): i32 { return consume(thread([1, 2], 3)); }`)
 }
 
-// A local built from a literal is as fresh as a call result, so its last use
-// may be an `own` argument in any position, not only the returned call
-// (#10864). A spread literal copies its base's fields and is not admitted.
 func TestOwnGuardAllowsLiteralBuiltLocalAtLastUse(t *testing.T) {
 	prelude := `struct W { d: i64[], tag: string }
 function take(own xs: i64[]): i32 { return xs.len() as i32; }
@@ -997,9 +846,6 @@ function takes(own s: string): i32 { return s.len() as i32; }
 }`)
 }
 
-// A local handed to an `own` parameter and stored to later is dead at the call
-// when only straight-line statements that do not name it stand between
-// (#11093). Control flow, or a read, between the two keeps it live.
 func TestOwnGuardAllowsStoreAfterAGap(t *testing.T) {
 	prelude := `struct Pair { a: i32[], b: boolean[] }
 function step(own xs: i32[], own flags: boolean[]): Pair { return Pair { a: xs, b: flags }; }
@@ -1040,10 +886,6 @@ function take(own flags: boolean[]): i32 { return flags.len(); }
 }`)
 }
 
-// A struct-union member's binding is the scrutinee's own box: owned on an
-// owned scrutinee, bare or through the superseded-field move, and lent on a
-// borrowed one. A member literal returned or stored as its union is wrapped
-// in the member's variant call, and is still the move's literal.
 const memberUnionPrelude = `struct Node { xs: i32[], tag: i32 }
 struct Leaf { v: i32 }
 type Tree = Leaf | Node;
@@ -1068,10 +910,6 @@ function bump(own t: Tree): i32 {
 }`)
 	wantOK(t, "member-literal-returned-as-union", memberUnionPrelude+`
 function bump(own n: Node): Tree { return Node { ...n, xs: grow(n.xs) }; }`)
-	// A store's literal must have the store's target as its base for the
-	// store to supersede the moved field; a member stored as its union has
-	// another name as its target, so its base is not superseded and the
-	// move stays refused.
 	wantE051(t, "member-literal-stored-under-another-name", memberUnionPrelude+`
 function bump(own n: Node): Tree {
     let t: Tree = Leaf { v: 0 };
@@ -1106,8 +944,6 @@ function bump(b: Box): Box {
 }`)
 }
 
-// The byte kernels are lent views and answer an array they built, so their
-// result, and a function returning it, is fresh however their parameters look.
 const byteConsumer = `function take(own xs: u8[]): i32 { return xs.len(); }
 `
 

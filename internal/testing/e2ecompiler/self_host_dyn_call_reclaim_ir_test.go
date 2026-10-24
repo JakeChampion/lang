@@ -7,40 +7,11 @@ import (
 	"testing"
 )
 
-// dynCallReclaimCases pin dyn-payload reclaim for NON-LITERAL initialisers
-// (#4351):
-//
-//  1. A STRICT-FRESH CALL result (`let d: dyn T = mk(k)`, `= f.make(k)`) is
-//     this frame's rc==1 box and is released at scope exit, exactly as a
-//     struct-LITERAL init is.
-//  2. A COMPUTED non-string PRIMITIVE payload (`let d: dyn T = k * 2`). The
-//     coercion COPIES the value into a fresh op_dyn_box cell, so the local owns
-//     that cell however the value was produced.
-//  3. A dyn local declared inside an if / while / for / match BODY is released
-//     on block exit like one at function scope.
-//
-// The flat cases RETURN THE MEASURED BYTES PER ROUND (clamped at 95) rather
-// than a boolean verdict, so a regression reports its own size (a leaked
-// scalar-only concrete reads 40). 99 = rc over-release, 97 = the two churns
-// disagreed (a value was corrupted), 96 = wrong answer.
-//
-// The gate cases must not over-release: a bare-ident STRUCT alias, a
-// non-strict-fresh (identity) callee, a PARAM receiver, an escaping
-// `return d`, and a STRING payload behind a non-literal init (its cell holds a
-// pointer to a box that may be borrowed). Each reads its aliased source AFTER
-// the dyn local is done with it, so an over-release surfaces as a wrong answer
-// or an underflow tick rather than as silence.
-//
-// They run under FERN_STRICT_IR=1 (#6602), so a function the IR path cannot
-// lower fails the case rather than passing.
 var dynCallReclaimCases = []struct {
 	name string
 	src  string
 	exit int
 }{
-	// The main shape. `mk` is strict-fresh (its only return is a fresh
-	// struct literal), so its result is this frame's rc==1 box — the same
-	// standing the literal init has.
 	{"call-result-scalar-concrete", `trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
@@ -49,8 +20,6 @@ function go(k: i32): i32 { let d: dyn Shape = mk(k); return d.area(); }
 function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(2000); let b1: i64 = __heap_bump_bytes(); let x: i32 = churn(2000); let b2: i64 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } let per: i64 = (b2 - b1) / 2000; if (per > 95) { per = 95; } return (per as i32); }`, 0},
 
-	// An rc-ARRAY field on the concrete: releasing the dyn local has to release the
-	// tags buffer through Circle's drop, not just dec the box.
 	{"call-result-rc-field-concrete", `trait Shape { function area(self: Self): i32; }
 struct Circle { r: i32, tags: i32[] }
 impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r + self.tags[0]; } }
@@ -59,8 +28,6 @@ function go(k: i32): i32 { let d: dyn Shape = mk(k); return d.area(); }
 function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(2000); let b1: i64 = __heap_bump_bytes(); let x: i32 = churn(2000); let b2: i64 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } let per: i64 = (b2 - b1) / 2000; if (per > 95) { per = 95; } return (per as i32); }`, 0},
 
-	// A METHOD callee: the `dyn Shape` annotation cannot name the receiver, so
-	// the key comes from the receiver LOCAL's own annotation.
 	{"method-call-result", `trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
@@ -70,8 +37,6 @@ function go(k: i32): i32 { let f: Factory = Factory { base: 1 }; let d: dyn Shap
 function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(2000); let b1: i64 = __heap_bump_bytes(); let x: i32 = churn(2000); let b2: i64 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } let per: i64 = (b2 - b1) / 2000; if (per > 95) { per = 95; } return (per as i32); }`, 0},
 
-	// GATE: a bare-ident init aliases a local that outlives the coercion. The
-	// dyn local must stay uncredited or `s.side` reads freed memory.
 	{"alias-init-excluded", `trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
@@ -80,8 +45,6 @@ function go(k: i32): i32 { let s: Square = mk(k); let d: dyn Shape = s; let a: i
 function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 12) { bad = 96; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 
-	// GATE: the callee hands back its PARAMETER, so it is not strict-fresh and
-	// the result is the caller's box, not a fresh one.
 	{"identity-callee-excluded", `trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
@@ -90,9 +53,6 @@ function go(k: i32): i32 { let live: Square = Square { side: k }; let d: dyn Sha
 function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 12) { bad = 96; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 
-	// GATE: a PARAM receiver carries no `let` annotation for the AST scan to
-	// read, so the method key does not resolve and the box keeps today's leak.
-	// The receiver is read after the dispatch, so a mistaken credit would show.
 	{"param-receiver-method-excluded", `trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
@@ -102,24 +62,18 @@ function go(f: Factory, k: i32): i32 { let d: dyn Shape = f.make(k); let a: i32 
 function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { let f: Factory = Factory { base: 1 }; if (go(f, 3) != 17) { bad = 96; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 
-	// A COMPUTED primitive payload: op_dyn_box copies the value into a fresh
-	// cell, so the escape verdict is the whole admission.
 	{"computed-prim-payload", `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 function go(k: i32): i32 { let d: dyn Show = k * 2; return d.show(); }
 function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(2000); let b1: i64 = __heap_bump_bytes(); let x: i32 = churn(2000); let b2: i64 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } let per: i64 = (b2 - b1) / 2000; if (per > 95) { per = 95; } return (per as i32); }`, 0},
 
-	// The value comes from a LOCAL rather than an expression — still a copy
-	// into the cell, and the source stays readable afterwards.
 	{"prim-payload-from-local", `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 function go(k: i32): i32 { let n: i32 = k * 3; let d: dyn Show = n; let a: i32 = d.show(); return a + n; }
 function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 19) { return 96; } acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(2000); if (w == 96) { return 96; } let b1: i64 = __heap_bump_bytes(); let x: i32 = churn(2000); let b2: i64 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } let per: i64 = (b2 - b1) / 2000; if (per > 95) { per = 95; } return (per as i32); }`, 0},
 
-	// BLOCK-SCOPED: the dyn local lives in an if body, so retire_locals renames
-	// its slot before the sweep reads the credit.
 	{"block-scoped-struct-payload", `trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
@@ -127,8 +81,6 @@ function go(k: i32): i32 { let t: i32 = 0; if (k > 0) { let d: dyn Shape = Squar
 function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(2000); let b1: i64 = __heap_bump_bytes(); let x: i32 = churn(2000); let b2: i64 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } let per: i64 = (b2 - b1) / 2000; if (per > 95) { per = 95; } return (per as i32); }`, 0},
 
-	// The UNTAKEN branch of the same shape: the slot is entry-zeroed by the
-	// prologue and the sweep decs a null rather than stack garbage.
 	{"block-scoped-untaken-branch", `trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
@@ -136,17 +88,12 @@ function go(k: i32): i32 { let t: i32 = 0; if (k > 100) { let d: dyn Shape = Squ
 function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 5) { bad = 96; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 
-	// GATE: a STRING payload from a non-literal init. Its cell is fresh, but
-	// the box at cell@8 is the LOCAL's, and the "string" tag's sweep would free
-	// it — so the whole binding stays uncredited and `s.len()` still reads.
 	{"string-payload-alias-excluded", `trait Show { function show(self: Self): i32; }
 impl Show for string { function show(self: Self): i32 { return self.len(); } }
 function go(k: i32): i32 { let s: string = "abcd"; let d: dyn Show = s; let a: i32 = d.show(); return a + s.len() + k - k; }
 function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 8) { bad = 96; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 
-	// GATE: `return d` escapes the box to the caller, so it is not released
-	// here and the caller's dispatch still finds a live payload.
 	{"escaping-dyn-excluded", `trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
@@ -156,8 +103,6 @@ function go(k: i32): i32 { let e = mkd(k); return e.area(); }
 function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 9) { bad = 96; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 
-	// GATE: the prim credit is otherwise unconditional, so the escape gates are
-	// all that keep an escaping or reassigned cell out of the sweep.
 	{"escaping-and-reassigned-prim-excluded", `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 function mkd(k: i32): dyn Show { let d: dyn Show = k * 2; return d; }
@@ -167,7 +112,6 @@ function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { 
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 }
 
-// TestSelfHostDynCallReclaimIRX86_64 — the x86-64 IR path.
 func TestSelfHostDynCallReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -192,7 +136,6 @@ func TestSelfHostDynCallReclaimIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostDynCallReclaimIRArm64 — the arm64 IR path, under qemu.
 func TestSelfHostDynCallReclaimIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -213,7 +156,6 @@ func TestSelfHostDynCallReclaimIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostDynCallReclaimIRWasm — the wasm IR path.
 func TestSelfHostDynCallReclaimIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host dyn call-result reclaim wasm IR e2e")

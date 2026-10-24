@@ -1,27 +1,5 @@
 package constfold_test
 
-// Determinism + idempotence guard for constant folding.
-//
-// constfold.Fold mutates *ast.Program in place: literal arithmetic
-// collapses to single numbers, all-constant-arg calls to pure
-// builtins reduce, and a condition on compile-time constants becomes a
-// literal. Two distinct properties matter:
-//
-//   - Determinism: Fold(parse(src)) produces the same AST every
-//     run. The walker is slice-based today, so determinism is
-//     constructive — but the same was true of modload until
-//     TestLoadDeterministic caught a real Go-map-iteration leak.
-//
-//   - Idempotence: Fold(Fold(p)) == Fold(p). A real concern even
-//     when each individual rewrite is deterministic: if the
-//     walker visits children before parents, a folded child can
-//     reveal a new fold-eligible parent on the SECOND pass, and
-//     the result keeps changing. We assert the fixed-point
-//     property by folding twice, printing both, comparing bytes.
-//
-// printer.Print is the witness; comparing across two folds + a
-// fresh re-parse + fold catches drift in either property.
-
 import (
 	"testing"
 
@@ -30,11 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/printer"
 )
 
-// matrix favours surfaces where a fold rewrites parents based on
-// just-folded children: nested arithmetic (innermost folds first),
-// constant-condition if (whole branch elides), and the array /
-// string / struct constructors that might fold their literal args
-// before the surrounding expression sees them.
 var matrix = map[string]string{
 	"minimal": `function main(): i32 { return 0; }`,
 
@@ -67,10 +40,6 @@ function main(): i32 {
 }`,
 }
 
-// TestFoldDeterministic asserts Fold is deterministic across
-// re-parses: parse twice, fold twice, both printer outputs must
-// be byte-identical. A failure means the walker introduced map-
-// iteration or other process-state dependence.
 func TestFoldDeterministic(t *testing.T) {
 	for name, src := range matrix {
 		name, src := name, src
@@ -87,11 +56,6 @@ func TestFoldDeterministic(t *testing.T) {
 	}
 }
 
-// TestFoldIdempotent asserts Fold reaches its fixed point in a
-// single pass: Fold(Fold(parse(src))) == Fold(parse(src)). A
-// failure means the walker visits children in an order that
-// reveals new fold opportunities on a second pass — the result
-// would keep changing across redundant Fold calls.
 func TestFoldIdempotent(t *testing.T) {
 	for name, src := range matrix {
 		name, src := name, src

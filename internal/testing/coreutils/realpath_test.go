@@ -4,29 +4,6 @@ import (
 	"testing"
 )
 
-// realpath(1) runs the same walk readlink's `-f` / `-e` / `-m` do
-// (`coreutils/lib/canon.fern`), so this corpus does not re-prove the
-// walk: readlink's covers the modes, the trailing slash, `..`, the
-// cycle and the dangling component. What is here is what realpath
-// adds.
-//
-// Two of them are easy to conflate and are not the same axis. `-e` /
-// `-m` say how much has to EXIST. `-P` / `-L` / `-s` say what happens
-// to the LINKS, and the three are one setting where the last one
-// wins: `-P` follows a link where it stands, `-s` reads no link at
-// all, and `-L` does both in order — a lexical pass that settles `..`
-// against the name as written, then a physical pass over its answer.
-// `sublink/..` separates all three, and `-P -s` / `-s -P` prove the
-// last-wins.
-//
-// The rest is `--relative-to` and `--relative-base`, which are string
-// work over two resolved paths. The rule that is easy to get wrong:
-// with a base, the output is relative only when the path AND the
-// directory measured from are both under it, so a base that the
-// `--relative-to` directory is not under makes every answer absolute.
-// A directory that will not resolve at all ends the program before any
-// operand is printed, and `-q` does not cover that.
-
 func init() {
 	registerCorpus("realpath", realpathCases)
 }
@@ -37,7 +14,6 @@ func realpathCases(t *testing.T) []invocation {
 		return invocation{name: name, args: args, dir: tree}
 	}
 	return []invocation{
-		// The default mode: all but the last component must exist.
 		at("a link", "link"),
 		at("a plain file", "file"),
 		at("a directory", "dir"),
@@ -51,12 +27,10 @@ func realpathCases(t *testing.T) []invocation {
 		at("several operands", "link", "file", "missing"),
 		at("an operand that fails between two that do not", "link", "missing/x", "file"),
 
-		// -q covers an operand's failure and nothing else.
 		at("-q on a missing last component", "-q", "missing"),
 		at("-q on a missing middle component", "-q", "missing/x"),
 		at("-q over several operands", "-q", "link", "missing/x", "file"),
 
-		// -e and -m, and the last of the two winning.
 		at("-e a missing name", "-e", "missing"),
 		at("-e a dangling link", "-e", "dangling"),
 		at("-e a link", "-e", "link"),
@@ -68,9 +42,6 @@ func realpathCases(t *testing.T) []invocation {
 		at("-em in one cluster", "-em", "missing"),
 		at("-me in one cluster", "-me", "missing"),
 
-		// The link axis. `sublink` is a link two directories deep, so
-		// popping it physically and popping it lexically land in
-		// different places.
 		at("-P past a link two deep", "-P", "sublink/.."),
 		at("-L past a link two deep", "-L", "sublink/.."),
 		at("-s past a link two deep", "-s", "sublink/.."),
@@ -94,8 +65,6 @@ func realpathCases(t *testing.T) []invocation {
 		at("-L a file two components from the end", "-L", "dir/f/x"),
 		at("-s a file two components from the end", "-s", "dir/f/x"),
 
-		// -s reads no link, so every question about a component is
-		// asked of the path as written.
 		at("-s a missing last component", "-s", "missing"),
 		at("-s a missing middle component", "-s", "missing/x"),
 		at("-s a dangling link", "-s", "dangling"),
@@ -113,8 +82,6 @@ func realpathCases(t *testing.T) []invocation {
 		at("-e -s a dangling link", "-e", "-s", "dangling"),
 		at("-m -s a cycle", "-m", "-s", "loop1"),
 
-		// -L is the two-pass one, so a fault can come out of either
-		// pass and the message still names the operand as typed.
 		at("-L a name with several dotdots", "-L", "dir/../sublink/../file"),
 		at("-L past a link then down", "-L", "sublink/../f"),
 		at("-P past a link then down", "-P", "sublink/../f"),
@@ -135,12 +102,10 @@ func realpathCases(t *testing.T) []invocation {
 		at("-s a dotdot pair on names that do not exist", "-s", "a/b/../../c"),
 		at("-s dotdot past the root", "-s", "../../../../"),
 
-		// -z is the NUL delimiter.
 		at("-z one operand", "-z", "link"),
 		at("-z two operands", "-z", "link", "file"),
 		at("-z with a failure", "-z", "link", "missing/x"),
 
-		// --relative-to on its own: always relative.
 		at("--relative-to here", "--relative-to=.", "dir/f"),
 		at("--relative-to a subdirectory", "--relative-to=dir", "file"),
 		at("--relative-to two deep", "--relative-to=dir/sub", "file"),
@@ -158,16 +123,11 @@ func realpathCases(t *testing.T) []invocation {
 		at("--relative-to under -s", "-s", "--relative-to=.", "link"),
 		at("--relative-to under -L", "-L", "--relative-to=sublink/..", "dir/f"),
 		at("--relative-to an empty directory name", "--relative-to=", "file"),
-		// The DIR is resolved the same way an operand is, so a DIR that
-		// is itself a link lands where the link points and the three
-		// link settings answer differently.
 		at("--relative-to a directory that is a link", "--relative-to=sublink", "dir/f"),
 		at("-L --relative-to a directory that is a link", "-L", "--relative-to=dirlink", "dir/f"),
 		at("-s --relative-to a directory that is a link", "-s", "--relative-to=dirlink", "dir/f"),
 		at("-P --relative-to a directory that is a link", "-P", "--relative-to=dirlink", "dir/f"),
 
-		// -m puts the whole thing on names that need not exist, which
-		// is the only way to pin the ../.. arithmetic exactly.
 		at("--relative-to a sibling", "-m", "--relative-to=/a/b", "/a/c"),
 		at("--relative-to the path itself", "-m", "--relative-to=/a", "/a"),
 		at("--relative-to an ancestor", "-m", "--relative-to=/a/b", "/a/b/c/d"),
@@ -178,7 +138,6 @@ func realpathCases(t *testing.T) []invocation {
 		at("--relative-to across a dotdot", "-m", "--relative-to=/a", "/a/b/../c"),
 		at("--relative-to the root itself", "-m", "--relative-to=/", "/"),
 
-		// --relative-base alone is also the directory measured from.
 		at("--relative-base holding the path", "--relative-base=/etc", "/etc/passwd"),
 		at("--relative-base not holding the path", "--relative-base=/usr", "/etc/passwd"),
 		at("--relative-base here", "--relative-base=.", "dir/f"),
@@ -191,8 +150,6 @@ func realpathCases(t *testing.T) []invocation {
 		at("--relative-base given twice", "--relative-base=.", "--relative-base=dir", "dir/f"),
 		at("--relative-base an empty directory name", "--relative-base=", "file"),
 
-		// Both together: relative only when the path and the
-		// directory measured from are BOTH under the base.
 		at("both, everything under the base", "--relative-to=dir", "--relative-base=/", "file"),
 		at("both, the path outside the base", "--relative-to=/etc", "--relative-base=/usr", "/etc/passwd"),
 		at("both, the directory outside the base", "--relative-to=/usr", "--relative-base=/etc", "/etc/passwd"),
@@ -204,8 +161,6 @@ func realpathCases(t *testing.T) []invocation {
 		at("both, the path outside a base the directory is under", "--relative-to=dir/sub", "--relative-base=dir", "file"),
 		at("--relative-base with a trailing slash", "-m", "--relative-base=/a/b", "/a/b/"),
 
-		// A directory that will not resolve ends the program, before
-		// any operand and whatever -q says.
 		at("--relative-to a missing directory under -e", "-e", "--relative-to=missing", "file"),
 		at("--relative-to a missing directory quietly", "-q", "-e", "--relative-to=missing", "file"),
 		at("--relative-to under a plain file", "-e", "--relative-to=file/x", "file"),
@@ -214,7 +169,6 @@ func realpathCases(t *testing.T) []invocation {
 		at("--relative-base a missing directory under -e", "-e", "--relative-base=missing", "file"),
 		at("an operand still fails after the directories resolve", "-e", "--relative-to=dir", "missing"),
 
-		// The long spellings and the prefixes that are unique.
 		at("--canonicalize-existing", "--canonicalize-existing", "missing"),
 		at("--canonicalize-missing", "--canonicalize-missing", "missing"),
 		at("--logical", "--logical", "link"),
@@ -236,7 +190,6 @@ func realpathCases(t *testing.T) []invocation {
 		at("--relative-b is a unique prefix", "--relative-b", "dir", "dir/f"),
 		at("--relative-to takes the next token", "--relative-to", "dir", "file"),
 
-		// getopt faults, and the ambiguity lists in declaration order.
 		{name: "--c is ambiguous", args: []string{"--c", "link"}},
 		{name: "--ca is ambiguous", args: []string{"--ca", "link"}},
 		{name: "--r is ambiguous", args: []string{"--r", "link"}},
@@ -253,9 +206,6 @@ func realpathCases(t *testing.T) []invocation {
 		{name: "version with a value", args: []string{"--version=1"}},
 		{name: "relative-to with no value at the end", args: []string{"link", "--relative-to"}},
 
-		// Operands, the awkward ones. The missing-operand check comes
-		// before the directories are resolved, so a bad one is not
-		// what a run with no operands reports.
 		{name: "no operands"},
 		{name: "no operands with an option", args: []string{"-z"}},
 		{name: "no operands with a relative-to", args: []string{"--relative-to=dir"}},
@@ -277,7 +227,6 @@ func realpathCases(t *testing.T) []invocation {
 		at("an operand with an apostrophe", "-e", "a'b"),
 		{name: "POSIXLY_CORRECT stops at the first operand", args: []string{"link", "-z"}, dir: tree, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// The write-failure paths.
 		{name: "stdout closed with output", args: []string{"link"}, dir: tree, stdout: stdoutClosed},
 		{name: "stdout closed with no output", args: []string{"missing/x"}, dir: tree, stdout: stdoutClosed},
 		{name: "stdout closed quietly", args: []string{"-q", "missing/x"}, dir: tree, stdout: stdoutClosed},
@@ -300,15 +249,10 @@ func TestRealpathHelpVersion(t *testing.T) {
 	requireHelp(t, "realpath", []string{"link", "--help"}, 0)
 	requireVersion(t, "realpath", []string{"--version"}, 0)
 	requireVersion(t, "realpath", []string{"--vers"}, 0)
-	// realpath declares no `--verbose`, so a lone `--v` is the version
-	// rather than the ambiguity readlink's `--v` is.
 	requireVersion(t, "realpath", []string{"--v"}, 0)
 	requireVersion(t, "realpath", []string{"-e", "--version"}, 0)
 }
 
-// A relative operand starts at the working directory, so a removed one
-// fails before any component is looked at, with what getcwd(2) said —
-// ENOENT — in every mode, `-m` included. An absolute operand never asks.
 func TestRealpathUnlinkedWorkingDirectory(t *testing.T) {
 	const enoent = "No such file or directory"
 	requireUnlinkedParity(t, "realpath", []unlinkedCase{

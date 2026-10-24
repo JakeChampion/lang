@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// Pin every bit position, zero, complements and mixed patterns against Go's
-// integer oracle, and __mulhi_u64 against bits.Mul64. In particular, u64
-// values must retain their high 32 bits.
 func TestSelfHostInterpBitCounts(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/interp_run.fern")

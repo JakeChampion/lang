@@ -2,17 +2,6 @@ package e2e
 
 import "testing"
 
-// codecDecodeBytesProgram pins that std/base64 and std/base32's decoders
-// yield `u8[]` rather than `string` (#5730, the D9 follow-up), the same
-// contract std/hex got in the first slice.
-//
-// The point is not the type per se: `base64_decode` of a PNG produces
-// arbitrary bytes, and a `string` is supposed to mean well-formed UTF-8.
-// As long as these came back as `string`, the D9 invariant was false by
-// construction for every caller — and this is the *normal* use of these
-// APIs, not an edge case.
-//
-// Exits 0 on success, a distinct code per failed step.
 const codecDecodeBytesProgram = `
 import "std/base64" as b64;
 import "std/base32" as b32;

@@ -1,31 +1,3 @@
-// cat.fern — GNU-compatible `cat`.
-//
-//   cat [-AbeEnstTuv] [FILE]...
-//
-// Every FILE in order, `-` and no operand both meaning stdin. With no
-// formatting option the bytes are copied as they are, spliced by the
-// kernel where it can and one write per read where it cannot; with one
-// they are rewritten line by line:
-//
-//   -n  number every line, `%6d\t` (the field widens past a million)
-//   -b  number the non-blank lines only; -n is then ignored
-//   -s  squeeze runs of blank lines to one
-//   -E  `$` before each newline
-//   -T  tab as `^I`
-//   -v  every other control byte as `^X`, DEL as `^?`, a high byte
-//       as `M-` and then the same rule on the low seven bits
-//   -A = -vET, -e = -vE, -t = -vT, -u nothing at all.
-//
-// Line state runs ACROSS files: a file that ends without a newline
-// continues its line into the next, and -s remembers a blank line
-// over the boundary.
-//
-// Two checks are made before a byte moves. stdout is fstat'ed first —
-// a closed one is `standard output: Bad file descriptor` even when
-// there is nothing to copy — and each input is fstat'ed against it:
-// a regular file that is also the output, with bytes left to read, is
-// refused as `input file is output file`, because copying it onto
-// itself would never finish.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
@@ -97,21 +69,12 @@ function help_text(): string {
   return out;
 }
 
-// `Fmt` — the formatting the option scan selected. `plain` is the
-// fast path: none of it. `spell` is the -v / -T spelling by byte,
-// built once by `spell_table`, empty for a byte copied through as it is.
-// `stop` is the set a line's scan stops at: the spelled bytes and the
-// newline. `expand` is every byte's output, -E's `$` included, as the
-// eight-byte records `buf_push_bytes_expanded` reads. `tails` is a number's last
-// two digits and tab by the hundred (`number_tails`), for -n and -b.
 struct Fmt { number: boolean, nonblank: boolean, squeeze: boolean, ends: boolean, tabs: boolean, np: boolean, spell: u8[][], stop: u8[], expand: u8[], tails: string }
 
 function is_plain(f: Fmt): boolean {
   return !f.number && !f.nonblank && !f.squeeze && !f.ends && !f.tabs && !f.np;
 }
 
-// -v / -T / -E with no numbering or squeezing: the one expansion per
-// chunk that `spell_chunk` takes.
 function is_spell_only(f: Fmt): boolean {
   return (f.np || f.tabs || f.ends) && !f.number && !f.nonblank && !f.squeeze;
 }
@@ -120,10 +83,6 @@ function is_squeeze_only(f: Fmt): boolean {
   return f.squeeze && !f.number && !f.nonblank && !f.ends && !f.tabs && !f.np;
 }
 
-// `spelling(b, f)` — one byte in -v notation: `^X` for a control, `^?`
-// for DEL, `M-` and then the same rule on the low seven bits above
-// 127; a tab is `^I` only under -T, and without -v nothing else is
-// touched. Empty when the byte is copied as it is.
 function spelling(b: i32, f: Fmt): u8[] {
   if (b == 9) {
     if (f.tabs) {
@@ -180,37 +139,16 @@ function spell_table(f: Fmt): Fmt {
   return Fmt { ...f, spell: tab, stop: stop, expand: expand };
 }
 
-// `State` — what carries across files: the buffered stdout, the
-// output being built for it, the line-number field, whether the next
-// byte begins a line, whether the line before it was blank (for -s),
-// and whether any input failed.
-//
-// `num` is the last line number written. Its `%6d\t` field goes into
-// the builder as two pushes: `head`, the number's hundreds with the
-// field's padding, which changes once in a hundred lines and is
-// formatted then, and the last two digits with the tab, a slice of
-// `Fmt.tails`. `base` is the hundred `head` was formatted for.
-// `pending_cr` is a carriage return held back from the end of a read under
-// -E without -v: GNU shows `\r\n` as `^M$`, so the CR's spelling waits on
-// the next byte, in the next read or the next file.
 struct State { w: io_buffered.BufWriter, num: u64, head: string, base: u64, at_start: boolean, prev_blank: boolean, pending_cr: boolean, ok: boolean }
 
-// `read_size()` — bytes per read(2). GNU reads 128 KiB; measured
-// against `cat` of a 62 MiB file, that block is what the pipe and
-// the file both want.
 function read_size(): i32 {
   return 131072;
 }
 
-// `splice_size()` — bytes per splice(2), and the size of the pipe the
-// runtime moves them through. GNU asks for 512 KiB; 1 MiB, the kernel's
-// default ceiling, measured 3 ms to 4 ms on a 62 MiB file.
 function splice_size(): i32 {
   return 1048576;
 }
 
-// GNU's splice_cat skips a regular file this small or smaller, whose
-// bytes a read and a write move as cheaply.
 function splice_floor(): i64 {
   return 32768 as i64;
 }
@@ -219,10 +157,6 @@ function state_new(): State {
   return State { w: gnu.out_with(read_size()), num: 0 as u64, head: "    ", base: 0 as u64, at_start: true, prev_blank: false, pending_cr: false, ok: true };
 }
 
-// `number_tails()` — the last two digits of a line number and the tab
-// after them, three bytes a number: `00\t` to `99\t` for a number past
-// 100, then the same hundred for the first, whose tens are a space
-// below 10.
 function number_tails(): string {
   let out: u8[] = __alloc_u8(600);
   let i: i32 = 0;
@@ -240,8 +174,6 @@ function number_tails(): string {
   return string_from_bytes_unchecked(out);
 }
 
-// `head_for(q)` — the hundreds `q` of a line number, padded on the left
-// to the four columns the `%6d` field leaves them.
 function head_for(q: u64): string {
   let digits: string = (q as i64).to_string();
   let pad: i32 = 4 - digits.len();
@@ -262,18 +194,10 @@ function head_for(q: u64): string {
   return string_from_bytes_unchecked(out);
 }
 
-// `drain(s)` — get what is buffered out to the fd, so a diagnostic on
-// stderr lands after the output it follows.
 function drain(s: State): State {
   return State { ...s, w: gnu.flush(s.w) };
 }
 
-// `format_chunk(st, chunk, f)` — one read of input through the line
-// rewriter. Pieces go straight into stdout's builder, which flushes
-// itself at its own threshold, so no byte is copied into an accumulator
-// on the way. The scan is one memchr per line; a body is appended whole,
-// with its newline, unless -v / -T has bytes to spell out or -E puts a
-// `$` before the newline.
 function format_chunk(st: State, chunk: u8[], f: Fmt): State {
   let s: State = st;
   let w: io_buffered.BufWriter = s.w;
@@ -296,7 +220,6 @@ function format_chunk(st: State, chunk: u8[], f: Fmt): State {
   let nonblank: boolean = f.nonblank;
   let number: boolean = f.number;
   let ends: boolean = f.ends;
-  // -E shows a CR that ends a line as `^M`; -v spells every CR that way.
   let cr_mark: boolean = ends && !f.np;
   if (s.pending_cr) {
     if (chunk[0] as i32 == 10) {
@@ -333,7 +256,6 @@ function format_chunk(st: State, chunk: u8[], f: Fmt): State {
       prev_blank = blank;
     }
     if (spell) {
-      // The stop set holds the newline, so the scan never passes `end`.
       let i: i32 = __scan_set_bytes(chunk, pos, stop);
       while (i < end) {
         buf_push_bytes_range(h, chunk, pos, i);
@@ -365,16 +287,9 @@ function format_chunk(st: State, chunk: u8[], f: Fmt): State {
       pos = nl + 1;
     }
   }
-  // One settle per chunk: the builder grows as the chunk's lines are
-  // pushed, by at most a few times the read, and is written once.
   return State { ...s, w: gnu.check(gnu.settle(w)), num: num, head: head, base: base, at_start: at_start, prev_blank: prev_blank, pending_cr: pending_cr };
 }
 
-// `spell_chunk(st, chunk, f)` — -v / -T / -E with nothing that needs the
-// start of a line: every byte's output is its record in `f.expand`, so a
-// chunk is one expansion into the builder. A CR under -E without -v
-// depends on the byte after it, so a chunk holding one takes the line
-// rewriter instead.
 function spell_chunk(st: State, chunk: u8[], f: Fmt): State {
   if (f.ends && !f.np && (st.pending_cr || __memchr_bytes(chunk, 13, 0) >= 0)) {
     return format_chunk(st, chunk, f);
@@ -382,9 +297,6 @@ function spell_chunk(st: State, chunk: u8[], f: Fmt): State {
   return State { ...st, w: gnu.check(st.w.write_bytes_expanded(chunk, f.expand)), at_start: chunk[chunk.len() - 1] as i32 == 10 };
 }
 
-// `squeeze_chunk(st, chunk)` — -s with nothing else: a run of
-// non-blank lines is one append, and a blank line is dropped when the
-// one before it was blank too.
 function squeeze_chunk(st: State, chunk: u8[]): State {
   let s: State = st;
   let w: io_buffered.BufWriter = s.w;
@@ -402,7 +314,6 @@ function squeeze_chunk(st: State, chunk: u8[]): State {
       pos = pos + 1;
       continue;
     }
-    // The run ends with the newline a blank line follows, or the chunk.
     let q: i32 = __memchr_bytes(chunk, 10, pos);
     while (q >= 0 && q + 1 < len && chunk[q + 1] as i32 != 10) {
       q = __memchr_bytes(chunk, 10, q + 1);
@@ -421,18 +332,11 @@ function squeeze_chunk(st: State, chunk: u8[]): State {
   return State { ...s, w: gnu.check(w), at_start: at_start, prev_blank: prev_blank };
 }
 
-// `fail(st, msg)` — one diagnostic with the output flushed ahead of
-// it; the exit status becomes 1.
 function fail(st: State, msg: string): State {
   let s: State = drain(st);
   return State { ...s, w: gnu.error_out(s.w, msg), ok: false };
 }
 
-// `splice_all(r)` — the input moved to stdout by the kernel: copied
-// (copy_file_range) where both are files, as GNU 9.12 does, else spliced.
-// Ok(false) when the pair can be neither, which leaves the input where it
-// stood for the read loop to carry on from and meet any failure of its own;
-// Err is copy_all's.
 function splice_all(r: Reader): Result[boolean, IoError] {
   let out: Writer = stdout();
   match (copy_all(r, out)) {
@@ -467,11 +371,6 @@ function splice_all(r: Reader): Result[boolean, IoError] {
   }
 }
 
-// `copy_all(r, out)` — the input copied to `out` by copy_file_range.
-// Ok(false) when the pair cannot be copied that way, or the first answer is
-// 0, which a /proc file the kernel calls empty also gives; what was copied
-// before that has moved both offsets, so splicing or reading carries on from
-// there. Any other failure is the operand's, as GNU's copy_cat reports it.
 function copy_all(r: Reader, out: Writer): Result[boolean, IoError] {
   let copied: boolean = false;
   while (true) {
@@ -496,8 +395,6 @@ function copy_all(r: Reader, out: Writer): Result[boolean, IoError] {
   }
 }
 
-// `cat_file(path, st, f, out_stat)` — one operand. `out_stat` is
-// stdout's record, for the input-is-output check.
 function cat_file(path: string, st: State, f: Fmt, out_stat: FileStat): State {
   let s: State = st;
   let stdin_input: boolean = path == "-";
@@ -578,8 +475,6 @@ function cat_file(path: string, st: State, f: Fmt, out_stat: FileStat): State {
   if (!stdin_input) {
     r.close();
   }
-  // GNU writes what is pending at the end of every file, so a full
-  // stdout is reported before the next operand is opened.
   s = drain(s);
   return State { ...s, w: gnu.flush(s.w) };
 }
@@ -587,7 +482,6 @@ function cat_file(path: string, st: State, f: Fmt, out_stat: FileStat): State {
 pub function main(): i32 {
   let argv: string[] = args();
   let opts: gnu.Opt[] = [];
-  // GNU's long_options order: it is the order an ambiguity lists them in.
   opts = opts.append(gnu.flag("b", "number-nonblank", opt_number_nonblank()));
   opts = opts.append(gnu.flag("n", "number", opt_number()));
   opts = opts.append(gnu.flag("s", "squeeze-blank", opt_squeeze()));

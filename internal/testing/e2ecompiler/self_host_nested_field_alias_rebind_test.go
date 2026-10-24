@@ -6,15 +6,6 @@ import (
 	"testing"
 )
 
-// --- Nested-struct field ALIASED in a self-rebind literal (#6623) ------------
-//
-// `o = S { xs: o.xs.append(i), inner: o.inner, n: i }` and
-// `o = S { ...o, xs: o.xs.append(i) }` mean the same thing and must cost the
-// same. `o.inner` in a field-value position is a field READ, not a move: the
-// struct literal retains it, so the successor box holds a COUNTED reference and
-// the superseded box's deep drop decs the dup. Read as a move, `o` lost its
-// whole reclaim credit and the superseded ARRAY buffers leaked too — one per
-// iteration, 12.7x the carried spelling.
 const nestedFieldAliasExplicitSrc = `struct I { tag: i32, data: i32[] }
 struct S { xs: i32[], inner: I, n: i32 }
 
@@ -55,14 +46,6 @@ function main(): i32 {
     return t & 63;
 }`
 
-// --- The same read on an ARRAY field (#6628) ---------------------------------
-//
-// A scalar-element or array-of-struct field read is not a move either: the
-// struct literal retains it, so the successor box never holds an uncounted
-// buffer.
-//
-// This shape reads every carried buffer back after the loop, so an over-release
-// is a wrong answer rather than a quieter number.
 func nestedFieldAliasArrayFieldSrc(k int, carried bool) string {
 	update := "o = S { xs: o.xs.append(i), ys: o.ys, n: i };"
 	if carried {
@@ -88,16 +71,10 @@ function main(): i32 {
 }`, update, k)
 }
 
-// arrayFieldAliasExit is what nestedFieldAliasArrayFieldSrc must exit with:
-// `work` returns (2 + k) + 3 + 7, ten calls are summed, and `main` masks to 6
-// bits. Computing it beats a table — the point of the k sweep is that only the
-// byte count is allowed to vary with k.
 func arrayFieldAliasExit(k int) int {
 	return (10 * (k + 12)) & 63
 }
 
-// The other array field kind: an ARRAY-OF-STRUCT field, which must behave as
-// the scalar-element arrays do.
 func nestedFieldAliasStructArraySrc(k int) string {
 	return fmt.Sprintf(`struct E { a: i32, b: i32 }
 struct S { xs: i32[], es: E[], n: i32 }
@@ -120,9 +97,6 @@ function main(): i32 {
 }`, k)
 }
 
-// The array read handed to a DIFFERENT local, the array sibling of the fork row
-// below: `p` and `o` are both live afterwards and both show the shared buffer,
-// so `o` must keep its field-move mark.
 const nestedFieldAliasArrayForkSrc = `struct S { xs: i32[], ys: i32[], n: i32 }
 
 function work(k: i32): i32 {
@@ -138,16 +112,6 @@ function main(): i32 {
     return t / 10;
 }`
 
-// --- The same read on a direct ENUM field (#6653, enum route) ----------------
-//
-// The enum field read is not a move either. The QUALIFIED variant-ctor
-// spelling `V.A(7)` is a fresh construction just as the bare `A(7)` is, so the
-// struct takes it over without a retain (#6681); retained, the one box the
-// whole shape allocates was never freed — 400 B here, flat in k, and on the
-// `...o` carry too.
-//
-// `vv` is a `let` borrow of the carried enum, so the payload is read back after
-// the loop: an over-release is a wrong exit code before it is a byte count.
 func enumFieldAliasSrc(k int, carried bool) string {
 	update := "o = S { xs: o.xs.append(i), v: o.v, n: i };"
 	if carried {
@@ -177,13 +141,8 @@ function main(): i32 {
 }`, update, k)
 }
 
-// enumFieldAliasExit: `work` returns (2 + k) + 7, ten calls summed, masked to
-// six bits.
 func enumFieldAliasExit(k int) int { return (10 * (k + 9)) & 63 }
 
-// The enum field read handed to a DIFFERENT local: `p` and `o` both show the
-// shared box afterwards, so `o` keeps its mark and the answer must still be
-// right (7 + 7 + 3 per call).
 const enumFieldAliasForkSrc = `enum V { A(i32), B }
 struct S { xs: i32[], v: V, n: i32 }
 
@@ -206,12 +165,6 @@ function main(): i32 {
     return t / 10;
 }`
 
-// --- A fresh variant ctor in a struct-literal enum field (#6681) -------------
-//
-// No rebind, no loop, one bind: `V.A(7)` builds a sole-owned rc=1 box the struct
-// takes over, exactly as `A(7)` does, so neither spelling may retain it. The
-// qualified one did, and the box outlived the program — 40 B on a program that
-// allocates three objects.
 func freshVariantCtorFieldSrc(qualified bool) string {
 	ctor := "A(7)"
 	if qualified {
@@ -231,9 +184,6 @@ function work(k: i32): i32 {
 function main(): i32 { return work(2) & 63; }`, ctor)
 }
 
-// The same field read bound to a DIFFERENT local must keep marking: `p` and `o`
-// are both live afterwards, so deep-dropping `o` would reach into what `p`
-// shows. Only the self-rebind — where the successor IS this slot — is exempt.
 const nestedFieldAliasForkSrc = `struct I { tag: i32, data: i32[] }
 struct S { xs: i32[], inner: I, n: i32 }
 
@@ -250,8 +200,6 @@ function main(): i32 {
     return t / 10;
 }`
 
-// leakSummary compiles src with the self-host driver under FERN_LEAKCHECK,
-// runs it, and returns (live_bytes, allocs, exit code).
 func leakSummary(t *testing.T, gcc string, runner []string, driverBin, dir, name, src string) (int64, int64, int) {
 	t.Helper()
 	asm := hevCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1"})
@@ -276,9 +224,6 @@ func leakSummary(t *testing.T, gcc string, runner []string, driverBin, dir, name
 	return live, allocs, exit
 }
 
-// TestSelfHostNestedFieldAliasRebindX86_64 — both spellings of the same
-// self-update reclaim everything, and the shapes the exemption must not reach
-// still answer correctly. Every program here must end at live_bytes 0.
 func TestSelfHostNestedFieldAliasRebindX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -302,14 +247,10 @@ func TestSelfHostNestedFieldAliasRebindX86_64(t *testing.T) {
 	flat(t, "the `...base` carry", carriedLive)
 	flat(t, "the explicit `inner: o.inner` alias (#6653)", explicitLive)
 
-	// #6628. Every superseded box and the `xs` buffer it owned must be released,
-	// so a regression grows with k.
 	t.Run("array-field-alias-flat-in-k", func(t *testing.T) {
 		for _, k := range []int{1, 2, 8, 32} {
 			name := fmt.Sprintf("nfa_arrfield_k%d", k)
 			live, _, exit := leakSummary(t, gcc, runner, driverBin, dir, name, nestedFieldAliasArrayFieldSrc(k, false))
-			// Every carried buffer is read back after the loop, so a released
-			// live buffer shows up here before any byte count does.
 			if want := arrayFieldAliasExit(k); exit != want {
 				t.Fatalf("k=%d exited %d, want %d — a carried `ys` was released under a live reference", k, exit, want)
 			}
@@ -324,7 +265,6 @@ func TestSelfHostNestedFieldAliasRebindX86_64(t *testing.T) {
 		flat(t, "explicit `ys: o.ys` (#6653)", explicit)
 	})
 
-	// `work` returns (2 + k) + 2 + 6 here, so the exit is (10*(k+10)) & 63.
 	t.Run("struct-array-field-alias-flat-in-k", func(t *testing.T) {
 		for _, k := range []int{1, 2, 8, 32} {
 			name := fmt.Sprintf("nfa_structarr_k%d", k)
@@ -336,7 +276,6 @@ func TestSelfHostNestedFieldAliasRebindX86_64(t *testing.T) {
 		}
 	})
 
-	// #6653's enum route.
 	t.Run("enum-field-alias-matches-the-carry", func(t *testing.T) {
 		for _, k := range []int{1, 2, 8, 32} {
 			name := fmt.Sprintf("nfa_enumfield_k%d", k)
@@ -351,7 +290,6 @@ func TestSelfHostNestedFieldAliasRebindX86_64(t *testing.T) {
 		flat(t, "the `...o` enum carry", carried)
 	})
 
-	// #6681: the two spellings of one fresh variant construction.
 	t.Run("qualified-variant-ctor-field-is-fresh", func(t *testing.T) {
 		qualified, _, qExit := leakSummary(t, gcc, runner, driverBin, dir, "nfa_qvctor", freshVariantCtorFieldSrc(true))
 		bare, _, bExit := leakSummary(t, gcc, runner, driverBin, dir, "nfa_bvctor", freshVariantCtorFieldSrc(false))

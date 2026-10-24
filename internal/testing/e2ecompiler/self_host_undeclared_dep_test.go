@@ -10,9 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A bare import under a fern.toml that names neither a module file nor a
-// declared dependency is E086 at the import in both checkers, and the message
-// names the manifest to add it to.
 func TestSelfHostUndeclaredDependencyIsE086(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{

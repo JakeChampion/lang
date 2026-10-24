@@ -6,18 +6,6 @@ import (
 	"testing"
 )
 
-// --- Discarded string-returning call reclaim --------------------------------
-//
-// `mk(a);` as a STATEMENT owns a fresh string nothing else will ever hold, so
-// the discard must free it, as the same call BOUND to a local
-// (`let t = mk(a);`) does.
-//
-// Only a callee whose every return is a freshly-allocated string qualifies. A
-// callee that can hand back a borrowed arg / field / literal must be left
-// alone: freeing its result drops a box a live local still holds.
-
-// discardedStrCallSrc churns `mk(a);` n times and returns n % 7, so the exit
-// code pins that the loop actually ran the requested number of rounds.
 func discardedStrCallSrc(rounds int) string {
 	return `function mk(s: string): string { return s + "!"; }
 
@@ -33,17 +21,6 @@ function main(): i32 {
 }`
 }
 
-// TestSelfHostDiscardedStrCallReclaimX86_64 — a discarded fresh-string call
-// frees its result.
-//
-// The assertion is that the residue does NOT SCALE with the round count, not
-// that it is zero: `main`'s own `a` is never reclaimed (a process-exit floor,
-// not a leak), so a correct run still ends at allocs=601 frees=600
-// live_bytes=24 for any n. Doubling n is what separates the floor from the
-// leak — before the fix the same doubling took live_bytes 4824 → 9624 → 19224.
-//
-// frees must never EXCEED allocs either: that would mean something else had
-// already claimed the value and this free is a double.
 func TestSelfHostDiscardedStrCallReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -56,8 +33,6 @@ func TestSelfHostDiscardedStrCallReclaimX86_64(t *testing.T) {
 		asm := hevCompile(t, runner, driverBin, discardedStrCallSrc(rounds), []string{"FERN_LEAKCHECK=1"})
 		progBin := buildBin(t, gcc, dir, "discarded_str_call_"+strconv.Itoa(rounds), asm)
 		stderr, exit := hevRun(t, runner, progBin)
-		// Confirmed against both oracles (bin/fern -interp and native -target
-		// x86-64), not read off the self-host run this test exists to check.
 		if want := rounds % 7; exit != want {
 			t.Fatalf("rounds=%d: exited %d, want %d", rounds, exit, want)
 		}
@@ -102,10 +77,6 @@ func TestSelfHostDiscardedStrCallReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostDiscardedStrCallHazardsX86_64 — the discard shapes the free must
-// still REFUSE. Each asserts BEHAVIOUR: a wrongly-granted free releases a box
-// something else still reads, so the failure is a wrong answer or a crash, not
-// a leak. Every `want` was confirmed against the interpreter and native x86-64.
 func TestSelfHostDiscardedStrCallHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -117,9 +88,6 @@ func TestSelfHostDiscardedStrCallHazardsX86_64(t *testing.T) {
 		src  string
 		want int
 	}{
-		// A callee returning a BORROWED value — its own param — so the discard
-		// must leave it alone. Freeing it would drop the box `a` still holds;
-		// the next allocation reuses it and the content check fails.
 		{"borrowed_return_untouched", `function mk(s: string): string { return s + "!"; }
 function pick(a: string, b: string): string { if (a.len() > 3) { return a; } return b; }
 function main(): i32 {
@@ -131,9 +99,6 @@ function main(): i32 {
     if (b != "xy") { return 2; }
     return 5;
 }`, 5},
-		// A conditional return where ONE arm is a borrowed param disqualifies
-		// the whole callee: EVERY return must be fresh, including one nested
-		// in an if.
 		{"mixed_return_disqualifies", `function half(a: string, c: boolean): string {
     if (c) { return a; }
     return a + "!";
@@ -145,9 +110,6 @@ function main(): i32 {
     if (a != "abcdefgh") { return 1; }
     return 6;
 }`, 6},
-		// The value is still correct when the same callee's result IS used
-		// elsewhere in the same function — the discard's free must not reach a
-		// separately-bound result.
 		{"bound_and_discarded_coexist", `function mk(s: string): string { return s + "!"; }
 function main(): i32 {
     let a: string = "abcdefgh";

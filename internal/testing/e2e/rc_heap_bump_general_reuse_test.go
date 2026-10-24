@@ -4,21 +4,6 @@ import (
 	"testing"
 )
 
-// General FBIP reuse (Perceus reuse token, computeReuseSources): a DEAD, owned,
-// all-scalar struct local D is paired with a LATER same-type construction C (a
-// DIFFERENT local) in the same block, so C reuses D's box in place via
-// __alloc_reuse — beyond the self-overwrite tryStructReuseOverwrite (D == C).
-// The high-value case is a loop body: each iteration's dead `a` becomes `b`'s
-// box, so the loop holds ~1 Point box instead of bump-allocating two per turn.
-//
-// Soundness rests on the same two gates as self-overwrite reuse: freeEligible
-// (D is OWNED, never a borrowed param) + the runtime is_unique check (a shared
-// D declines reuse, dec's, and C fresh-allocs — the alias keeps D's box). D's
-// slot is zeroed after the hand-off so the exit sweep / a non-C path never
-// double-releases. A mispaired class degrades to free+alloc (never unsound).
-
-// genReuseChurnSrc: 300 iterations, each builds a dead `a` then reuses it for
-// `b`. The returned value is only correct if every reuse wrote the right box.
 const genReuseChurnSrc = `struct Point { x: i32, y: i32 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -35,9 +20,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// genReuseAliasedSrc: D (`a`) is aliased into a live `keep` before its last
-// use, so at runtime rc>1 and reuse DECLINES (b fresh-allocs). keep must still
-// read a's original values; nothing over-releases.
 const genReuseAliasedSrc = `struct Point { x: i32, y: i32 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -55,10 +37,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// genReusePtrChurnSrc: pointer-field general reuse. Each iteration builds a
-// dead Holder `a` with an array, then reuses a's box for `b` with a FRESH
-// array — a's old array is deep-freeing-dropped on the reuse branch before b's
-// store overwrites it (no leak), b's array is retained. Value + 0 over-release.
 const genReusePtrChurnSrc = `struct Holder { id: i32, items: i32[] }
 function main(): i32 {
     let acc: i32 = 0;
@@ -76,9 +54,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// genReusePtrAliasedSrc: `a` is aliased into a live `keep` (rc>1), so the
-// runtime is_unique check DECLINES reuse — b fresh-allocs and keep keeps a's
-// box + array intact. Mirrors the self-overwrite `aliased` contract.
 const genReusePtrAliasedSrc = `struct Holder { id: i32, items: i32[] }
 function main(): i32 {
     let a: Holder = Holder { id: 1, items: [7, 8] };
@@ -92,10 +67,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// genReuseCrossTypeChurnSrc: cross-type box-class reuse. Each iteration's dead
-// Point (2×i32, class 16) is reused for a Pair (2×i32, class 16) — a DIFFERENT
-// struct type of the same class. Value-correct only if every reuse wrote the
-// right block at C's (Pair's) offsets.
 const genReuseCrossTypeChurnSrc = `struct Point { x: i32, y: i32 }
 struct Pair { a: i32, b: i32 }
 function main(): i32 {
@@ -113,9 +84,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// genReuseCrossTypePtrSrc: cross-type WITH pointer fields. Dead Holder
-// (id, items) reused for Bag (tag, data) — same class. D's old array released
-// at D's offset, C's array stored at C's offset. 200-iter, 0 over-release.
 const genReuseCrossTypePtrSrc = `struct Holder { id: i32, items: i32[] }
 struct Bag { tag: i32, data: i32[] }
 function main(): i32 {
@@ -134,9 +102,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// genReuseTupleChurnSrc: tuple-source reuse. Each iteration's dead tuple `a`
-// is reused for tuple `b`. Value-correct only if every reuse wrote the right
-// block at the tuple's element offsets.
 const genReuseTupleChurnSrc = `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -152,8 +117,6 @@ const genReuseTupleChurnSrc = `function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// genReuseTuplePtrSrc: tuple WITH a pointer element. Dead (i32, i32[]) reused
-// for a fresh (i32, i32[]) — D's old array released at D's offset each turn.
 const genReuseTuplePtrSrc = `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -170,11 +133,6 @@ const genReuseTuplePtrSrc = `function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// genReuseEnumChurnSrc: enum-source reuse with a uniform-droppable
-// Wrap(i32[]). Each iteration's dead `a` is reused for `b`; a's old array is
-// freed at the uniform payload offset on the reuse branch each turn (no leak),
-// b's fresh array retained. Value-correct only if every reuse wrote the right
-// block.
 const genReuseEnumChurnSrc = `enum Wrapper { Wrap(i32[]) }
 function main(): i32 {
     let acc: i32 = 0;
@@ -191,9 +149,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// genReuseEnumCrossVariantSrc: a uniform two-variant enum, D and C may differ
-// in variant (Keep vs Swap, same box class). Exercises the variant-independent
-// old-payload free.
 const genReuseEnumCrossVariantSrc = `enum Bag { Keep(i32[]), Swap(i32[]) }
 function main(): i32 {
     let acc: i32 = 0;
@@ -210,10 +165,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// genReuseCrossBlockScalarSrc: cross-block reuse — a function-top-level D is
-// reused by a construction NESTED in an if-body. Exercises BOTH paths: go_=true
-// reuses D's box for b; go_=false leaves D for the exit sweep. Neither may
-// double-free. `go_` is a param so the branch isn't const-folded.
 const genReuseCrossBlockScalarSrc = `struct Point { x: i32, y: i32 }
 function run(go_: boolean): i32 {
     let a: Point = Point { x: 10, y: 20 };
@@ -233,9 +184,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// genReuseCrossBlockPtrSrc: the pointer-field cross-block case — the reuse-path
-// frees D's old array at C, the not-taken path frees D in the exit sweep. The
-// adversarial double-free check for cross-block.
 const genReuseCrossBlockPtrSrc = `struct Holder { id: i32, items: i32[] }
 function runp(go_: boolean): i32 {
     let a: Holder = Holder { id: 1, items: [7, 8] };
@@ -255,11 +203,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// genReuseCrossBlockLoopSrc: the dominant cross-block shape — a loop-body D
-// reused by a construction nested in an if INSIDE the loop, every iteration.
-// The if runs on even iterations only, so odd iterations leave D for the
-// next-iteration reinit drop (the adversarial double-free / leak check across
-// the taken / not-taken alternation), with a pointer field to free.
 const genReuseCrossBlockLoopSrc = `struct Holder { id: i32, items: i32[] }
 function main(): i32 {
     let acc: i32 = 0;

@@ -1,30 +1,9 @@
-// A binding that dies inside a loop body used to hold its reference for the
-// rest of the function. computePreciseDrops built its candidate set from
-// `fn.Body.Stmts`, so only a TOP-LEVEL `let` could be released at its last
-// use; anything declared inside an if / while / for / match survived to the
-// next entry's re-init drop or the function-exit sweep.
-//
-// For an alias of an accumulator that is exactly the rc==1 append cliff
-// (#6024). `let keep = acc` takes an alias inc, so `acc` sits at rc 2, and
-// the append grows in place only at rc 1 — every subsequent append copies the
-// whole buffer. Releasing `keep` at its last read restores rc 1 and lets the
-// appends run in place.
-//
-// Both halves are pinned: the DEAD alias must reach 0 copies, and the LIVE
-// alias (with an opaque observer after the append) must still copy on every
-// append. The observer sees the original buffer, so reusing it would change
-// its result. A direct length-only read can instead be evaluated early; a
-// separate case pins that optimization. The counter tallies spare-capacity
-// copies, and
-// seven of the 200 appends find the buffer full, so the live alias reads 193.
 package e2e
 
 import (
 	"testing"
 )
 
-// deadAliasAppendSrc: `keep` is read BEFORE the append and never again, so the
-// mutation is unobservable through it and the buffer can be grown in place.
 const deadAliasAppendSrc = `@noinline function observed_length(xs: i32[]): i32 { return xs.len(); }
 function main(): i32 {
     let acc: i32[] = [];
@@ -40,9 +19,6 @@ function main(): i32 {
     return __arr_push_shared_count();
 }`
 
-// liveAliasAppendSrc: the control. Same program with the read moved AFTER the
-// append, so `keep` is still live across it and every copy is required. The
-// read is a call because semhoist moves a bare `keep.len()` ahead of the append.
 const liveAliasAppendSrc = `@noinline function observed_length(xs: i32[]): i32 { return xs.len(); }
 function main(): i32 {
     let acc: i32[] = [];
@@ -72,7 +48,6 @@ func TestX86_64DeadAliasAppendNoCopy(t *testing.T) {
 	}
 }
 
-// A length fact needs no live array identity after the append.
 const lengthOnlyAliasAppendSrc = `function main(): i32 {
     let acc: i32[] = [];
     let i: i32 = 0;

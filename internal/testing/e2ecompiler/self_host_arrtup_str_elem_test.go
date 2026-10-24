@@ -5,30 +5,6 @@ import (
 	"testing"
 )
 
-// --- Arrays of tuples with string elements, and the erased-generic call (#7910 (c)) --
-//
-// Two refusals sat on `let ps: (i32, string)[] = [(i, w(i)), …]`, and the
-// call through `count[T](xs: T[])` the issue named was only the second.
-//
-// The first is the element admission: the array-of-tuples credit ("ARRTUP:")
-// proved each tuple's string element fresh with the SYNTACTIC test alone — a
-// literal or an inline concat — so an element produced by a registered
-// fresh-string function was refused and the whole array kept its shallow
-// buffer-only dec. That leaked every tuple box and every string with no call
-// in sight. The admission now reads the same fresh-string registry the tuple
-// LOCAL's credit reads.
-//
-// The second is the argument position: the ARRTUP element-escape scan had no
-// arm for a direct call with the array as a bare-ident argument, so the
-// argument fell to the bare-ident leaf and counted as an escape — where the
-// array-of-structs twin already admits a param proven to touch no element
-// ("ELB:") or to keep it only counted ("CNT:"). An erased generic reading
-// `xs.len()` is exactly such a param.
-//
-// The x86-64 and arm64 legs are the leak-matrix rows of the same names
-// (native oracle, sanitize leg); this file is the wasm leg, which asserts a
-// balanced census and the interpreter's exit code.
-
 const arrTupStrLiteralLenSrc = `function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function round(i: i32): i32 {
     let ps: (i32, string)[] = [(i, w(i)), (i + 1, w(i + 1))];

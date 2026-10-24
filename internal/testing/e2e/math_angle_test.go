@@ -2,14 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/math's floating-point angle + interpolation
-// helpers — pi / tau / to_radians / to_degrees / lerp. All are pure f64
-// arithmetic (no libm), so every backend must agree bit-for-bit. Checks the
-// exact-representable cases directly (lerp endpoints + midpoints, tau == 2·pi,
-// zero-angle conversions) and the rounding cases (degree↔radian round-trip,
-// to_radians(180°) ≈ π) within a tight epsilon. Returns 42 iff every check
-// holds across interp / x86-64 / wasm / arm64; each leg skips itself when its
-// toolchain is absent.
 const mathAngleProg = `
 import "std/math";
 function main(): i32 {

@@ -7,10 +7,6 @@ import (
 	"testing"
 )
 
-// `import "lib"` names the sibling lib.fern, as native resolves it, whether
-// or not a stdlib root is passed. Without a root the self-host skipped every
-// non-local import, so the module was never loaded and each call into it read
-// as E001 — including when the module itself was the one in error.
 func TestSelfHostBareSiblingImportWithoutRoot(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "fern.fern")
@@ -39,7 +35,6 @@ func TestSelfHostBareSiblingImportWithoutRoot(t *testing.T) {
 		t.Fatalf("-check: exit %d\n%s", code, out)
 	}
 	bin := filepath.Join(work, "prog")
-	// This test executes via the x86-64 runner; the CLI's default is ARM64.
 	if out, code := run("-target", "x86-64-linux", "-o", bin, entry); code != 0 {
 		t.Fatalf("-o: exit %d\n%s", code, out)
 	}

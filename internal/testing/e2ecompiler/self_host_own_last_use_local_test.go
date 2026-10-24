@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostOwnLastUseLocal runs the conformance case for a local handed to
-// an `own` parameter where it dies (#9541) through the self-host CLI with the
-// leak census on. The fixture legs check its exit code; this checks that the
-// semantic lowering moves each local exactly once — a reference released
-// twice or never shows here and nowhere else on the self-host path.
 func TestSelfHostOwnLastUseLocal(t *testing.T) {
 	prog, err := os.ReadFile(filepath.Join(langSrcAbs(t, "conformance"), "cases", "own_param_last_use_local", "main.fern"))
 	if err != nil {
@@ -28,9 +23,6 @@ func TestSelfHostOwnLastUseLocal(t *testing.T) {
 	}
 }
 
-// ownLastUseReassignSrc stores a borrowed parameter over a fresh `let` local
-// before handing it on, once straight and once on one branch: the local no
-// longer holds a count of its own, so the hand-over has to buy one.
 const ownLastUseReassignSrc = `struct W { d: i32[], n: i32 }
 @noinline function eat(own w: W): i32 { return w.n + w.d.len(); }
 @noinline function mkw(n: i32): W { return W { d: [n], n: n }; }
@@ -45,8 +37,6 @@ function main(): i32 {
 }
 `
 
-// ownLastUseLoopLocalSrc hands a local the loop body declares to an `own`
-// parameter on every pass (#12260), straight and through a destructure.
 const ownLastUseLoopLocalSrc = `struct W { d: i32[], n: i32 }
 @noinline function eat(own w: W): i32 { return w.n + w.d.len(); }
 @noinline function mkw(n: i32): W { return W { d: [n, n], n: n }; }
@@ -65,8 +55,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostOwnLastUseLocalSanitized runs the same hand-overs, and a local
-// reassigned before its hand-over, under the sanitizer and the leak census.
 func TestSelfHostOwnLastUseLocalSanitized(t *testing.T) {
 	prog, err := os.ReadFile(filepath.Join(langSrcAbs(t, "conformance"), "cases", "own_param_last_use_local", "main.fern"))
 	if err != nil {

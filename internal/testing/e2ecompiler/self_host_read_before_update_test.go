@@ -2,12 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// readBeforeUpdateProgram reads an array after the update that consumes it:
-// `chain` reads the element beside the one the first `with` wrote, `ends`
-// reads the length and an element, and `after` reads the updated array,
-// which has to stay behind the update. Moved ahead of the update (semhoist),
-// the reads leave the array unique, so 100 calls of each of the first two
-// allocate nothing.
 const readBeforeUpdateProgram = `import "std/i64";
 
 @noinline function chain(own acc: i32[], at: i32): i32[] {

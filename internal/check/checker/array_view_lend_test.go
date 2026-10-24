@@ -8,10 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// An owned `T[]` lends into a borrowed `[T]` PARAMETER, the array-side
-// counterpart of the `str` → `string` borrow (#4813). Before #6798 the caller
-// had to spell `xs[0:xs.len()]`, which is why `[T]` appeared exactly once in
-// the whole stdlib: a view-taking API was awkward for its callers.
 func TestOwnedArrayLendsIntoViewParam(t *testing.T) {
 	cases := []struct {
 		name string
@@ -56,8 +52,6 @@ func TestOwnedArrayLendsIntoLocalView(t *testing.T) {
 	}
 }
 
-// A view cannot promote to an owned array. The element types must match.
-// An own parameter consumes its argument, so it cannot receive a loan.
 func TestArrayViewLendIsOneWayAndNonConsuming(t *testing.T) {
 	cases := []struct {
 		name string
@@ -88,11 +82,6 @@ function main(): i32 { let owned: i32[] = [1, 2]; return total(owned); }`,
 	}
 }
 
-// The lend is a real coercion, not just a typing relaxation: `T[]` is the
-// array while `[T]` is a `{data_ptr, len}` pair, so the checker rewrites the
-// accepted argument into the full-range slice `xs[:]`. Every backend, the
-// interpreter, and the rc passes then see the shape they already handle for
-// an explicit slice — nothing downstream needs to learn about the coercion.
 func TestArrayViewLendRewritesArgumentToFullRangeSlice(t *testing.T) {
 	const src = `function total(bs: [u8]): i32 { return bs.len(); }
 function main(): i32 { let owned: u8[] = [1, 2, 3]; return total(owned); }`

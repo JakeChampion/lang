@@ -1,17 +1,17 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The wrapping shape: the result REACHES the argument through
-// memory. Admitted by the struct-literal slot arm, because
-// construction inc's the aliased field, so the temp is at rc 2
-// across the caller's drop.
-//
-// The self-host's counted tier had to REFUSE this exact shape
-// (#7856) — its construction-side retain is conditional on the
-// field type routing a reclaim, and `Box { o: o }` does not.
-// Native's needsRcIncOnAlias is unconditional for every pointer
-// type, which is why the credit is sound here and was not there.
-// Pinned so that difference cannot be quietly erased.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 struct Op { a: i32, s: string }
 struct Box { o: Op, n: i32 }
 

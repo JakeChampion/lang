@@ -2,18 +2,9 @@ package e2ecompiler
 
 import "testing"
 
-// TestSelfHostUuidIR covers std/uuid's v4 + v7 generators through the
-// self-hosted x86-64 compiler (the "self-host pending" audit gap for std/uuid,
-// docs/FEATURE-AUDIT.md). random_bytes is a CSPRNG, so the output isn't
-// deterministic; the program self-validates the canonical structure (length 36,
-// hyphens at 8/13/18/23, the version nibble, and an RFC-4122 variant nibble in
-// 8/9/a/b) and returns 42 on success — exactly the shape the conformance case
-// audit_std_uuid checks.
 func TestSelfHostUuidIR(t *testing.T) {
 	cli := newStrictCLI(t)
 
-	// validate(u, ver) returns 42 iff u is the canonical hyphenated form with the
-	// expected version char and a 8/9/a/b variant nibble; else a distinct code.
 	const validate = `import "std/uuid";
 function validate(u: string, ver: i32): i32 {
     if (u.len() != 36) { return 100; }
@@ -28,8 +19,8 @@ function validate(u: string, ver: i32): i32 {
 		name string
 		src  string
 	}{
-		{"v4", validate + `function main(): i32 { return validate(uuid.uuid_v4(), 52); }`}, // '4'
-		{"v7", validate + `function main(): i32 { return validate(uuid.uuid_v7(), 55); }`}, // '7'
+		{"v4", validate + `function main(): i32 { return validate(uuid.uuid_v4(), 52); }`},
+		{"v7", validate + `function main(): i32 { return validate(uuid.uuid_v7(), 55); }`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1,7 +1,5 @@
 package e2eharness
 
-// Shared UTF-8 lead/continuation bytes must not make distinct scalars members
-// of the same set or let filtering and trimming split a character (#5626 D9).
 const StringCharacterSetProgram = `
 import "std/string" as str;
 import "std/utf8" as utf8;

@@ -9,32 +9,6 @@ import (
 	"testing"
 )
 
-// --- A `return` before a consuming match strands the local (#7742) -----------
-//
-// A local consumed by a match is released by that match, so a `return` from ANY
-// statement between its `let` and the match must release it too — the
-// post-match drop it jumps is the local's only release. No alias, no nesting,
-// no arm:
-//
-//	let src: Option[i32[]] = Some([i, i + 1]);
-//	if (i >= 0) { return 5; }
-//	match (src) { Some(b) => { return b.len(); }, None => { return 2; } }
-//
-// Left unreleased that is 80 B/round, unbounded, frees=0. The rc-enum sibling
-// behaves identically; a flat `Option[string]` carries a slot credit whose exit
-// sweep runs on the return path either way (the asymmetry #7725 recorded).
-//
-// TWO ROUND COUNTS ON THE ARRAY ROW, deliberately: the discriminator between this
-// and a bounded leak is whether live_bytes moves with the round count, and a
-// single count cannot show it. The `..._400` row is not redundant with the 100 one.
-//
-// Every row asserts `__rc_underflow_count() == 0` before its answer. Widening a release
-// window is the shape that double-frees, and the census cannot see an
-// over-release into a freelist — so each row also runs a second leg under
-// FERN_SANITIZE=1. `TestSelfHostNestedMatchBorrowNoUnderflowX86_64` covers the
-// same hazard from the other side and runs in the same suites.
-//
-// Each want is the `bin/fern -interp` answer.
 type earlyReturnDropCase struct {
 	name string
 	src  string
@@ -56,21 +30,16 @@ func earlyReturnDropCases() []earlyReturnDropCase {
 }`
 	return []earlyReturnDropCase{
 		{
-			// THE REPRO. Was 200/0 live 8000.
 			name: "arr_early_return",
 			src:  arrEarly + earlyReturnDropMain("100"),
 			want: 2,
 		},
 		{
-			// The same shape at 4x the rounds. Was 800/0 live 32000 — the row that
-			// makes the leak's unboundedness a fact rather than an inference.
 			name: "arr_early_return_400_rounds",
 			src:  arrEarly + earlyReturnDropMain("400"),
 			want: 8,
 		},
 		{
-			// The control: the `return` moved AFTER the match, so the post-match
-			// drop is reached. Balanced before this change and after it.
 			name: "arr_return_after_match",
 			src: `function round(i: i32): i32 {
     let t: i32 = 0;
@@ -82,8 +51,6 @@ func earlyReturnDropCases() []earlyReturnDropCase {
 			want: 36,
 		},
 		{
-			// The rc-payload ENUM sibling: an enum box holding an array,
-			// released on the early return the same way.
 			name: "rcenum_early_return",
 			src: `enum E { Full(i32[]), None }
 function round(i: i32): i32 {
@@ -95,8 +62,6 @@ function round(i: i32): i32 {
 			want: 2,
 		},
 		{
-			// The SCALAR-payload enum: its box is released on the early return
-			// too.
 			name: "scalar_enum_early_return",
 			src: `enum S { A(i32), B }
 function round(i: i32): i32 {
@@ -108,10 +73,6 @@ function round(i: i32): i32 {
 			want: 2,
 		},
 		{
-			// A flat Option[string]: clean BEFORE this change, because its slot
-			// credit's exit sweep still runs on the return path. Here to pin that
-			// the widened window does not release it a second time — the row that
-			// would go to 99 if it did.
 			name: "str_early_return_unchanged",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -123,10 +84,6 @@ function round(i: i32): i32 {
 			want: 2,
 		},
 		{
-			// The early return is TAKEN on half the rounds only, so both paths run
-			// in one program: the return path releases through the pending entry and
-			// the fall-through path through the post-match drop. Exactly one of them
-			// fires per round, which is the property the whole window rests on.
 			name: "early_return_conditional",
 			src: `function round(i: i32): i32 {
     let src: Option[i32[]] = Some([i, i + 1]);
@@ -138,9 +95,6 @@ function round(i: i32): i32 {
 			want: 18,
 		},
 		{
-			// The `return` is inside a WHILE between the var and the match, so the
-			// sweep is emitted from a nested block that inherits the enclosing
-			// pending set rather than owning it.
 			name: "early_return_inside_a_loop",
 			src: `function round(i: i32): i32 {
     let src: Option[i32[]] = Some([i, i + 1]);
@@ -153,8 +107,6 @@ function round(i: i32): i32 {
 			want: 2,
 		},
 		{
-			// The lower_block sibling: candidate, early return and match all inside
-			// an `if`, which is the second of the two sites that install entries.
 			name: "nested_block_early_return",
 			src: `function round(i: i32): i32 {
     if (i >= 0) {
@@ -167,9 +119,6 @@ function round(i: i32): i32 {
 			want: 2,
 		},
 		{
-			// A STRUCT payload, whose release is a field walk plus a box dec — the
-			// deepest release reached through this window, and the one that strands
-			// a field buffer rather than just a box when it is missed.
 			name: "struct_payload_early_return",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
@@ -183,9 +132,6 @@ function round(i: i32): i32 {
 	}
 }
 
-// TestSelfHostEarlyReturnConsumingDropX86_64 — every row balances at live_bytes 0
-// with no rc underflow, on the census leg and again under the quarantining
-// allocator.
 func TestSelfHostEarlyReturnConsumingDropX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -232,8 +178,6 @@ func TestSelfHostEarlyReturnConsumingDropX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostEarlyReturnConsumingDropWasmIR — the wasm sibling. Exit codes only:
-// an over-release moves no byte count on any backend.
 func TestSelfHostEarlyReturnConsumingDropWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping early-return consuming-drop wasm IR e2e")
@@ -272,7 +216,6 @@ func TestSelfHostEarlyReturnConsumingDropWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostEarlyReturnConsumingDropIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostEarlyReturnConsumingDropIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

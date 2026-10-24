@@ -10,12 +10,6 @@ import (
 	"time"
 )
 
-// AcceptDistributionServerSource is a supervised server with `workers`
-// workers whose handler answers the worker it ran in: a cell the
-// handler's closure holds, set from the monotonic clock on the worker's
-// first request, so every worker's copy of it after the fork carries its
-// own value. The caps are lifted for the measuring client, one host
-// holding thousands of connections.
 func AcceptDistributionServerSource(workers int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -32,11 +26,6 @@ function main(): i32 {
 `, workers)
 }
 
-// MeasureAcceptDistribution holds `held` connections to the server at addr,
-// one request on each, and answers how many of them each worker accepted,
-// keyed by the worker's answer. The connections stay open until it
-// returns, so the count is the distribution at `held` held, not over a
-// churn of short connections.
 func MeasureAcceptDistribution(t *testing.T, addr string, held int) map[string]int {
 	t.Helper()
 	conns := make([]net.Conn, 0, held)
@@ -67,11 +56,6 @@ func MeasureAcceptDistribution(t *testing.T, addr string, held int) map[string]i
 	return per
 }
 
-// CheckAcceptDistribution drives AcceptDistributionServerSource with
-// `workers` workers: `held` connections land on more than one worker,
-// and the distribution is logged, since how evenly the shared listener
-// spreads them under EPOLLEXCLUSIVE is what #9854 measures before fixing
-// the default.
 func CheckAcceptDistribution(t *testing.T, addr string, workers, held int) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)

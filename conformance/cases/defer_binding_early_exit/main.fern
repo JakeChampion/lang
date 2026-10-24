@@ -1,7 +1,7 @@
 import "core/int";
 
-// A continue before registration cannot read a nonexistent local or reuse the
-// previous iteration's registration. Only iterations one and three contribute.
+
+
 function main(): i32 {
     let seen: i32 = 0;
     let i: i32 = 0;

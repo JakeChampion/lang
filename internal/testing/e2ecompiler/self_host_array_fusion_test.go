@@ -9,19 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Producer-consumer fusion of std/array pipelines in the self-host compiler
-// (#11072, compiler/semfuse.fern), on every self-host target.
-//
-// The pass runs on the typed semantic graphs all three backends lower from, so
-// each target is run rather than one: what is shared is the graph, and what
-// differs is how strictly each backend types the loop built from it.
-//
-// Three programs. The first computes every chain shape native fuses, and a
-// few more, both through the combinators and through a hand-written loop, and
-// compares the two inside the program, so a wrong fused loop fails even where
-// it is consistently wrong. The second counts allocations, and the third
-// prints from element functions, so the order of their effects is visible.
-
 const selfHostArrayFusionSrc = `import "std/array";
 
 function build(n: i32): i64[] {
@@ -412,9 +399,6 @@ function main(): i32 {
 }
 `
 
-// Each chain runs `rounds` times over 2000 elements. Unfused, every
-// intermediate costs a buffer per round and a regrow per doubling, so a chain
-// that allocates fewer blocks than it has rounds per allowance has built none.
 const selfHostArrayFusionAllocSrc = `import "std/array";
 
 function build(n: i32): i64[] {
@@ -548,10 +532,6 @@ function main(): i32 {
 }
 `
 
-// Element functions that print. Fused, the stages' calls interleave per
-// element, so a chain whose element functions reach an effect must stay one
-// traversal per stage. That holds whether the effect is the stage's own or a
-// callee's, and whether the second party is another stage or the sink.
 const selfHostArrayFusionEffectSrc = `import "std/array";
 
 function noisy(x: i64): i64 {
@@ -582,8 +562,6 @@ function main(): i32 {
 
 const selfHostArrayFusionEffectWant = "mmmfffpppmmmnnnrrtttww"
 
-// runSelfHostFusionProgram compiles src with the self-host compiler for target
-// and runs it, returning its stdout and exit code.
 func runSelfHostFusionProgram(t *testing.T, target, src string) (string, int) {
 	t.Helper()
 	switch target {
@@ -607,8 +585,6 @@ func runSelfHostFusionProgram(t *testing.T, target, src string) (string, int) {
 
 var selfHostFusionTargets = []string{e2eharness.TargetX86_64Linux, e2eharness.TargetArm64Linux, e2eharness.TargetWasm32Wasi}
 
-// Exit 10..32 names the case that disagreed with its loop (see check), and the
-// size it disagreed at: (case * 5 + size index) - 40.
 func TestSelfHostArrayFusionMatchesHandWrittenLoops(t *testing.T) {
 	for _, target := range selfHostFusionTargets {
 		t.Run(target, func(t *testing.T) {
@@ -619,10 +595,6 @@ func TestSelfHostArrayFusionMatchesHandWrittenLoops(t *testing.T) {
 	}
 }
 
-// 70+w: chain w computed nothing; 80+w: chain w still allocates its
-// intermediates; 90 / 91: a chain that must not fuse stopped building its
-// intermediate; 92: a flat_map allocates more than its hand-written loop;
-// 98 / 99: the counter itself stopped working.
 func TestSelfHostArrayFusionStopsAllocatingIntermediates(t *testing.T) {
 	for _, target := range selfHostFusionTargets {
 		t.Run(target, func(t *testing.T) {

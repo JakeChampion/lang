@@ -5,7 +5,6 @@ import "std/string";
 function require(ok: boolean, group: string): void {
   if (!ok) {
     print("large-array machine controls failed: " + group);
-    // Shared native status; printed module and mutation identify the failure.
     exit(180);
   }
 }
@@ -33,7 +32,6 @@ function memory(s: string): void {
   mutation(s, "movl -16(%rax), %ecx", "movq -16(%rax), %rcx", false);
   mutation(s, "movl -16(%rax), %ecx", "movl -12(%rax), %ecx", false);
   mutation(s, "leaq -16(%rax), %r8", "leaq -8(%rax), %r8", false);
-  // Current block contents differ between recycled and oversized paths.
   mutation(s, "call __fern_large_push", "call __fern_large_push\nmovq (%r8), %rax", false);
   for offset in ["-8", "-4", "0", "4", "8", "12"] {
     mutation(s, "call __fern_large_push", "call __fern_large_push\nmovl $7, " + offset + "(%rsp)", false);
@@ -41,8 +39,6 @@ function memory(s: string): void {
 }
 
 function arithmetic(s: string): void {
-  // These fail only when the internally generated full domain reaches the
-  // relevant word or byte wrap; low capacities alone would miss truncation.
   mutation(s, "addq $3, %rcx", "addl $3, %ecx", false);
   mutation(s, "addq $3, %rcx", "addq $2, %rcx", false);
   mutation(s, "addq $3, %rcx", "addq $3, %rcx\nmovl %ecx, %ecx", false);
@@ -52,7 +48,6 @@ function arithmetic(s: string): void {
   mutation(s, "leaq 0(,%rcx,8), %rsi", "leaq 0(,%rcx,8), %rsi\nmovl %esi, %esi", false);
   mutation(s, "cmpq $65536, %rcx", "cmpl $65536, %ecx", false);
   mutation(s, "cmpq $65536, %rcx", "cmpq $65537, %rcx", false);
-  // Lowering the threshold changes only the excluded small-capacity domain.
   mutation(s, "cmpq $65536, %rcx", "cmpq $65535, %rcx", true);
   mutation(s, "jae .Larrdec_large", "jnb .Larrdec_large", true);
   mutation(s, "jae .Larrdec_large", "ja .Larrdec_large", false);

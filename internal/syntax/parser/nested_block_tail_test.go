@@ -7,10 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// A block in a value block's tail position is the enclosing block's value
-// (#12388): `{ …; { 1 } }` yields the inner block, as the grammar's ValueBlock
-// allows. A nested block that yields nothing, or that more statements follow,
-// stays a statement block.
 func TestNestedBlockTail(t *testing.T) {
 	thenOf := func(t *testing.T, body string) ast.Expr {
 		t.Helper()

@@ -1,15 +1,9 @@
-// Conditional normal-x86 array-box effects for ordinary scalar record sizes.
-// The allocator contract below is a premise, not an implemented allocator proof.
 import "./ssacapacityisa" as isa;
 
-// Half kinds: numeric, original register, stack pointer, fresh base, outer
-// return, initial stack, initial allocation, allocator DI, inner successor,
-// small-list base, recycled block, next head, initial recycled word.
 struct Half { kind: i32, identity: i64, high: boolean }
 
 struct Word { low: Half, high: Half }
 
-// zero and carry are -1 while unknown.
 struct State { regs: Word[], memory: Half[], writes: i32[], calls: i32, successor: i32, zero: i32, carry: i32, ok: boolean }
 
 function half(kind: i32, identity: i64, high: boolean): Half {
@@ -37,9 +31,6 @@ function narrowed(w: Word, width: i32): Word {
   return if (width == 32) { Word { ...w, high: number(0).high } } else { w };
 }
 
-// Memory: the stack S-16..S+15, the fresh allocation of C+3 words, the
-// selected free-list slot, then the recycled block of C+3 words that slot
-// holds when the class is not empty.
 function initial_word(capacity: i32, hit: boolean, i: i32): Word {
   let slot = 8 + (capacity + 3) * 2;
   if (i == 4 || i == 5) {
@@ -113,8 +104,6 @@ function add(s: State, op: isa.Op): State {
   return numeric_add(unknown(s), op.destination, w, delta);
 }
 
-// The list base plus a byte count selects a slot; the slot less the base
-// is the byte count again.
 function register_add(s: State, op: isa.Op): State {
   let a = s.regs[op.destination];
   let b = s.regs[op.source];
@@ -243,8 +232,6 @@ function push(s: State, w: Word): State {
   return write(stored, 4, next);
 }
 
-// A memory operand is read before the push moves SP and written after the
-// pop moves it, as the hardware does.
 function stack_step(s: State, op: isa.Op): State {
   let sp = s.regs[4];
   if (!pointer(sp) || sp.low.kind != 2 || op.index >= 0) {
@@ -269,8 +256,6 @@ function allocation(s: State, capacity: i32, pc: i32, op: isa.Op): State {
   if (op.symbol != "__fern_alloc" || s.calls != 0 || !equal(s.regs[4], token(2, -8))) {
     return State { ...s, ok: false };
   }
-  // Derive the request before invoking the conditional boundary. The six-word
-  // C=3 allocation is48 bytes, including the unused last record word.
   if (!equal(s.regs[7], number((capacity as i64 + 3) * 8))) {
     return State { ...s, ok: false };
   }
@@ -292,9 +277,6 @@ function lea(s: State, op: isa.Op): State {
   return if (next >= -64 && next <= 64) { write(s, op.destination, displaced(w, op.offset as i64)) } else { State { ...s, ok: false } };
 }
 
-// Flags come only from a compare of an unsigned value against a nonnegative
-// immediate, or a self test of an unsigned value or of the recycled block,
-// which the domain supplies as nonzero.
 function compare(s: State, op: isa.Op): State {
   let w = narrowed(s.regs[op.source], op.width);
   let against = if (op.kind == 27) { 0 as i64 } else { op.immediate as i64 };
@@ -369,7 +351,6 @@ function branch(s: State, condition: string): i32 {
   return if (condition == "jbe") { below } else { if (condition == "ja") { inverse(below) } else { -1 } };
 }
 
-// The capacity, RC1 and length header of the box at cells base..base+5.
 function header(capacity: i32, base: i32, i: i32): Half {
   let w = if (i - base == 2 || i - base == 3) { number(1) } else { number(capacity as i64) };
   return if (i % 2 == 0) { w.low } else { w.high };
@@ -464,21 +445,6 @@ function path(p: isa.Program, capacity: i32, hit: boolean): boolean {
   return false;
 }
 
-// Conditional implication ONLY, for C=2 and C=3, each with the class's slot
-// L+8*(C+3) holding a recycled block B and holding zero. Incoming DI=C,
-// canonical aligned stack S-16..S+15, original return at S. A nonempty slot
-// holds a valid owned aligned block of 8*(C+3) bytes whose first word is the
-// arbitrary next head; the empty slot takes the one allocator call, which
-// must return successfully with AX=B, a fresh aligned disjoint writable
-// extent of 8*(C+3) bytes, arbitrary DI, other GPRs preserved, and its
-// return/higher stack preserved. Allocator scratch below S-16 is
-// unconstrained. These are UNPROVED premises: no allocator implementation,
-// linkage, list ownership or caller credit is certified. Derives AX=B+16,
-// DI=C, other registers preserved, capacity/RC1/length headers, untouched
-// remaining block cells, C at S-8, and either the next head in the slot and at
-// S-16 (pop) or the actual successor at S-16 and the slot untouched (call).
-// Normal RET consumes the original return at S and advances SP by8. No flag,
-// unwind, terminal, debug, larger-capacity or ARM/WASI-runtime claim is made.
 pub function check(output: string): boolean {
   let p = isa.array_box_program(output);
   return p.error == "" && path(p, 2, false) && path(p, 2, true) && path(p, 3, false) && path(p, 3, true);

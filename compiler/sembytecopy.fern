@@ -1,5 +1,3 @@
-// Only invariant-source, zero-based byte walks qualify. A source carried by
-// the receiver phi has sequential update semantics and must keep its loop.
 import "./ssa";
 import "./ssasem";
 import "./typeinfo";
@@ -280,7 +278,6 @@ pub function rewrite(f: ssasem.Func, contracts: ssasem.Contract[]): Rewritten {
 }
 
 function may_have_copy_loop(g: ssa.SFunc): boolean {
-  // The outside block, header, body and exit are distinct.
   if (g.blocks.len() < 4) {
     return false;
   }

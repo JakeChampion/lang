@@ -10,23 +10,6 @@ import (
 	"testing"
 )
 
-// A workflow's `paths:` / `paths-ignore:` filter decides when the lane runs,
-// and it had drifted from what the lanes are built from (#8474, #8627). Nothing
-// in a filter can be computed at run time, so the list is checked here instead.
-//
-// Two gates, and the second is the one that matters:
-//
-//   - every entry must match something on disk, so an entry that reads as
-//     coverage and provides none is caught;
-//   - every internal package a lane's binary is built from must be covered,
-//     so narrowing a filter back to an enumeration cannot silently drop one.
-
-// pathFilterEntries returns a workflow's `paths:` / `paths-ignore:` globs. For
-// a lane ci.yml calls that is its row of the lane table, keyed by the lane's
-// filename; for anything else it is the globs inside the workflow's own
-// top-level `on:` mapping. Only those two keys are read: a `workflows:` list
-// names other workflows and a `branches:` list names refs, neither of which is
-// a path.
 func pathFilterEntries(t *testing.T, workflow string) []string {
 	t.Helper()
 	if f, ok := laneTable(t)[strings.TrimSuffix(workflow, ".yml")]; ok {
@@ -59,9 +42,9 @@ func pathFilterEntries(t *testing.T, workflow string) []string {
 			continue
 		}
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
-			continue // blank lines and comments stay inside the block
+			continue
 		}
-		indet = -1 // any other line ends the list
+		indet = -1
 	}
 	return out
 }
@@ -85,20 +68,12 @@ func workflowFiles(t *testing.T) []string {
 	return out
 }
 
-// TestWorkflowPathFiltersHaveNoDeadEntries catches the `internal/prelude/**`
-// shape across EVERY workflow. The per-file version of this gate was scoped to
-// macos.yml, which is why the same dead entry survived in three other lanes
-// (#8627): a dead entry contributes nothing to the match, so an allowlist
-// silently narrows to whatever its remaining entries happen to cover.
 func TestWorkflowPathFiltersHaveNoDeadEntries(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	checked := 0
 	for _, wf := range workflowFiles(t) {
 		for _, entry := range pathFilterEntries(t, wf) {
 			checked++
-			// `dir/**` matches anything under dir; the rest are literal paths
-			// or a single-segment glob. Reduce each to something
-			// filepath.Glob can answer, then require at least one hit.
 			probe := strings.TrimSuffix(entry, "/**")
 			matches, err := filepath.Glob(filepath.Join(root, filepath.FromSlash(probe)))
 			if err != nil {
@@ -116,22 +91,13 @@ func TestWorkflowPathFiltersHaveNoDeadEntries(t *testing.T) {
 	}
 }
 
-// filterCoverage names, per lane, the command whose dependency closure the
-// lane's filter must cover.
 var filterCoverage = []struct {
 	workflow string
 	pkg      string
 }{
-	// The only lane that EXECUTES an arm64-darwin binary: Linux CI
-	// cross-compiles Mach-O and checks it is well-formed, which cannot catch
-	// an ABI bug.
 	{"macos.yml", "./cmd/fern"},
-	// The docs site stages the playground wasm, built by the compiler the
-	// oracle builds, and that compiler generates the stdlib reference.
 	{"docs-build.yml", "./cmd/fern"},
 	{"pages.yml", "./cmd/fern"},
-	// The playground is the compiler the oracle builds plus the page that
-	// hosts it.
 	{"playground-e2e.yml", "./cmd/fern"},
 }
 
@@ -161,7 +127,7 @@ func TestWorkflowPathFiltersCoverEveryDependency(t *testing.T) {
 				if !strings.HasPrefix(line, mod+"internal/") {
 					continue
 				}
-				pkg := strings.TrimPrefix(line, mod) // e.g. internal/pkg/platforms
+				pkg := strings.TrimPrefix(line, mod)
 				if !coveredByAny(pkg, entries) {
 					uncovered = append(uncovered, pkg)
 				}
@@ -175,11 +141,6 @@ func TestWorkflowPathFiltersCoverEveryDependency(t *testing.T) {
 	}
 }
 
-// coveredByAny reports whether pkg (a slash path like "internal/pkg/platforms")
-// falls under one of the filter's globs. Only the `dir/**` and exact-path
-// forms are recognised, which is all the filters use; an entry in any other
-// shape is treated as covering nothing, so it fails loudly rather than
-// passing by accident.
 func coveredByAny(pkg string, entries []string) bool {
 	for _, e := range entries {
 		if strings.HasSuffix(e, "/**") {

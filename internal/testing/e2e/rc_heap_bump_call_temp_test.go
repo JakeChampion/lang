@@ -4,36 +4,6 @@ import (
 	"testing"
 )
 
-// Call-result reclamation at BORROWING string consumers (RC-Perceus,
-// statement-temporary mechanism). A call returning string hands back an
-// OWNED (+1) value, and the general drop machinery already reclaims one
-// that is discarded as a statement or consumed as an argument. But a
-// borrowing consumer — OpStrConcat, OpStrEq, __str_idx, __str_slice — only
-// READS its operand's bytes and leaves the buffer alone, so a call result
-// used directly there was reclaimed by nobody: `"n = " + f(x)`,
-// `f(x) == "…"`, `f(x)[0]` and `f(x)[a:b]` each leaked one buffer per
-// evaluation, unbounded in a loop. isOwnedStringTemp now admits a
-// string-returning call alongside the sub-concat / string-slice shapes,
-// and all four consumers stash-and-dec through the shared
-// stashOwnedStringOperand / decStashedStringTemps pair.
-//
-// The leak hid behind short strings: a result of 7 bytes or fewer is
-// inline-tagged (SSO) and never allocates, so `f.to_string()` on a small
-// number showed nothing. These fixtures stay above the threshold.
-//
-// The measurement is self-contained rather than two runs at different N
-// (as its nested-concat sibling does) because the native legs report
-// through an EXIT CODE: a growth that happens to be a multiple of 256 is
-// invisible there, and 192256 vs 1632256 — the wasm figures for this
-// shape — are both ≡ 0 mod 256. Measuring the delta INSIDE the program
-// sidesteps the truncation entirely: once the freelist is warm a
-// reclaiming loop leaves the bump high-water exactly flat, so the check
-// is `delta == 0` over a span that a leak would grow by 20000 buffers.
-// The warm-up burn is separate because wasm's first couple of thousand
-// iterations still bump (512 B, settling well before 2000) as the size
-// classes fill; native reaches steady state immediately.
-
-// Exit code 0 = every consumer bounded; 1..4 names the one that grew.
 const callTempConsumerBumpSrc = `function mk(s: string): string { return slice_unchecked(s, 0, 20) + "!"; }
 function burn(a: string, n: i32, mode: i32): i32 {
     let i: i32 = 0;
@@ -63,12 +33,6 @@ function main(): i32 {
     return 0;
 }`
 
-// Value-correctness + 0 over-release. `pick` returns a BORROWED operand —
-// the caller's own `a` — which is exactly the shape a too-eager dec would
-// corrupt: freeing it hands its block back to the freelist, the next
-// iteration reuses it, and the final content checks see garbage. It stays
-// correct because a Fern return is owned at the call site, so the borrowed
-// return was inc'd on the way out. Each borrowing consumer is covered.
 const callTempConsumerUnderflowSrc = `function mk(s: string): string { return slice_unchecked(s, 0, 2) + "!"; }
 function pick(a: string, b: string): string {
     if (a.len() > 3) { return a; }

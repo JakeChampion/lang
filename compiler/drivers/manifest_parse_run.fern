@@ -1,8 +1,3 @@
-// compiler/drivers/manifest_parse_run.fern — the self-host half of the
-// manifest parser parity test: for each fern.toml path argument, one line,
-// `ok` or `err <diagnostic>` from fern_toml.parse. The companion Go test
-// expects manifest.Parse's verdict on every row.
-
 import "../fern_toml";
 
 function verdict(path: string): string {

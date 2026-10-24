@@ -1,12 +1,8 @@
-// Scoped normal-x86 decrement effects. All states are private
-// and derived from the same complete supplied text, never public proof data.
 import "./ssadecrementisa" as isa;
 import "./ssadecrementcount" as count;
 import "./ssadecrementmemory" as memory;
 import "./ssadecrementtext" as text;
 
-// kind: unknown, original GPR, pointer P, original SP, return address,
-// zero-extended 32-bit count, exact zero. Original GPR identities remain distinct.
 struct Value { kind: i32, identity: i32, rc: count.Value }
 
 struct State { regs: Value[], heap: memory.Memory, flags: count.Flags, zero: boolean, increments: i32, ok: boolean }
@@ -73,7 +69,6 @@ function store(s: State, op: isa.Op): State {
 }
 
 function zero_flags(immediate: i32): count.Flags {
-  // Exact modular32 subtraction 0 - immediate. Only INT_MIN overflows.
   let over = immediate == -2147483648;
   let neg = immediate > 0 || over;
   return count.Flags { zero: if (immediate == 0) { 1 } else { 0 }, negative: if (neg) { 1 } else { 0 }, carry: if (immediate != 0) { 1 } else { 0 }, overflow: if (over) { 1 } else { 0 }, signed_less: if (immediate > 0) { 1 } else { 0 } };
@@ -81,7 +76,6 @@ function zero_flags(immediate: i32): count.Flags {
 
 function pointer_flags(s: State, op: isa.Op, v: Value): State {
   if ((op.kind == 6 || op.kind == 8) && v.kind == 2) {
-    // P is aligned and in [65536, 2^47). Equality with the floor is unknown.
     return State { ...s, flags: count.Flags { zero: if (op.kind == 6) { 1 } else { -1 }, negative: 0, carry: 0, overflow: 0, signed_less: 0 } };
   }
   return State { ...s, flags: unknown_flags() };
@@ -111,9 +105,6 @@ function arithmetic(s: State, op: isa.Op): State {
     return flags(s, op);
   }
   if (op.kind == 12 && s.zero && s.increments == 0) {
-    // The sole admitted counter write maps arbitrary original low32 C to
-    // C+1 modulo 2^32, leaving upper32 and all other memory unchanged.
-    // INC preserves CF. Its other flags describe C+1, not the zero header.
     return State { ...s, increments: 1, flags: count.Flags { ...unknown_flags(), carry: s.flags.carry } };
   }
   return State { ...s, ok: false };
@@ -125,7 +116,6 @@ function step(s: State, op: isa.Op, register_entry: boolean): State {
   }
   if (op.kind == 2) {
     let v = s.regs[op.source];
-    // MOV32 zero-extends; it cannot preserve an arbitrary 64-bit identity.
     return write(s, op.destination, if (op.width == 64 || v.kind == 5 || v.kind == 6) { v } else { token(0, 0) });
   }
   if (op.kind == 3) {
@@ -218,8 +208,6 @@ function finished(s: State): boolean {
     }
     i = i + 1;
   }
-  // No stack write is admitted. Plain RET therefore reads the original
-  // return address at original SP and leaves SP at original SP + 8.
   return true;
 }
 
@@ -231,12 +219,6 @@ function same_value(a: Value, b: Value): boolean {
   return a.kind == b.kind && a.identity == b.identity && a.rc.family == b.rc.family && a.rc.delta == b.rc.delta;
 }
 
-// The `.u` entry is reached on the register path with the entry state, apart
-// from the flags of the floor test it skips and RCX, which the body may
-// clobber. RCX goes back to its entry value and the flags are forgotten, so
-// the rest of the walk is the walk from `.u`, which the caller enters having
-// tested the floor, and proves the body for every value a prefix could leave
-// in RCX.
 function unguarded(s: State, original: State): State {
   let i = 0;
   while (i < s.regs.len()) {
@@ -287,14 +269,6 @@ function path(p: isa.Program, shared: boolean, register_entry: boolean, zero: bo
   return false;
 }
 
-// Explicit preconditions: P is eight-byte aligned in [65536, 2^47), its
-// four-byte RC at P-8 is readable/writable and disjoint from the readable
-// incoming 16-byte stack. Original signed32 RC is negative or greater than
-// one. Stack entry supplies P at SP+8; register entry supplies P in RAX and
-// leaves SP+8 unconstrained. Both preserve every GPR except RAX/RCX, return
-// P in RAX, and return through the original stack word with SP advanced 8.
-// This does not establish caller credits, zero/one/free/debug behavior or
-// any other target, and is not wired into production admission.
 pub function check(output: string, entry: string): boolean {
   let p = isa.program(output, entry);
   if (p.error != "") {
@@ -310,13 +284,6 @@ pub function check(output: string, entry: string): boolean {
   return true;
 }
 
-// Same entry/register/return contract, but original RC is exactly zero.
-// The declared counter must resolve to an aligned writable eight-byte
-// allocation, disjoint from object/header and stack in the linked image.
-// Those address/permission preconditions are NOT established by text parsing.
-// The counter's original contents are arbitrary, despite its initializer.
-// Proves only one low32 increment with unchanged upper32/object/other memory.
-// Underflow reporting does not discharge an ownership credit.
 pub function check_zero(output: string, entry: string): boolean {
   if (!text.counter_storage(output)) {
     return false;

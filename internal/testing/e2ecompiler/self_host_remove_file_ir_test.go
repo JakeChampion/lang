@@ -9,12 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostRemoveFileIR pins `remove_file(path)` lowering on the self-host
-// x86-64 IR path. remove_file unlinks a file and returns Result[void, IoError]; it
-// lowers to op_remove_file, backed by the __fern_remove_file runtime. The
-// program makes a temp dir, writes a file, remove_file's it, then read_dir's the
-// dir and asserts it's empty (0 entries) -> exit 0; exercises temp_dir /
-// write_file / remove_file / read_dir / remove_dir_all on the IR path.
 func TestSelfHostRemoveFileIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -67,15 +61,6 @@ func TestSelfHostRemoveFileIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostRemoveFileIRWasm is the wasm mirror: remove_file now lowers through
-// the wasm IR path too (it was a wasm_eligible exclusion). The wasm op_remove_file
-// handler calls a fresh runtime ($__fern_remove_file: preview1 path_unlink_file ->
-// Result[void, IoError] box [tag@0, payload@4], Ok=0 on success / Err=1 on failure
-// with the same null-IoError placeholder $__fern_stat's Err arm uses — the match
-// binds it with a wildcard). Unlike the x86 test this exercises remove_file alone
-// (temp_dir / read_dir are not yet wasm-eligible): it removes a known file (None)
-// and a missing file (Some) under wasmtime with the temp dir as preopen, exiting 0
-// only if both resolve, and the test confirms the known file is gone on disk.
 func TestSelfHostRemoveFileIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host remove_file wasm IR e2e")
@@ -85,13 +70,11 @@ func TestSelfHostRemoveFileIRWasm(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
-	// A known regular file under the temp dir — remove_file should unlink it.
 	target := filepath.Join(dir, "rmtarget.txt")
 	if err := os.WriteFile(target, []byte("delete me\n"), 0o644); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
 
-	// Relative paths resolved against the preopen (the temp dir, mapped to /).
 	const src = `function main(): i32 {
     match (remove_file("rmtarget.txt")) {
         Ok(_) => {
@@ -131,7 +114,6 @@ func TestSelfHostRemoveFileIRWasm(t *testing.T) {
 	if code := run.ProcessState.ExitCode(); code != 0 {
 		t.Errorf("remove_file wasm IR program exited %d, want 0 (known file -> None, missing -> Some)\n--- WAT ---\n%s", code, wat)
 	}
-	// The known file must actually be gone (the None path really unlinked it).
 	if _, err := os.Stat(target); !os.IsNotExist(err) {
 		t.Errorf("rmtarget.txt still present after remove_file (stat err = %v)", err)
 	}

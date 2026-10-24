@@ -1,10 +1,10 @@
-// `xs.map(k)` over an f64[] or an f32[], with k a generic kernel the lane
-// type can instantiate, gives the same answer as the scalar map: the
-// compiler may run k on f64x2 / f32x4 groups and on the scalar for the
-// rest, and each lane computes what the scalar does. A kernel that reads its
-// lane structure (`lane`, directly or through a helper), whose bound the
-// lane type lacks, or that has an effect (`print`, directly or through a
-// method of its own) is mapped one element at a time.
+
+
+
+
+
+
+
 import "std/f64";
 import "std/simd" as simd;
 import "std/num" as num;
@@ -110,9 +110,9 @@ function main(): i32 {
   line32("clamp32", fs.map(clamp));
   let four: f32[] = [1.5, 2.5, 3.5, 4.5];
   line32("four", four.map(poly));
-  // The input is still read after the maps above, so each map copies it.
+
   line("input", xs);
-  // Here the input dies at the map, which may write it in place.
+
   let ys: f64[] = [2.0, 3.0, 4.0];
   line("owned", ys.map(poly));
   return 0;

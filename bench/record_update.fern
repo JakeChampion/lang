@@ -1,12 +1,3 @@
-// record_update — the same per-byte writes as array_with, but the buffer is a
-// field of a threaded record that also carries a refcounted (string) field,
-// updated the way E048 forces an update to be written: `Blk { ...b, buf:
-// b.buf.with(i, v) }`, through a method taking the record by value.
-//
-// This is the shape every coreutils formatter reaches for, and the difference
-// against array_with is what the record costs per byte: the box reuse
-// decision, the release of the field the update replaces, and whatever the
-// carried fields are charged (#8530).
 struct Blk { buf: u8[], note: string, n: i32 }
 
 function (b: Blk) put(i: i32, v: u8): Blk {

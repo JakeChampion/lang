@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// TestWasmClockCensus runs each clock builtin, and the date formatter
-// over the wall clock, a hundred times under the wasm leak census: the
-// preview-2 wall-clock helpers read the host's datetime record through
-// a scratch block they allocate, and one that is not given back is a
-// block per read (#9854's `Date` header, formatted once per second,
-// read the clock once per wait and leaked one for each).
 func TestWasmClockCensus(t *testing.T) {
 	loop := func(call string) string {
 		return `import "std/time";

@@ -7,22 +7,6 @@ import (
 	"testing"
 )
 
-// #4357 (#4297 A2 follow-up): a reclaimable struct LOOP-LOCAL carrying a DIRECT enum
-// field (`while { let t: Tagged = Tagged { e: Poly([i, i+1]), n: i }; }`) must release
-// the enum field's VARIANT PAYLOAD at each loop rebind, not only the struct box: for
-// each enum field the runtime variant dispatch drops the variant payload and frees the
-// enum box before the struct box is freed.
-//
-// SOUNDNESS: that holds only when every enum field of the literal is a FRESH variant
-// ctor (`e: Poly([..])` with a fresh array payload), so the old enum box + payload is
-// sole-owned (rc=1). A NON-fresh (aliased bare-ident) enum field is retained by its
-// owner, so freeing its payload would double-release — such a struct must leak
-// instead (the ALIAS-SAFETY case proves __rc_underflow_count stays 0). A once-off
-// final-box payload leak is bounded, so the fixpoint is flat across N.
-//
-// Gated on the self-host x86-64 IR path: FIXPOINT (bump growth equal at N=50 / N=5000)
-// + OVER-RELEASE (the fresh payload is read each iteration) + ALIAS-SAFETY.
-
 func structEnumFieldLoopLocalSrc(n string) string {
 	return `enum Shape { Poly(i32[]), Dot }
 struct Tagged { e: Shape, n: i32 }
@@ -42,9 +26,6 @@ function main(): i32 {
 }`
 }
 
-// per iter reads xs[0..2] = i + (i+1) + (i+2) = 3i+3, plus t.n = i => 4i+3; sum over
-// 0..199 = 4*19900 + 3*200 = 80200. A wrong free of the live payload corrupts the sum
-// or trips __rc_underflow_count.
 const structEnumFieldLoopLocalDetectorSrc = `enum Shape { Poly(i32[]), Dot }
 struct Tagged { e: Shape, n: i32 }
 function main(): i32 {
@@ -59,10 +40,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// A struct whose enum field is a bare IDENT (`e: shared`, shared a live enum local
-// across the loop) must NOT be deep-dropped — that would double-release shared's
-// payload, so the struct takes the leak-safe shallow path; __rc_underflow_count == 0
-// proves no over-release. acc = 100*7 (xs[0] per iter) + 7 (final match) = 707.
 const structEnumFieldAliasSafetySrc = `enum Shape { Poly(i32[]), Dot }
 struct Tagged { e: Shape, n: i32 }
 function main(): i32 {
@@ -78,12 +55,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// A struct whose enum field is a FRESH ctor but with a NON-fresh (aliased bare-ident)
-// STRING payload (`m: Text(s)`, s a live string local): a non-fresh string payload is
-// not sole-owned any more than an array one, so the struct takes the leak-safe shallow
-// path rather than __fern_str_free the aliased string; s stays live (read after the
-// loop). acc = 100*5 (v.len per iter) + 5 (s.len after) = 505;
-// __rc_underflow_count == 0 proves no over-release of s.
 const structEnumFieldStringPayloadAliasSrc = `enum Msg { Text(string), None }
 struct W { m: Msg, n: i32 }
 function main(): i32 {

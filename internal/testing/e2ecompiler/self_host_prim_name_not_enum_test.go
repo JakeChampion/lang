@@ -5,24 +5,10 @@ import (
 	"testing"
 )
 
-// #8428: a primitive type name — `u8`, `u32`, `u64`, `usize`, `char`, `str` —
-// is never a bare nominal enum.
-//
-// The shapes here are the ones the conformance corpus does not carry. What the
-// corpus does cover, and so is not repeated: `int_checked_div` /
-// `match_expr_arm_width` (u32 / u64 Option payloads), `string_slice_option`
-// (a `str` payload), `char_cast_receiver` (a `let c: char` receiver) and the
-// whole `core/bigint` `(u64[], u64)` return chain, gated by
-// `TestFernFixturesSelfHostX86_64` under FERN_SELFHOST_FIXTURES=1.
 var primNameNotEnumCases = []struct {
 	name string
 	src  string
 }{
-	// A `(u64[], u64)` tuple return, read back through `.N[i]` AND through a
-	// destructure. The tuple element binds as the 8-byte u64 array it is, like an
-	// annotated `let xs: u64[]` — not as an array of an enum named "u64", which
-	// has no 8-byte element kind and leaves the destructured array's `a[1]`
-	// reading its low 32 bits (exit 4).
 	{"u64-array-tuple-element", "function mk(): (u64[], u64) {\n" +
 		"    let q: u64[] = [];\n    q = q.append(18446744073709551615 as u64);\n    q = q.append(4294967296 as u64);\n" +
 		"    return (q, 4294967297 as u64);\n}\n" +
@@ -37,31 +23,17 @@ var primNameNotEnumCases = []struct {
 		"    let xs: u64[] = t.0;\n" +
 		"    if (xs[1] != (4294967296 as u64)) { return 6; }\n" +
 		"    return 0;\n}"},
-	// A `u64[]` ENUM PAYLOAD must not be dropped as an array of enum boxes:
-	// that would dereference each u64 limb as an rc box.
-	// 18446744073709551615 is not a plausible address, so a wrong drop
-	// SIGSEGVs — a limb holding a real address would silently decrement
-	// whatever it pointed at instead. The arm reads only `.len()`: the crash is
-	// on the DROP, and a wide element read off an enum payload needs the
-	// checker's type annotations, which the stdin driver does not run.
 	{"u64-array-enum-payload", "enum E { Xs(u64[]), N }\n" +
 		"function main(): i32 {\n" +
 		"    let e: E = Xs([18446744073709551615 as u64, 5 as u64]);\n" +
 		"    match (e) { Xs(v) => { return v.len() - 2; }, N => { return 3; } }\n" +
 		"    return 9;\n}"},
-	// The plain `struct Q { us: u64[] }` construction from the issue. It is
-	// leak-safe on its own terms (is_leaksafe_array_field covers u64[]), which
-	// is tested before the enum-array arm — so this one is a pin that the
-	// narrowing did not disturb it, not a repro.
 	{"u64-array-struct-field", "struct Q { us: u64[] }\n" +
 		"function main(): i32 {\n" +
 		"    let q: Q = Q { us: [18446744073709551615 as u64, 2 as u64] };\n" +
 		"    if (q.us[0] != (18446744073709551615 as u64)) { return 1; }\n" +
 		"    if (q.us[1] != (2 as u64)) { return 2; }\n" +
 		"    return 0;\n}"},
-	// `char[]` as a struct field. It too was admitted as an array-of-enum and
-	// dropped by a box walk; it is a flat 4-byte-slot scalar buffer, so it now
-	// is covered by is_leaksafe_array_field with i32[] / u32[] / u8[].
 	{"char-array-struct-field", "struct C { cs: char[] }\n" +
 		"function main(): i32 {\n" +
 		"    let c: C = C { cs: [97 as char, 98 as char] };\n" +
@@ -70,8 +42,6 @@ var primNameNotEnumCases = []struct {
 		"    return 0;\n}"},
 }
 
-// TestSelfHostPrimNameNotEnumX86_64 — the production x86-64 IR path, against the
-// interpreter oracle, with FERN_STRICT_IR=1 so a case cannot pass by bailing.
 func TestSelfHostPrimNameNotEnumX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -101,9 +71,6 @@ func TestSelfHostPrimNameNotEnumX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostUsizeArrayFieldRefused runs a `usize[]` struct field, which must
-// not be walked as an array of enum boxes: its 8-byte elements are read as
-// scalars and every array is reclaimed. The want is bin/fern -interp's.
 func TestSelfHostUsizeArrayFieldRefused(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)

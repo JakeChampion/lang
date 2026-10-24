@@ -12,18 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternVariantResultMixedCustomProvider exercises a `variant` *result* with
-// a mix of payloaded and payloadless cases (docs/WIT-BRING-YOUR-OWN.md): an
-// `@import` extern returns `variant opt-num { some(s32), none }`, lifted into a
-// Fern enum with a payloaded + a payloadless variant. The uniform payload (s32)
-// flattens to (disc, payload) returned indirectly; the wrapper materializes a
-// box `[rc][tag@0][payload@off]` for every case — the payloadless `none` case
-// gets the same box with an unused payload, exactly as option/result results
-// already materialize their payloadless arm, so it's tag-correct and
-// match-correct. Verifies the result wrapper accepts payloadless cases.
-//
-// The provider exports `lookup: func(n: s32) -> opt-num`: n>=0 → some(n*2),
-// else none. The Fern side matches and recovers the payload / payloadless arm.
 func TestExternVariantResultMixedCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -50,8 +38,6 @@ func TestExternVariantResultMixedCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// lookup returns the variant indirectly (disc:u8 @0, payload:s32 @4) via
-	// cabi_realloc. some=0/none=1. For none, the payload is left unwritten.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))

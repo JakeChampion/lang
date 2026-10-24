@@ -7,11 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64FrameGas byte-checks the frame prologue/epilogue ops
-// added in slice 3h (stp/ldp pre/post, ldr/str writeback, and the `mov
-// Xd, sp` add-immediate alias) as parsed by arm64_gas.fern. The expected
-// bytes are pinned against llvm-mc. Run through the self-host wasm pipeline;
-// exit 0 = all pass, else the 1-based failing check id.
 func TestSelfHostArm64FrameGas(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64 frame gas e2e")
@@ -39,18 +34,10 @@ func TestSelfHostArm64FrameGas(t *testing.T) {
 	}
 }
 
-// TestSelfHostArm64DarwinMachOFnGasRuns proves the GAS assembler can now
-// handle a real function shape — the prologue/epilogue + frame idiom the
-// self-host arm64-darwin backend actually emits (stp/mov-sp/str-push/
-// ldr-pop/ldp/ret), with a `bl` from `_main`. A Fern program assembles
-// that text, wraps it with macho.fern, and the signed Mach-O exits 42 —
-// no external tool.
 func TestSelfHostArm64DarwinMachOFnGasRuns(t *testing.T) {
 	assertMachORuns(t, machoRun{name: "fn42", main: arm64MachOFnGasDriverMain, wantExit: 42})
 }
 
-// arm64FrameGasSelfTestMain asserts the frame ops assemble to the
-// llvm-mc-pinned bytes. Each `return N` is a distinct failing-check id.
 const arm64FrameGasSelfTestMain = `
 function main(): i32 {
     // stp x29, x30, [sp, #-16]! -> 0xA9BF7BFD -> FD 7B BF A9
@@ -78,9 +65,6 @@ function main(): i32 {
 }
 `
 
-// arm64MachOFnGasDriverMain assembles the real prologue/epilogue + frame
-// idiom the arm64-darwin backend emits, computing exit(42) via a push/pop
-// round-trip of the value through the stack frame.
 const arm64MachOFnGasDriverMain = "\n" +
 	"function main(): i32 {\n" +
 	"    let asm: string = \"\";\n" +

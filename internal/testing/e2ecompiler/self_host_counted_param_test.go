@@ -4,37 +4,16 @@ import (
 	"testing"
 )
 
-// --- A COUNTED param position is not a move ---------------------------------
-//
-// A callee that only reads its parameter, or stores it with a COUNTED store
-// (a struct-literal field, which retains it), does not take the caller's
-// reference. A NAMED local passed at such a position must still be released by
-// the caller; withholding that release is a constant two-object leak whatever
-// the loop count. The `balance: true` rows — string, string[] and enum
-// arguments — assert allocs == frees at live_bytes 0.
-//
-// A callee that hands the argument back, returns a struct holding it, passes it
-// onward to one that does, hands out an element, or destructures an enum
-// argument (`callee_hands_out_payload`, whose payload could leave uncounted)
-// keeps a reference the caller must not release. Those rows are refused, and
-// they read their values back after churn: the census cannot see a
-// use-after-free.
-//
-// Each want is the `bin/fern -interp` answer.
-
 type countedParamCase struct {
 	name    string
 	src     string
 	want    int
-	balance bool // assert allocs == frees at live_bytes 0
+	balance bool
 }
 
 func countedParamCases() []countedParamCase {
 	return []countedParamCase{
 		{
-			// The repro. The callee stores the param into a struct-literal field, which
-			// RETAINS it and gives the retain back at the holder's drop; the caller's
-			// own claim was never released. 102 allocs / 100 frees before, native 101/101.
 			name: "counted_arg_string",
 			src: `struct P { f: string, n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
@@ -56,9 +35,6 @@ function main(): i32 {
 			want: 73, balance: true,
 		},
 		{
-			// The same at the DEEP class. The callee's store retains the BUFFER, so
-			// __fern_str_arr_free's rc gate leaves the element walk to whichever owner
-			// reaches rc 1. 106/102 before, native 104/104.
 			name: "counted_arg_strarr",
 			src: `struct P { f: string[], n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
@@ -80,8 +56,6 @@ function main(): i32 {
 			want: 71, balance: true,
 		},
 		{
-			// REFUSED: a callee that hands the param back keeps a reference
-			// the caller must not release.
 			name: "callee_returns_param",
 			src: `function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function mkv(i: i32): string { let s: string = w("k"); return s; }
@@ -103,8 +77,6 @@ function main(): i32 {
 			want: 63, balance: false,
 		},
 		{
-			// The same callee, read back BY BYTES after 200 churn allocations. The
-			// census cannot see a use-after-free; this returns 88 if keep's bytes moved.
 			name: "callee_returns_param_readback",
 			src: `function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function mkv(i: i32): string { let s: string = w("k"); return s; }
@@ -131,9 +103,6 @@ function main(): i32 {
 			want: 45, balance: false,
 		},
 		{
-			// REFUSED: the param is stored into a struct the callee RETURNS, so the
-			// share outlives the call. The caller keeps leaking rather than releasing
-			// under the holder.
 			name: "param_in_returned_struct",
 			src: `struct P { f: string, n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
@@ -154,8 +123,6 @@ function main(): i32 {
 			want: 66, balance: false,
 		},
 		{
-			// REFUSED through the onward position: the callee passes the param
-			// to esc2, which hands it back.
 			name: "onward_pass_to_handback",
 			src: `function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function mkv(i: i32): string { let s: string = w("k"); return s; }
@@ -176,9 +143,6 @@ function main(): i32 {
 			want: 63, balance: false,
 		},
 		{
-			// REFUSED for string[]: an element read is not a counted use — the tier
-			// declines ExprIndex for arrays precisely because the element may BE a
-			// reference handed out uncounted. Reads the element back after churn.
 			name: "callee_extracts_element",
 			src: `struct P { f: string[], n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
@@ -199,8 +163,6 @@ function main(): i32 {
 			want: 85, balance: false,
 		},
 		{
-			// REFUSED: the string[] reaches a returned struct. Reads both the array
-			// header and element 0 back after churn.
 			name: "strarr_in_returned_struct",
 			src: `struct P { f: string[], n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
@@ -221,8 +183,6 @@ function main(): i32 {
 			want: 94, balance: false,
 		},
 		{
-			// The enum flavour of the repro, and the third tier on this registry.
-			// 102 allocs / 100 frees before, native 102/102.
 			name: "counted_arg_enum",
 			src: `struct P { f: E, n: i32 }
 enum E { A(i32[]), B }
@@ -244,8 +204,6 @@ function main(): i32 {
 			want: 5, balance: true,
 		},
 		{
-			// REFUSED: the callee hands the enum argument back. Not
-			// balance-checked; the exit value and the underflow check guard it.
 			name: "callee_returns_enum",
 			src: `enum E { A(i32[]), B }
 function mkv(i: i32): E { return E.A([i, i + 1]); }
@@ -263,10 +221,6 @@ function main(): i32 {
 			want: 13, balance: false,
 		},
 		{
-			// REFUSED, and this is the hole with no analogue in the string tier: a
-			// callee that destructures the enum could hand the PAYLOAD out
-			// uncounted, so a `match` on the param keeps the caller's reference
-			// live. The payload is read back after churn.
 			name: "callee_hands_out_payload",
 			src: `enum E { A(i32[]), B }
 function mkv(i: i32): E { return E.A([i, i + 1]); }
@@ -285,11 +239,6 @@ function main(): i32 {
 			want: 70, balance: false,
 		},
 		{
-			// The DESIGNED case, and the one that can fail on behaviour: the holder
-			// is RETURNED, so the retain is live past the frame that built the
-			// enum, and the payload is read back after 20 churn frames have
-			// recycled the freelist. Self-host is clean at 6900/6900 where
-			// NATIVE leaks 900 objects. A wrong walk returns 100, a double free 99.
 			name: "enum_holder_escapes_readback",
 			src: `enum E { A(i32[]), B }
 function mkv(i: i32): E { return E.A([i, i + 1]); }
@@ -318,9 +267,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostCountedParamReleaseX86_64 — a local passed at a counted parameter
-// position keeps the scope-exit release its own creation owes, and every callee
-// that could let the value outlive the call keeps refusing it.
 func TestSelfHostCountedParamReleaseX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

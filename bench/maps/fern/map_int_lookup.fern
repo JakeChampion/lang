@@ -1,13 +1,8 @@
-// Map[i32, i32] with keys `i * 7` and value `i`: the Rust half's
-// `hashbrown<u32,u32>` and `multitable<4,4>` rows.
 import "core/map";
 import "std/bench";
 import "std/u64";
 import "./shared";
 
-// The tables are built in helpers, not in main: a variable updated in a loop
-// and then captured by the closure bench.run takes is copied on every update
-// (#12927), which would make the build quadratic and swamp the run.
 function build(n: i32): Map[i32, i32] {
   let m: Map[i32, i32] = Map { };
   let i: i32 = 0;

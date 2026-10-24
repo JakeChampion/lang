@@ -9,26 +9,16 @@ import (
 	"testing"
 )
 
-// A `for x in t.N` loop over a tuple ELEMENT that is itself an array lowers on
-// the self-host IR path. Like the struct-field loop (`for c in r.cells`), it
-// walks a borrow of an array the tuple owns, with the element type taken from
-// the tuple's type rather than a struct field decl. Found by differential
-// probing; each case is oracle-checked and pinned "ir". Scalar-array tuple
-// elements (i32[]/f64[]/i64[]) are not covered here.
 var foreachTupleElemArrayIRCases = []struct {
 	name string
 	src  string
 }{
-	// A string-array tuple element, LOCAL tuple: sum the element lengths → 5 + (1
-	// + 2 + 3) = 11.
 	{"strarr_local", `function main(): i32 {
     let t: (i32, string[]) = (5, ["a", "bb", "ccc"]);
     let s = t.0;
     for x in t.1 { s = s + x.len(); }
     return s;
 }`},
-	// The SAME shape as a STRUCT FIELD (`r.t.1`): the tuple element access resolves
-	// through the struct field's tuple type → 11.
 	{"strarr_field", `struct Row { t: (i32, string[]) }
 function main(): i32 {
     let r = Row { t: (5, ["a", "bb", "ccc"]) };
@@ -36,8 +26,6 @@ function main(): i32 {
     for x in r.t.1 { s = s + x.len(); }
     return s;
 }`},
-	// A STRUCT-array tuple element: `x.a` resolves through the element struct name
-	// bound on the loop var → 5 + (1 + 2 + 3) = 11.
 	{"structarr", `struct Inner { a: i32 }
 function main(): i32 {
     let t: (i32, Inner[]) = (5, [Inner{a:1}, Inner{a:2}, Inner{a:3}]);
@@ -45,15 +33,12 @@ function main(): i32 {
     for x in t.1 { s = s + x.a; }
     return s;
 }`},
-	// An ARRAY-OF-TUPLES tuple element — the loop var is itself a tuple, so its
-	// element tags (`p.1`) must resolve too → 5 + (1 + 2) = 8.
 	{"arr_of_tuples", `function main(): i32 {
     let t: (i32, (i32, string)[]) = (5, [(1, "a"), (2, "bb")]);
     let s = t.0;
     for p in t.1 { s = s + p.1.len(); }
     return s;
 }`},
-	// An ENUM-array tuple element matched in the body → 5 + 1 + 100 + 1 = 107.
 	{"enumarr_match", `enum Color { Red, Green, Blue }
 function main(): i32 {
     let t: (i32, Color[]) = (5, [Color.Red, Color.Blue, Color.Green]);
@@ -61,16 +46,12 @@ function main(): i32 {
     for c in t.1 { match (c) { Color.Blue => { s = s + 100; }, _ => { s = s + 1; } } }
     return s;
 }`},
-	// An Option-array tuple element, payload recovered via match → 5 + 3 + 1 + 7 = 16.
 	{"optarr_match", `function main(): i32 {
     let t: (i32, Option[i32][]) = (5, [Some(3), None, Some(7)]);
     let s = t.0;
     for o in t.1 { match (o) { Some(n) => { s = s + n; }, None => { s = s + 1; } } }
     return s;
 }`},
-	// RC stress: a fresh tuple with a string-array element built + iterated every
-	// round — the leak-only borrow must not over-release → (50 * (1+2+3)) % 256 =
-	// 300 % 256 = 44.
 	{"rc_loop", `function main(): i32 {
     let acc = 0;
     let i = 0;
@@ -85,7 +66,6 @@ function main(): i32 {
 }`},
 }
 
-// The x86-64 leg.
 func TestSelfHostForeachTupleElemArrayIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
@@ -137,8 +117,6 @@ func TestSelfHostForeachTupleElemArrayIR(t *testing.T) {
 	}
 }
 
-// The wasm leg: the fix lives in the shared lowering, so the wasm IR backend walks
-// the tuple-element array borrow through the same 4-byte-slot arr_get counted loop.
 func TestSelfHostForeachTupleElemArrayWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping foreach-tuple-elem-array wasm IR e2e")

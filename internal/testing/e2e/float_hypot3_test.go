@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/f64.hypot3 — the 3-D Euclidean length
-// sqrt(x*x + y*y + z*z), the three-argument sibling of hypot. Uses the same
-// overflow-safe scaling (divide through by the largest magnitude). sqrt is a
-// native wasm op, so unlike the transcendentals this lowers on all four
-// backends including wasmbin. Both f64 and f32. Returns 42 iff every check
-// holds across interp / x86-64 / wasm / arm64; each leg skips itself when its
-// toolchain is absent.
 const floatHypot3Prog = `
 import "std/f64";
 function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }

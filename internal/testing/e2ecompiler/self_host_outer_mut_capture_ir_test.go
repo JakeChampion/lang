@@ -9,28 +9,11 @@ import (
 	"testing"
 )
 
-// outerMutCaptureIRCases pin #5301 (+ #5300's outer-mutated-scalar shapes):
-// a closure capturing an outer local that the ENCLOSING scope reassigns —
-// before or after the closure is created — must observe the current binding
-// at each call, matching the interpreter's by-reference capture semantics
-// (the oracle per #2896). Pointer captures (array / string / struct) used to
-// snapshot by value on every compiled path (native 10/38/10 where interp
-// returned 42); outer-mutated scalars additionally BAILED the self-host IR
-// path to AST, which snapshots at make time too. Native now boxes such
-// captures into the shared 1-element cell (closureconv.boxableCapture admits
-// ast.IsPointerType); the self-host param-lift no longer declines a capture
-// reassigned in the enclosing body — captures are passed at each CALL SITE,
-// which reads the current binding, exactly the oracle's semantics (closure-
-// side writes are covered by the scalar box pass and E049).
-//
-// All wants are the interpreter's exit codes (kept < 126 for the wasm leg).
 var outerMutCaptureIRCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The #5301 repro table: array / string / struct reassigned AFTER the
-	// closure is created; the closure must read the new binding.
 	{"array-reassign",
 		`function main(): i32 {
     let a: i32[] = [10, 1];
@@ -53,7 +36,6 @@ function main(): i32 {
     b = B { v: 42 };
     return f();
 }`, 42},
-	// The scalar control row — also by-reference (bailed to AST pre-fix).
 	{"i32-outer-reassign",
 		`function main(): i32 {
     let n: i32 = 10;
@@ -61,10 +43,6 @@ function main(): i32 {
     n = 42;
     return f();
 }`, 42},
-	// #5300's shapes: an outer-scope mutation BEFORE the closure is created
-	// (bailed the function to AST), and the loop-accumulator idiom where the
-	// closure both writes one capture (boxed cell) and reads another that the
-	// loop keeps advancing (0+1+2+3+4... via the live counter).
 	{"outer-mutate-then-capture",
 		`function main(): i32 {
     let total: i32 = 0;
@@ -83,8 +61,6 @@ function main(): i32 {
     }
     return s + 32;
 }`, 42},
-	// Both directions on one capture: the closure writes it (boxed cell), the
-	// outer scope also reassigns it — one shared cell, writes visible both ways.
 	{"outer-and-inner-write",
 		`function main(): i32 {
     let x: i32 = 0;
@@ -93,8 +69,6 @@ function main(): i32 {
     let r: i32 = f();
     return x + 35;
 }`, 42},
-	// A `.with` self-reassign on a soon-captured array (#5300's hand-boxed
-	// repro — the aliasing shape that used to bail the whole function).
 	{"with-selfreassign-then-capture",
 		`function main(): i32 {
     let a: i32[] = [0, 1];
@@ -102,8 +76,6 @@ function main(): i32 {
     let f: () => i32 = (): i32 => { return a[0]; };
     return f();
 }`, 42},
-	// RC guard: reassign the captured array to another still-live local and
-	// back; both bindings stay readable (an over-release corrupts one).
 	{"alias-reassign-live",
 		`function main(): i32 {
     let keep: i32[] = [40, 7];
@@ -116,8 +88,6 @@ function main(): i32 {
     let y: i32 = keep[0];
     return x + y - 38;
 }`, 42},
-	// A loop growing the captured string 40 times — the closure reads the
-	// final value (also exercises repeated frees of the superseded strings).
 	{"loop-string-grow",
 		`function main(): i32 {
     let s: string = "x";
@@ -129,14 +99,6 @@ function main(): i32 {
     }
     return f() + 1;
 }`, 42},
-	// #5394: ESCAPING closures (returned — the make_closure env-box path).
-	// The env used to snapshot the capture at creation; the capture now boxes
-	// into a shared cell (any type), so the outer reassignment stores through
-	// the cell and the escaped closure reads the live value.
-	// #10129: the capture is declared in a LOOP body. The cell-read desugar
-	// counted a `for` statement's whole body as the loop's own binders, so the
-	// cell was both a cell and a non-cell there and was left undesugared; the
-	// append on its element then lowered as `i32.append`.
 	{"escape-loop-body-array",
 		`function apply(x: i32, f: (i32) => i32): i32 { return f(x); }
 function main(): i32 {
@@ -210,9 +172,6 @@ function main(): i32 {
     let g: () => i32 = mk();
     return g();
 }`, 42},
-	// The escaped closure also WRITES the shared cell: outer sets 38 before
-	// returning f; each call adds 2 — the second call reads the first call's
-	// write through the same cell (40 + 2 = 42).
 	{"escape-mixed-write",
 		`function mk(): () => i32 {
     let n: i32 = 0;
@@ -225,10 +184,6 @@ function main(): i32 {
     let r1: i32 = g();
     return g();
 }`, 42},
-	// Escape via an ARRAY CONTAINER (`[f]`), capture reassigned after: needs
-	// BOTH the #5394 cell boxing (container storage is an escape) and the
-	// #5405 closure-local array-literal classification (else `fs[0]()`
-	// bare-calls the env box and SIGSEGVs).
 	{"escape-container-reassign",
 		`function main(): i32 {
     let a: i32[] = [10, 1];
@@ -237,8 +192,6 @@ function main(): i32 {
     a = [42, 1];
     return fs[0]();
 }`, 42},
-	// One capture shared by a direct-called closure AND a container-escaped
-	// one; both read the post-reassignment buffer: 20 + 21 = 41.
 	{"escape-two-closures-shared-capture",
 		`function main(): i32 {
     let a: i32[] = [10, 1];
@@ -250,9 +203,6 @@ function main(): i32 {
 }`, 41},
 }
 
-// TestSelfHostOuterMutCaptureIRX86_64 cross-checks the interpreter, pins the
-// "ir" routing (these shapes all bailed to AST before), then runs the
-// self-host-compiled binary.
 func TestSelfHostOuterMutCaptureIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -292,8 +242,6 @@ func TestSelfHostOuterMutCaptureIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostOuterMutCaptureWasmIR runs the same cases through the wasm IR
-// backend (the lift is shared, so the call-site capture pass covers wasm too).
 func TestSelfHostOuterMutCaptureWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping outer-mut-capture wasm IR e2e")
@@ -332,8 +280,6 @@ func TestSelfHostOuterMutCaptureWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostOuterMutCaptureIRArm64 runs the pointer rows and the mixed
-// write case under qemu via `asm_ir_run -target arm64-linux`.
 func TestSelfHostOuterMutCaptureIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

@@ -5,12 +5,6 @@ import "std/mock_platform";
 import "std/i64";
 import "std/platform";
 
-// tests/stdlib/mock_platform_canned_test.fern — a mock_platform.MockPlatform answers
-// what the test canned for each capability (#9854): the handler under
-// test reads a variable, the clock, a random number and an upstream's
-// answer through its bag, and the test decides each answer; configuration
-// and secrets are canned the same way, a secret logged by its name alone.
-
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   let region: string = "nowhere";
   match (plat.env("REGION")) {

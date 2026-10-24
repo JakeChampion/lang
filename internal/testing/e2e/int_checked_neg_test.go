@@ -2,14 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the unary integer overflow helpers on the signed
-// types — std/i32 and std/i64: checked_neg / checked_abs (Option) and
-// overflowing_neg ((wrapped, did_overflow)). MIN is the one value where unary
-// `-` and `|·|` overflow (the magnitude 2^(w-1) has no representation), so
-// abs() / bare `-` wrap MIN to itself; these give the overflow-safe forms.
-// Checks the clean cases (both signs, zero) and the MIN overflow for each.
-// Returns 42 iff every check holds across interp / x86-64 / wasm / arm64; each
-// leg skips itself when its toolchain is absent.
 const intCheckedNegProg = `
 import "std/i32";
 import "std/i64" as i64m;

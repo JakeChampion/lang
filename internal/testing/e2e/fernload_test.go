@@ -1,9 +1,3 @@
-// tools/fernload, the open-loop load generator, against a std/serve hello
-// server: every request the rate schedules goes out, every one is
-// answered, and the report carries the counts and a corrected latency
-// distribution. The x86-64 leg builds both programs with the self-host
-// compiler; the interpreter leg runs the tool under `-interp`, where a
-// started connect is non-blocking from the start as it is natively.
 package e2e
 
 import (
@@ -69,9 +63,6 @@ func TestFernloadInterp(t *testing.T) {
 	checkFernload(t, exec.Command(bin, "-interp", fernloadSource(t), "--", "--rate", "50", "--connections", "2", "--duration", "2", "http://"+addr+"/"), 100)
 }
 
-// checkFernload runs the tool and reads its report: every scheduled
-// request sent and answered, none lost, and a latency distribution that
-// is ordered and non-empty.
 func checkFernload(t *testing.T, cmd *exec.Cmd, scheduled int) {
 	t.Helper()
 	out, err := cmd.CombinedOutput()

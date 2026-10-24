@@ -1,7 +1,3 @@
-// Package e2eharness holds the shared e2e test harness — driver builds,
-// tooling discovery, caches — used by both internal/testing/e2e and
-// internal/testing/e2ecompiler (#4398 part 3). Extracted verbatim from
-// internal/testing/e2e/self_host_numeric_methods_ir_test.go.
 package e2eharness
 
 import (
@@ -11,8 +7,6 @@ import (
 	"testing"
 )
 
-// InterpExit runs `fern -interp` on src (written to a temp file) and returns the
-// reference exit code — the oracle for the self-host comparisons below.
 func InterpExit(t *testing.T, interpBin, src string) int {
 	t.Helper()
 	f := filepath.Join(t.TempDir(), "oracle.fern")

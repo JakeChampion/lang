@@ -2,11 +2,6 @@ import "./ast";
 import "./astwalk";
 import "./util";
 
-// Direct-call lifting changes free variables as well as call targets. The
-// injected arguments name bindings from the lifted lambda's defining scope.
-// Lexical binders can hide either the callee or those arguments; never rewrite
-// such a call to a different value. A caller can retain the ordinary closure
-// when the original callee remains after substitution.
 struct Context {
   fname: string,
   lname: string,
@@ -33,8 +28,6 @@ function shadow(ctx: Context, names: string[]): Context {
   return ctx;
 }
 
-// Each list owns its scope. An ordinary initializer still sees the old
-// binding; a nested function's sees its own declared function.
 function body(stmts: ast.Stmt[], ctx: Context): (ast.Stmt[], Context) {
   let out: ast.Stmt[] = [];
   for stmt in stmts {
@@ -63,11 +56,6 @@ function expr(e: ast.Expr, ctx: Context): ast.Expr {
   return out;
 }
 
-// Resolve the new free-variable order against the old exact capture types and
-// the explicitly introduced bindings. Module functions are not captures.
-// Unchecked input remains unchecked. If an older caller supplies no type for
-// an introduced capture of a checked lambda, decline that rewrite rather than
-// manufacture a type or pass stale metadata to lowering.
 function lambda(lm: ast.ExprLambda, ctx: Context): ast.Expr {
   let names: string[] = [];
   for param in lm.params {
@@ -106,8 +94,6 @@ function lambda(lm: ast.ExprLambda, ctx: Context): ast.Expr {
   return ast.ExprLambda { ...rewritten, captures: caps };
 }
 
-// Own only scope boundaries and direct calls. The shared
-// spine owns the other expression containers, including maps and f-strings.
 function expr_at(e: ast.Expr, ctx: Context): (ast.Expr, Context, boolean) {
   if (ctx.blocked) {
     return (e, ctx, true);

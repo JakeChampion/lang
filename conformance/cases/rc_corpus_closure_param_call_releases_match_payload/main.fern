@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// #8003: a match payload handed to a call through a closure PARAMETER,
-// the shape of the serve loop's `handler(req, plat)`. An indirect callee
-// that keeps its argument retains it, so the arm's release is
-// balanced; the handler here reads it, hands it back, and stores it
-// into what it returns.
+
+
+
+
+
+
+
+
 struct Req { path: string, n: i32 }
 struct Holder { r: Req }
 function parse(i: i32): Option[Req] {

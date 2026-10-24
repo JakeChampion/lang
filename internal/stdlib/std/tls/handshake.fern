@@ -1,31 +1,4 @@
-// std/tls/handshake — the TLS 1.3 handshake of RFC 8446, client and server,
-// as sans-IO state machines over std/tls/record, keyschedule, keyshare and
-// message: bytes in, bytes out. There are no sockets, no clock and no
-// randomness of its own; the caller passes the entropy each side consumes.
-//
-//   let step: handshake.ClientStep = handshake.client_start(handshake.client_config("example.com"), entropy)?;
-//   send(step.output);
-//   step = step.client.read(received)?;   // step.output, step.data, step.events
-//
-// Certificates are the caller's to judge. When the server's CertificateVerify
-// arrives, the client stops with a `VerifyServer` event carrying the chain,
-// the signature scheme, the signed content and the signature, and goes on
-// once `verdict` is called. The server stops with `SignNeeded` and goes on
-// once `signature` is called, so no private key enters it.
-//
-// One full handshake per connection, with a HelloRetryRequest when the
-// client's key share is in a group the server does not take: no PSK and no
-// early data.
-//
-// Under QUIC (RFC 9001) there are no records: a config with `quic` set
-// takes handshake bytes by encryption level through `read_crypto` and
-// hands them out as `Crypto` events to carry in CRYPTO frames, reports
-// each traffic secret as a `Secret` event for QUIC's packet protection to
-// derive its keys from, carries the transport parameters as the
-// `extensions` the config adds and `peer_extensions` answers, and refuses
-// application data, KeyUpdate and the alert record, which are QUIC's own
-// (an error's `alert()` is the code for CONNECTION_CLOSE). A QUIC
-// handshake needs ALPN and the transport parameters on both sides.
+// This module implements TLS 1.3 handshake state without I/O.
 
 import "core/int";
 import "std/crypto";
@@ -37,19 +10,12 @@ import "std/utf8";
 import "std/error";
 import "core/cmp";
 
-// HandshakeError — why a handshake or connection failed. `alert()` is the
-// alert to send, and `(c: Client) alert(e)` / `(s: Server) alert(e)` the
-// record carrying it.
 pub enum HandshakeError {
   Record(record.RecordError),
   Message(message.MsgError),
   KeyShare(keyshare.KeyShareError),
-  // A handshake message of this kind where the state does not allow it.
   OutOfOrder(i32),
-  // A record of this content type where it is not allowed.
   UnexpectedRecord(i32),
-  // QUIC: handshake bytes at this encryption level, which is not the one
-  // being read.
   Level(i32),
   Illegal(string),
   MissingExtension(string),
@@ -57,18 +23,12 @@ pub enum HandshakeError {
   NotTls13,
   HandshakeFailure(string),
   NoApplicationProtocol,
-  // The caller's verdict on the peer's certificate was no.
   BadCertificate,
-  // The server's caller requires a client certificate and none was sent.
   CertificateRequired,
-  // A Finished that does not verify.
   DecryptError,
-  // The peer's fatal alert, which is answered with nothing.
   PeerAlert(i32),
   Entropy(i32, i32),
-  // A configuration that cannot make a handshake, saying why.
   BadConfig(string),
-  // A call out of turn, naming it.
   Misuse(string),
 }
 
@@ -119,9 +79,6 @@ function __message_alert(e: message.MsgError): i32 {
   return 10;
 }
 
-// alert is the AlertDescription to send, or 0 for a peer's alert, which is
-// not answered.
-// One arm per variant.
 // fern-lint: allow cyclomatic-complexity
 pub function (e: HandshakeError) alert(): i32 {
   match (e) {
@@ -186,7 +143,6 @@ pub function (e: HandshakeError) alert(): i32 {
   return 80;
 }
 
-// One arm per variant.
 // fern-lint: allow cyclomatic-complexity
 pub function (e: HandshakeError) message(): string {
   match (e) {
@@ -251,63 +207,32 @@ pub function (e: HandshakeError) message(): string {
   return "";
 }
 
-// Event — what a step tells the caller beyond bytes to send and data read.
 pub enum Event {
-  // The client has the server's certificate chain and its signature over
-  // the transcript: judge them, then call `verdict`.
   VerifyServer(Verification),
-  // The server, or a client asked for a certificate, needs `signed` signed
-  // with its chain's key under `scheme`: sign it, then call `signature`.
   SignNeeded(Signing),
-  // The server has the client's certificate chain and its signature over
-  // the transcript, or an empty chain when the client sent none: judge
-  // them, then call `verdict`.
   VerifyClient(Verification),
-  // The handshake is complete; application data may flow both ways.
   Connected,
-  // The peer sent close_notify.
   PeerClosed,
-  // The server sent a ticket after the handshake.
   Ticket(message.NewSessionTicket),
-  // The client offers tickets for resumption under the suite chosen: look
-  // one up, then call `resume` with it or with None for a full handshake.
   ResumeOffered(Offer),
-  // QUIC: handshake bytes to carry in CRYPTO frames at an encryption level.
   Crypto(CryptoFlight),
-  // QUIC: a traffic secret for the packet protection at a level; one event
-  // for each direction as it is set. Offloaded to the kernel: the secret a
-  // KeyUpdate set, whose keys the kernel needs next.
   Secret(TrafficSecret),
 }
 
-// CryptoFlight — handshake bytes at an encryption level: 0 Initial, 1
-// Handshake, 2 1-RTT (RFC 9001 §4.1.3).
 pub struct CryptoFlight { level: i32, bytes: u8[] }
 
-// TrafficSecret — the secret the packet protection at `level` derives its
-// keys from under `cipher_suite()`, for what this side writes when `write`
-// and for what it reads otherwise.
 pub struct TrafficSecret { level: i32, write: boolean, secret: u8[] }
 
-// Offer — the identities a client offers, the suite the server chose,
-// whose hash a usable PSK must have been derived under, and the name the
-// client asked for, which a ticket must have been issued to.
 pub struct Offer { identities: message.PskIdentity[], suite: keyschedule.CipherSuite, server_name: string }
 
-// Resumed — the server's answer to an Offer: which identity, and its PSK.
 pub struct Resumed { index: i32, psk: u8[] }
 
-// Resumption — a ticket a client offers: its identity, the PSK it stands
-// for, the suite whose hash the PSK was derived under, and the age to
-// send, obfuscated by the ticket's age_add.
 pub struct Resumption { identity: u8[], psk: u8[], suite: keyschedule.CipherSuite, obfuscated_age: u32 }
 
 pub struct Verification { chain: u8[][], scheme: i32, signed: u8[], signature: u8[] }
 
 pub struct Signing { scheme: i32, signed: u8[] }
 
-// certificate_verify_content is what a CertificateVerify signs (§4.4.3): 64
-// spaces, the context string, a zero byte and the transcript hash.
 pub function certificate_verify_content(server: boolean, transcript_hash: [u8]): u8[] {
   let context: string = "TLS 1.3, client CertificateVerify";
   if (server) {
@@ -338,7 +263,6 @@ function __copy(b: [u8]): u8[] {
   return __bytes_owned(b);
 }
 
-// __join is a fresh a then b, for an a held in a field.
 function __join(a: [u8], b: [u8]): u8[] {
   return __cat(__copy(a), b);
 }
@@ -369,15 +293,11 @@ function __zeros(n: i32): u8[] {
   return out;
 }
 
-// __binder is a PSK's binder (§4.2.11.2): Finished's MAC under the binder
-// key over the transcript before the ClientHello and the hello cut before
-// its binders.
 function __binder(h: keyschedule.Hash, psk: [u8], before: [u8], truncated: [u8]): u8[] {
   let th: u8[] = h.digest(__cat(__copy(before), truncated));
   return keyschedule.finished_verify_data(h, keyschedule.early_secret(h, psk).binder_key(), th);
 }
 
-// __without is the extensions less any of a kind.
 function __without(exts: message.Extension[], kind: i32): message.Extension[] {
   let out: message.Extension[] = [];
   for e in exts {
@@ -388,18 +308,6 @@ function __without(exts: message.Extension[], kind: i32): message.Extension[] {
   return out;
 }
 
-// Conn — what both sides keep: records taken off the wire but not yet
-// processed, the bytes of the record still arriving, the handshake bytes not
-// yet a whole message, the transcript, and each direction's protection,
-// with how far it has got (0 plaintext, 1 handshake keys, 2 application
-// keys) and its traffic secret, which a KeyUpdate advances.
-//
-// Under QUIC (`quic`) nothing is framed or sealed here: the handshake bytes
-// written and the secrets set wait in `crypto` and `secrets` until the step
-// hands them out as events. Once offloaded to the kernel's record layer
-// (`kernel`), records are framed in the clear for the kernel to seal, the
-// records read arrive opened, and a secret a KeyUpdate sets waits in
-// `secrets` as QUIC's do.
 struct Conn {
   held: record.Record[],
   inbox: u8[],
@@ -447,8 +355,6 @@ function __with_write(c: Conn, secret: u8[], level: i32): Conn {
   return next;
 }
 
-// __flushed moves what a QUIC or offloaded connection gathered into the
-// step's events: the secrets set, then the handshake bytes written.
 function __flushed(c: Conn, out: Out): Flushed {
   if (!c.quic && !c.kernel) {
     return Flushed { conn: c, out: out };
@@ -465,8 +371,6 @@ function __flushed(c: Conn, out: Out): Flushed {
 
 struct Flushed { conn: Conn, out: Out }
 
-// __plain_out frames handshake bytes sent before any key: a record of
-// `version`, or under QUIC a flight at the level being written.
 function __plain_out(c: Conn, version: i32, bytes: u8[]): Wrote {
   if (c.quic) {
     return Wrote { conn: Conn { ...c, crypto: c.crypto.append(CryptoFlight { level: c.writing, bytes: bytes }) }, bytes: [] };
@@ -474,7 +378,6 @@ function __plain_out(c: Conn, version: i32, bytes: u8[]): Wrote {
   return Wrote { conn: c, bytes: record.frame(record.Handshake, version, bytes) };
 }
 
-// Out — what a step has gathered so far.
 struct Out { output: u8[], data: u8[], events: Event[], closed: boolean }
 
 function __out(): Out {
@@ -483,12 +386,6 @@ function __out(): Out {
 
 struct Wrote { conn: Conn, bytes: u8[] }
 
-// __write frames content as records of type t, at most 2^14 bytes each:
-// plaintext before the write keys are set and once the kernel seals them,
-// sealed in between. Under QUIC handshake bytes become a flight at the
-// level being written, an alert is nothing (the error's code goes in QUIC's
-// CONNECTION_CLOSE), and application data is refused: QUIC carries and
-// protects it itself.
 function __write(c: Conn, t: record.ContentType, content: [u8]): Result[Wrote, HandshakeError] {
   if (c.quic) {
     return __write_quic(c, t, content);
@@ -533,10 +430,6 @@ function __write_quic(c: Conn, t: record.ContentType, content: [u8]): Result[Wro
 
 struct Absorbed { conn: Conn, out: Out }
 
-// __absorb takes in one record: its handshake bytes go to `pending`, its
-// application data to the output, and an alert is acted on. `ccs` is
-// whether a compatibility change_cipher_spec may arrive now, and `app`
-// whether application data may.
 function __absorb(c: Conn, r: record.Record, ccs: boolean, app: boolean, out: Out): Result[Absorbed, HandshakeError] {
   if (r.content_type.code() == 20) {
     if (ccs && r.fragment.len() == 1 && r.fragment[0] == 1) {
@@ -561,11 +454,6 @@ function __absorb(c: Conn, r: record.Record, ccs: boolean, app: boolean, out: Ou
   return Err(UnexpectedRecord(23));
 }
 
-// __opened acts on a record the read key opened. Application data is the
-// decrypted record's own buffer, owned here: it becomes the step's data
-// unmoved when nothing precedes it in the read, rather than being copied onto
-// an empty accumulator. Every other content (a post-handshake message, an
-// alert) goes through __content as the pre-key records do.
 function __opened(c: Conn, o: record.Opened, app: boolean, out: Out): Result[Absorbed, HandshakeError] {
   if (o.content_type.code() == 23 && app && c.reading == 2) {
     if (out.data.len() == 0) {
@@ -576,7 +464,6 @@ function __opened(c: Conn, o: record.Opened, app: boolean, out: Out): Result[Abs
   return __content(c, o.content_type.code(), o.content, app, out);
 }
 
-// __content acts on a record's content once it is in the clear.
 function __content(c: Conn, code: i32, content: u8[], app: boolean, out: Out): Result[Absorbed, HandshakeError] {
   if (code == 22) {
     return Ok(Absorbed { conn: Conn { ...c, pending: __join(c.pending, content) }, out: out });
@@ -590,8 +477,6 @@ function __content(c: Conn, code: i32, content: u8[], app: boolean, out: Out): R
   return Err(UnexpectedRecord(code));
 }
 
-// close_notify closes the connection, user_canceled is a warning, and any
-// other alert is fatal.
 function __peer_alert(c: Conn, content: u8[], out: Out): Result[Absorbed, HandshakeError] {
   if (content.len() != 2) {
     return Err(Message(message.DecodeError("alert")));
@@ -607,7 +492,6 @@ function __peer_alert(c: Conn, content: u8[], out: Out): Result[Absorbed, Handsh
 
 struct Next { conn: Conn, raw: message.Raw, has: boolean }
 
-// __next takes the first whole handshake message out of `pending`.
 function __next(c: Conn): Result[Next, HandshakeError] {
   match (message.split(c.pending)) {
     Ok(s) => {
@@ -636,7 +520,6 @@ function __decode(raw: message.Raw): Result[message.Message, HandshakeError] {
   return Err(OutOfOrder(raw.kind));
 }
 
-// A message that changes the keys must end its record (§5.1).
 function __at_key_change(c: Conn): Result[boolean, HandshakeError] {
   if (c.pending.len() != 0) {
     return Err(OutOfOrder(c.pending[0] as i32));
@@ -644,9 +527,6 @@ function __at_key_change(c: Conn): Result[boolean, HandshakeError] {
   return Ok(true);
 }
 
-// __key_update handles a peer's KeyUpdate: the read side moves to the next
-// secret, and a request is answered with a KeyUpdate before the write side
-// moves too (§4.6.3).
 function __key_update(c: Conn, request: boolean, out: Out): Result[Absorbed, HandshakeError] {
   if (c.quic) {
     return Err(Illegal("KeyUpdate under QUIC"));
@@ -661,8 +541,6 @@ function __key_update(c: Conn, request: boolean, out: Out): Result[Absorbed, Han
   return Ok(Absorbed { conn: w.conn, out: Out { ...out, output: __join(out.output, w.bytes) } });
 }
 
-// __update sends a KeyUpdate and moves the write side to the next secret;
-// `request` asks the peer to update its own (§4.6.3).
 function __update(c: Conn, request: boolean): Result[Wrote, HandshakeError] {
   if (c.quic) {
     return Err(Illegal("KeyUpdate under QUIC"));
@@ -672,14 +550,8 @@ function __update(c: Conn, request: boolean): Result[Wrote, HandshakeError] {
   return Ok(Wrote { conn: __with_write(w.conn, keyschedule.next_traffic_secret(h, w.conn.write_secret), 2), bytes: w.bytes });
 }
 
-// KernelKeys — the protection in force in each direction as an offload
-// leaves it, in the form Linux's TLS record layer takes
-// (`record.Protection.kernel_info`).
 pub struct KernelKeys { transmit: u8[], receive: u8[] }
 
-// __offload hands the record layer to the kernel: only at a record boundary
-// with nothing read but unprocessed, since the kernel takes the stream from
-// the next record on.
 function __offload(c: Conn): Option[Offloaded] {
   if (c.quic || c.kernel || c.reading != 2 || c.writing != 2 || c.held.len() != 0 || c.inbox.len() != 0 || c.pending.len() != 0) {
     return None;
@@ -689,9 +561,6 @@ function __offload(c: Conn): Option[Offloaded] {
 
 struct Offloaded { conn: Conn, keys: KernelKeys }
 
-// rekeyed is the kernel keys the secrets among an offloaded connection's
-// `events` set: empty in a direction no KeyUpdate moved, the last secret in
-// one that did.
 pub function rekeyed(suite: keyschedule.CipherSuite, events: Event[]): KernelKeys {
   let keys: KernelKeys = KernelKeys { transmit: [], receive: [] };
   for e in events {
@@ -707,7 +576,6 @@ pub function rekeyed(suite: keyschedule.CipherSuite, events: Event[]): KernelKey
   return keys;
 }
 
-// The keys of `later` where it has them, else `earlier`'s.
 pub function (earlier: KernelKeys) then(later: KernelKeys): KernelKeys {
   let keys: KernelKeys = earlier;
   if (later.transmit.len() > 0) {
@@ -756,17 +624,8 @@ function __has_string(v: string[], x: string): boolean {
   return false;
 }
 
-// The client.
-
-// ClientConfig — what the client offers. The first `shares` groups get a key
-// share each; the rest are named as supported, for a HelloRetryRequest.
 pub struct ClientConfig { server_name: string, alpn: string[], suites: keyschedule.CipherSuite[], groups: keyshare.Group[], shares: i32, schemes: i32[], resume: Option[Resumption], chain: u8[][], sign_schemes: i32[], quic: boolean, extensions: message.Extension[] }
 
-// client_config offers every suite, X25519MLKEM768 with X25519, secp256r1
-// and SecP256r1MLKEM768 named as fallbacks, the signature schemes
-// std/crypto verifies, no ticket, and no
-// certificate of its own: `chain` (leaf first) and `sign_schemes` (what
-// its key can make, in preference order) are sent when a server asks.
 pub function client_config(server_name: string): ClientConfig {
   return ClientConfig { server_name: server_name, alpn: [], suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519, keyshare.Secp256r1, keyshare.Secp256r1MlKem768], shares: 1, schemes: [0x0403, 0x0503, 0x0807, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601], resume: None, chain: [], sign_schemes: [], quic: false, extensions: [] };
 }
@@ -791,10 +650,6 @@ const C_CLOSED: i32 = 8;
 
 const C_WAIT_SIGNATURE: i32 = 9;
 
-// Client — one client connection. `alpn` is the protocol the server chose,
-// empty when none was. `spare` is the entropy a share for a
-// HelloRetryRequest takes, and `retry_suite` the suite one chose, 0 before
-// any.
 pub struct Client {
   conn: Conn,
   state: i32,
@@ -824,8 +679,6 @@ pub struct Client {
   peer_extensions: message.Extension[],
 }
 
-// ClientStep — the client after a call, the bytes to send, the application
-// data read and what happened.
 pub struct ClientStep { client: Client, output: u8[], data: u8[], events: Event[] }
 
 function __client_step(c: Client, out: Out): ClientStep {
@@ -853,9 +706,6 @@ function __group_codes(config: ClientConfig): i32[] {
   return out;
 }
 
-// client_entropy is how many random bytes client_start takes for config:
-// 32 for the random, the shares sent, and enough for a share in any other
-// group a HelloRetryRequest may ask for.
 pub function client_entropy(config: ClientConfig): i32 {
   let n: i32 = __shares(config);
   let sent: i32 = 0;
@@ -873,7 +723,6 @@ pub function client_entropy(config: ClientConfig): i32 {
   return 32 + sent + spare;
 }
 
-// __shares is how many groups get a key share: at least one, at most all.
 function __shares(config: ClientConfig): i32 {
   if (config.shares < 1) {
     return 1;
@@ -884,8 +733,6 @@ function __shares(config: ClientConfig): i32 {
   return config.shares;
 }
 
-// __hello_extensions are a first ClientHello's extensions, carrying a key
-// share for each of `shares`.
 function __hello_extensions(config: ClientConfig, shares: keyshare.ClientShare[]): message.Extension[] {
   let entries: message.KeyShareEntry[] = [];
   for sh in shares {
@@ -906,8 +753,6 @@ function __hello_extensions(config: ClientConfig, shares: keyshare.ClientShare[]
   return exts;
 }
 
-// __made_shares makes the shares the first groups get, from the entropy
-// after the random, and answers the entropy left over.
 function __made_shares(config: ClientConfig, entropy: [u8]): Result[(keyshare.ClientShare[], u8[]), HandshakeError] {
   let shares: keyshare.ClientShare[] = [];
   let at: i32 = 32;
@@ -929,8 +774,6 @@ function __made_shares(config: ClientConfig, entropy: [u8]): Result[(keyshare.Cl
   return Ok((shares, __copy(entropy[at:entropy.len()])));
 }
 
-// client_start begins a handshake from client_entropy(config) random bytes
-// and returns the ClientHello to send.
 pub function client_start(config: ClientConfig, entropy: [u8]): Result[ClientStep, HandshakeError] {
   if (config.groups.len() == 0 || config.suites.len() == 0) {
     return Err(BadConfig("a client needs a group and a suite"));
@@ -950,16 +793,10 @@ pub function client_start(config: ClientConfig, entropy: [u8]): Result[ClientSte
   return Ok(ClientStep { ...step, client: Client { ...step.client, more_shares: more } });
 }
 
-// client_from_hello begins a handshake from a ClientHello the caller built,
-// the share whose public key it carries, and the entropy for a share a
-// HelloRetryRequest may ask for. What the server answers is checked against
-// what this hello offers.
 pub function client_from_hello(hello: message.ClientHello, share: keyshare.ClientShare, spare: [u8]): Result[ClientStep, HandshakeError] {
   return __client_from_hello(hello, share, spare, client_config(""));
 }
 
-// __offering is the hello offering the ticket, if there is one; its suite
-// must be among those offered.
 function __offering(hello: message.ClientHello, resume: Option[Resumption]): Result[message.ClientHello, HandshakeError] {
   match (resume) {
     Some(r) => {
@@ -975,8 +812,6 @@ function __offering(hello: message.ClientHello, resume: Option[Resumption]): Res
   return Ok(hello);
 }
 
-// __bound is the hello with its pre_shared_key extension last, offering r
-// with a binder over `before` and the hello cut before the binder.
 function __bound(hello: message.ClientHello, r: Resumption, before: [u8]): message.ClientHello {
   let h: keyschedule.Hash = r.suite.hash();
   let id: message.PskIdentity = message.PskIdentity { identity: r.identity, obfuscated_age: r.obfuscated_age };
@@ -1042,8 +877,6 @@ function __server_hello(c: Client, raw: message.Raw, out: Out): Result[ClientRun
   return Ok(ClientRun { client: Client { ...c, conn: conn, state: C_WAIT_ENCRYPTED_EXTENSIONS, hs: hs, client_hs: client_hs, server_hs: server_hs, resumed: psk.len() > 0 }, out: out });
 }
 
-// __selected_psk is the PSK the ServerHello takes up: the one offered, when
-// it names it and chose a suite with its hash; empty when it took none.
 function __selected_psk(c: Client, h: message.ServerHello, suite: keyschedule.CipherSuite): Result[u8[], HandshakeError] {
   match (message.find(h.extensions, message.EXT_PRE_SHARED_KEY)) {
     Some(d) => {
@@ -1078,8 +911,6 @@ function __code(r: Result[i32, message.MsgError]): Result[i32, HandshakeError] {
   return Ok(0);
 }
 
-// __check_server_hello checks a ServerHello or HelloRetryRequest against the
-// ClientHello and answers the suite it chose.
 function __check_server_hello(c: Client, h: message.ServerHello): Result[keyschedule.CipherSuite, HandshakeError] {
   match (message.find(h.extensions, message.EXT_SUPPORTED_VERSIONS)) {
     Some(d) => {
@@ -1098,9 +929,6 @@ function __check_server_hello(c: Client, h: message.ServerHello): Result[keysche
   return __offered_suite(c, h.cipher_suite);
 }
 
-// __hello_retry answers a HelloRetryRequest (§4.1.4): a share in the group
-// it names, the cookie it carries echoed, and the first ClientHello
-// replaced in the transcript by its hash.
 function __hello_retry(c: Client, raw: message.Raw, h: message.ServerHello, out: Out): Result[ClientRun, HandshakeError] {
   if (c.retry_suite != 0) {
     return Err(OutOfOrder(raw.kind));
@@ -1110,8 +938,6 @@ function __hello_retry(c: Client, raw: message.Raw, h: message.ServerHello, out:
   let hello: message.ClientHello = message.ClientHello { ...c.hello, extensions: __without(__retry_extensions(c.hello.extensions, h.extensions, share), message.EXT_PRE_SHARED_KEY) };
   let digest: u8[] = suite.hash().digest(c.conn.transcript);
   let before: u8[] = __cat(__cat([254 as u8, 0 as u8, 0 as u8, digest.len() as u8], digest), raw.bytes);
-  // The ticket is offered again, bound over the first hello's hash and
-  // the retry, unless the suite chosen has another hash.
   let resume: Option[Resumption] = None;
   match (c.resume) {
     Some(r) => {
@@ -1130,8 +956,6 @@ function __hello_retry(c: Client, raw: message.Raw, h: message.ServerHello, out:
   return Ok(ClientRun { client: next, out: Out { ...out, output: __join(out.output, w.bytes) } });
 }
 
-// __retry_share makes the share a HelloRetryRequest asks for: in a group the
-// ClientHello named, not the one it already sent a share in.
 function __retry_share(c: Client, h: message.ServerHello): Result[keyshare.ClientShare, HandshakeError] {
   let code: i32 = __retry_group(c, h)?;
   match (keyshare.group(code)) {
@@ -1171,8 +995,6 @@ function __retry_group(c: Client, h: message.ServerHello): Result[i32, Handshake
   return Err(Illegal("HelloRetryRequest group"));
 }
 
-// The second ClientHello's extensions: the first's, its key share replaced
-// by the new one, and the server's cookie echoed at the end.
 function __retry_extensions(first: message.Extension[], retry: message.Extension[], share: keyshare.ClientShare): message.Extension[] {
   let out: message.Extension[] = [];
   for e in first {
@@ -1188,7 +1010,6 @@ function __retry_extensions(first: message.Extension[], retry: message.Extension
   return out;
 }
 
-// The server's suite must be one the ClientHello offered.
 function __offered_suite(c: Client, code: i32): Result[keyschedule.CipherSuite, HandshakeError] {
   match (keyschedule.cipher_suite(code)) {
     Some(s) => {
@@ -1203,9 +1024,6 @@ function __offered_suite(c: Client, code: i32): Result[keyschedule.CipherSuite, 
   return Err(Illegal("cipher suite"));
 }
 
-// A ServerHello carries only supported_versions and key_share, with
-// pre_shared_key when a ticket was offered, and a HelloRetryRequest a
-// cookie too.
 function __hello_extensions_only(c: Client, h: message.ServerHello): Result[boolean, HandshakeError] {
   let psk: boolean = false;
   match (c.resume) {
@@ -1237,7 +1055,6 @@ function __version(d: u8[]): Result[i32, HandshakeError] {
   return Err(NotTls13);
 }
 
-// __sent_share is the share the ClientHello sent in group `code`, if any.
 function __sent_share(c: Client, code: i32): Option[keyshare.ClientShare] {
   if (c.share.group.code() == code) {
     return Some(c.share);
@@ -1261,7 +1078,6 @@ function __sends_share(c: Client, code: i32): boolean {
   }
 }
 
-// __agree finishes the key exchange with the server's share.
 function __agree(c: Client, h: message.ServerHello): Result[u8[], HandshakeError] {
   match (message.key_share(__ext(h.extensions, message.EXT_KEY_SHARE, "key_share")?)) {
     Ok(e) => {
@@ -1284,8 +1100,6 @@ function __agree(c: Client, h: message.ServerHello): Result[u8[], HandshakeError
   return Err(MissingExtension("key_share"));
 }
 
-// The extensions a ServerHello carries, or that are the client's alone,
-// may not come in EncryptedExtensions.
 function __hello_only(k: i32): boolean {
   return k == message.EXT_KEY_SHARE || k == message.EXT_SUPPORTED_VERSIONS || k == message.EXT_PRE_SHARED_KEY || k == message.EXT_SIGNATURE_ALGORITHMS;
 }
@@ -1324,9 +1138,6 @@ function __encrypted_extensions(c: Client, exts: message.Extension[]): Result[Cl
   return Ok(Client { ...c, alpn: alpn, peer_extensions: exts, state: C_WAIT_CERTIFICATE_OR_REQUEST });
 }
 
-// __quic_terms is what RFC 9001 requires of the peer's hello or
-// EncryptedExtensions: the transport parameters (§8.2) and an application
-// protocol (§8.1).
 function __quic_terms(exts: message.Extension[], alpn: string): Result[boolean, HandshakeError] {
   match (message.find(exts, message.EXT_QUIC_TRANSPORT_PARAMETERS)) {
     Some(d) => {},
@@ -1340,7 +1151,6 @@ function __quic_terms(exts: message.Extension[], alpn: string): Result[boolean, 
   return Ok(true);
 }
 
-// The server's ALPN answer is one protocol the client offered.
 function __chosen_alpn(c: Client, d: u8[]): Result[string, HandshakeError] {
   match (message.alpn(d)) {
     Ok(p) => {
@@ -1375,9 +1185,6 @@ function __offered_schemes(c: Client): i32[] {
   return [];
 }
 
-// __server_finished checks the server's Finished and answers it: with the
-// client's Finished, after its Certificate when one was asked for, which
-// waits for the caller's signature when the chain is not empty.
 function __server_finished(c: Client, raw: message.Raw, verify_data: u8[], out: Out): Result[ClientRun, HandshakeError] {
   let h: keyschedule.Hash = c.conn.suite.hash();
   if (!keyschedule.verify_finished(h, c.server_hs, __hash(c.conn), verify_data)) {
@@ -1407,8 +1214,6 @@ function __server_finished(c: Client, raw: message.Raw, verify_data: u8[], out: 
   return Ok(ClientRun { client: Client { ...keyed, conn: conn, state: C_WAIT_SIGNATURE, own_scheme: scheme, flight: cert }, out: Out { ...out, events: out.events.append(ev) } });
 }
 
-// __own_scheme is the first scheme the client's key makes that the server
-// accepts, or 0 when it has no chain or none is accepted.
 function __own_scheme(c: Client): i32 {
   if (c.own_chain.len() == 0) {
     return 0;
@@ -1421,8 +1226,6 @@ function __own_scheme(c: Client): i32 {
   return 0;
 }
 
-// __client_finish sends `flight` and the client's Finished, moves both
-// directions to the application secrets and connects.
 function __client_finish(c: Client, conn: Conn, flight: u8[], out: Out): Result[ClientRun, HandshakeError] {
   let h: keyschedule.Hash = conn.suite.hash();
   let fin: u8[] = message.encode(message.Finished(keyschedule.finished_verify_data(h, c.client_hs, __hash(conn))));
@@ -1434,7 +1237,6 @@ function __client_finish(c: Client, conn: Conn, flight: u8[], out: Out): Result[
   return Ok(ClientRun { client: Client { ...c, conn: next, state: C_CONNECTED, res_master: res_master, flight: [], client_ap: [], server_ap: [] }, out: done });
 }
 
-// __client_message hands a message to the handler for the client's state.
 function __client_message(c: Client, raw: message.Raw, out: Out): Result[ClientRun, HandshakeError] {
   if (c.state == C_WAIT_SERVER_HELLO) {
     return __server_hello(c, raw, out);
@@ -1478,8 +1280,6 @@ function __on_encrypted_extensions(c: Client, kind: i32, m: message.Message, out
   return Err(OutOfOrder(kind));
 }
 
-// A CertificateRequest may come first, once; then the server's chain, which
-// must not be empty.
 function __on_certificate(c: Client, kind: i32, m: message.Message, out: Out): Result[ClientRun, HandshakeError] {
   match (m) {
     message.CertificateRequestMsg(r) => {
@@ -1514,8 +1314,6 @@ function __chain(cert: message.Certificate): Result[u8[][], HandshakeError] {
   return Ok(chain);
 }
 
-// The CertificateVerify signs the transcript before it, which `c` still
-// holds; `next` has it added.
 function __on_certificate_verify(c: Client, next: Client, kind: i32, m: message.Message, out: Out): Result[ClientRun, HandshakeError] {
   match (m) {
     message.CertificateVerifyMsg(v) => {
@@ -1533,7 +1331,6 @@ function __on_certificate_verify(c: Client, next: Client, kind: i32, m: message.
   return Err(OutOfOrder(kind));
 }
 
-// After the handshake the server may send a ticket or a KeyUpdate.
 function __client_after(c: Client, kind: i32, m: message.Message, out: Out): Result[ClientRun, HandshakeError] {
   match (m) {
     message.NewSessionTicketMsg(t) => {
@@ -1550,13 +1347,10 @@ function __client_after(c: Client, kind: i32, m: message.Message, out: Out): Res
   return Err(OutOfOrder(kind));
 }
 
-// A client waiting on the caller, or closed, takes no more records.
 function __client_parked(state: i32): boolean {
   return state == C_WAIT_VERDICT || state == C_WAIT_SIGNATURE || state == C_CLOSED;
 }
 
-// __client_drain handles the whole messages pending, until a verdict or a
-// signature is awaited.
 function __client_drain(c: Client, out: Out): Result[ClientRun, HandshakeError] {
   let client: Client = c;
   while (!__client_parked(client.state)) {
@@ -1571,9 +1365,6 @@ function __client_drain(c: Client, out: Out): Result[ClientRun, HandshakeError] 
   return Ok(ClientRun { client: client, out: out });
 }
 
-// __client_run processes records, held ones first: each record's messages
-// are handled before the next record is opened, since a message may change
-// the keys. Waiting on a verdict holds the rest.
 function __client_run(c: Client, out: Out): Result[ClientStep, HandshakeError] {
   let records: record.Record[] = c.conn.held;
   let r: ClientRun = __client_drain(c, out)?;
@@ -1619,8 +1410,6 @@ function __deframe(c: Conn, input: [u8]): Result[Conn, HandshakeError] {
   return Err(Misuse("deframe"));
 }
 
-// __records deframes input after the partial record held in inbox, copying
-// only when one is held.
 function __records(inbox: u8[], input: [u8]): Result[record.Deframed, record.RecordError] {
   if (inbox.len() == 0) {
     return record.deframe(input);
@@ -1628,7 +1417,6 @@ function __records(inbox: u8[], input: [u8]): Result[record.Deframed, record.Rec
   return record.deframe(__cat(__copy(inbox), input));
 }
 
-// read takes bytes from the server.
 pub function (c: Client) read(input: [u8]): Result[ClientStep, HandshakeError] {
   if (c.state == C_CLOSED) {
     return Err(Misuse("read after close"));
@@ -1639,8 +1427,6 @@ pub function (c: Client) read(input: [u8]): Result[ClientStep, HandshakeError] {
   return __client_run(Client { ...c, conn: __deframe(c.conn, input)? }, __out());
 }
 
-// read_crypto takes the server's handshake bytes QUIC carried in CRYPTO
-// frames at `level`, which must be the level being read.
 pub function (c: Client) read_crypto(level: i32, bytes: [u8]): Result[ClientStep, HandshakeError] {
   if (c.state == C_CLOSED) {
     return Err(Misuse("read_crypto after close"));
@@ -1654,14 +1440,10 @@ pub function (c: Client) read_crypto(level: i32, bytes: [u8]): Result[ClientStep
   return __client_run(Client { ...c, conn: Conn { ...c.conn, pending: __join(c.conn.pending, bytes) } }, __out());
 }
 
-// peer_extensions is what the server's EncryptedExtensions carried, QUIC's
-// transport parameters among them; empty before it arrives.
 pub function (c: Client) peer_extensions(): message.Extension[] {
   return c.peer_extensions;
 }
 
-// verdict answers a VerifyServer event: whether the chain is trusted for the
-// server's name and the signature verifies under its key.
 pub function (c: Client) verdict(ok: boolean): Result[ClientStep, HandshakeError] {
   if (c.state != C_WAIT_VERDICT) {
     return Err(Misuse("verdict"));
@@ -1672,8 +1454,6 @@ pub function (c: Client) verdict(ok: boolean): Result[ClientStep, HandshakeError
   return __client_run(Client { ...c, state: C_WAIT_FINISHED }, __out());
 }
 
-// signature answers a SignNeeded event with the signature over its content,
-// and sends the Certificate, CertificateVerify and Finished.
 pub function (c: Client) signature(sig: [u8]): Result[ClientStep, HandshakeError] {
   if (c.state != C_WAIT_SIGNATURE) {
     return Err(Misuse("signature"));
@@ -1684,7 +1464,6 @@ pub function (c: Client) signature(sig: [u8]): Result[ClientStep, HandshakeError
   return __client_run(r.client, r.out);
 }
 
-// write seals application data once connected.
 pub function (c: Client) write(data: [u8]): Result[ClientStep, HandshakeError] {
   if (c.state != C_CONNECTED) {
     return Err(Misuse("write"));
@@ -1693,15 +1472,11 @@ pub function (c: Client) write(data: [u8]): Result[ClientStep, HandshakeError] {
   return Ok(__client_step(Client { ...c, conn: w.conn }, Out { ...__out(), output: w.bytes }));
 }
 
-// close sends close_notify; nothing more may be written. Under QUIC there
-// is nothing to send: the connection close is QUIC's.
 pub function (c: Client) close(): Result[ClientStep, HandshakeError] {
   let w: Wrote = __write(c.conn, record.Alert, [1 as u8, 0 as u8])?;
   return Ok(__client_step(Client { ...c, conn: w.conn, state: C_CLOSED }, Out { ...__out(), output: w.bytes }));
 }
 
-// alert is the record that reports e to the server, empty when e is the
-// server's own alert.
 pub function (c: Client) alert(e: HandshakeError): u8[] {
   return __alert_record(c.conn, e);
 }
@@ -1710,8 +1485,6 @@ pub function (c: Client) connected(): boolean {
   return c.state == C_CONNECTED;
 }
 
-// update_keys sends a KeyUpdate and moves the write side to the next
-// traffic secret; `request` asks the server to update its own.
 pub function (c: Client) update_keys(request: boolean): Result[ClientStep, HandshakeError] {
   if (c.state != C_CONNECTED) {
     return Err(Misuse("update_keys"));
@@ -1720,21 +1493,12 @@ pub function (c: Client) update_keys(request: boolean): Result[ClientStep, Hands
   return Ok(__client_step(Client { ...c, conn: w.conn }, Out { ...__out(), output: w.bytes }));
 }
 
-// Whether the kernel seals and opens the client's records (`offload`).
 pub function (c: Client) offloaded(): boolean {
   return c.conn.kernel;
 }
 
-// ClientOffload — a client whose records the kernel now seals and opens,
-// and the keys to give it.
 pub struct ClientOffload { client: Client, keys: KernelKeys }
 
-// offload hands the record layer to the kernel, or None while the client is
-// not connected or holds bytes of a record not yet processed. Afterwards
-// `write`, `close` and an alert are records framed in the clear for the
-// kernel to seal, `read` takes records the kernel opened, framed as they
-// arrived, and a KeyUpdate either way reports the new secret as a `Secret`
-// event.
 pub function (c: Client) offload(): Option[ClientOffload] {
   if (c.state != C_CONNECTED) {
     return None;
@@ -1748,12 +1512,10 @@ pub function (c: Client) offload(): Option[ClientOffload] {
   return None;
 }
 
-// The protocol the server chose by ALPN, empty when none was.
 pub function (c: Client) alpn(): string {
   return c.alpn;
 }
 
-// Whether the handshake resumed from the ticket offered.
 pub function (c: Client) resumed(): boolean {
   return c.resumed;
 }
@@ -1762,9 +1524,6 @@ pub function (c: Client) cipher_suite(): keyschedule.CipherSuite {
   return c.conn.suite;
 }
 
-// resumption_psk is the PSK a ticket this connection received stands for,
-// from its nonce (§4.6.1); the connection must have completed its
-// handshake here, not been restored.
 pub function (c: Client) resumption_psk(nonce: [u8]): Result[u8[], HandshakeError] {
   if (c.res_master.len() == 0) {
     return Err(Misuse("resumption_psk"));
@@ -1772,14 +1531,10 @@ pub function (c: Client) resumption_psk(nonce: [u8]): Result[u8[], HandshakeErro
   return Ok(keyschedule.resumption_psk(c.conn.suite.hash(), c.res_master, nonce));
 }
 
-// save is a connected client as bytes, for a caller that keeps an idle
-// connection where only bytes can go; client_restore makes it again. It
-// holds the traffic secrets, so it is as secret as the connection.
 pub function (c: Client) save(): Result[u8[], HandshakeError] {
   if (c.conn.quic) {
     return Err(Misuse("save under QUIC"));
   }
-  // The kernel holds an offloaded connection's sequence numbers.
   if (c.conn.kernel) {
     return Err(Misuse("save once offloaded"));
   }
@@ -1794,7 +1549,6 @@ pub function (c: Client) save(): Result[u8[], HandshakeError] {
   return Ok(__saved_field(out, c.alpn.bytes()));
 }
 
-// client_restore is the client `save` made.
 pub function client_restore(saved: [u8]): Result[Client, HandshakeError] {
   if (saved.len() < 5 || saved[0] != 1 as u8) {
     return Err(Misuse("client_restore"));
@@ -1858,9 +1612,6 @@ function __u64_of(b: [u8]): u64 {
   return v;
 }
 
-// __saved_fields reads the length-prefixed fields `save` wrote after the
-// header: each direction's secret and sequence number, the inbox, the
-// pending bytes and the protocol.
 function __saved_fields(saved: [u8], from: i32): Result[u8[][], HandshakeError] {
   let out: u8[][] = [];
   let at: i32 = from;
@@ -1881,20 +1632,12 @@ function __saved_fields(saved: [u8], from: i32): Result[u8[][], HandshakeError] 
   return Ok(out);
 }
 
-// The server.
-
-// ServerConfig — the certificate chain, leaf first; the signature schemes its
-// key can make, in preference order; and what the server accepts, in
-// preference order.
 pub struct ServerConfig { chain: u8[][], schemes: i32[], suites: keyschedule.CipherSuite[], groups: keyshare.Group[], alpn: string[], request_client_certificate: boolean, quic: boolean, extensions: message.Extension[] }
 
-// server_config takes every suite and group, no protocol, and asks the
-// client for no certificate.
 pub function server_config(chain: u8[][], schemes: i32[]): ServerConfig {
   return ServerConfig { chain: chain, schemes: schemes, suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519, keyshare.Secp256r1, keyshare.Secp256r1MlKem768], alpn: [], request_client_certificate: false, quic: false, extensions: [] };
 }
 
-// The schemes a CertificateRequest names: those std/tls/verify checks.
 const VERIFY_SCHEMES: i32[] = [0x0403, 0x0503, 0x0807, 0x0804, 0x0805, 0x0806];
 
 const S_WAIT_CLIENT_HELLO: i32 = 0;
@@ -1915,9 +1658,6 @@ const S_WAIT_CLIENT_VERIFY: i32 = 7;
 
 const S_WAIT_CLIENT_VERDICT: i32 = 8;
 
-// The entropy a server takes: 32 random bytes, then up to 64 for its share.
-// server_entropy is how many random bytes server_new takes for config: 32
-// for the random and enough for a share in any of its groups.
 pub function server_entropy(config: ServerConfig): i32 {
   let most: i32 = 0;
   for g in config.groups {
@@ -1928,9 +1668,6 @@ pub function server_entropy(config: ServerConfig): i32 {
   return 32 + most;
 }
 
-// Server — one server connection. `server_name` and `alpn` are what the
-// client asked for and what was chosen, empty when absent. `retry_group` and
-// `retry_suite` are what a HelloRetryRequest named, 0 before one.
 pub struct Server {
   conn: Conn,
   state: i32,
@@ -1960,8 +1697,6 @@ function __server_step(s: Server, out: Out): ServerStep {
   return ServerStep { server: Server { ...s, conn: f.conn }, output: f.out.output, data: f.out.data, events: f.out.events };
 }
 
-// server_new waits for a ClientHello, holding 96 bytes of entropy: the
-// ServerHello's random, then its key share's.
 pub function server_new(config: ServerConfig, entropy: [u8]): Result[Server, HandshakeError] {
   if (config.chain.len() == 0 || config.schemes.len() == 0 || config.suites.len() == 0 || config.groups.len() == 0) {
     return Err(BadConfig("a server needs a certificate, a signature scheme, a suite and a group"));
@@ -1999,8 +1734,6 @@ function __codes(r: Result[i32[], message.MsgError]): Result[i32[], HandshakeErr
   return Ok([]);
 }
 
-// Choice — the group the server takes and the client's share in it, or with
-// `retry`, a group the client named without a share, to ask for one.
 struct Choice { group: keyshare.Group, key: u8[], retry: boolean }
 
 function __client_shares(h: message.ClientHello): Result[message.KeyShareEntry[], HandshakeError] {
@@ -2015,9 +1748,6 @@ function __client_shares(h: message.ClientHello): Result[message.KeyShareEntry[]
   return Err(MissingExtension("key_share"));
 }
 
-// __choose_share picks the server's most preferred group the client sent a
-// share for, else its most preferred group the client names, to ask for a
-// share in.
 function __choose_share(s: Server, h: message.ClientHello): Result[Choice, HandshakeError] {
   let groups: i32[] = __codes(message.supported_groups(__ext(h.extensions, message.EXT_SUPPORTED_GROUPS, "supported_groups")?))?;
   let shares: message.KeyShareEntry[] = __client_shares(h)?;
@@ -2042,7 +1772,6 @@ function __choose_share(s: Server, h: message.ClientHello): Result[Choice, Hands
   return __retry_choice(s, groups);
 }
 
-// The server's most preferred group the client names without a share.
 function __retry_choice(s: Server, groups: i32[]): Result[Choice, HandshakeError] {
   for want in s.config.groups {
     if (__has(groups, want.code())) {
@@ -2126,7 +1855,6 @@ function __offers_tls13(h: message.ClientHello): Result[boolean, HandshakeError]
   return Err(NotTls13);
 }
 
-// The server's most preferred suite the client offers.
 function __pick_suite(s: Server, h: message.ClientHello): Result[keyschedule.CipherSuite, HandshakeError] {
   let i: i32 = 0;
   while (i < s.config.suites.len()) {
@@ -2138,7 +1866,6 @@ function __pick_suite(s: Server, h: message.ClientHello): Result[keyschedule.Cip
   return Err(HandshakeFailure("no cipher suite in common"));
 }
 
-// The server's most preferred signature scheme the client accepts.
 function __pick_scheme(s: Server, h: message.ClientHello): Result[i32, HandshakeError] {
   let schemes: i32[] = __codes(message.signature_algorithms(__ext(h.extensions, message.EXT_SIGNATURE_ALGORITHMS, "signature_algorithms")?))?;
   let i: i32 = 0;
@@ -2163,8 +1890,6 @@ function __answer_share(s: Server, choice: Choice): Result[keyshare.ServerShare,
   return Err(HandshakeFailure("key share"));
 }
 
-// __encrypted_extensions_msg carries the protocol chosen, if any, and the
-// extensions the config adds: QUIC's transport parameters.
 function __encrypted_extensions_msg(s: Server, alpn: string): u8[] {
   let ee: message.Extension[] = [];
   if (alpn.len() > 0) {
@@ -2176,9 +1901,6 @@ function __encrypted_extensions_msg(s: Server, alpn: string): u8[] {
   return message.encode(message.EncryptedExtensions(ee));
 }
 
-// __server_flight is EncryptedExtensions, a CertificateRequest when the
-// config asks for one, and Certificate, which the CertificateVerify and
-// Finished follow once the signature is made.
 function __server_flight(s: Server, alpn: string): u8[] {
   let out: u8[] = __encrypted_extensions_msg(s, alpn);
   if (s.config.request_client_certificate) {
@@ -2193,7 +1915,6 @@ function __server_flight(s: Server, alpn: string): u8[] {
   return __cat(out, message.encode(message.CertificateMsg(message.Certificate { context: [], entries: entries })));
 }
 
-// Negotiated — what the server chose from a ClientHello.
 struct Negotiated { suite: keyschedule.CipherSuite, scheme: i32, choice: Choice, alpn: string, name: string }
 
 function __negotiate(s: Server, h: message.ClientHello): Result[Negotiated, HandshakeError] {
@@ -2201,8 +1922,6 @@ function __negotiate(s: Server, h: message.ClientHello): Result[Negotiated, Hand
   return Ok(Negotiated { suite: __pick_suite(s, h)?, scheme: __pick_scheme(s, h)?, choice: __choose_share(s, h)?, alpn: __choose_alpn(s, h)?, name: __server_name(h)? });
 }
 
-// __negotiated_terms is what the server chose from a ClientHello, which
-// under QUIC must carry the transport parameters and name a protocol.
 function __negotiated_terms(s: Server, h: message.ClientHello): Result[Negotiated, HandshakeError] {
   let n: Negotiated = __negotiate(s, h)?;
   if (s.conn.quic) {
@@ -2211,9 +1930,6 @@ function __negotiated_terms(s: Server, h: message.ClientHello): Result[Negotiate
   return Ok(n);
 }
 
-// __client_hello answers a ClientHello: with a HelloRetryRequest when it
-// has no share the server takes; by asking the caller about the tickets it
-// offers; else with the ServerHello and the server's flight.
 function __client_hello(first: Server, raw: message.Raw, out: Out): Result[ServerRun, HandshakeError] {
   let h: message.ClientHello = __as_client_hello(raw)?;
   let s: Server = Server { ...first, peer_extensions: h.extensions };
@@ -2233,8 +1949,6 @@ function __client_hello(first: Server, raw: message.Raw, out: Out): Result[Serve
   return __serve_hello(s, raw, h, n, [], 0, out);
 }
 
-// __offered_psks is a ClientHello's pre_shared_key offer, which must be its
-// last extension and come with psk_key_exchange_modes naming psk_dhe_ke.
 function __offered_psks(h: message.ClientHello): Result[Option[message.OfferedPsks], HandshakeError] {
   match (message.find(h.extensions, message.EXT_PRE_SHARED_KEY)) {
     Some(d) => {
@@ -2261,9 +1975,6 @@ function __offered_psks(h: message.ClientHello): Result[Option[message.OfferedPs
   return Ok(None);
 }
 
-// __serve_hello sends the ServerHello and what follows it: with a PSK
-// taken, EncryptedExtensions and Finished at once; without, Encrypted-
-// Extensions and Certificate, asking for the CertificateVerify signature.
 function __serve_hello(s: Server, raw: message.Raw, h: message.ClientHello, n: Negotiated, psk: [u8], index: i32, out: Out): Result[ServerRun, HandshakeError] {
   let suite: keyschedule.CipherSuite = n.suite;
   let share: keyshare.ServerShare = __answer_share(s, n.choice)?;
@@ -2297,9 +2008,6 @@ function __serve_hello(s: Server, raw: message.Raw, h: message.ClientHello, n: N
   return Ok(ServerRun { server: Server { ...next, conn: conn, state: S_WAIT_SIGNATURE, flight: flight }, out: Out { ...sent, events: sent.events.append(ev) } });
 }
 
-// __send_finished sends `before`, already in the transcript, then `tail`
-// and the server's Finished, and moves the write side to the application
-// keys.
 function __send_finished(s: Server, before: [u8], tail: [u8], out: Out): Result[ServerRun, HandshakeError] {
   let h: keyschedule.Hash = s.conn.suite.hash();
   let conn: Conn = Conn { ...s.conn, transcript: __join(s.conn.transcript, tail) };
@@ -2316,7 +2024,6 @@ function __send_finished(s: Server, before: [u8], tail: [u8], out: Out): Result[
   return Ok(ServerRun { server: Server { ...s, conn: next, state: state, flight: [], finished_hash: finished_hash }, out: Out { ...out, output: __join(out.output, w.bytes) } });
 }
 
-// __check_binder verifies the binder of the identity taken (§4.2.11.2).
 function __check_binder(s: Server, raw: message.Raw, h: message.ClientHello, suite: keyschedule.CipherSuite, c: Resumed): Result[boolean, HandshakeError] {
   let offer: message.OfferedPsks = message.OfferedPsks { identities: [], binders: [] };
   match (__offered_psks(h)?) {
@@ -2337,9 +2044,6 @@ function __check_binder(s: Server, raw: message.Raw, h: message.ClientHello, sui
   return Ok(true);
 }
 
-// A client in middlebox compatibility mode sends a session id and expects a
-// change_cipher_spec after the server's first handshake message (Appendix
-// D.4).
 function __compat_ccs(own output: u8[], h: message.ClientHello): u8[] {
   if (h.session_id.len() > 0) {
     return __cat(output, [20 as u8, 3 as u8, 3 as u8, 0 as u8, 1 as u8, 1 as u8]);
@@ -2347,8 +2051,6 @@ function __compat_ccs(own output: u8[], h: message.ClientHello): u8[] {
   return output;
 }
 
-// __retry_request asks for a share in the group chosen (§4.1.4), the first
-// ClientHello going into the transcript as its hash.
 function __retry_request(s: Server, raw: message.Raw, h: message.ClientHello, n: Negotiated, out: Out): Result[ServerRun, HandshakeError] {
   let hrr: message.ServerHello = message.ServerHello { random: message.retry_random(), session_id: h.session_id, cipher_suite: n.suite.code(), extensions: [message.ext_selected_version(message.TLS13), message.ext_retry_group(n.choice.group.code())] };
   let hrr_bytes: u8[] = message.encode(message.ServerHelloMsg(hrr));
@@ -2363,8 +2065,6 @@ function __retry_request(s: Server, raw: message.Raw, h: message.ClientHello, n:
   return Ok(ServerRun { server: Server { ...s, conn: plain.conn, retry_group: n.choice.group.code(), retry_suite: n.suite.code() }, out: Out { ...out, output: output } });
 }
 
-// The second ClientHello must carry a share in the group asked for and keep
-// the suite chosen.
 function __check_second_hello(s: Server, n: Negotiated): Result[boolean, HandshakeError] {
   if (n.choice.retry || n.choice.group.code() != s.retry_group) {
     return Err(Illegal("second ClientHello without the share asked for"));
@@ -2383,14 +2083,10 @@ function __client_finished(s: Server, raw: message.Raw, verify_data: u8[], out: 
   let conn: Conn = Conn { ...s.conn, transcript: __join(s.conn.transcript, raw.bytes) };
   __at_key_change(conn)?;
   let master: keyschedule.MasterSecret = s.hs.master_secret();
-  // The application secrets hash the transcript through the server's
-  // Finished; the resumption secret through the client's.
   conn = __with_read(conn, master.client_traffic(s.finished_hash), 2);
   return Ok(ServerRun { server: Server { ...s, conn: conn, state: S_CONNECTED, res_master: master.resumption(__hash(conn)) }, out: Out { ...out, events: out.events.append(Connected) } });
 }
 
-// __client_certificate takes the client's chain: an empty one is put to
-// the caller at once, a chain waits for its CertificateVerify.
 function __client_certificate(s: Server, raw: message.Raw, cert: message.Certificate, out: Out): Result[ServerRun, HandshakeError] {
   if (cert.context.len() != 0) {
     return Err(Illegal("certificate_request_context"));
@@ -2407,8 +2103,6 @@ function __client_certificate(s: Server, raw: message.Raw, cert: message.Certifi
   return Ok(ServerRun { server: Server { ...s, conn: conn, state: S_WAIT_CLIENT_VERIFY, client_chain: chain }, out: out });
 }
 
-// __client_verify puts the client's chain and its signature over the
-// transcript before the CertificateVerify to the caller.
 function __client_verify(s: Server, raw: message.Raw, v: message.CertificateVerify, out: Out): Result[ServerRun, HandshakeError] {
   if (!__has(VERIFY_SCHEMES, v.scheme)) {
     return Err(Illegal("signature scheme"));
@@ -2446,8 +2140,6 @@ function __server_message(s: Server, raw: message.Raw, out: Out): Result[ServerR
   return Err(OutOfOrder(raw.kind));
 }
 
-// __client_auth_message takes the client's Certificate, then its
-// CertificateVerify.
 function __client_auth_message(s: Server, raw: message.Raw, m: message.Message, out: Out): Result[ServerRun, HandshakeError] {
   match (m) {
     message.CertificateMsg(cert) => {
@@ -2465,13 +2157,10 @@ function __client_auth_message(s: Server, raw: message.Raw, m: message.Message, 
   return Err(OutOfOrder(raw.kind));
 }
 
-// A server waiting on the caller, or closed, takes no more records.
 function __server_parked(state: i32): boolean {
   return state == S_WAIT_SIGNATURE || state == S_WAIT_RESUME || state == S_WAIT_CLIENT_VERDICT || state == S_CLOSED;
 }
 
-// Whether the client's first encrypted flight is awaited, when its
-// compatibility change_cipher_spec may arrive.
 function __client_flight_due(state: i32): boolean {
   return state == S_WAIT_FINISHED || state == S_WAIT_CLIENT_CERTIFICATE || state == S_WAIT_CLIENT_VERIFY;
 }
@@ -2508,7 +2197,6 @@ function __server_run(s: Server, out: Out): Result[ServerStep, HandshakeError] {
   return Ok(__server_step(server, r.out));
 }
 
-// read takes bytes from the client.
 pub function (s: Server) read(input: [u8]): Result[ServerStep, HandshakeError] {
   if (s.state == S_CLOSED) {
     return Err(Misuse("read after close"));
@@ -2519,8 +2207,6 @@ pub function (s: Server) read(input: [u8]): Result[ServerStep, HandshakeError] {
   return __server_run(Server { ...s, conn: __deframe(s.conn, input)? }, __out());
 }
 
-// read_crypto takes the client's handshake bytes QUIC carried in CRYPTO
-// frames at `level`, which must be the level being read.
 pub function (s: Server) read_crypto(level: i32, bytes: [u8]): Result[ServerStep, HandshakeError] {
   if (s.state == S_CLOSED) {
     return Err(Misuse("read_crypto after close"));
@@ -2534,14 +2220,10 @@ pub function (s: Server) read_crypto(level: i32, bytes: [u8]): Result[ServerStep
   return __server_run(Server { ...s, conn: Conn { ...s.conn, pending: __join(s.conn.pending, bytes) } }, __out());
 }
 
-// peer_extensions is what the client's hello carried, QUIC's transport
-// parameters among them; empty before it arrives.
 pub function (s: Server) peer_extensions(): message.Extension[] {
   return s.peer_extensions;
 }
 
-// signature answers a SignNeeded event with the signature over its content,
-// and sends the rest of the server's flight.
 pub function (s: Server) signature(sig: [u8]): Result[ServerStep, HandshakeError] {
   if (s.state != S_WAIT_SIGNATURE) {
     return Err(Misuse("signature"));
@@ -2551,9 +2233,6 @@ pub function (s: Server) signature(sig: [u8]): Result[ServerStep, HandshakeError
   return __server_run(r.server, r.out);
 }
 
-// resume answers a ResumeOffered event: with the identity taken and the
-// PSK its ticket stands for, whose binder must verify, or with None for a
-// full handshake.
 pub function (s: Server) resume(choice: Option[Resumed]): Result[ServerStep, HandshakeError] {
   if (s.state != S_WAIT_RESUME) {
     return Err(Misuse("resume"));
@@ -2576,8 +2255,6 @@ pub function (s: Server) resume(choice: Option[Resumed]): Result[ServerStep, Han
   return Err(Misuse("resume"));
 }
 
-// verdict answers a VerifyClient event: whether the client's chain, or its
-// absence, is accepted and its signature verifies.
 pub function (s: Server) verdict(ok: boolean): Result[ServerStep, HandshakeError] {
   if (s.state != S_WAIT_CLIENT_VERDICT) {
     return Err(Misuse("verdict"));
@@ -2588,12 +2265,10 @@ pub function (s: Server) verdict(ok: boolean): Result[ServerStep, HandshakeError
   return __server_run(Server { ...s, state: S_WAIT_FINISHED }, __out());
 }
 
-// The chain the client sent, empty when it sent none or was not asked.
 pub function (s: Server) client_chain(): u8[][] {
   return s.client_chain;
 }
 
-// ticket sends a NewSessionTicket; the handshake must be complete.
 pub function (s: Server) ticket(t: message.NewSessionTicket): Result[ServerStep, HandshakeError] {
   if (s.state != S_CONNECTED) {
     return Err(Misuse("ticket"));
@@ -2602,7 +2277,6 @@ pub function (s: Server) ticket(t: message.NewSessionTicket): Result[ServerStep,
   return Ok(__server_step(Server { ...s, conn: w.conn }, Out { ...__out(), output: w.bytes }));
 }
 
-// Whether the handshake resumed from a ticket.
 pub function (s: Server) resumed(): boolean {
   return s.resumed;
 }
@@ -2611,8 +2285,6 @@ pub function (s: Server) cipher_suite(): keyschedule.CipherSuite {
   return s.conn.suite;
 }
 
-// resumption_psk is the PSK a ticket with this nonce stands for (§4.6.1);
-// the handshake must be complete.
 pub function (s: Server) resumption_psk(nonce: [u8]): Result[u8[], HandshakeError] {
   if (s.res_master.len() == 0) {
     return Err(Misuse("resumption_psk"));
@@ -2620,7 +2292,6 @@ pub function (s: Server) resumption_psk(nonce: [u8]): Result[u8[], HandshakeErro
   return Ok(keyschedule.resumption_psk(s.conn.suite.hash(), s.res_master, nonce));
 }
 
-// write seals application data once connected.
 pub function (s: Server) write(data: [u8]): Result[ServerStep, HandshakeError] {
   if (s.state != S_CONNECTED) {
     return Err(Misuse("write"));
@@ -2642,8 +2313,6 @@ pub function (s: Server) connected(): boolean {
   return s.state == S_CONNECTED;
 }
 
-// update_keys sends a KeyUpdate and moves the write side to the next
-// traffic secret; `request` asks the client to update its own.
 pub function (s: Server) update_keys(request: boolean): Result[ServerStep, HandshakeError] {
   if (s.state != S_CONNECTED) {
     return Err(Misuse("update_keys"));
@@ -2652,16 +2321,12 @@ pub function (s: Server) update_keys(request: boolean): Result[ServerStep, Hands
   return Ok(__server_step(Server { ...s, conn: w.conn }, Out { ...__out(), output: w.bytes }));
 }
 
-// Whether the kernel seals and opens the server's records (`offload`).
 pub function (s: Server) offloaded(): boolean {
   return s.conn.kernel;
 }
 
-// ServerOffload — a server whose records the kernel now seals and opens,
-// and the keys to give it.
 pub struct ServerOffload { server: Server, keys: KernelKeys }
 
-// offload hands the record layer to the kernel, as Client.offload does.
 pub function (s: Server) offload(): Option[ServerOffload] {
   if (s.state != S_CONNECTED) {
     return None;

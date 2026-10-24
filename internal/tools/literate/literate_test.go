@@ -7,7 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// tangle is a test helper: parse + tangle, failing the test on error.
 func tangle(t *testing.T, src string) (string, []Line) {
 	t.Helper()
 	code, lm, err := Parse(src).Tangle()
@@ -25,9 +24,6 @@ func TestTangleRootOnly(t *testing.T) {
 	}
 }
 
-// A chunk defined *after* it is referenced still resolves: tangle works
-// off the chunk table, not document order. This is the whole point of
-// Knuth-style named chunks.
 func TestTangleOutOfOrderReference(t *testing.T) {
 	src := strings.Join([]string{
 		"```fern",
@@ -50,7 +46,6 @@ func TestTangleOutOfOrderReference(t *testing.T) {
 	}
 }
 
-// Defining the same chunk name twice appends in document order.
 func TestTangleConcatenatesPieces(t *testing.T) {
 	src := strings.Join([]string{
 		"```fern",
@@ -72,44 +67,35 @@ func TestTangleConcatenatesPieces(t *testing.T) {
 	}
 }
 
-// A reference is expanded with the reference line's indentation
-// prepended to every expanded line, and the line map records the shift
-// so columns can be mapped back to the document.
 func TestTangleIndentationAndLineMap(t *testing.T) {
 	src := strings.Join([]string{
-		"```fern",      // line 1
-		"<<*>>=",       // line 2
-		"fn main() {",  // line 3
-		"    <<body>>", // line 4 — indented reference
-		"}",            // line 5
-		"```",          // line 6
-		"```fern",      // line 7
-		"<<body>>=",    // line 8
-		"return 7;",    // line 9
-		"```",          // line 10
+		"```fern",
+		"<<*>>=",
+		"fn main() {",
+		"    <<body>>",
+		"}",
+		"```",
+		"```fern",
+		"<<body>>=",
+		"return 7;",
+		"```",
 	}, "\n")
 	code, lm := tangle(t, src)
 	want := "fn main() {\n    return 7;\n}"
 	if code != want {
 		t.Errorf("tangled =\n%s\n\nwant\n%s", code, want)
 	}
-	// 3 generated lines.
 	if len(lm) != 3 {
 		t.Fatalf("line map len = %d, want 3", len(lm))
 	}
-	// Generated line 2 ("    return 7;") came from document line 9 with
-	// 4 columns of indentation added.
 	if lm[1].Lit != 9 || lm[1].ColShift != 4 {
 		t.Errorf("lineMap[1] = %+v, want {Lit:9 ColShift:4}", lm[1])
 	}
-	// Generated line 1 ("fn main() {") came from document line 3, no shift.
 	if lm[0].Lit != 3 || lm[0].ColShift != 0 {
 		t.Errorf("lineMap[0] = %+v, want {Lit:3 ColShift:0}", lm[0])
 	}
 }
 
-// A ```fern block without a `<<name>>=` header is display-only: it is
-// never tangled, so illustrative snippets don't pollute the build.
 func TestTangleDisplayOnlyExcluded(t *testing.T) {
 	src := strings.Join([]string{
 		"Here's an illustration that should NOT compile in:",
@@ -155,7 +141,6 @@ func TestTangleUndefinedReference(t *testing.T) {
 	if !strings.Contains(pe.Error(), "undefined chunk") || !strings.Contains(pe.Error(), "nope") {
 		t.Errorf("error = %q, want it to name the undefined chunk", pe.Error())
 	}
-	// The reference is on document line 3.
 	if pe.Position() != (ast.Position{Line: 3, Col: 1}) {
 		t.Errorf("position = %v, want 3:1", pe.Position())
 	}
@@ -185,8 +170,6 @@ func TestTangleCyclicReference(t *testing.T) {
 	}
 }
 
-// Longer fences (````) and indented fences are handled, and a chunk
-// header may follow leading blank lines inside the block.
 func TestTangleFenceVariants(t *testing.T) {
 	src := strings.Join([]string{
 		"````fern",

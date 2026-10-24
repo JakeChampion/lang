@@ -8,16 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/modload"
 )
 
-// A receiver method keeps its source-level name through the load (the
-// hoist to `__method_<Type>_<Name>` needs it), so it never becomes a
-// `<mod>__<name>` declaration. It must not claim that name for the
-// module's INTERNAL references either: a bare call to a same-named free
-// function — a builtin like `env`, or one from an import — was rewritten
-// to a `<mod>__env` that nothing declares, so a module could not wrap the
-// builtin it named its method after.
-//
-// Repro: `std/platform`'s `Host` method `env(self, name)`, whose body is
-// `return env(name);`.
 func TestMethodNameDoesNotShadowFreeFunctionInsideItsModule(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"wrap.fern": `pub struct Box { v: i32 }

@@ -9,9 +9,6 @@ import (
 	"unicode/utf8"
 )
 
-// ReaderTextFixture uses an independent UTF-8 oracle for exact physical
-// chunks. Invalid reads consume their bytes; the following chunk must still
-// be read correctly. The final oversized request exercises short-read storage.
 type ReaderTextFixture struct {
 	Source string
 	Input  []byte
@@ -24,7 +21,6 @@ func MakeReaderTextFixture() ReaderTextFixture {
 		{0xc2}, {0xdf}, {0xe0, 0x9f, 0xbf}, {0xed, 0xa0, 0x80},
 		{0xe2, 0x82}, {0xf0, 0x8f, 0xbf, 0xbf}, {0xf4, 0x90, 0x80, 0x80},
 		{0xf5, 0x80, 0x80, 0x80}, {0xff}, {0xf0, 0x9f, 0x99},
-		// A valid scalar split across two physical reads is two refusals.
 		{0xc3}, {0xa9},
 		[]byte("text after rejection"), []byte("é€🙂\x00"),
 		[]byte("tail\x00"),
@@ -48,8 +44,6 @@ function main(): i32 {
 	var input []byte
 	for i, chunk := range chunks {
 		if i == len(chunks)-1 {
-			// Refusal consumes only the requested lead byte. The following
-			// explicit raw read must preserve its continuation unchanged.
 			input = append(input, 0xc3, 0xa9, 'Z')
 			src.WriteString(`match (r.read_chunk(1)) {
     Ok(_) => { return 206; },

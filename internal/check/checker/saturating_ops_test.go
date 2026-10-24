@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// The saturating operators `+|` / `-|` / `*|` / `<<|` (#5542) are integer-only: there
-// is no string-concat form (unlike `+`), no float form, and no composite
-// operator overload. `usize` is rejected outright because its clamp bounds are
-// target-width-dependent and so aren't expressible in the target-agnostic IR.
 func TestSaturatingOperatorTyping(t *testing.T) {
 	mustOK := func(src string) {
 		t.Helper()
@@ -37,20 +33,14 @@ func TestSaturatingOperatorTyping(t *testing.T) {
 	mustOK(`function main(): i32 { let a: u8 = 1; let b: u8 = 2; return (a <<| b) as i32; }`)
 	mustOK(`function main(): i32 { let a: i64 = 1; let b: i64 = 2; return (a <<| b) as i32; }`)
 
-	// No string form — `+|` is not overloaded the way `+` is.
 	mustErr(`function main(): i32 { let s: string = "a"; let t: string = "b"; let u: string = s +| t; return 0; }`,
 		`requires an integer type`)
-	// No float form.
 	mustErr(`function main(): i32 { let a: f64 = 1.0; let b: f64 = 2.0; let c: f64 = a *| b; return 0; }`,
 		`requires an integer type`)
-	// Mismatched widths still need an explicit `as`.
 	mustErr(`function main(): i32 { let a: i32 = 1; let b: u32 = 2; return a +| b; }`,
 		`share an integer type`)
-	// usize is rejected: the clamp bounds are target-width-dependent.
 	mustErr(`function main(): i32 { let a: usize = 1; let b: usize = 2; return (a +| b) as i32; }`,
 		"not supported on `usize`")
-	// `<<|` carries the same three rules as the arithmetic three: no float
-	// form, no cross-width mixing, no usize.
 	mustErr(`function main(): i32 { let a: f64 = 1.0; let b: f64 = 2.0; let c: f64 = a <<| b; return 0; }`,
 		`requires an integer type`)
 	mustErr(`function main(): i32 { let a: i32 = 1; let b: u32 = 2; return a <<| b; }`,

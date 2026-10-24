@@ -13,17 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/tools/tty"
 )
 
-// `isatty` is reachable from the STDLIB — `std/cli`'s colour gate calls it —
-// so the self-hosted compiler has to lower it, not merely be told by the
-// capability tables that it is allowed. Before it did, `std/cli` compiled on
-// one compiler and not the other, and the driver reported only "module is not
-// IR-eligible".
-//
-// Classification is pinned elsewhere (internal/pkg/platforms, internal/pkg/caps and
-// their self-host mirrors). What this pins is the LOWERING, and it pins it by
-// running the result: the self-host-compiled binary must answer no on a pipe
-// and yes on a real terminal. A helper that always returned 0 would satisfy
-// half of that, which is the half a redirected-output-only test checks.
 func TestSelfHostIsattyFollowsTheStream(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

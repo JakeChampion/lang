@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// arm64NativeSrc returns the merged arm64-darwin native backend module
-// (encoder + GAS assembler + Mach-O writer), the single source the
-// self-host CLI imports and the e2e self-tests concatenate with a driver.
 func arm64NativeSrc(t *testing.T) string {
 	b, err := os.ReadFile("../../../compiler/arm64_native.fern")
 	if err != nil {
@@ -18,23 +15,10 @@ func arm64NativeSrc(t *testing.T) string {
 	return string(b) + toU8Src
 }
 
-// toU8Src is the byte conversion the native-backend fixtures write an image
-// through: arm64_native, x86_native and elf build bytes as i32[], and
-// string_from_bytes_unchecked takes u8[].
 const toU8Src = `
 function to_u8(b: i32[]): u8[] { let o: u8[] = []; let i: i32 = 0; while (i < b.len()) { o = o.append(b[i] as u8); i = i + 1; } return o; }
 `
 
-// TestSelfHostArm64Encode exercises the self-hosted AArch64 machine-code
-// encoder (compiler/arm64_encode.fern) — the assembler half of
-// the arm64-darwin native-binary path (the container half is macho.fern).
-//
-// arm64_encode.fern is import-free, so this test concatenates it with a
-// self-test main() that encodes each instruction and asserts the bytes
-// against the ground-truth encodings (the Go reference is pinned against
-// llvm-mc), then runs the combined program through the self-host wasm
-// pipeline (wasm_run -> WAT -> wasmtime). Exit 0 = all checks pass; a
-// failing check returns its 1-based id.
 func TestSelfHostArm64Encode(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64_encode e2e")
@@ -62,23 +46,10 @@ func TestSelfHostArm64Encode(t *testing.T) {
 	}
 }
 
-// TestSelfHostArm64DarwinMachOExitRuns is the first end-to-end proof of the
-// arm64-darwin native-binary path with NO external tool: a Fern program
-// (arm64_encode.fern + macho.fern + a driver) assembles an exit(42) program
-// to AArch64 machine code, wraps it in an ad-hoc-signed static Mach-O via
-// macho.fern, and writes the raw binary to stdout. The Go test captures
-// that binary, asserts it parses as an arm64 MH_EXECUTE, and — on an Apple
-// Silicon host — writes it 0o755 and executes it, asserting the process
-// exits 42. This exercises the whole chain (Fern instruction encoder ->
-// Mach-O writer + ad-hoc signature -> kernel load -> svc) with no clang,
-// ld64, or codesign.
 func TestSelfHostArm64DarwinMachOExitRuns(t *testing.T) {
 	assertMachORuns(t, machoRun{name: "exit42", main: arm64MachOExitDriverMain, wantExit: 42})
 }
 
-// arm64EncodeSelfTestMain asserts each encoder against the ground-truth
-// little-endian bytes (the Go reference is pinned against llvm-mc). Each
-// `return N` is a distinct failing-check id (0 = all pass).
 const arm64EncodeSelfTestMain = `
 function main(): i32 {
     // movz x0, #42 -> 0xD2800540 -> 40 05 80 D2
@@ -126,9 +97,6 @@ function main(): i32 {
 }
 `
 
-// arm64MachOExitDriverMain assembles a Darwin exit(42): x0 = status,
-// x16 = 1 (SYS_exit), then the BSD trap `svc #0x80`. macho.fern wraps and
-// ad-hoc-signs it into a runnable static Mach-O.
 const arm64MachOExitDriverMain = `
 function main(): i32 {
     let code: i32[] = [];

@@ -9,9 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The interpreter reads a request and the end of stream behind it in one
-// read, the case that answered nothing before #11649: an incomplete
-// request at the end of stream is answered 400.
 func TestServeIncompleteRequestAtEOFInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	srcPath := filepath.Join(t.TempDir(), "srv.fern")

@@ -7,11 +7,6 @@ import (
 	"syscall"
 )
 
-// statFields projects Darwin's 64-bit-inode `struct stat` onto rawStat.
-// `st_mode` and `st_nlink` are 16-bit there and `st_dev` / `st_rdev` /
-// `st_blksize` are 32-bit, so each widens; the timestamps are named
-// `Atimespec` rather than Linux's `Atim`, which is why this file exists
-// at all rather than one shared unix projection.
 func statFields(info os.FileInfo, _ statOrigin) rawStat {
 	st, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {

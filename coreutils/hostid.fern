@@ -1,16 +1,3 @@
-// hostid.fern — GNU-compatible `hostid`.
-//
-//   hostid    print the numeric identifier for the current host, in hex
-//
-// Darwin's gethostid is the kern.hostid sysctl. Elsewhere the number is
-// glibc's gethostid: the four bytes of /etc/hostid if that
-// file holds four, else the machine's IPv4 address with its halves
-// swapped — `addr << 16 | addr >> 16` over the in_addr word, so the
-// low-order host part of the address leads — else 0. The address is the
-// hostname resolved through NSS (lib/resolv), which is why a box whose
-// name maps to 127.0.0.1 in /etc/hosts prints `007f0100`. Eight hex
-// digits, unsigned; there are no options and no operands, and any operand
-// is `extra operand`.
 import "std/string";
 import "std/array";
 import "./lib/gnu";
@@ -26,8 +13,6 @@ function help_text(): string {
   return out;
 }
 
-// The word stored by sethostid, if /etc/hostid holds one: read(2) of four
-// bytes must return all four, so a shorter file is the same as none.
 function stored_id(): Option[i64] {
   match (read_file_bytes("/etc/hostid")) {
     Ok(bs) => {
@@ -42,8 +27,6 @@ function stored_id(): Option[i64] {
   }
 }
 
-// Darwin's gethostid is sysctl kern.hostid ({CTL_KERN, KERN_HOSTID}), a
-// 32-bit int that is 0 unless something set it.
 function darwin_host_id(): i64 {
   match (sysctl([1, 11])) {
     Ok(bs) => {
@@ -58,8 +41,6 @@ function darwin_host_id(): i64 {
   }
 }
 
-// gethostid's derivation from the address: the in_addr word rotated by
-// sixteen bits, kept to 32.
 function address_id(word: i32): i64 {
   let w: i64 = word as i64 & 4294967295;
   return (w << 16 | w >> 16) & 4294967295;
@@ -89,7 +70,6 @@ function host_id(): i64 {
   }
 }
 
-// `%08x`: at least eight lowercase hex digits.
 function hex8(v: i64): string {
   let digits: string = "0123456789abcdef";
   let out: string = "";

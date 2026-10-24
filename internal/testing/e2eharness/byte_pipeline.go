@@ -30,9 +30,6 @@ const BytePipelineProgram = `function main(): i32 {
 }
 `
 
-// CheckBytePipeline verifies the composed raw path, including using the
-// extracted array after freeing its builder. Stderr remains separate from
-// arbitrary output bytes so ownership diagnostics cannot look like output.
 func CheckBytePipeline(t *testing.T, cmd *exec.Cmd, input []byte) string {
 	t.Helper()
 	cmd.Stdin = bytes.NewReader(input)

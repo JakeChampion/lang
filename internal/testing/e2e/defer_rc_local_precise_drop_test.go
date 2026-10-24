@@ -2,39 +2,18 @@ package e2e
 
 import "testing"
 
-// TestDeferReadLocalKeepsItLive covers #9471: a `defer` whose action reads an
-// rc-tracked LOCAL miscompiled on both register backends, where the
-// interpreter answered correctly.
-//
-// preciseDropTarget placed the local's release right after its last
-// referencing statement, and counted the `defer` as that reference. But a
-// `defer` STATEMENT only registers the action — emitDeferCleanupKind
-// re-evaluates the expression at each exit, by which time the release has run
-// and zeroed the slot, so the replay read a null. Placing the drop later is not
-// the fix: the replay sites are the exits, and the exit sweep is already
-// exactly that placement (every exit runs emitDeferCleanup before
-// emitRcDecLocalsAtExit), so such a local simply stays on the sweep.
-//
-// The defect had two faces and the quiet one is the reason these cases pin the
-// ANSWER rather than just a clean exit: an indexed read through the zeroed slot
-// faults, but `.len()` on it returns 0, so the program ran to completion with a
-// wrong result and nothing to notice.
 func TestDeferReadLocalKeepsItLive(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
 		want int
 	}{
-		// The minimal shape: the defer is the local's ONLY reference, so the
-		// release landed immediately after the array was built.
 		{"defer_is_only_use", `function f(out: Cell[i32]): i32 {
     let arr: i32[] = [1, 2, 3];
     defer out.set(arr[1]);
     return 0;
 }
 function main(): i32 { let a: Cell[i32] = cell_new(0); f(a); return a.get(); }`, 2},
-		// A real use BEFORE the defer and none after — the release still lands
-		// on the defer statement, so reading it earlier does not save it.
 		{"last_use_before_defer", `function f(out: Cell[i32]): i32 {
     let arr: i32[] = [1, 2, 3];
     out.set(arr[0]);
@@ -42,29 +21,18 @@ function main(): i32 { let a: Cell[i32] = cell_new(0); f(a); return a.get(); }`,
     return 0;
 }
 function main(): i32 { let a: Cell[i32] = cell_new(0); f(a); return a.get(); }`, 2},
-		// The quiet face: `.len()` through the zeroed slot answered 0 instead
-		// of faulting, so this case fails on the VALUE, not on a crash.
 		{"silent_wrong_answer", `function f(out: Cell[i32]): i32 {
     let arr: i32[] = [1, 2, 3];
     defer out.set(arr.len());
     return 0;
 }
 function main(): i32 { let a: Cell[i32] = cell_new(0); f(a); return a.get(); }`, 3},
-		// A later use that is the `return` itself was always correct, but NOT
-		// because the local survived on merit: the scan picks the return
-		// statement and preciseDropTarget refuses to drop after a return, so
-		// the local fell through to the exit sweep by that abort alone. Kept
-		// as the shape that always worked, named for what it actually is.
 		{"later_use_is_the_return", `function f(out: Cell[i32]): i32 {
     let arr: i32[] = [1, 2, 3];
     defer out.set(arr[1]);
     return arr[0];
 }
 function main(): i32 { let a: Cell[i32] = cell_new(0); f(a); return a.get(); }`, 2},
-		// A later use that is NOT a return is the shape the case above does
-		// not reach: the scan picks that statement, the drop-after-return
-		// abort does not apply, so the local was precise-dropped there and the
-		// replay still read the zeroed slot. 1 + 2 = 3.
 		{"later_use_is_not_a_return", `function sink(c: Cell[i32], v: i32): i32 { c.set(c.get() + v); return v; }
 function f(out: Cell[i32]): i32 {
     let arr: i32[] = [1, 2, 3];
@@ -73,11 +41,6 @@ function f(out: Cell[i32]): i32 {
     return 0;
 }
 function main(): i32 { let a: Cell[i32] = cell_new(0); f(a); return a.get(); }`, 3},
-		// errdefer replays through emitErrDeferCleanup rather than
-		// emitDeferCleanup, so it is a second replay site with the same
-		// hazard — and collectDefers gathers both forms into b.defers, so
-		// one bail-out covers both. Confirmed failing the same way before
-		// the fix.
 		{"errdefer_reads_local", `function f(out: Cell[i32]): Option[i32] {
     let arr: i32[] = [1, 2, 3];
     errdefer out.set(arr[1]);
@@ -87,12 +50,6 @@ function main(): i32 {
     let a: Cell[i32] = cell_new(0);
     match (f(a)) { Some(v) => { return 90; }, None => { return a.get(); } }
 }`, 2},
-		// The reported program (#9471): a defer inside a loop reading a
-		// loop-local array, with a `continue` edge out of a nested block. The
-		// loop and the `continue` turned out to be incidental — the nested
-		// declaration routes through computeNestedDrops, which shares
-		// preciseDropTarget with the top-level pass — but it is the shape that
-		// was reported and it belongs in the record.
 		{"defer_in_loop_over_loop_local", `function f(out: Cell[i32]): i32 {
     let i: i32 = 0;
     while (i < 4) {

@@ -1,7 +1,7 @@
-// A const may be a struct literal whose fields are constants (#6685),
-// including earlier consts and a nested struct. Each use is its own value:
-// reading a field from one use and passing another to a function leave the
-// const intact for the uses after them.
+
+
+
+
 import "core/int";
 
 struct Point { x: i32, y: i32 }

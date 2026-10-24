@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// Identical inputs produce no diff at all — empty string out, so
-// callers can use `len(diff) == 0` as a fast same-content check.
 func TestUnifiedDiffEmptyWhenIdentical(t *testing.T) {
 	src := "function f(): i32 {\n  return 1;\n}\n"
 	got := UnifiedDiff(src, src, "a.fern", "b.fern")
@@ -16,8 +14,6 @@ func TestUnifiedDiffEmptyWhenIdentical(t *testing.T) {
 	}
 }
 
-// A single changed line shows up with the expected `-`/`+` prefix
-// pair plus surrounding context.
 func TestUnifiedDiffSingleLineChange(t *testing.T) {
 	a := "line one\nline two\nline three\n"
 	b := "line one\nline 2\nline three\n"
@@ -36,25 +32,15 @@ func TestUnifiedDiffSingleLineChange(t *testing.T) {
 	}
 }
 
-// The hunk header carries the correct line-count metadata. Three
-// equal lines around a single change produce `@@ -2,1 +2,1 @@` (the
-// change is on line 2; only one line on each side); with default
-// context 3 we'd get all surrounding equal lines included on each
-// side too, so the actual numbers reflect that.
 func TestUnifiedDiffHunkHeaderHasLineNumbers(t *testing.T) {
 	a := "a\nb\nc\nd\ne\n"
 	b := "a\nb\nC\nd\ne\n"
 	got := UnifiedDiff(a, b, "x", "y")
-	// Hunk header begins with @@; we don't pin exact line counts
-	// (they vary with context window width) — just make sure a
-	// well-formed `@@ -N,M +N,M @@` header appears.
 	if !strings.Contains(got, "@@ -1,5 +1,5 @@") {
 		t.Errorf("expected hunk header `@@ -1,5 +1,5 @@`:\n%s", got)
 	}
 }
 
-// Multiple change regions far apart get separate hunks. The default
-// context is 3 lines, so changes 7 lines apart shouldn't merge.
 func TestUnifiedDiffSeparatesDistantChanges(t *testing.T) {
 	a := "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n"
 	b := "1!\n2\n3\n4\n5\n6\n7\n8\n9\n10!\n"
@@ -65,8 +51,6 @@ func TestUnifiedDiffSeparatesDistantChanges(t *testing.T) {
 	}
 }
 
-// Insertions and deletions both appear with the right prefix; the
-// surviving context lines stay intact.
 func TestUnifiedDiffInsertAndDelete(t *testing.T) {
 	a := "alpha\nbeta\ngamma\n"
 	b := "alpha\nBETA\ngamma\nDELTA\n"
@@ -82,8 +66,6 @@ func TestUnifiedDiffInsertAndDelete(t *testing.T) {
 	}
 }
 
-// Files that differ only by a missing trailing newline still emit a
-// diff (the diff helper preserves the line content as-stored).
 func TestUnifiedDiffHandlesMissingTrailingNewline(t *testing.T) {
 	a := "x\ny\n"
 	b := "x\ny"
@@ -93,9 +75,6 @@ func TestUnifiedDiffHandlesMissingTrailingNewline(t *testing.T) {
 	}
 }
 
-// scriptSides replays an edit script: the deleted and equal lines have to
-// reproduce `a` exactly and the inserted and equal lines `b`, or the diff
-// is not a diff of those two inputs at all.
 func scriptSides(script []op) (string, string) {
 	var a, b strings.Builder
 	for _, o := range script {
@@ -122,10 +101,6 @@ func scriptEdits(script []op) int {
 	return n
 }
 
-// lcsEdits is the shortest possible edit-script length for a and b,
-// computed straight from an LCS table. Quadratic in both time and memory,
-// which is exactly why editScript may not use one — but it is the ground
-// truth the search is checked against on inputs small enough to afford it.
 func lcsEdits(a, b []string) int {
 	m, n := len(a), len(b)
 	prev := make([]int, n+1)
@@ -146,16 +121,10 @@ func lcsEdits(a, b []string) int {
 	return m + n - 2*prev[0]
 }
 
-// The search has to agree with the LCS table on every small input: same
-// two sides reconstructed, and no edit more than the minimum. A shortest
-// script is not unique, so the ops themselves are not pinned — only the
-// count is.
 func TestEditScriptIsMinimal(t *testing.T) {
 	rng := rand.New(rand.NewSource(20260905))
 	lines := []string{"a\n", "b\n", "c\n", "d\n", "e\n"}
 	for iter := 0; iter < 8000; iter++ {
-		// A small alphabet makes ties between equally short scripts the
-		// common case rather than a rarity.
 		alphabet := 2 + rng.Intn(len(lines)-1)
 		a := make([]string, rng.Intn(14))
 		for i := range a {
@@ -176,11 +145,6 @@ func TestEditScriptIsMinimal(t *testing.T) {
 	}
 }
 
-// Past its cost cap the search stops looking for the shortest script and
-// splits at the furthest point it reached. Real sources never get there,
-// so the path is driven here with a cap of 1: the script may be longer
-// than the minimum, but it still has to be a diff of the two inputs and
-// it still has to terminate.
 func TestEditScriptBeyondCostCapStillReconstructs(t *testing.T) {
 	rng := rand.New(rand.NewSource(7))
 	lines := []string{"a\n", "b\n", "c\n"}
@@ -201,14 +165,6 @@ func TestEditScriptBeyondCostCapStillReconstructs(t *testing.T) {
 	}
 }
 
-// The `-d` path on a large file with most of its lines changed is what
-// OOM-killed the formatter (#8526): the LCS table it used to build is
-// 20 GB at this size. Plain formatting was never the expensive half, so a
-// gate that only formats proves nothing — this one has to diff.
-//
-// The vocabulary is deliberately small and shared between the two sides,
-// so the alignment search cannot be short-circuited by discarding lines
-// that occur on one side only.
 func TestUnifiedDiffLargeMostlyChangedFile(t *testing.T) {
 	const lines = 50000
 	stmts := []string{
@@ -226,8 +182,6 @@ func TestUnifiedDiffLargeMostlyChangedFile(t *testing.T) {
 		stmt := stmts[i%len(stmts)]
 		depth := (i / 3) % 4
 		before.WriteString(strings.Repeat("  ", depth) + stmt + "\n")
-		// Reindent by one level, and drop every 37th line outright so the
-		// diff is not a pure one-for-one substitution.
 		if i%37 != 0 {
 			after.WriteString(strings.Repeat("  ", depth+1) + stmt + "\n")
 		}

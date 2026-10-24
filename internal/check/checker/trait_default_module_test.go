@@ -10,17 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// A trait's default body belongs to the module that DECLARED the trait,
-// not the one that wrote the `impl` inheriting it (#8484). modload
-// mangles the body in the declaring module, so the clone
-// synthesizeTraitDefaults drops into each impl carries already-resolved
-// names; the clone records that module in DefiningModule so everything
-// reading the BODY — name resolution, diagnostic file attribution, the
-// capability walk — roots there rather than in the implementer.
-
-// A default body reaching a `pub` helper beside the trait used to be
-// E001: the clone still said `secret_helper`, and nothing by that name
-// existed in the implementer.
 func TestTraitDefaultBodyReachesOwnModulePubHelper(t *testing.T) {
 	err, _ := checkFiles(t, map[string]string{
 		"lib.fern": `pub function secret_helper(): i32 { return 41; }
@@ -42,9 +31,6 @@ function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }
 	}
 }
 
-// Same, for a helper the trait's module never exported. `pub` governs
-// what OTHER modules may name; the default body is the trait module's
-// own source, so a private helper is in reach.
 func TestTraitDefaultBodyReachesOwnModulePrivateHelper(t *testing.T) {
 	err, _ := checkFiles(t, map[string]string{
 		"lib.fern": `function private_helper(): i32 { return 41; }
@@ -66,8 +52,6 @@ function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }
 	}
 }
 
-// The hijack: the implementing module happens to declare the same name.
-// The synthesised body must still call the trait module's function.
 func TestTraitDefaultBodyIsNotHijackedByTheImplementer(t *testing.T) {
 	prog := loadFiles(t, map[string]string{
 		"lib.fern": `pub function secret_helper(): i32 { return 41; }
@@ -98,10 +82,6 @@ function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }
 	}
 }
 
-// The synthesised method records the declaring module separately:
-// SourceModule stays the impl's (it owns the method, and method
-// visibility plus the opaque-field rule key on that), DefiningModule
-// names the trait's.
 func TestTraitDefaultCarriesDefiningModule(t *testing.T) {
 	prog := loadFiles(t, map[string]string{
 		"lib.fern": `pub trait Greet {
@@ -130,17 +110,11 @@ function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }
 	if greet.BodyModule() != greet.DefiningModule {
 		t.Errorf("BodyModule() = %q, want DefiningModule %q", greet.BodyModule(), greet.DefiningModule)
 	}
-	// The clone keeps the trait's positions, so a diagnostic inside it
-	// lands on the source the reader can act on.
 	if greet.P.Line != 3 {
 		t.Errorf("synthesised method position = line %d, want the trait method's line 3", greet.P.Line)
 	}
 }
 
-// A default body reaches its own module's opaque fields. `pub opaque`
-// hides the fields from other modules, and the body is the trait
-// module's own source, so the rule keys on where the body was WRITTEN
-// rather than on the impl that inherited it.
 func TestTraitDefaultBodyReachesOwnModuleOpaqueFields(t *testing.T) {
 	err, _ := checkFiles(t, map[string]string{
 		"lib.fern": `pub opaque struct Email { addr: i32 }
@@ -163,14 +137,8 @@ function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }
 	}
 }
 
-// A diagnostic raised inside a materialised default names the TRAIT's
-// file and line. Before this it was blamed on the impl's file at the
-// trait's line:column — a line that does not mention the identifier.
 func TestTraitDefaultDiagnosticNamesTheTraitsSource(t *testing.T) {
 	err, paths := checkFiles(t, map[string]string{
-		// Line 3 is the default body. main.fern below is long enough to
-		// have a line 3, so a regression renders a real (wrong) snippet
-		// rather than a blank one.
 		"lib.fern": `pub trait Greet {
     function tag(self: Self): i32;
     function greet(self: Self): i32 { return nowhere_at_all() + 1; }
@@ -198,8 +166,6 @@ function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }
 	}
 }
 
-// A generic trait, a default calling another default, and a default
-// building a struct literal from its own module all clone the same way.
 func TestTraitDefaultBodyGenericAndChained(t *testing.T) {
 	files := map[string]string{
 		"lib.fern": `pub function base(): i32 { return 40; }
@@ -224,9 +190,6 @@ function main(): i32 { let r: R = R { n: 1 }; return r.one() + r.two() + r.boxed
 	if err, _ := checkFiles(t, files, "main.fern"); err != nil {
 		t.Fatalf("generic trait / chained default / own-module struct literal must all resolve in the trait's module:\n%v", err)
 	}
-	// main.fern declares its own `base` and `Wrap`, so type-checking
-	// alone cannot tell the two apart — assert which ones the clones
-	// actually name.
 	prog := loadFiles(t, files, "main.fern")
 	if _, err := Check(prog); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -245,8 +208,6 @@ function main(): i32 { let r: R = R { n: 1 }; return r.one() + r.two() + r.boxed
 	}
 }
 
-// structLitNames collects the type names of every struct literal in a
-// body.
 func structLitNames(b *ast.Block) map[string]bool {
 	out := map[string]bool{}
 	for _, s := range b.Stmts {
@@ -260,8 +221,6 @@ func structLitNames(b *ast.Block) map[string]bool {
 	return out
 }
 
-// loadFiles is checkFiles without the Check call, for tests that need
-// the loaded Program itself.
 func loadFiles(t *testing.T, files map[string]string, entry string) *ast.Program {
 	t.Helper()
 	dir := t.TempDir()
@@ -277,10 +236,6 @@ func loadFiles(t *testing.T, files map[string]string, entry string) *ast.Program
 	return prog
 }
 
-// synthesisedMethod finds the materialised default for `name` — the
-// hoist has not run at Check time for a name lookup, so match on the
-// FuncDecl the synthesiser appended (a receiver method carrying
-// ImplTrait and the bare trait-method name).
 func synthesisedMethod(t *testing.T, prog *ast.Program, name string) *ast.FuncDecl {
 	t.Helper()
 	for _, fn := range prog.Funcs {
@@ -292,8 +247,6 @@ func synthesisedMethod(t *testing.T, prog *ast.Program, name string) *ast.FuncDe
 	return nil
 }
 
-// bodyIdents collects every Ident name in a body — a call to `f()` is a
-// Call whose Callee is an Ident.
 func bodyIdents(b *ast.Block) map[string]bool {
 	out := map[string]bool{}
 	if b == nil {

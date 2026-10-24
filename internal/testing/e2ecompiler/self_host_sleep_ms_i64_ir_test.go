@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostSleepMsI64IR pins `sleep_ms(<i64>)` lowering on the self-host
-// x86-64 IR path: an i64 count (`sleep_ms(5 as i64)`) and a plain i32 one both
-// reach the __fern_sleep_ms runtime, which reads the count from a 64-bit
-// register (rdi / x0). The program reads a
-// monotonic clock, sleeps an i64 millisecond count, reads it again, and checks
-// the clock did not go backwards -> exit 0; exercises monotonic_ns + sleep_ms
-// (i64 arg) on the IR path.
 func TestSelfHostSleepMsI64IR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

@@ -8,25 +8,11 @@ import (
 	"testing"
 )
 
-// `parse_type_name` coarsens a function type to the flat tag "fn" and drops the
-// signature; `ret_fn_ret` / `ret_fn_param_types` carry it alongside, and
-// `fn_tag_spelling` rebuilds the spelling from the pair. `ast.ExprLambda` grew
-// the pair so a nested function that RETURNS a function keeps its signature
-// through the lambda desugar — but every pass that rebuilds a lambda or hoists
-// one to a `FuncDecl` has to carry the pair, and a pass that REWRITES type
-// names has to rewrite the pair with them.
-//
-// Each case is a shape whose nested function returns a function, reached
-// through a different one of those passes.
 var lambdaFnSidecarCases = []struct {
 	name  string
 	files map[string]string
 	want  int
 }{
-	// parser.subst_expr clones a generic body per instantiation, substituting
-	// the type vars. It substituted `ret_type` and left the pair to the spread,
-	// so the clone described its nested function as returning `(T) => T` with
-	// `T` unbound in the clone's scope.
 	{"generic-clone-substitutes-the-pair", map[string]string{
 		"main.fern": `pub function make[T](seed: T): T {
     function idmaker(base: T): (T) => T {
@@ -42,9 +28,6 @@ function main(): i32 {
 `,
 	}, 7},
 
-	// flatten.rewrite_expr mangles an imported module's type names to their
-	// flat form. Same shape: `ret_type` was mangled, the pair was not, so the
-	// nested function's signature still named the module-local `Box`.
 	{"flatten-mangles-the-pair", map[string]string{
 		"bmod.fern": `pub struct Box { v: i32 }
 
@@ -64,9 +47,6 @@ function main(): i32 {
 `,
 	}, 4},
 
-	// parser.hl_rewrite lifts a SELF-RECURSIVE local function to a top-level
-	// `FuncDecl` — the sixth lambda-to-`FuncDecl` hoist, and the one the first
-	// pass at this missed. It wrote the empty pair.
 	{"recursive-local-hoist-keeps-the-pair", map[string]string{
 		"main.fern": `function main(): i32 {
     function rec(n: i32): (i32) => i32 {
@@ -80,17 +60,6 @@ function main(): i32 {
 	}, 9},
 }
 
-// TestSelfHostLambdaFnSidecarCensus is the gate the fix is actually for: a
-// dropped or stale pair leaves the checked-source producer with no spelling for
-// the nested function's result, and the module refuses at `unresolved result
-// type` — which is what the flatten case did, taking its two `__lam_0` callers
-// with it as `call target has no semantic contract`.
-//
-// Only the flatten case discriminates today. The other two reach a LATER
-// refusal either way, so the pair they were dropping is not yet what holds them
-// back; they are here because a stale spelling is wrong whether or not anything
-// currently reads it, and because this is the gate that will notice when
-// something does.
 func TestSelfHostLambdaFnSidecarCensus(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -137,9 +106,6 @@ func TestSelfHostLambdaFnSidecarCensus(t *testing.T) {
 	}
 }
 
-// TestSelfHostLambdaFnSidecarX86_64 checks the same three shapes compile and
-// RUN to their expected exit codes, so the census result cannot be bought with
-// a miscompile.
 func TestSelfHostLambdaFnSidecarX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 

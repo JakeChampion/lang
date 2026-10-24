@@ -1,11 +1,5 @@
 package e2eharness
 
-// BytesFloorProbe exercises the runtime's bytes floor (#9853): `__str_bytes`
-// answers the address of a string's bytes for a string carried inline in
-// its word (spilled into the caller's scratch) and for a heap string, and
-// answers 0 for the inline case when no scratch is given; `__arr_set_len`
-// shortens a byte array to the bytes a read filled. Exit 42 iff every step
-// holds; each failing step has its own code.
 func BytesFloorProbe() string {
 	return `function main(): i32 {
     let b: u8[] = [104u8, 105u8, 106u8, 107u8];

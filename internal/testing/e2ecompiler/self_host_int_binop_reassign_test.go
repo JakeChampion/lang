@@ -7,18 +7,6 @@ import (
 	"testing"
 )
 
-// intBinopReassignCases pin string-freshness tracking against integer
-// arithmetic: `let e: i32 = ae + 1` is a `+` but not a string. Credited as a
-// fresh string, the later `e = eb` between two such locals takes the string
-// alias-reassign retain: a __fern_rc_inc on an integer, which faults for every
-// value but the immortal sentinel -1. coreutils/lib/ld's `add` computes
-// exactly that shape (a value's exponent plus its trailing zeros, then
-// `if (eb < e) { e = eb; }`), which crashed the self-host numfmt on every
-// fractional input.
-//
-// Each program exits 0 when the arithmetic is right; a surviving retain is a
-// SIGSEGV (exit 139), never a wrong answer, so the exit code is the whole
-// verdict.
 var intBinopReassignCases = []struct {
 	name string
 	src  string
@@ -59,8 +47,6 @@ function main(): i32 {
     if (probe(a, b) != 0 - 2) { return 1; }
     return 0;
 }`},
-	// The string concat the credit exists for still takes it, and the alias
-	// reassign between two of them still balances: no leak, no over-release.
 	{"string-concat-still-credited", `
 function main(): i32 {
     let s: string = "ab" + "cd";

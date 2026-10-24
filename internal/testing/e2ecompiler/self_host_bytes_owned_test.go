@@ -8,13 +8,6 @@ import (
 	"testing"
 )
 
-// bytesOwnedProgram copies byte views into owned arrays with
-// `__bytes_owned`: a slice of a packed u8[], a string's bytes (a view tagged
-// as string-backed), an empty slice, a whole array lent as a view, and a copy
-// grown afterwards, which must not touch the source. The last line counts
-// what 100 copies of an eight-byte slice allocate: the copy alone on the
-// native targets, which build the slice's view in the frame, and on wasm the
-// view's copy of the bytes as well.
 const bytesOwnedProgram = `import "std/i32";
 import "std/i64";
 
@@ -59,10 +52,6 @@ func TestSelfHostBytesOwned(t *testing.T) {
 		map[string]string{"arm64-linux": native, "x86-64-linux": native, "x86-64-sanitize": native, "wasm32-wasi": "5 8869 18 721642 0 10 6 3\n800 200\n"})
 }
 
-// bytesRangeProgram copies windows with `__bytes_range`: of a packed u8[], of
-// a string's bytes, and an empty one. A window costs one box: no view of it
-// is built first, so 100 copies of five bytes allocate 100 times, and an
-// empty window is the static empty array, so 200 of them allocate nothing.
 const bytesRangeProgram = `import "std/i64";
 
 @noinline function ranged(b: [u8], from: i32, to: i32): u8[] {
@@ -101,11 +90,6 @@ func TestSelfHostBytesRange(t *testing.T) {
 		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want, "wasm32-wasi": want})
 }
 
-// keptRangeProgram stores a function's __bytes_range result back into the
-// table its argument was read from, as std/serve's __serve_compact does with
-// a connection's buffer. The kernel builds its result, so the result borrows
-// nothing of the argument and the table is updated in place: 100 empty
-// copies allocate nothing.
 const keptRangeProgram = `import "std/i64";
 
 struct T { bufs: u8[][], offs: i32[] }
@@ -141,12 +125,6 @@ func TestSelfHostBytesRangeKeptInPlace(t *testing.T) {
 		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want, "wasm32-wasi": want})
 }
 
-// bytesIntoProgram writes ranges over arrays with `__bytes_into`: from a
-// packed u8[], from a string's bytes and from a slice of a view; over an
-// array another binding still holds, which must keep its bytes while the
-// write lands in a copy; and an empty write at the very end of both. The
-// last line writes 100 times into one 64-byte buffer nothing else holds,
-// which allocates nothing: each write lands in the buffer's own box.
 const bytesIntoProgram = `import "std/i64";
 
 @noinline function into(own dst: u8[], at: i32, src: [u8], from: i32, n: i32): u8[] {
@@ -190,8 +168,6 @@ func TestSelfHostBytesInto(t *testing.T) {
 		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want, "wasm32-wasi": want})
 }
 
-// bytesIntoOutOfRange writes three bytes at offset 2 of a four-byte array,
-// which must abort as an out-of-range slice does rather than write past it.
 const bytesIntoOutOfRange = `@noinline function into(own dst: u8[], at: i32, src: [u8], from: i32, n: i32): u8[] {
   return __bytes_into(dst, at, src, from, n);
 }

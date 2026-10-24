@@ -9,7 +9,6 @@ import (
 	"time"
 )
 
-// fmtFile writes `content` under `dir` as `name` and returns its path.
 func fmtFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
@@ -23,24 +22,6 @@ func init() {
 	registerCorpus("fmt", fmtCases)
 }
 
-// fmtCases is fmt(1)'s corpus.
-//
-// The main part of it is the break chooser: a backward dynamic program whose
-// cost function has seven terms, and the cases below are the invocations
-// that separate them from each other. A line's distance from the GOAL is
-// squared, a line costs a constant on top of that, the difference between
-// two adjacent lines costs half a squared column, and the last line of a
-// paragraph is free — which is why the slack collects at the FRONT of a
-// paragraph and why greedy filling is wrong here. Four more terms read the
-// punctuation around a break: a sentence end is a bonus, a period that did
-// NOT end one is a near-refusal, other trailing punctuation is a small
-// bonus and an opening bracket is another, and the two words a break can
-// strand — the one that ends a sentence and the one after a sentence's
-// first word — cost a term that shrinks with the word's own length.
-//
-// The rest is the reader: what a paragraph is under each of -c / -t / -s,
-// where the indent comes from, how a tab is measured and written back, and
-// the sticky flag one anywhere in the input sets.
 func fmtCases(t *testing.T) []invocation {
 	dir := t.TempDir()
 
@@ -63,33 +44,15 @@ func fmtCases(t *testing.T) []invocation {
 	}
 	d := filepath.Join(dir, "d")
 	big := fmtFile(t, dir, "big", strings.Repeat("alpha beta gamma delta epsilon zeta eta theta\n\n", 20000))
-	// One paragraph of 100 000 lines, a word to each. The layout is forced —
-	// two 36-column words fill a line and a third cannot — so GNU's 997-word
-	// window lays it out exactly as the whole-paragraph chooser does, and the
-	// case measures the reader instead: the paragraph's words are appended
-	// to once per LINE, and a copy there made this shape quadratic (#9983,
-	// 22 s at 40 000 lines against GNU's 14 ms). The bound is what turns
-	// that regression into a named divergence rather than a lane stall.
 	var tall strings.Builder
 	for i := 0; i < 100000; i++ {
 		fmt.Fprintf(&tall, "w%035d\n", i)
 	}
 	oneParagraph := fmtFile(t, dir, "tall", tall.String())
-	// 900 one-character words: long enough to exercise the chooser over a
-	// whole paragraph and short enough to stay inside GNU's word buffer.
 	long := fmtFile(t, dir, "long", strings.Repeat("a ", 899)+"a\n")
-	// The last paragraph GNU formats in one piece, and the first it does
-	// not: the 999th word flushes the 998 before it, laid out as if the
-	// paragraph ended there, up to a line start the flush re-enters from.
 	brim := fmtFile(t, dir, "brim", strings.Repeat("a ", 996)+"a\n")
 	over := fmtFile(t, dir, "over", strings.Repeat("a ", 998)+"a\n")
-	// Two flushes, and a third paragraph's worth after them.
 	thrice := fmtFile(t, dir, "thrice", strings.Repeat("a ", 2500)+"a\n")
-	// 3000 words of varying length with sentence ends, commas and brackets
-	// among them, nine to an input line: the flush's choice of re-entry
-	// line depends on the costs of the lines before it, so the layout it
-	// leaves behind is not the one the whole paragraph would get. Also
-	// with the first line indented, for -c and -t, and behind a prefix.
 	var wide, wideIndented, wideQuoted strings.Builder
 	for i := 0; i < 3000; i++ {
 		w := strings.Repeat("abcdefghijk"[i%11:i%11+1], 1+(i*7)%9)
@@ -125,8 +88,6 @@ func fmtCases(t *testing.T) []invocation {
 	wideFile := fmtFile(t, dir, "wide", wide.String())
 	wideIndentedFile := fmtFile(t, dir, "wide-indented", wideIndented.String())
 	wideQuotedFile := fmtFile(t, dir, "wide-quoted", wideQuoted.String())
-	// 700 twelve-byte words: 8400 bytes of word text, so the byte buffer
-	// fills before the word count does, in the middle of a word.
 	var longWords strings.Builder
 	for i := 0; i < 700; i++ {
 		fmt.Fprintf(&longWords, "w%011d", i)
@@ -137,20 +98,15 @@ func fmtCases(t *testing.T) []invocation {
 		}
 	}
 	longWordsFile := fmtFile(t, dir, "long-words", longWords.String())
-	// A word longer than the byte buffer, with words before it and
-	// without: the bytes that fill the buffer with nothing else held are
-	// written as they are, and the word goes on from there.
 	giant := fmtFile(t, dir, "giant", "aa bb "+strings.Repeat("x", 12000)+" cc dd\n")
 	giantAlone := fmtFile(t, dir, "giant-alone", strings.Repeat("y", 6000)+" zz\n")
 
 	return []invocation{
-		// The default: width 75, goal 75*187/200 = 70.
 		{name: "default width", args: []string{words}},
 		{name: "default width prose", args: []string{prose}},
 		{name: "no operand reads stdin", args: []string{}, stdin: "aaa bbb ccc ddd eee fff\n"},
 		{name: "lone dash", args: []string{"-"}, stdin: "aaa bbb ccc ddd eee fff\n"},
 
-		// -w in every spelling, and the last one winning.
 		{name: "short width glued", args: []string{"-w20", words}},
 		{name: "short width spaced", args: []string{"-w", "20", words}},
 		{name: "long width equals", args: []string{"--width=20", words}},
@@ -167,7 +123,6 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "plus in the width", args: []string{"-w", "+20", words}},
 		{name: "leading zeros in the width", args: []string{"-w", "0020", words}},
 
-		// Width faults: one line, no `Try …` line.
 		{name: "width not a number", args: []string{"-w", "x", words}},
 		{name: "width empty", args: []string{"-w", "", words}},
 		{name: "width blank", args: []string{"-w", " ", words}},
@@ -185,8 +140,6 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "width absurd", args: []string{"-w", "99999999999999999999999", words}},
 		{name: "width not valid UTF-8", args: []string{"-w", "\xff\xfe", words}},
 
-		// -g, including its two rules: it is checked against the FINAL
-		// width, and without -w it sets the width to goal + 10.
 		{name: "goal glued", args: []string{"-g30", "-w", "40", words}},
 		{name: "goal spaced", args: []string{"-g", "30", "-w", "40", words}},
 		{name: "long goal", args: []string{"--goal=30", "-w", "40", words}},
@@ -206,7 +159,6 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "goal large with no width", args: []string{"-g", "2490", words}},
 		{name: "width and goal both out of range", args: []string{"-w", "2501", "-g", "2502", words}},
 
-		// The obsolete -WIDTH, which is argv[1] and nothing else.
 		{name: "obsolete width", args: []string{"-20", words}},
 		{name: "obsolete width one digit", args: []string{"-8", words}},
 		{name: "obsolete width leading zeros", args: []string{"-00020", words}},
@@ -223,8 +175,6 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "obsolete after dashdash is a file", args: []string{"--", "-20"}},
 		{name: "long digits are unrecognized", args: []string{"--20", words}},
 
-		// Greedy and optimal differ. Each of these is a case where filling
-		// each line as far as it goes gives a different answer.
 		{name: "slack moves to the front", args: []string{"-w", "10"}, stdin: "000 001 002\n"},
 		{name: "slack moves to the front wider", args: []string{"-w", "11"}, stdin: "aaa bbb ccc ddd eee\n"},
 		{name: "three ways to break five words", args: []string{"-w", "12"}, stdin: "aaaa bbbb cccc dddd eeee\n"},
@@ -245,8 +195,6 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "the first paragraph GNU flushes narrow", args: []string{"-w", "20", over}},
 		{name: "a paragraph flushed twice", args: []string{thrice}},
 		{name: "a paragraph flushed twice narrow", args: []string{"-w", "20", thrice}},
-		// A flush inside the first line, where -c and -t take the reader's
-		// own column as the continuation indent.
 		{name: "the first paragraph GNU flushes crown", args: []string{"-c", over}},
 		{name: "the first paragraph GNU flushes tagged", args: []string{"-t", over}},
 		{name: "a paragraph flushed twice crown", args: []string{"-c", thrice}},
@@ -269,15 +217,12 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "a word longer than the byte buffer", args: []string{giant}},
 		{name: "a word longer than the byte buffer alone", args: []string{giantAlone}},
 
-		// The orphan term: what it costs to strand the word that ends a
-		// sentence, which shrinks as that word grows.
 		{name: "orphan one char", args: []string{"-w", "100", "-g", "100"}, stdin: strings.Repeat("xxxxxxxxxxxxxxxxxxxxxxxx ", 3) + "xxxxxxxxxxxxxxxxxxxxxxxx y\n"},
 		{name: "orphan three chars", args: []string{"-w", "100", "-g", "100"}, stdin: strings.Repeat("xxxxxxxxxxxxxxxxxxxxxxxx ", 3) + "xxxxxxxxxxxxxxxxxxxxxxxx yyy\n"},
 		{name: "orphan ten chars", args: []string{"-w", "100", "-g", "100"}, stdin: strings.Repeat("xxxxxxxxxxxxxxxxxxxxxxxx ", 3) + "xxxxxxxxxxxxxxxxxxxxxxxx yyyyyyyyyy\n"},
 		{name: "orphan at the tipping point", args: []string{"-w", "50", "-g", "25"}, stdin: strings.Repeat("x", 20) + " yyyyyyyy " + strings.Repeat("z", 25) + "\n"},
 		{name: "orphan one past the tipping point", args: []string{"-w", "50", "-g", "26"}, stdin: strings.Repeat("x", 20) + " yyyyyyyy " + strings.Repeat("z", 25) + "\n"},
 
-		// The widow term: a break after the first word of a sentence.
 		{name: "widow two chars", args: []string{"-w", "50", "-g", "39"}, stdin: strings.Repeat("x", 19) + ".  yy " + strings.Repeat("z", 25) + "\n"},
 		{name: "widow two chars one goal lower", args: []string{"-w", "50", "-g", "38"}, stdin: strings.Repeat("x", 19) + ".  yy " + strings.Repeat("z", 25) + "\n"},
 		{name: "widow five chars", args: []string{"-w", "50", "-g", "30"}, stdin: strings.Repeat("x", 19) + ".  yyyyy " + strings.Repeat("z", 25) + "\n"},
@@ -286,8 +231,6 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "punctuation outranks the widow", args: []string{"-w", "19", "-g", "10", "-c"}, stdin: "dog.\"\nab\" over zzzz\n"},
 		{name: "a plain word takes the widow", args: []string{"-w", "19", "-g", "10", "-c"}, stdin: "dog.\"\nabx over zzzz\n"},
 
-		// The sentence bonus, the no-break refusal, and the two small
-		// bonuses for punctuation.
 		{name: "break at a sentence end", args: []string{"-w", "20"}, stdin: "one two.  three four five six seven eight nine ten\n"},
 		{name: "no sentence without two spaces", args: []string{"-w", "20"}, stdin: "one two. three four five six seven eight nine ten\n"},
 		{name: "sentence end at the line end", args: []string{"-w", "20"}, stdin: "one two.\nthree four five six seven eight nine ten\n"},
@@ -300,7 +243,6 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "brace is not a paren", args: []string{"-w", "40"}, stdin: strings.Repeat("a", 30) + " bbb {zzzzz\n"},
 		{name: "paren outranks the orphan", args: []string{"-w", "50", "-g", "24"}, stdin: strings.Repeat("x", 20) + " yyyyyyyy (" + strings.Repeat("z", 24) + "\n"},
 
-		// Sentence detection: the closing run and the two-blank rule.
 		{name: "sentence spacing under -u", args: []string{"-u", "-w", "200"}, stdin: "a.  b a?  b a!  b a:  b a,  b a)  b\n"},
 		{name: "closers after the period", args: []string{"-u", "-w", "200"}, stdin: "a.)  b a.]  b a.\"  b a.'  b a.)]  b\n"},
 		{name: "closers that are not closers", args: []string{"-u", "-w", "200"}, stdin: "a.}  b a.>  b a.,  b a.;  b\n"},
@@ -313,14 +255,12 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "sentence spacing when lines join", args: []string{"-w", "60"}, stdin: "Foo bar.\nBaz qux.\nEnd\n"},
 		{name: "no sentence spacing on one line", args: []string{"-w", "60"}, stdin: "Foo bar. Baz qux. End\n"},
 
-		// -u.
 		{name: "uniform spacing", args: []string{"-u", "-w", "60"}, stdin: "Hello   there.   Next  sentence   here.  Done\n"},
 		{name: "long uniform spacing", args: []string{"--uniform-spacing", "-w", "60"}, stdin: "Hello   there.   Next  sentence   here.  Done\n"},
 		{name: "without -u spacing is the input's", args: []string{"-w", "60"}, stdin: "Hello   there.   Next  sentence   here.  Done\n"},
 		{name: "inter-word spacing is kept when it fits", args: []string{"-w", "14"}, stdin: "aaaa    bbbb    cccc    dddd\n"},
 		{name: "uniform spacing with tabs", args: []string{"-u", "-w", "40"}, stdin: "aaa    bbb\tccc  ddd\n"},
 
-		// -c.
 		{name: "crown margin", args: []string{"-c", "-w", "30"}, stdin: "    This is an indented first line of a paragraph that\n  continues here with a different indent and keeps going.\n"},
 		{name: "crown margin without -c", args: []string{"-w", "30"}, stdin: "    This is an indented first line of a paragraph that\n  continues here with a different indent and keeps going.\n"},
 		{name: "long crown margin", args: []string{"--crown-margin", "-w", "20", indented}},
@@ -328,7 +268,6 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "crown three lines", args: []string{"-c", "-w", "40"}, stdin: "  aaa\n    bbb\n      ccc\n"},
 		{name: "crown rejects an argument", args: []string{"--crown-margin=3", words}},
 
-		// -t.
 		{name: "tagged equal indents split", args: []string{"-t", "-w", "20", indented}},
 		{name: "tagged unequal indents join", args: []string{"-t", "-w", "20", tagged}},
 		{name: "long tagged", args: []string{"--tagged-paragraph", "-w", "20", tagged}},
@@ -341,8 +280,6 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "crown wins over tagged", args: []string{"-ct", "-w", "20", indented}},
 		{name: "tagged wins nothing over crown", args: []string{"-tc", "-w", "20", indented}},
 
-		// -s: long lines are split, short ones are never joined, and the
-		// chooser still decides where the split goes.
 		{name: "split only", args: []string{"-s", "-w", "40", two}},
 		{name: "long split only", args: []string{"--split-only", "-w", "40", two}},
 		{name: "split only breaks optimally", args: []string{"-s", "-w", "10"}, stdin: "000 001 002\n"},
@@ -354,7 +291,6 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "split only beats tagged", args: []string{"-st", "-w", "20", indented}},
 		{name: "split only beats both", args: []string{"-cstu", "-w", "20", indented}},
 
-		// -p.
 		{name: "prefix", args: []string{"-p", ">", "-w", "20", quoted}},
 		{name: "prefix with a trailing space", args: []string{"-p", "> ", "-w", "20", quoted}},
 		{name: "long prefix", args: []string{"--prefix=>", "-w", "20", quoted}},
@@ -402,7 +338,6 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "tagged under a prefix repeats the column", args: []string{"-t", "-p", ">", "-w", "20"}, stdin: ">aa\n>  bb\n\n> one two three four five six seven\n"},
 		{name: "tagged under a prefix at a narrow width", args: []string{"-t", "-p", "//", "-w", "30", "-g", "2"}, stdin: "    //  0123456789  x   the ab word\tabc    quick  word   abc hello quick  abc\n"},
 
-		// Paragraphs.
 		{name: "blank line separates", args: []string{"-w", "40"}, stdin: "aaa bbb\n\nccc ddd\n"},
 		{name: "runs of blank lines", args: []string{"-w", "40", blank}},
 		{name: "whitespace only line is blank", args: []string{"-w", "40"}, stdin: "a b\n   \nc d\n"},
@@ -415,7 +350,6 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "trailing blank unterminated line", args: []string{"-w", "40"}, stdin: "aaa bbb\n   "},
 		{name: "leading blank lines", args: []string{"-w", "40"}, stdin: "\n\naaa bbb\n"},
 
-		// Tabs: width, the sticky flag, and the way a run is written back.
 		{name: "tab indent", args: []string{"-w", "20", tabs}},
 		{name: "tab indent is eight columns", args: []string{"-w", "12"}, stdin: "\ta b c d e\n"},
 		{name: "eight spaces are not a tab", args: []string{"-w", "12"}, stdin: "        a b c d e\n"},
@@ -435,7 +369,6 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "an indent of two spaces and a tab", args: []string{"-w", "22"}, stdin: "  \tone two three four five six\n"},
 		{name: "an indent of a tab and a space", args: []string{"-w", "22"}, stdin: "\t one two three four five six\n"},
 
-		// Bytes that are not separators.
 		{name: "form feed is a word byte", args: []string{"-w", "40"}, stdin: "a b\fc d\n"},
 		{name: "carriage return is a word byte", args: []string{"-w", "40"}, stdin: "a b\rc d\n"},
 		{name: "NUL is a word byte", args: []string{"-w", "40"}, stdin: "a\x00b c\n"},
@@ -445,12 +378,10 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "columns are bytes not characters", args: []string{"-w", "8"}, stdin: "\xc3\xa9\xc3\xa9 bbb ccc ddd\n"},
 		{name: "invalid UTF-8 passes through", args: []string{"-w", "5"}, stdin: "a\xff\xfe b \xc3 ccc\n"},
 
-		// Long and unbreakable.
 		{name: "a word longer than the width", args: []string{"-w", "10"}, stdin: strings.Repeat("x", 30) + " y\n"},
 		{name: "an indent wider than the width", args: []string{"-w", "10"}, stdin: strings.Repeat(" ", 30) + "a b c\n"},
 		{name: "two over-long words", args: []string{"-w", "10"}, stdin: strings.Repeat("x", 30) + " " + strings.Repeat("y", 30) + "\n"},
 
-		// Operands.
 		{name: "two files", args: []string{"-w", "40", two, words}},
 		{name: "paragraphs do not span files", args: []string{"-w", "40", nonl, two}},
 		{name: "dash among files", args: []string{"-w", "40", two, "-", words}, stdin: "from stdin here\n"},
@@ -467,7 +398,6 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "stdin is a directory", args: []string{"-w", "40"}, stdinPath: d},
 		{name: "stdin is a regular file", args: []string{"-w", "20"}, stdinPath: words},
 
-		// getopt.
 		{name: "invalid short option", args: []string{"-Z", words}},
 		{name: "unrecognized long option", args: []string{"--foo"}},
 		{name: "unrecognized long option with a value", args: []string{"--foo=bar"}},
@@ -495,7 +425,6 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "posix2 version does not permute", args: []string{words, "-w", "20"}, env: []string{"_POSIX2_VERSION=199209"}},
 		{name: "COLUMNS is not read", args: []string{words}, env: []string{"COLUMNS=20"}},
 
-		// Write failures.
 		{name: "stdout closed", args: []string{"-w", "20", words}, stdout: stdoutClosed},
 		{name: "stdout full", args: []string{"-w", "20", words}, stdout: stdoutFull},
 		{name: "stdout closed with a large output", args: []string{"-w", "20", big}, stdout: stdoutClosed},
@@ -504,7 +433,6 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "stdout closed with a missing file", args: []string{missing}, stdout: stdoutClosed},
 		{name: "stdout full with a missing file", args: []string{missing}, stdout: stdoutFull},
 
-		// Bulk.
 		{name: "large file", args: []string{"-w", "30", big}},
 		{name: "large file with -u", args: []string{"-u", "-w", "30", big}},
 		{name: "large file with -s", args: []string{"-s", "-w", "30", big}},
@@ -514,9 +442,6 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "one paragraph of a hundred thousand lines", args: []string{oneParagraph}, timeout: 5 * time.Second},
 		{name: "one paragraph of a hundred thousand lines narrow", args: []string{"-w", "38", oneParagraph}, timeout: 5 * time.Second},
 
-		// The width is inclusive under 9.12: a line may reach WIDTH columns
-		// exactly, whatever fills it — words, an indent, a prefix — where 9.4
-		// held it to WIDTH-1.
 		{name: "a line at the width", args: []string{"-w", "20"}, stdin: "aaaaaaaaa bbbbbbbbbb\n"},
 		{name: "a line one under the width", args: []string{"-w", "20"}, stdin: "aaaaaaaaa bbbbbbbbb\n"},
 		{name: "an indented line at the width", args: []string{"-w", "20"}, stdin: "  aaaaaaa bbbbbbbbbb\n"},

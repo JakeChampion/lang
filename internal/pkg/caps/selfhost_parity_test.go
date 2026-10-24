@@ -8,23 +8,6 @@ import (
 	"testing"
 )
 
-// The self-host compiler carries its own copy of this package
-// (compiler/caps.fern, #6634) because it cannot import Go. Two
-// copies of a classification is exactly the shape CLAUDE.md warns about: a new
-// builtin needs classifying in both capability systems, and the way that goes
-// wrong is one side being updated and the other not — silently, because
-// neither compiler can see the other's table.
-//
-// These tests read the Fern source as data and compare it entry-for-entry with
-// the maps above, so a builtin tagged here and unclassified there fails a fast
-// Go test rather than surfacing as "the self-host compiled a program native
-// refuses". They deliberately do NOT build anything: the price of the gate has
-// to be low enough that it runs on every change to this file.
-//
-// The behaviour on top of the table — reachability, the report, the E070
-// text — is pinned by compiler/drivers/caps_run.fern and by the
-// native/self-host differential in internal/testing/e2ecompiler.
-
 const selfHostCapsSrc = "../../../compiler/caps.fern"
 
 func readSelfHostCaps(t *testing.T) string {
@@ -36,7 +19,6 @@ func readSelfHostCaps(t *testing.T) string {
 	return string(b)
 }
 
-// fernStringList pulls the string literals out of a Fern array literal body.
 func fernStringList(body string) []string {
 	var out []string
 	for _, m := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(body, -1) {
@@ -45,7 +27,6 @@ func fernStringList(body string) []string {
 	return out
 }
 
-// fernList extracts a `pub function NAME(): string[] { return [...]; }` body.
 func fernList(t *testing.T, src, fn string) []string {
 	t.Helper()
 	m := regexp.MustCompile(`(?s)` + fn + `\(\): string\[\] \{\s*return \[(.*?)\];`).FindStringSubmatch(src)
@@ -55,9 +36,6 @@ func fernList(t *testing.T, src, fn string) []string {
 	return fernStringList(m[1])
 }
 
-// TestSelfHostCapabilityVocabularyMatches pins the vocabulary. A capability
-// one side knows and the other does not is a grant that parses in fern.toml
-// and gates nothing.
 func TestSelfHostCapabilityVocabularyMatches(t *testing.T) {
 	data, err := os.ReadFile("../../../compiler/capvocab.fern")
 	if err != nil {
@@ -72,9 +50,6 @@ func TestSelfHostCapabilityVocabularyMatches(t *testing.T) {
 	}
 }
 
-// TestSelfHostBuiltinCapsMatch pins the tagged half of the classification:
-// every builtin tagged here is tagged there, with the same capability, and the
-// self-host tags nothing extra.
 func TestSelfHostBuiltinCapsMatch(t *testing.T) {
 	src := readSelfHostCaps(t)
 	re := regexp.MustCompile(`BuiltinCap\s*\{\s*builtin:\s*"([^"]+)",\s*capability:\s*"([^"]+)"\s*\}`)
@@ -106,9 +81,6 @@ func TestSelfHostBuiltinCapsMatch(t *testing.T) {
 	}
 }
 
-// TestSelfHostUngatedMatch pins the other half. A builtin that moves from
-// ungated to tagged (or the reverse) on one side only is a package one
-// compiler refuses and the other builds.
 func TestSelfHostUngatedMatch(t *testing.T) {
 	found := map[string]bool{}
 	for _, name := range fernList(t, readSelfHostCaps(t), "ungated") {
@@ -126,15 +98,6 @@ func TestSelfHostUngatedMatch(t *testing.T) {
 	}
 }
 
-// TestSelfHostFrontendUngatedAreSelfHostOnly holds the one list with no native
-// counterpart to its stated reason for existing: names the self-host front end
-// registers as builtins that native's checker does not, so this package's
-// completeness contract has nothing to say about them.
-//
-// Both directions matter. A name that native DOES know belongs in the shared
-// ungated() list, where the test above compares it entry-for-entry — parking
-// it here would exempt it from that comparison, which is the only way a
-// classification difference could hide.
 func TestSelfHostFrontendUngatedAreSelfHostOnly(t *testing.T) {
 	src := readSelfHostCaps(t)
 	extras := fernList(t, src, "frontend_ungated")
@@ -159,11 +122,6 @@ func TestSelfHostFrontendUngatedAreSelfHostOnly(t *testing.T) {
 	}
 }
 
-// TestSelfHostRegistryFullyClassified is the completeness contract on the
-// self-host side, at Go speed: every builtin its parser registers is tagged,
-// ungated, front-end-ungated, or `__`-internal. caps_run.fern asserts the same
-// thing from inside the compiled compiler; this one fails in milliseconds when
-// a builtin lands unclassified.
 func TestSelfHostRegistryFullyClassified(t *testing.T) {
 	src := readSelfHostCaps(t)
 	classified := map[string]bool{}
@@ -191,9 +149,6 @@ func TestSelfHostRegistryFullyClassified(t *testing.T) {
 	}
 }
 
-// selfHostBuiltinRegistry reads parser.builtin_function_names() — the
-// self-host's user-callable builtin registry, and the set the completeness
-// contract is measured against.
 func selfHostBuiltinRegistry(t *testing.T) map[string]bool {
 	t.Helper()
 	const parserSrc = "../../../compiler/parser.fern"
@@ -205,8 +160,6 @@ func selfHostBuiltinRegistry(t *testing.T) map[string]bool {
 	if m == nil {
 		t.Fatalf("no builtin_function_names() list found in %s", parserSrc)
 	}
-	// Strip comments first: the list is annotated, and a builtin NAME quoted
-	// inside a comment would otherwise read as a registered builtin.
 	body := regexp.MustCompile(`(?m)//.*$`).ReplaceAllString(m[1], "")
 	out := map[string]bool{}
 	for _, name := range fernStringList(body) {

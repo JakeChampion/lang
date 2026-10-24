@@ -12,13 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// getxattr and lgetxattr (#9098), setxattr and lsetxattr (#9154) through the
-// self-host IR path. All four are generated Fern runtime bodies
-// (`asmcore.rt_src_getxattr`, `rt_src_setxattr`): Linux's two calls each, or
-// Darwin's one with XATTR_NOFOLLOW in its options word for the `l` form. The
-// host sets the attribute the reads start from, so the probe reads back a
-// value it did not write itself, and the symlink tells each pair apart.
-
 func selfHostXattrSource(t *testing.T, dir string) string {
 	t.Helper()
 	f := filepath.Join(dir, "f")
@@ -111,8 +104,6 @@ func TestSelfHostXattrIRArm64(t *testing.T) {
 	}
 }
 
-// Darwin's getxattr takes a position and an options word; XATTR_NOFOLLOW is
-// its lgetxattr, so a wrong word reads the target through the link.
 func TestSelfHostArm64DarwinXattr(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("requires Apple Silicon")

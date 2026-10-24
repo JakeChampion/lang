@@ -1,29 +1,5 @@
-// std/wasm/leb128 — variable-length integer encoder for the
-// WebAssembly Core 1.0 binary format.
-//
-// Spec: https://webassembly.github.io/spec/core/binary/values.html
-// (the "Integers" subsection: ULEB128 for unsigned counts /
-// indices, SLEB128 for signed immediates).
-//
-// Part of Phase 1 of docs/TOOLCHAIN-SELF-HOSTING.md — prerequisite
-// for an in-Lang WAT-to-binary encoder. The module is pure: every
-// function takes a `u8[]` and a numeric value, appends the encoded
-// bytes, and returns the extended buffer. No file I/O, no globals.
-// Not yet wired into the compiler driver — that's a later phase
-// once the compiler itself can run Lang code at build time.
-//
-// Encoding shape (uleb): take the low 7 bits, shift the value
-// right by 7, repeat until the value reaches 0. Every byte except
-// the last sets bit 7 as the continuation flag.
-//
-// Encoding shape (sleb): same low-7-bit / shift loop, but the
-// terminator condition is "remaining value matches the sign-
-// extension of the byte's bit-6" — i.e. the encoded high bit
-// already implies the rest. The arithmetic shift on the signed
-// type does the sign extension for free.
+// This module encodes variable-length integers for WebAssembly.
 
-// uleb_u32 — append the ULEB128 encoding of `value` to `buf` and
-// return the extended buffer. 1–5 bytes for any u32.
 pub function uleb_u32(buf: u8[], value: u32): u8[] {
   let out: u8[] = buf;
   let v: u32 = value;
@@ -39,7 +15,6 @@ pub function uleb_u32(buf: u8[], value: u32): u8[] {
   return out;
 }
 
-// uleb_u64 — same as uleb_u32 for the wider type. 1–10 bytes.
 pub function uleb_u64(buf: u8[], value: u64): u8[] {
   let out: u8[] = buf;
   let v: u64 = value;
@@ -55,11 +30,6 @@ pub function uleb_u64(buf: u8[], value: u64): u8[] {
   return out;
 }
 
-// sleb_i32 — append the SLEB128 encoding of `value` to `buf` and
-// return the extended buffer. 1–5 bytes. The terminator checks
-// bit 6 of the just-emitted byte against the sign of the
-// remaining value: a final 0 with bit-6 clear stops a positive
-// run; a final -1 with bit-6 set stops a negative run.
 pub function sleb_i32(buf: u8[], value: i32): u8[] {
   let out: u8[] = buf;
   let v: i32 = value;
@@ -77,7 +47,6 @@ pub function sleb_i32(buf: u8[], value: i32): u8[] {
   return out;
 }
 
-// sleb_i64 — same as sleb_i32 for the wider type. 1–10 bytes.
 pub function sleb_i64(buf: u8[], value: i64): u8[] {
   let out: u8[] = buf;
   let v: i64 = value;
@@ -95,11 +64,6 @@ pub function sleb_i64(buf: u8[], value: i64): u8[] {
   return out;
 }
 
-// uleb_size_u32 — number of bytes uleb_u32 will emit for `value`.
-// Lets callers pre-size a buffer when they need to know the
-// length before encoding (e.g. wasm section headers, which carry
-// their body's size as a uleb prefix that has to be written
-// before the body).
 pub function uleb_size_u32(value: u32): i32 {
   let v: u32 = value;
   let n: i32 = 1;
@@ -113,7 +77,6 @@ pub function uleb_size_u32(value: u32): i32 {
   return n;
 }
 
-// uleb_size_u64 — byte count for uleb_u64.
 pub function uleb_size_u64(value: u64): i32 {
   let v: u64 = value;
   let n: i32 = 1;

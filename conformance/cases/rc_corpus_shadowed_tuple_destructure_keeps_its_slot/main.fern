@@ -1,14 +1,14 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A tuple destructure whose names SHADOW an enclosing local. The
-// checker registers each destructure name as a synthetic *ast.Var
-// that lives only in info.Locals, so renaming the Destructure node's
-// []string left the slot registered under the old name: the compiler
-// failed outright with `ir: destructure name "a$1" has no slot
-// (compiler bug)`. A hard compiler crash, on main, for a program the
-// interpreter runs fine — reached here because the sibling-scope
-// rename above makes the pass fire on far more programs.
+
+
+
+
+
+
+
+
+
+
+
 function f(): i32 {
     let a: i32 = 1;
     {

@@ -6,19 +6,6 @@ import (
 	"testing"
 )
 
-// Perceus precise drops — slice 4: STRUCT + tuple box types. A dead owned
-// struct/tuple local is dropped at its last use via emitOwnedSlotDrop (the
-// deep __drop_struct_ / __drop_tuple_ fn — frees the box AND its rc-tracked
-// fields), so the whole structure reclaims early. The peak-memory win shows
-// when the box holds a large field (an array buffer).
-//
-// Sound because struct/tuple construction INCs its pointer fields (StructLit /
-// TupleLit), so a precise drop is rc-protected — a field aliased into a live
-// local only DECs (the same reason slice-2 rc-element arrays are sound). ENUMs
-// are NOT precise-dropped: their construction doesn't rc-count payloads, so
-// they're excluded (and are built via variant-constructor calls that
-// initMayAliasLive already gates).
-
 func bdLit(n int) string {
 	p := make([]string, n)
 	for i := range p {
@@ -27,9 +14,6 @@ func bdLit(n int) string {
 	return "[" + strings.Join(p, ", ") + "]"
 }
 
-// boxDead4Src: 4 sequentially-dead structs, each holding a size-class array —
-// the box + its array reclaim before the next allocates. The array goes through
-// `id` so the record of constants is a heap box rather than a static one.
 func boxDead4Src() string {
 	l := bdLit(100)
 	return `struct Box { data: i32[], n: i32 }
@@ -56,9 +40,6 @@ function main(): i32 {
 }`
 }
 
-// boxAliasSrc: a struct's array field aliased into a live local + read after
-// the struct's precise drop; the deep struct drop must only DEC the shared
-// array (keep survives). Forced interleaved alloc would corrupt a wrong free.
 const boxAliasSrc = `struct Box { data: i32[], n: i32 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -75,7 +56,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// boxEnumDead4Src: a heap enum carrying an array payload, sequentially dead.
 func boxEnumDead4Src() string {
 	l := bdLit(100)
 	return `enum E { Wrap(i32[]), Two(i32, i32) }
@@ -94,9 +74,6 @@ func TestWASMBoxPreciseDrop(t *testing.T) {
 	if dead, live := runWasm(t, boxDead4Src()), runWasm(t, boxLive4Src()); dead >= live {
 		t.Errorf("precise drops should reclaim sequentially-dead struct boxes: dead4 %d should be < live4 %d", dead, live)
 	}
-	// Enum boxes are deliberately NOT precise-dropped (enum construction
-	// doesn't rc-count payloads), but they must stay value-correct + leak-free
-	// — exercise the enum-of-array shape as a no-regression / soundness check.
 	if got := runWasm(t, boxEnumDead4Src()); got == 0 {
 		t.Errorf("enum-of-array program should produce a non-zero high-water, got 0")
 	}

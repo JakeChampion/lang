@@ -1,16 +1,16 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A pair-form enum handed straight to a call, never bound, is now
-// released after the call (#6393) — a class that had no release at
-// all before, so the controls are what carry this row.
-//
-// `wrap` returns its own parameter's array, so the box is not proven
-// fresh and keeps its prior leak; `live` is read after the loop, and
-// a release admitted there would have freed it. `keep` moves the
-// payload into a container that outlives the call and `unwrap` hands
-// it straight back — both read afterwards for the same reason.
-// 8 + 40 + 56 + 10 + 24 + 32 + 5.
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 struct S2 { a: i32, b: i32 }
 function mk(n: i32): Option[i32[]] {

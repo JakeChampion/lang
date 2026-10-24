@@ -1,13 +1,5 @@
 import "std/i32";
 
-// struct_drop — the function-exit reference-counting sweep, which is the
-// shape the self-hosted compiler is built out of: several locals of a
-// multi-field rc-tracked struct, live across several early exits.
-//
-// Every exit drops every live local, so the emitted drop code scales as
-// locals x exits. Without a benchmark of this shape the gate cannot see a
-// change to how that drop is emitted — the outlining work in #6888 cut the
-// whole-compiler emit by 71% and moved no other benchmark here at all.
 struct Frame { name: string, tags: string[], slots: i32[], depth: i32 }
 
 function mk(k: i32): Frame {
@@ -18,7 +10,6 @@ function mk(k: i32): Frame {
   return Frame { name: "frame_" + k.to_string(), tags: t, slots: s, depth: k };
 }
 
-// Four locals live across five exits: the sweep runs at each one.
 function pick(k: i32): i32 {
   let a: Frame = mk(k);
   if (k == 1) {

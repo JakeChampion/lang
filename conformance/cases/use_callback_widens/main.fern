@@ -1,7 +1,7 @@
-// A `use` callback returns what the callee's callback slot returns, not what
-// the enclosing function does: the rest of `a` is the `(i32) => dyn Shape`
-// `mk` takes, so its `return` boxes a Sq into the dyn, where the enclosing
-// i32 would refuse it.
+
+
+
+
 trait Shape {
   function area(self: Self): i32;
 }

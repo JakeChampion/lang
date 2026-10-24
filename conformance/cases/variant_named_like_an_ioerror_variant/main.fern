@@ -1,6 +1,6 @@
-// A program's own variant may share a name with one of IoError's. std/error's
-// match on IoError's three-payload `Other` checks against IoError's variant,
-// not this one-payload `Other`.
+
+
+
 import "std/error";
 import "std/i32";
 

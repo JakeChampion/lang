@@ -10,8 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// Exercise the production checker directly, so the semantic regression also
-// runs on cross hosts without rebuilding a second-generation compiler driver.
 func TestSelfHostHandlerStateX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

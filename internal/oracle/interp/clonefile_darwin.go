@@ -8,7 +8,6 @@ import (
 	"unsafe"
 )
 
-// fclonefileat(2), and the flags __fern_clone_file passes it.
 const (
 	sysFclonefileat  = 517
 	cloneNofollow    = 0x1
@@ -16,8 +15,6 @@ const (
 	atFdcwdDarwin    = -2
 )
 
-// cloneFile is fclonefileat from an open src, so a symlinked src is
-// followed and a symlinked dest is not. dest must not exist.
 func cloneFile(src, dest string) error {
 	f, err := os.Open(src)
 	if err != nil {

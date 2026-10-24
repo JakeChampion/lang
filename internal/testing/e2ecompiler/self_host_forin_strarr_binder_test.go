@@ -4,22 +4,6 @@ import (
 	"testing"
 )
 
-// --- A string[] local read by `for s in names` -------------------------------
-//
-// `let names: string[] = [mk("a"), mk("b")]; for s in names { t = t + s.len(); }`
-// must release the array and both element boxes every round, as the indexed
-// spelling `while (j < names.len()) { t = t + names[j].len(); j = j + 1 }` does.
-// It is `for_in_str_elem__loop__read` on both leak-matrix arches (#5338).
-//
-// The binder needs no credit of its own: `s` borrows an element that `names`
-// owns, and `names`'s own deep free releases it. What matters is whether `s`
-// outlives an iteration. A bind, a return, a container or struct store, or a
-// call whose result is bound outward all make it do so; those rows must keep
-// the element alive, and each reads its value back after 200 rounds of churn
-// have recycled the freelist.
-//
-// Each want is the `bin/fern -interp` answer.
-
 const forinBinderDecl = `function mkstr(a: string): string { return a + "-long-enough-to-heap-allocate"; }
 function churn(i: i32): i32 { let a: string[] = [mkstr("c"), mkstr("d")]; return a[0].len() + a[1].len(); }
 function keepstr(x: string): i32 { return x.len(); }
@@ -41,7 +25,6 @@ func forinBinderCases() []arrenumShareCase {
 		"if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }\n"
 	return []arrenumShareCase{
 		{
-			// THE CELL, in the matrix's own spelling. 500/100 before.
 			name: "forin_len_read",
 			src: `function mkstr(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -53,9 +36,6 @@ function round(i: i32): i32 {
 			want: 68,
 		},
 		{
-			// Control: the indexed spelling of the same read, clean before this
-			// change. It is what says the array's credit — not the binder's —
-			// was the thing being refused.
 			name: "indexed_read_unchanged",
 			src: `function mkstr(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -68,8 +48,6 @@ function round(i: i32): i32 {
 			want: 68,
 		},
 		{
-			// The binder handed to a call that returns a SCALAR — the callee
-			// keeps nothing, so the borrow is still transient.
 			name: "binder_scalar_call_arg",
 			src: forinBinderDecl + `function round(i: i32): i32 {
     let names: string[] = [mkstr("a"), mkstr("b")];
@@ -82,7 +60,6 @@ function round(i: i32): i32 {
 			want: 65,
 		},
 		{
-			// The binder is assigned to a local that outlives the loop.
 			name: "refused_binder_escapes_local",
 			src: forinBinderDecl + `function round(i: i32): i32 {
     let want: i32 = mkstr("a").len();
@@ -96,8 +73,6 @@ function round(i: i32): i32 {
 			want: 72,
 		},
 		{
-			// The binder is bound to a fresh local inside the body and
-			// carried out through it.
 			name: "refused_binder_bound_local",
 			src: forinBinderDecl + `function round(i: i32): i32 {
     let want: i32 = mkstr("a").len();
@@ -111,7 +86,6 @@ function round(i: i32): i32 {
 			want: 72,
 		},
 		{
-			// The binder is stored into a container.
 			name: "refused_binder_into_container",
 			src: forinBinderDecl + `function round(i: i32): i32 {
     let want: i32 = mkstr("a").len();
@@ -125,7 +99,6 @@ function round(i: i32): i32 {
 			want: 33,
 		},
 		{
-			// The binder leaves the frame as a return value.
 			name: "refused_binder_returned",
 			src: forinBinderDecl + `function grab(i: i32): string {
     let names: string[] = [mkstr("a"), mkstr("b")];
@@ -142,10 +115,6 @@ function round(i: i32): i32 {
 			want: 72,
 		},
 		{
-			// A call PASSES THROUGH the binder — it takes the string and
-			// returns it, and the result is bound outward. The scalar-returning
-			// case above is admitted; this one is the reason that distinction
-			// has to be drawn on where the RESULT goes.
 			name: "refused_call_launders_binder",
 			src: forinBinderDecl + `function round(i: i32): i32 {
     let want: i32 = mkstr("a").len();
@@ -159,9 +128,6 @@ function round(i: i32): i32 {
 			want: 72,
 		},
 		{
-			// The binder SHADOWS the array. The two are distinct bindings
-			// (lexical.fern), so the walk reads the array and the binder each under
-			// its own symbol and the array keeps its deep credit.
 			name: "binder_shadows_array",
 			src: forinBinderDecl + `function round(i: i32): i32 {
     let names: string[] = [mkstr("a"), mkstr("b")];
@@ -175,9 +141,6 @@ function round(i: i32): i32 {
 	}
 }
 
-// TestSelfHostForInStrArrBinderX86_64 — iterating a reclaimable string[] with a
-// transient binder keeps the array's deep credit, and a binder that outlives an
-// iteration still takes it away.
 func TestSelfHostForInStrArrBinderX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

@@ -8,91 +8,31 @@ import (
 	"testing"
 )
 
-// #8567: a DIRECT enum field with an rc payload was released box-only, stranding
-// the live variant's payloads.
-//
-// A direct enum field's payload has one releaser on every drop path (#8692): a
-// second one at a struct local's scope exit once fired after the first and
-// landed past a live claim (exit 99 on TestSelfHostEnumFieldShare and
-// TestSelfHostStructEnumFieldPayloadDrop).
-//
-// THE EXIT CODE DOES NOT MOVE on the leak: the leakcheck leg against native is
-// the gate. The register and wasm legs are where an over-release would land as
-// exit 99.
 var selfHostEnumFieldDeepDropCases = []struct {
 	name string
 	src  string
 }{
-	// Route 1: the field reclaim releases the replaced enum field.
 	{"enum-field-via-field-reclaim", "enum Payload { None, Some(i32[]) }\nstruct Asm { p: Payload, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, p: Payload.Some([v]) };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { p: Payload.Some([9]), n: 0 };\n    a = step(a, 1);\n    let r: i32 = 0;\n    match (a.p) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); } }\n    return r + __rc_underflow_count();\n}"},
 
-	// Route 2: the enum field sits one struct down, so only Inner's drop reaches its
-	// payload when the old Asm dies.
 	{"enum-field-via-struct-drop", "enum Payload { None, Some(i32[]) }\nstruct Inner { p: Payload }\nstruct Asm { i: Inner, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, i: Inner { p: Payload.Some([v]) } };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { i: Inner { p: Payload.Some([9]) }, n: 0 };\n    a = step(a, 1);\n    let r: i32 = 0;\n    match (a.i.p) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); } }\n    return r + __rc_underflow_count();\n}"},
 
-	// Two rc-carrying variants, so the tag dispatch has to pick rather than fall
-	// into a single arm.
 	{"two-rc-variants", "enum Payload { None, Some(i32[]), Many(i32[]) }\nstruct Asm { p: Payload, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, p: Payload.Many([v, v]) };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { p: Payload.Some([9]), n: 0 };\n    a = step(a, 1);\n    let r: i32 = 0;\n    match (a.p) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); }, Payload.Many(h) => { r = h.len(); } }\n    return r + __rc_underflow_count();\n}"},
 
-	// Three rounds, so a per-round leak accumulates rather than resting on one
-	// missed release.
 	{"three-rounds", "enum Payload { None, Some(i32[]) }\nstruct Asm { p: Payload, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, p: Payload.Some([v]) };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { p: Payload.Some([9]), n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    a = step(a, 3);\n    let r: i32 = 0;\n    match (a.p) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); } }\n    return r + __rc_underflow_count();\n}"},
 
-	// An enum LOCAL aliases the field across the supersede, so __enum_drop_'s
-	// rc==1 gate must decline the box — the local still reads the payload
-	// afterwards. This is the direct guard on that gate: without it the walk
-	// frees a payload a live name still reaches, which lands as a changed answer
-	// or an underflow, not as a leak.
 	{"local-alias-declines-walk", "enum Payload { None, Some(i32[]) }\nstruct Asm { p: Payload, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, p: Payload.Some([v]) };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { p: Payload.Some([9, 9, 9]), n: 0 };\n    let keep: Payload = a.p;\n    a = step(a, 1);\n    let r: i32 = 0;\n    match (keep) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); } }\n    return r + __rc_underflow_count();\n}"},
 
-	// The enum box is sole-owned but its PAYLOAD buffer is shared with a local, so
-	// the walk does run and its dec must be balanced by the construction's retain.
-	// The other half of the guard: the row above proves the gate declines a shared
-	// box, this one proves the dec is right when it does not.
 	{"shared-payload-buffer", "enum Payload { None, Some(i32[]) }\nstruct Asm { p: Payload, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, p: Payload.Some([v]) };\n}\nfunction main(): i32 {\n    let buf: i32[] = [9, 9, 9];\n    let a: Asm = Asm { p: Payload.Some(buf), n: 0 };\n    a = step(a, 1);\n    return buf.len() + __rc_underflow_count();\n}"},
 
-	// Control: a SCALAR payload. Nothing heap sits under the box, so releasing it
-	// must not dec anything beneath — that would be an over-release.
 	{"scalar-payload-control", "enum Payload { None, Some(i32) }\nstruct Asm { p: Payload, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, p: Payload.Some(v) };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { p: Payload.Some(0), n: 0 };\n    a = step(a, 1);\n    let r: i32 = 0;\n    match (a.p) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g; } }\n    return r + __rc_underflow_count();\n}"},
 
-	// A SECOND STRUCT holds the enum box across the supersede. Every struct
-	// literal reading a nested-struct or enum field incs it, so `b` holds a
-	// COUNTED reference and `a`'s supersede must still release its own: one dec
-	// too few leaks the payload every round, one too many lands as an underflow,
-	// which is why `__rc_underflow_count()` is added to the answer.
-	//
-	// The local-alias row above cannot stand in for it: there the second
-	// reference lives in a local, here in another struct's field.
 	{"second-struct-alias", "enum Payload { None, Some(i32[]) }\nstruct Asm { p: Payload, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, p: Payload.Some([v]) };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { p: Payload.Some([9, 9, 9]), n: 0 };\n    let b: Asm = Asm { p: a.p, n: 1 };\n    a = step(a, 1);\n    let r: i32 = 0;\n    match (b.p) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); } }\n    return r + __rc_underflow_count();\n}"},
 
-	// The same share built by ASSIGNMENT rather than by an initialiser. The
-	// retain arms are position-independent, so refusing the type here while
-	// admitting it above left the identical leak reachable through the commoner
-	// spelling — 120 B, caught in review of the fix for the row above. The
-	// var-init row cannot stand in for it: the two positions are scanned by
-	// different functions.
 	{"second-struct-alias-assigned", "enum Payload { None, Some(i32[]) }\nstruct Asm { p: Payload, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, p: Payload.Some([v]) };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { p: Payload.Some([9, 9, 9]), n: 0 };\n    let b: Asm = Asm { p: Payload.None, n: 0 };\n    b = Asm { p: a.p, n: 1 };\n    a = step(a, 1);\n    let r: i32 = 0;\n    match (b.p) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); } }\n    return r + __rc_underflow_count();\n}"},
 
-	// Control: the same enum as an ARRAY field, which #8604 fixed and whose walk
-	// now delegates to the new helper. Clean before and after — the refactor must
-	// not have moved it.
 	{"enum-array-field-control", "enum Payload { None, Some(i32[]) }\nstruct Asm { ps: Payload[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, ps: [Payload.Some([v])] };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { ps: [Payload.Some([9])], n: 0 };\n    a = step(a, 1);\n    return a.ps.len() + __rc_underflow_count();\n}"},
 }
 
-// TestSelfHostEnumFieldDeepDropLeakCheck is the gate: clean under FERN_LEAKCHECK
-// on BOTH compilers, native as the oracle.
-//
-// FIVE rows leak without #8567's fix: the three defect rows and both guard rows.
-// The guards do their work in the other direction — they are the rows an
-// UNGATED or unbalanced walk would fail, and it would fail them as a changed
-// answer or an underflow rather than as a leak, which is why the exit code is
-// asserted alongside the verdict. The two controls are clean either way.
-//
-// The second-struct-alias PAIR answers a LATER fix and is counted separately:
-// both leak without #8658's counted-share carve-out, one row per scanned
-// position. The initialiser and the assignment are walked by different
-// functions, so neither row stands in for the other — which is how the
-// assignment half survived that fix's first cut.
 func TestSelfHostEnumFieldDeepDropLeakCheck(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	cli := buildLangBinForInterp(t)
@@ -118,8 +58,6 @@ func TestSelfHostEnumFieldDeepDropLeakCheck(t *testing.T) {
 	}
 }
 
-// TestSelfHostEnumFieldDeepDropX86_64 — the answers against the interpreter
-// oracle, and where the shared-box row's over-release would surface.
 func TestSelfHostEnumFieldDeepDropX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -149,7 +87,6 @@ func TestSelfHostEnumFieldDeepDropX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostEnumFieldDeepDropArm64 — the arm64 emit of the new helper.
 func TestSelfHostEnumFieldDeepDropArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -175,8 +112,6 @@ func TestSelfHostEnumFieldDeepDropArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostEnumFieldDeepDropWasmIR — wasm emits its own helper body and its
-// own reclaim, so both call sites need proving there too.
 func TestSelfHostEnumFieldDeepDropWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping the wasm leg")

@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// A bound on a struct's, enum's or union alias's type parameter is P001
-// naming the impl it belongs on (#12282, #12297): the alias used to drop the
-// bound without a word, the other two reported the `:` as an unexpected
-// token.
 func TestDeclTypeParamBoundIsP001(t *testing.T) {
 	cases := []struct{ name, src, want string }{
 		{"struct", "struct W[T: B] { v: T }", "struct W: a bound on type parameter T belongs on an impl"},

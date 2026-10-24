@@ -6,18 +6,6 @@ import (
 	"testing"
 )
 
-// --- A fresh argument to a CLOSURE call must not leak per round (#6460) ---
-//
-// Native's arg-temp reclaim only ever ran for a call to a NAMED function, so
-// the identical literal handed through a function-typed local or param was
-// never released at all. This is the self-host half of the same observable.
-//
-// It asserts the DELTA between calling through a closure value and calling the
-// same body directly, at two round counts. The self-host's Perceus port is
-// still in progress (docs/RC-PERCEUS-SELF-HOST-PORT.md), so an absolute byte
-// figure would be a budget for the rest of that work rather than a gate on
-// this shape; subtracting the direct-call control cancels whatever both forms
-// leak for unrelated reasons and leaves only what the indirection costs.
 func closureArgChurnSelfHostSrc(rounds int, indirect bool) string {
 	body := `        t = t + len([1, 2, i]);`
 	decl := ""

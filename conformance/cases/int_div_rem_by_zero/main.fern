@@ -1,14 +1,14 @@
 // spec: IS-04
 // spec: IS-05
-//
-// Division is TOTAL: `x / 0` is 0 and `x % 0` is x, on every backend,
-// with no fault. This is the edge where the hardware disagrees with
-// itself — x86's `idiv` raises #DE, wasm's `i32.div_s` traps by
-// specification, arm64's `sdiv` answers 0 — so leaving it to the target
-// gives one language three behaviours.
-//
-// The operands flow through a call so the divisor is not a constant the
-// folder could reject or answer at compile time.
+
+
+
+
+
+
+
+
+
 import "std/i32";
 import "std/i64";
 

@@ -7,10 +7,6 @@ import (
 	"testing"
 )
 
-// hostFsFacts has nothing to compare against on a platform this package has
-// no `statfs(2)` projection for — the same platforms `internal/oracle/interp`'s
-// fsstat_other.go answers ENOSYS on, so there is no answer to disagree with
-// rather than an answer nobody checked.
 func hostFsFacts(t *testing.T, _ string) (blockSize, nameMax, pathMax int64) {
 	t.Helper()
 	t.Skipf("the statfs probe compares against statfs(2); %s has none here", runtime.GOOS)

@@ -1,18 +1,5 @@
 package e2e
 
-// Differential coverage for std/string's Two-Way (Crochemore-Perrin) substring
-// search core, `__str_find_from`, and for the search family routed through it
-// (index_of / contains / find_all / count / count_matches / split / splitn /
-// replace / replace_n / replacen).
-//
-// The program is a differential harness rather than a fixed table: it
-// enumerates every haystack over {a,b} up to length 8 and every needle up to
-// length 5, and checks each result against a naive reference computed in the
-// same program. A binary alphabet is what actually exercises Two-Way's
-// periodic branch (the `memory` carry and the shift-by-period), which fixed
-// example strings tend to miss entirely. Returns 42 iff every case agrees on
-// every backend.
-
 import "testing"
 
 const stringTwoWaySearchProg = `

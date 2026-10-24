@@ -1,12 +1,6 @@
 import "std/test";
 import "std/rand" as rand;
 
-// tests/stdlib/rand_test.fern — pure-Fern coverage of std/rand. The
-// draws are non-deterministic (CSPRNG), so the tests assert the
-// CONTRACTS: shuffle is a permutation (multiset preserved) that leaves
-// its input untouched, choice is always in-bounds (None only when
-// empty), and sample returns k distinct elements of the input.
-
 function sum_arr(a: i32[]): i32 {
   let s: i32 = 0;
   let i: i32 = 0;
@@ -48,7 +42,6 @@ function test_shuffle_is_permutation(): test.TestOutcome {
 }
 
 function test_shuffle_pure(): test.TestOutcome {
-  // shuffle must not mutate its argument.
   let xs: i32[] = [1, 2, 3];
   let s: i32[] = rand.shuffle(xs);
   return test.assert_eq_array(xs, [1, 2, 3]);
@@ -96,7 +89,6 @@ function test_sample_without_replacement(): test.TestOutcome {
     if (!contains_arr(xs, s[i])) {
       return test.fail("element not from input");
     }
-    // distinctness
     let j: i32 = i + 1;
     while (j < s.len()) {
       if (s[i] == s[j]) {
@@ -111,7 +103,6 @@ function test_sample_without_replacement(): test.TestOutcome {
 
 function test_sample_edges(): test.TestOutcome {
   let xs: i32[] = [1, 2, 3];
-  // k >= len → all of xs (as a permutation); k <= 0 → empty.
   if (rand.sample(xs, 9).len() != 3) {
     return test.fail("k>=len size");
   }

@@ -11,17 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternVariantMultiFieldResultCustomProvider is the self-host port of
-// the Go-side multi-field `variant` *result* (docs/WIT-BRING-YOUR-OWN.md): a WIT
-// `variant ev { click(tuple<u32, u32>), key(u32), close }` lifted into a self-host
-// enum `Ev { Click(i32, i32), Key(i32), Close }`. The canonical join is SlotCount=2
-// i32 slots, returned indirectly (disc:u8 @0, slot0 @4, slot1 @8). The return area
-// is sized for the widest arm, so the result wrapper blind-copies all SlotCount
-// slots into the box fields; a match on a shorter arm reads
-// only its own fields (the rest stay unread) — no per-arm result branch needed.
-//
-// `classify: func(n: s32) -> ev`: n<10 -> close, n<100 -> key(n), else ->
-// click(n, n+1). The self-host `match` recovers each arm's fields.
 func TestSelfHostExternVariantMultiFieldResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -49,8 +38,6 @@ func TestSelfHostExternVariantMultiFieldResultCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// classify returns the variant indirectly: a 12-byte area (disc:u8 @0, slot0
-	// @4, slot1 @8) via cabi_realloc. click=0/key=1/close=2.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))

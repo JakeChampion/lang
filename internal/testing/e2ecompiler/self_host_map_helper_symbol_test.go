@@ -7,24 +7,6 @@ import (
 	"testing"
 )
 
-// `core/map`'s helpers keep their BARE names in the bundle under both compilers
-// (#9608).
-//
-// The Map surface is declared as concrete `_impl` functions — the language has
-// no generic method on a generic struct — and every backend routes `map_new` /
-// `__method_Map_get` onto them through one alias table, which can only name a
-// function one way. Until this, the self-host mangled `core/map`'s helpers to
-// `map____map_*` while native kept them bare, so the same source resolved under
-// one compiler and not the other, and no shared alias table could name either.
-//
-// `internal/pkg/modload`'s parity test compares the two predicates as data; this is
-// the behaviour on top of them, which is what a reader actually cares about:
-// the bare spelling runs and answers the same number on both sides.
-//
-// The qualified spelling is asserted REFUSED by both, deliberately. A runtime
-// helper is not public API, native mangles a qualified reference without
-// consulting the exemption, and matching that exactly is worth more than
-// opening a spelling only one compiler takes.
 const (
 	mapHelperBareSrc = `import "core/map";
 function main(): i32 { return __map_pow2_ceil(5); }
@@ -48,11 +30,6 @@ func TestSelfHostMapHelpersKeepBareNames(t *testing.T) {
 	selfHostBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 	nativeBin := buildFernCLIBin(t)
 
-	// nativeRun compiles with the fern CLI and, when that succeeds, runs the
-	// result. `compiled` is the COMPILE's verdict and `exit` the program's —
-	// kept apart deliberately. Folding a compile failure into the exit code
-	// makes a refusal indistinguishable from a program that exited non-zero,
-	// and the refusal canary below would then fire on neither.
 	nativeRun := func(t *testing.T, src string) (compiled bool, exit int, out string) {
 		t.Helper()
 		caseDir := t.TempDir()
@@ -88,14 +65,7 @@ func TestSelfHostMapHelpersKeepBareNames(t *testing.T) {
 		}
 	})
 
-	// Refused by both, and refused for the SAME reason — the name the qualified
-	// rewrite builds does not exist. Asserting only "self-host refuses" would
-	// pass against a compiler that refused the whole program.
 	t.Run("the qualified spelling is refused by both", func(t *testing.T) {
-		// The COMPILE is what has to fail. Reading the run's exit code instead
-		// would leave this silent forever: `__map_pow2_ceil(5)` exits 8, so a
-		// native that started accepting the qualified spelling would answer 8
-		// and never 0.
 		if compiled, _, _ := nativeRun(t, mapHelperQualifiedSrc); compiled {
 			t.Error("native compiled map.__map_pow2_ceil; the self-host note about matching it is now stale")
 		}

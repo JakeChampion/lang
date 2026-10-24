@@ -1,11 +1,6 @@
 import "std/test";
 import "std/textwrap" as textwrap;
 
-// tests/stdlib/textwrap_test.fern — pure-Fern coverage of
-// std/textwrap.word_wrap: greedy wrapping at word boundaries, the
-// exact-fit boundary, long words on their own line, hard-newline /
-// blank-line preservation, space collapsing, and the edge widths.
-
 function test_greedy_wrap(): test.TestOutcome {
   return test.assert_eq(textwrap.word_wrap("the quick brown fox", 10), "the quick\nbrown fox");
 }
@@ -15,7 +10,6 @@ function test_fits_on_one_line(): test.TestOutcome {
 }
 
 function test_boundary(): test.TestOutcome {
-  // "aa bb" is 5 wide: fits at width 5, breaks at width 4.
   if (textwrap.word_wrap("aa bb", 5) != "aa bb") {
     return test.fail("width 5 should fit");
   }
@@ -23,12 +17,10 @@ function test_boundary(): test.TestOutcome {
 }
 
 function test_long_word(): test.TestOutcome {
-  // A word longer than the width goes on its own line, unbroken.
   return test.assert_eq(textwrap.word_wrap("supercalifragilistic hi", 5), "supercalifragilistic\nhi");
 }
 
 function test_preserves_hard_newlines(): test.TestOutcome {
-  // Existing newlines are hard breaks; a blank line stays blank.
   return test.assert_eq(textwrap.word_wrap("a b\n\nc d", 10), "a b\n\nc d");
 }
 
@@ -39,7 +31,6 @@ function test_collapses_spaces_and_edges(): test.TestOutcome {
   if (textwrap.word_wrap("", 10) != "") {
     return test.fail("empty");
   }
-  // A non-positive width returns the input unchanged.
   return test.assert_eq(textwrap.word_wrap("a b c", 0), "a b c");
 }
 

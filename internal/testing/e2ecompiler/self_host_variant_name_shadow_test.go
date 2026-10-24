@@ -2,29 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A struct and an enum VARIANT may share a name — native accepts it and the
-// language has no rule against it — and the self-host decl table, keyed by the
-// bare name, then holds two decls under one key. A match arm has to read its
-// payload through the decl the SCRUTINEE's enum owns.
-//
-// It did not. The arm took the pattern's `Enum.` qualifier as its owner and
-// only fell through to the scrutinee when no decl of that name carried that
-// owner — but an ABSENT qualifier is the empty string, and a plain struct's
-// enum_owner is the empty string too, so an unqualified `Boxed(_, k)` beside a
-// `struct Boxed` resolved to the STRUCT. Its field 0 is not `__ev`, so the arm
-// took the struct-union member form: it bound only the first binder, to the
-// whole box typed `Boxed`, and never bound the second. `k` then read as an
-// unresolved name and lowered as a function ADDRESS — `const_func
-// $binding$2$k`, a symbol nothing defines — which `FERN_STRICT_IR` catches and
-// a plain build emits. At one payload the single binder was bound with the
-// struct's type instead, so `k + 1` dispatched to a `Boxed.add` method that
-// does not exist.
-//
-// The resolution is in the lowering, ahead of instruction selection, so one backend
-// carries the signal for all of them.
-//
-// 31 + 35 + 6 + 8 + 3 + 7 = 90, and the same program is 90 under the
-// interpreter and the Go compiler.
 const variantNameShadowSrc = `struct Boxed { d: i32, s: i32 }
 struct Tagged { v: i32 }
 enum Held { Bare(i32), Boxed(i32, i32) }
@@ -66,10 +43,6 @@ func TestSelfHostVariantNameShadowX86_64(t *testing.T) {
 	if got := interpExit(t, interp, variantNameShadowSrc); got != variantNameShadowExit {
 		t.Fatalf("interpreter = %d, want %d", got, variantNameShadowExit)
 	}
-	// FERN_STRICT_IR turns the bail this shape used to take into a named
-	// refusal, so a regression is a build failure here rather than a wrong
-	// number that happens to survive. No leakcheck: what this pins is which
-	// declaration the arm reads, not who releases the enum box.
 	asm := hevCompile(t, runner, driverBin, variantNameShadowSrc, []string{"FERN_STRICT_IR=1"})
 	bin := buildBin(t, gcc, dir, "variant_name_shadow", asm)
 	stderr, exit := hevRun(t, runner, bin)

@@ -1,16 +1,16 @@
 import "std/array";
 import "core/cmp";
 
-// One method name per verb, working at several element types in the same
-// program (#2663). Before the collapse each of these existed twice — once
-// for an `i32[]` receiver, once for a `string[]` one under a dodged name
-// (`count_str`, `reversed`, `sorted_str_asc`) — because the Array method
-// namespace keys on the name alone and could not fan out on the element.
-//
-// `sum` / `product` joined last: they delegate to `num.sum` / `num.product`,
-// so std/array has to import std/num, which put `impl Add for i32` in nearly
-// every program's transitive closure and collided with any user trait
-// providing `add` for i32 (#6931).
+
+
+
+
+
+
+
+
+
+
 function main(): i32 {
     let xs: i32[] = [3, 1, 2];
     let ls: i64[] = [10i64, 20i64];

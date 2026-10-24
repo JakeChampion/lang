@@ -25,8 +25,6 @@ func runDoctest(t *testing.T, doc string) (string, int) {
 	return out.String(), cmd.ProcessState.ExitCode()
 }
 
-// A passing example (pulling in a chunk) reports `ok`; a failing one
-// reports `not ok` and the command exits non-zero. Output is TAP.
 func TestLiterateDoctestPassAndFail(t *testing.T) {
 	doc := "# d\n" +
 		"```fern\n<<greet>>=\npub function greet(): string { return \"hi\"; }\n```\n" +
@@ -47,7 +45,6 @@ func TestLiterateDoctestPassAndFail(t *testing.T) {
 	}
 }
 
-// All-passing examples exit 0.
 func TestLiterateDoctestAllPass(t *testing.T) {
 	doc := "```fern test\nfunction main(): i32 { return 0; }\n```\n"
 	out, code := runDoctest(t, doc)
@@ -59,12 +56,11 @@ func TestLiterateDoctestAllPass(t *testing.T) {
 	}
 }
 
-// A type error in an example is remapped onto the document line.
 func TestLiterateDoctestDiagnosticRemap(t *testing.T) {
-	doc := "# t\n" + // 1
-		"```fern test\n" + // 2
-		"function main(): i32 { return \"nope\"; }\n" + // 3 <- error
-		"```\n" // 4
+	doc := "# t\n" +
+		"```fern test\n" +
+		"function main(): i32 { return \"nope\"; }\n" +
+		"```\n"
 	out, code := runDoctest(t, doc)
 	if code == 0 {
 		t.Fatalf("expected failure:\n%s", out)
@@ -74,8 +70,6 @@ func TestLiterateDoctestDiagnosticRemap(t *testing.T) {
 	}
 }
 
-// The committed example document's doctests all pass (guards the example
-// against rot).
 func TestLiterateDoctestExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-doctest", "../../../examples/literate/doctest_demo.fern.md")

@@ -1,7 +1,7 @@
-// A generic call whose argument is a call through a function-typed value
-// of more than one parameter: the instantiation is read from the value's
-// declared result, `(i32, i32) => Result[i32, dyn Tr]` here, the same as
-// from a one-parameter value or a named function's declaration.
+
+
+
+
 trait Tr {
     function code(self: Self): i32;
 }
@@ -40,6 +40,6 @@ function one(a: i32): Result[i32, dyn Tr] {
 }
 
 function main(): i32 {
-    // 7 + 50 + 4 = 61
+
     return via2(sum, 3, 4) + via2(sum, 6, 6) + via1(one, 4);
 }

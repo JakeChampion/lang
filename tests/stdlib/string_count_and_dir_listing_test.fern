@@ -1,15 +1,5 @@
 import "std/test";
 
-// tests/stdlib/string_count_and_dir_listing_test.fern —
-// batch 35 additions to std/test:
-//   * `test.assert_string_count(haystack, needle, n)` —
-//     `needle` appears exactly `n` times (non-overlapping)
-//     in `haystack`.
-//   * `test.assert_eq_dir_listing(dir, expected_names)` —
-//     directory listing equals the expected multiset of
-//     file/subdir names (`readdir` order not observable
-//     so the helper sorts both sides before compare).
-
 function test_string_count_pass(): test.TestOutcome {
   return test.assert_string_count(
     "[ERROR] one\n[ERROR] two\n[INFO] three\n",
@@ -26,8 +16,6 @@ function test_string_count_single_char(): test.TestOutcome {
 }
 
 function test_string_count_overlap_non_overlap(): test.TestOutcome {
-  // "aaa" with needle "aa" — non-overlapping count is 1
-  // (not 2 — overlap would consume the same byte twice).
   return test.assert_string_count("aaa", "aa", 1);
 }
 
@@ -37,7 +25,6 @@ function test_string_count_wrong_reports(): test.TestOutcome {
       return test.fail("wrong count should fail");
     },
     Fail(msg) => {
-      // Diagnostic should embed observed AND expected.
       if (!msg.contains("appears 2 times")
         || !msg.contains("expected 5")) {
         return test.fail("expected both counts in msg: " + msg);
@@ -56,7 +43,6 @@ function test_dir_listing_pass(r: test.TestRunner): test.TestRunner {
   if (dir == "") {
     return rr;
   }
-  // Write three files in arbitrary order.
   match (write_file(dir + "/zebra.txt", "z")) {
     Err(_) => {
       return rr.it("write fixture", () => test.fail("io"));
@@ -75,8 +61,6 @@ function test_dir_listing_pass(r: test.TestRunner): test.TestRunner {
     },
     Ok(_) => {}
   }
-  // Expected list in different order — sort-then-compare
-  // means this still matches.
   return rr.it(
     "listing matches multiset (sorted)",
     () => test.assert_eq_dir_listing(
@@ -115,7 +99,6 @@ function test_dir_listing_extra_file_fails(r: test.TestRunner): test.TestRunner 
     },
     Ok(_) => {}
   }
-  // Expected lacks b.txt — must fail.
   match (test.assert_eq_dir_listing(dir, ["a.txt"])) {
     Pass => {
       return rr.it("missing-from-expected", () => test.fail("missed"));

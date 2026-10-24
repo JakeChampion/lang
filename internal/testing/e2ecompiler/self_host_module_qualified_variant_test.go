@@ -10,9 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The self-host twin of internal/testing/e2e's TestModuleQualifiedVariant*: the
-// `mod.Variant` spelling (#10430) compiled by the production self-host
-// driver on every target it serves here.
 func TestSelfHostModuleQualifiedVariant(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires Linux native targets")

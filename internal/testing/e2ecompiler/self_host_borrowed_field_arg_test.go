@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-// --- A field read at a BORROWABLE call-arg position is not a move (#6691) ----
-//
-// `tagof(o.v)` hands a field to a callee that never returns, stores, slices or
-// captures its param, so the field stays owned by `o` alone and `o` keeps its
-// deep drop. Read as a move, every superseded box and the `xs` buffer it owned
-// leaked per ITERATION — 1840 / 10240 / 98560 bytes at k = 1 / 8 / 32.
 func borrowedFieldArgSrc(k int) string {
 	return fmt.Sprintf(`enum V { A(i32[]), B }
 struct S { xs: i32[], v: V, n: i32 }
@@ -40,14 +34,8 @@ function main(): i32 {
 }`, k)
 }
 
-// borrowedFieldArgExit: `work` returns (2 + k) + 3, ten calls summed, masked to
-// six bits.
 func borrowedFieldArgExit(k int) int { return (10 * (k + 5)) & 63 }
 
-// The callee that RETAINS its argument is a move. `keep` returns its param, so
-// `kept` genuinely aliases the enum box `o` still holds — deep-dropping a
-// superseded `o` would free the box `tagof(kept)` reads after the loop, which is
-// a wrong answer, not a byte count.
 const borrowedFieldArgRetainedSrc = `enum V { A(i32[]), B }
 struct S { xs: i32[], v: V, n: i32 }
 
@@ -78,12 +66,6 @@ function main(): i32 {
     return t & 63;
 }`
 
-// --- The same position, a nested-struct field (#6698) ------------------------
-//
-// `itag(o.inner)` passes a nested struct field to a borrowing callee; the type
-// must keep the field release that pairs with the struct literal's retain on
-// `o.inner` (the #6653 imbalance otherwise). Only the SPELLING of the read
-// differs between these two programs, and both must cost 0.
 func borrowedStructFieldArgSrc(k int, viaCall bool) string {
 	read := "o.inner.tag"
 	if viaCall {
@@ -112,10 +94,6 @@ function main(): i32 {
 }`, read, k)
 }
 
-// The retaining callee, for the struct field: `keepi` returns its param, so `p`
-// genuinely aliases the inner box `o` still holds. `p` is read back after the
-// rebind loop — both its scalar and its array — so treating the argument as a
-// borrow here would answer wrongly, not just quietly.
 const borrowedStructFieldArgRetainedSrc = `struct I { tag: i32, data: i32[] }
 struct S { xs: i32[], inner: I, n: i32 }
 
@@ -139,14 +117,6 @@ function main(): i32 {
     return t & 63;
 }`
 
-// --- The same position, a string field (#6703) -------------------------------
-//
-// `slen(o.name)` passes a string field to a borrowing callee. The struct's
-// string field must still be released with the struct and on every rebind;
-// missed, every superseded `name` stranded once per ITERATION: 2800 B against
-// the direct read's 0.
-//
-// Only the final read differs between the two programs.
 func borrowedStringFieldArgSrc(k int, viaCall bool) string {
 	read := "o.name.len()"
 	if viaCall {
@@ -174,10 +144,6 @@ function main(): i32 {
 }`, read, k)
 }
 
-// The retaining callee, for the string field. `keeps` returns its param, so
-// `kept` is a second reference to the buffer `o.name` holds — read back after
-// the rebind loop, so treating the argument as a borrow would free it early and
-// answer wrongly.
 const borrowedStringFieldArgRetainedSrc = `struct S { name: string, xs: i32[], n: i32 }
 
 @noinline function keeps(v: string): string { return v; }
@@ -200,9 +166,6 @@ function main(): i32 {
     return t & 63;
 }`
 
-// TestSelfHostBorrowedFieldArgReclaimX86_64 — the k curve is the discriminator:
-// the defect was per-iteration, so a single absolute count could not tell it
-// from the flat residual the enum payload's shallow-drop model leaves behind.
 func TestSelfHostBorrowedFieldArgReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -235,8 +198,6 @@ func TestSelfHostBorrowedFieldArgReclaimX86_64(t *testing.T) {
 		}
 	})
 
-	// #6698 — the read scan. The two spellings of one program must cost the same;
-	// the call spelling was at 800 B against the direct read's 0.
 	t.Run("struct-field-arg-matches-the-direct-read", func(t *testing.T) {
 		for _, k := range []int{1, 8, 32} {
 			viaCall, _, callExit := leakSummary(t, gcc, runner, driverBin, dir,
@@ -266,8 +227,6 @@ func TestSelfHostBorrowedFieldArgReclaimX86_64(t *testing.T) {
 		}
 	})
 
-	// #6703 — the string half. Per-ITERATION, so the k curve is what proves it:
-	// the call spelling tracked k (2800 B at k=8) where the direct read was 0.
 	t.Run("string-field-arg-matches-the-direct-read", func(t *testing.T) {
 		for _, k := range []int{1, 8, 32} {
 			viaCall, _, callExit := leakSummary(t, gcc, runner, driverBin, dir,

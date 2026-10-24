@@ -1,32 +1,32 @@
 // spec: ML-02
-//
-// Pins E053. The program is the example from that code's entry
-// in the diagnostic catalogue (`fern -explain E053`), so this case
-// also checks the catalogue's example really does produce the error
-// it documents.
-// error[E053]: `fip` function "scale" may not allocate (array literal)
+
+
+
+
+
+
 fip function scale(own xs: i32[]): i32[] {
-    return [xs[0] * 2];          // allocates a fresh array
+    return [xs[0] * 2];
 }
 
-// OK: rewrites one slot of the uniquely-owned array. `.with` is the spelling
-// a subscript assignment is refused in favour of (E056), and on a unique input
-// it writes the block in place rather than copying it, so the function
-// allocates nothing. A subscript assignment here would not compile at all.
+
+
+
+
 fip function double_first(own xs: i32[]): i32[] {
     return xs.with(0, xs[0] * 2);
 }
 
-// OK: the rebuild reuses the box `s` is handed in, so `fip` allocates
-// nothing. A field write here would be E048, whose remedy is this line —
-// and rejecting the rebuild left the two diagnostics naming each other.
+
+
+
 struct State { count: i32 }
 fip function bump(own s: State): State {
     return State { ...s, count: s.count + 1 };
 }
 
-// OK as fbip: the consuming match hands each Cons box straight to the
-// arm's rebuilt Cons — on unique input the function allocates nothing.
+
+
 enum List { Cons(i32, List), Nil }
 fbip function map_inc(own xs: List): List {
     match (xs) {

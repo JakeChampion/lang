@@ -11,50 +11,17 @@ import (
 	"time"
 )
 
-// TestSelfHostModloadPerModuleWholeCompilerX86_64 drives the builtins-aware
-// per-module build of the WHOLE self-host compiler (#3451).
-//
-// asm_modload_run's per-module flags follow asm_modload_run.fern's OWN import
-// graph (the whole compiler), thread the built-in TYPE layouts into the
-// whole-program struct view, and emit each module as its own IR
-// translation unit. The units linking with no undefined symbols proves the
-// whole-program runtime-need aggregation is complete; the linked binary running
-// as a compiler (emitting non-empty asm, exit 0) proves the per-module emit +
-// link mechanics hold at full-compiler scale.
-//
-// The emit uses `-per-module-emit-all` — a fresh process per BATCH of units,
-// each batch deriving the whole-program side tables once and sharing them
-// across its units.
-//
-// The per-module-built compiler then compiles the whole compiler (the fixpoint
-// gen2 input) without crashing and emits a real `call __fn_main`. That
-// self-compile first surfaced the string[]-struct-field `.append()` aliasing
-// UAF in the checker (#3561).
-//
-// This is the whole-compiler self-compile gate (#3457 slice 2): a merged
-// bundle of the compiler is past the 512-function IR budget, so per-module
-// emit is the only way to build it. Byte-identity of the per-module
-// self-reproduction is proved by TestSelfHostPerModuleEmitAllFixpointX86_64;
-// this test guards the emit+link+self-compile mechanics on every run.
 func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProjectTyped(t)
 
-	// Build the driver (asm_modload_run) as an x86 host binary via the native
-	// toolchain, exactly as the fixpoint harness does.
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "driver")
 
 	entry := filepath.Join(dir, "drivers/asm_modload_run.fern")
 
-	// 1. Emit every unit of the whole compiler. The entry unit folds in the full
-	// runtime-need root set the driver derives itself, so the link below still
-	// checks the need aggregation end to end.
 	units := emitAllWholeCompiler(t, runner, driverBin, entry, dir, "wc", "x86-64-linux", pmEmitAllBatch, pmGoBuiltEmitMemoryMB)
 	objs := unitObjPaths(t, dir, "wc", units)
 
-	// 2. Link all units — no undefined symbols proves the runtime-need union is
-	// complete (the entry's single shared runtime covers every helper any module
-	// uses).
 	linkStart := time.Now()
 	binPath := filepath.Join(dir, "selfcompiler_pm")
 	linkArgs := append([]string{"-static", "-nostdlib", "-no-pie"}, append(objs, "-o", binPath)...)
@@ -63,8 +30,6 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	}
 	t.Logf("link phase: %.1fs", time.Since(linkStart).Seconds())
 
-	// 3. The linked binary runs as a compiler: emit non-empty asm for a trivial
-	// program and exit 0.
 	progDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(progDir, "triv.fern"),
 		[]byte("function main(): i32 { return 7; }\n"), 0o644); err != nil {
@@ -88,19 +53,6 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 		t.Errorf("per-module-built compiler output missing `.globl _start` — does not look like an asm program")
 	}
 
-	// 4. CORRECTNESS: the per-module-built compiler must compile a program with
-	// FUNCTION PARAMETERS correctly. This is the regression guard for the Perceus
-	// use-after-free that the whole-compiler IR emit first surfaced: routing every
-	// module through the IR path means functions like asmcore.reset_locals — which
-	// `return EmitState { ...s, local_names: ln, local_types: lts }`, moving FRESH
-	// local arrays (a string[] and an enum-array Ty[], both of which skip the
-	// struct-literal array-field admission gate) into a returned struct — were
-	// IR-emitted for the first time. The exit dec-sweep then double-freed those
-	// moved locals, so the per-module-built compiler's own parse/check pipeline
-	// corrupted its heap and segfaulted the moment it compiled ANY function with a
-	// parameter (the param rendered "a: i32" landing in a freed string buffer). A
-	// no-arg `main` slipped past it (step 3); `add(40, 2)` did not. Compiling +
-	// running `add(40, 2)` proves the moved-array buffers survive (exit 42).
 	if err := os.WriteFile(filepath.Join(progDir, "add.fern"),
 		[]byte("function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(40, 2); }\n"), 0o644); err != nil {
 		t.Fatalf("write add.fern: %v", err)
@@ -131,17 +83,6 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 		t.Errorf("per-module-built compiler miscompiled add(40, 2): program exited %d, want 42", code)
 	}
 
-	// 5. SELF-COMPILE (the #3561 regression guard): the per-module-built compiler
-	// compiles the WHOLE compiler — its own ~1000-function multi-module source, the
-	// fixpoint gen2 input. This is the case the per-module bootstrap needs and the
-	// one that first surfaced the string[]-struct-field `.append()` aliasing UAF:
-	// the checker's `let actx = ctx` (StmtMatch) aliases asmcore.EmitState across a
-	// match arm, and bind_local_typed's `s.local_names.append(name)` — a string[]
-	// FIELD read — took the in-place consume form, corrupting the shared local_names
-	// buffer (it desynced from the clone-form local_types, so local_type_of read out
-	// of bounds → NULL Ty → SIGSEGV in the checker). Small programs (steps 3-4) never
-	// hit it; only the whole-compiler self-compile does. Asserting it compiles + emits
-	// a real `call __fn_main` (not the no-main fallback) guards the fix.
 	selfCompileStart := time.Now()
 	var scmd *exec.Cmd
 	if len(runner) == 0 {
@@ -158,17 +99,6 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 		t.Errorf("self-compiled whole compiler missing `call __fn_main` — has_main misread (no-main fallback)")
 	}
 
-	// 6. SELF-DRIVEN -per-module-needs (the #3456 step toward the IR-only bootstrap):
-	// the per-module-built compiler drives ITS OWN whole-program runtime-need query.
-	// This used to OOM (exit 137): the old -per-module-needs ran a full emit_module_funcs
-	// over every loaded module in one process to read back the exact need union, and the
-	// self-host runtime does not yet reclaim the per-function IR-op allocations (#3425),
-	// so a self-host-built compiler exhausted memory. It now returns the static
-	// all_runtime_need_roots over-approximation (the entry emits the full runtime), so the
-	// query is allocation-cheap and the self-host compiler can run it. (The full
-	// self-driven per-module BUILD still needs the large-module emit OOM resolved — the
-	// self-host Perceus reclamation work, roadmap goal #2 — so this guards only the needs
-	// query, the slice that landed here.)
 	var ncmd *exec.Cmd
 	if len(runner) == 0 {
 		ncmd = exec.Command(binPath, entry, "-per-module-needs")
@@ -186,35 +116,14 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	}
 }
 
-// pmEmitAllBatch is the units-per-process batch every whole-compiler emit-all in
-// this package drives. It is also what `emit_per_module_spawned` uses for the
-// driver's own default build, so the harness and the compiler exercise one
-// memory shape rather than two: every process lowers the whole program first.
 const pmEmitAllBatch = 64
 
-// pmFuncBudget is the [lo,hi) function-window budget the emit plan is sized
-// with, passed to the driver as -func-budget so its internal windowing matches.
-//
-// An oversized module (~511 funcs) emitted in one process can pass the arena
-// ceiling and be killed (exit 137), so #3425 shards such a module's emit by a
-// [lo,hi) FUNCTION WINDOW — each window emits a non-entry library sub-unit that
-// links exactly like a per-module unit. Peak scales with which functions a
-// window holds, not just the count: the heaviest lowering functions cluster
-// together, and a coarser split (e.g. 150) can land the whole cluster in one
-// window.
 const pmFuncBudget = 100
 
-// pmEmitJob is one emit window of the whole-compiler build plan: module modIdx's
-// functions [lo,hi) out of count.
 type pmEmitJob struct {
 	modIdx, lo, hi, count int
 }
 
-// pmUnitKey names the unit a job emits, the way the driver names it: the base
-// module namespace for the FIRST window (lo==0), whether or not that window is
-// the whole module (the "lo=0 shard keeps the base ns" invariant), and
-// base + "_s<lo>" for lo>0. This matches emit-all's file naming
-// (unit_<modIdx>[_s<lo>].s) and the per-process unit content.
 func pmUnitKey(j *pmEmitJob) string {
 	if j.lo == 0 {
 		return strconv.Itoa(j.modIdx)
@@ -222,9 +131,6 @@ func pmUnitKey(j *pmEmitJob) string {
 	return strconv.Itoa(j.modIdx) + "_s" + strconv.Itoa(j.lo)
 }
 
-// planWholeCompilerUnits asks the driver for the whole-compiler module shape
-// (count, post-lift function counts, staged source sizes) and expands it into
-// the flat window plan both emit routes use.
 func planWholeCompilerUnits(t *testing.T, drive func(...string) (string, error), dir, label string) []*pmEmitJob {
 	t.Helper()
 	shapeOut, err := drive("-per-module-shape")
@@ -238,10 +144,6 @@ func planWholeCompilerUnits(t *testing.T, drive func(...string) (string, error),
 	if len(shape) < 10 {
 		t.Fatalf("[%s] -per-module-shape returned %d modules, want a whole-compiler count >= 10", label, len(shape))
 	}
-	// Function count alone under-shards a module of FEW but GIANT functions:
-	// asm_arm64 (32 funcs, ~470 KB — emit_runtime alone is ~235 KB) crossed the
-	// arena ceiling emitted whole while staying far under the 100-func budget.
-	// Keep the independent Go window calculation and staged source sizes.
 	funcCounts := make([]int, len(shape))
 	modBytes := make([]int, len(shape))
 	for i, module := range shape {
@@ -253,7 +155,6 @@ func planWholeCompilerUnits(t *testing.T, drive func(...string) (string, error),
 	return planPmEmitWindows(funcCounts, modBytes, pmEntryIndex(shape), pmFuncBudget)
 }
 
-// pmEntryIndex is the position of the synthesized entry module in a shape.
 func pmEntryIndex(shape []pmModuleShape) int {
 	for i, m := range shape {
 		if m.namespace == "__entry" {
@@ -290,10 +191,6 @@ func parsePMModuleShape(out string) ([]pmModuleShape, error) {
 	return modules, nil
 }
 
-// planPmEmitWindows expands per-module function counts + source bytes into the
-// ordered window plan, module-major and window-minor — the same flat order the
-// driver's own unit list uses, so -unit-range [b,hi) emits exactly jobs[b:hi].
-// The module at `entry` is never sharded, as the driver's flat_unit_list does.
 func planPmEmitWindows(funcCounts, modBytes []int, entry, funcBudget int) []*pmEmitJob {
 	var jobs []*pmEmitJob
 	for i := range funcCounts {
@@ -313,12 +210,6 @@ func planPmEmitWindows(funcCounts, modBytes []int, entry, funcBudget int) []*pmE
 	return jobs
 }
 
-// emitWindowSize returns the [lo,hi) function-window size for a module of
-// `funcs` functions and `bytes` source bytes. The function-count budget and a
-// 300 KB source-byte budget each set a minimum window count; the window is
-// funcs/ceil(max of the two). Byte weighting exists for modules of FEW but
-// GIANT functions (asm_arm64: 32 funcs / ~470 KB) that the count threshold
-// alone emits whole — measured past the bump-arena trap (exit 137).
 func emitWindowSize(funcs, bytes, funcBudget int) int {
 	const byteBudget = 300_000
 	nWin := (funcs + funcBudget - 1) / funcBudget

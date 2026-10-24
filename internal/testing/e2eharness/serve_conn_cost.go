@@ -15,33 +15,14 @@ import (
 	"time"
 )
 
-// What one request and one connection cost the serve loop must not grow
-// with the connections it holds open (#12505): a loop pass costs what is
-// ready, and an accept or a close costs the same with thousands open. The
-// check measures one server twice, with no other connection open and with
-// connCostHeld idle keep-alive connections held, and compares.
-
-// connCostHeld is how many idle connections the second measurement holds.
-// A loop pass that walks every open connection, or a close that rebuilds
-// the table, costs well over 1.5 times as much at this count.
 const connCostHeld = 3000
 
-// connCostTicks is how much server CPU time, in clock ticks, each CPU
-// measurement spans, so a tick's rounding is under one percent of it.
 const connCostTicks = 150
 
-// connCostCycles is how many connect, request, close cycles the
-// allocation count spans.
 const connCostCycles = 2000
 
-// connCostRatio bounds the CPU time per request and per cycle with
-// connCostHeld connections held, as a multiple of the time with none.
 const connCostRatio = 1.5
 
-// PerConnectionCostServerSource is a server answering "hello" to every path
-// but /count, which answers the allocator's call count, with no cap on
-// connections per client or requests per connection that the measurement
-// would reach.
 func PerConnectionCostServerSource() string {
 	return `import "std/http";
 import "std/serve";
@@ -58,15 +39,10 @@ function main(): i32 {
 `
 }
 
-// connCost is one measurement: the server's CPU ticks per keep-alive
-// request and per connection cycle, and its allocations per cycle.
 type connCost struct {
 	request, cycle, allocs float64
 }
 
-// RaiseConnCostLimit raises the test process's descriptor limit to its
-// hard limit, for a server started after it to inherit, since both ends
-// hold every connection CheckPerConnectionCostFlat opens.
 func RaiseConnCostLimit(t *testing.T) {
 	t.Helper()
 	var lim syscall.Rlimit
@@ -82,8 +58,6 @@ func RaiseConnCostLimit(t *testing.T) {
 	}
 }
 
-// CheckPerConnectionCostFlat drives PerConnectionCostServerSource, whose
-// process is pid, started after RaiseConnCostLimit.
 func CheckPerConnectionCostFlat(t *testing.T, pid int, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -140,9 +114,6 @@ func CheckPerConnectionCostFlat(t *testing.T, pid int, addr string) {
 	}
 }
 
-// connCostMeasure is one measurement against the server at addr, whose
-// process is pid, with `keepAlive` sending one request on the measured
-// keep-alive connection.
 func connCostMeasure(t *testing.T, pid int, addr string, keepAlive func()) connCost {
 	t.Helper()
 	var m connCost
@@ -158,8 +129,6 @@ func connCostMeasure(t *testing.T, pid int, addr string, keepAlive func()) connC
 	return m
 }
 
-// connCostPer is the server's CPU ticks per call of `step`, over calls
-// until connCostTicks have passed.
 func connCostPer(t *testing.T, pid int, step func()) float64 {
 	t.Helper()
 	start := procTicks(t, pid)
@@ -175,22 +144,18 @@ func connCostPer(t *testing.T, pid int, step func()) float64 {
 	}
 }
 
-// procTicks is the user and system CPU time of process pid, in clock ticks.
 func procTicks(t *testing.T, pid int) int64 {
 	t.Helper()
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The command name may hold spaces; the fields after it do not.
 	fields := strings.Fields(string(b[strings.LastIndexByte(string(b), ')')+1:]))
 	user, _ := strconv.ParseInt(fields[11], 10, 64)
 	sys, _ := strconv.ParseInt(fields[12], 10, 64)
 	return user + sys
 }
 
-// connCostCycle connects, sends one request asking for the close, reads
-// the answer and closes.
 func connCostCycle(t *testing.T, addr, path string) string {
 	t.Helper()
 	c, err := net.DialTimeout("tcp", addr, 5*time.Second)

@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// The -cover-report reader (#5548). Its contract is narrow and load-
-// bearing: the rows in the stream ARE the denominator, the program's own
-// stderr shares the stream and must be ignored, and a row that does not
-// parse must be an error rather than a silently smaller total.
-
 const coverStream = `some program output
 fern-cover: a.fern:2 3
 fern-cover: a.fern:3 0
@@ -20,9 +15,6 @@ warning: unrelated stderr chatter
 fern-cover: b.fern:1 7
 `
 
-// coverBranchStream pairs a line report with the branch rows for three
-// conditionals: one fully covered (both edges ran), one whose true edge
-// never fired, and one never evaluated at all.
 const coverBranchStream = `fern-cover: a.fern:2 4
 fern-cover: a.fern:9 1
 fern-branch: a.fern:2:5 E 4
@@ -45,8 +37,6 @@ func TestCoverReportSummary(t *testing.T) {
 	got := b.String()
 	for _, want := range []string{
 		"a.fern: 2/5 lines (40.0%)\n",
-		// Consecutive dead lines collapse: a hundred of them is one
-		// fact, not a hundred.
 		"  uncovered lines: 3-5\n",
 		"b.fern: 1/1 lines (100.0%)\n",
 		"total: 3/6 lines (50.0%)\n",
@@ -55,12 +45,9 @@ func TestCoverReportSummary(t *testing.T) {
 			t.Errorf("summary missing %q; got:\n%s", want, got)
 		}
 	}
-	// A file with no conditionals reports no branch figure — it has not
-	// failed to cover anything.
 	if strings.Contains(got, "branches") {
 		t.Errorf("summary reports branches for a stream with none; got:\n%s", got)
 	}
-	// A fully-covered file has nothing to list.
 	if strings.Count(got, "uncovered lines:") != 1 {
 		t.Errorf("summary lists uncovered lines for a fully-covered file; got:\n%s", got)
 	}
@@ -83,8 +70,6 @@ func TestCoverReportLcov(t *testing.T) {
 	}
 }
 
-// Concatenated runs sum, so a suite split across several binaries reports
-// as one measurement rather than as the last one to write.
 func TestCoverReportSumsRepeatedRows(t *testing.T) {
 	files, err := parseCoverStream(strings.NewReader(
 		"fern-cover: a.fern:2 3\nfern-cover: a.fern:2 4\nfern-cover: a.fern:3 0\n"))
@@ -102,9 +87,6 @@ func TestCoverReportSumsRepeatedRows(t *testing.T) {
 	}
 }
 
-// A path with a colon in it (a Windows drive letter, a URL-ish stdlib
-// path) still splits at the LAST colon, so the line number is the line
-// number.
 func TestCoverReportSplitsAtTheLastColon(t *testing.T) {
 	files, err := parseCoverStream(strings.NewReader("fern-cover: stdlib://std/io.fern:12 1\n"))
 	if err != nil {
@@ -118,9 +100,6 @@ func TestCoverReportSplitsAtTheLastColon(t *testing.T) {
 	}
 }
 
-// A malformed prefixed row is a truncated or corrupted stream. Skipping it
-// would shrink the denominator and inflate the percentage — the one
-// failure a coverage number must never make quietly.
 func TestCoverReportRejectsMalformedRows(t *testing.T) {
 	for _, bad := range []string{
 		"fern-cover: a.fern:2\n",
@@ -134,7 +113,6 @@ func TestCoverReportRejectsMalformedRows(t *testing.T) {
 	}
 }
 
-// Nothing instrumented is the absence of a measurement, not a 0.0% one.
 func TestCoverReportEmptyStream(t *testing.T) {
 	var b strings.Builder
 	files, err := parseCoverStream(strings.NewReader("just program output\n"))
@@ -166,8 +144,6 @@ func TestFormatLineRanges(t *testing.T) {
 	}
 }
 
-// --- Branch reporting, slice 3 (#5548) ---------------------------------
-
 func TestCoverReportBranchSummary(t *testing.T) {
 	var b strings.Builder
 	files, err := parseCoverStream(strings.NewReader(coverBranchStream))
@@ -178,8 +154,6 @@ func TestCoverReportBranchSummary(t *testing.T) {
 		t.Fatalf("summary: %v", err)
 	}
 	got := b.String()
-	// Six edges: 2:5 has both (3 true, 1 false), 2:19 has only false,
-	// 9:5 was never evaluated so neither. 3 of 6.
 	for _, want := range []string{
 		"a.fern: 2/2 lines (100.0%), 3/6 branches (50.0%)\n",
 		"  uncovered branches: 2:19 true, 9:5 true, 9:5 false\n",
@@ -189,8 +163,6 @@ func TestCoverReportBranchSummary(t *testing.T) {
 			t.Errorf("summary missing %q; got:\n%s", want, got)
 		}
 	}
-	// Line coverage alone calls this file perfect. That the two figures
-	// disagree is the entire reason branch coverage exists.
 	if !strings.Contains(got, "100.0%), 3/6") {
 		t.Errorf("expected fully-covered lines alongside half-covered branches; got:\n%s", got)
 	}
@@ -207,12 +179,8 @@ func TestCoverReportBranchLcov(t *testing.T) {
 	}
 	got := b.String()
 	want := "SF:a.fern\nDA:2,4\nDA:9,1\n" +
-		// Block ids keep the two conditionals on line 2 apart; branch 0
-		// is the false edge, 1 the true one.
 		"BRDA:2,0,0,1\nBRDA:2,0,1,3\n" +
 		"BRDA:2,1,0,4\nBRDA:2,1,1,0\n" +
-		// Never evaluated is lcov's `-`, not 0: "not reached" and
-		// "reached and not taken" are different facts.
 		"BRDA:9,2,0,-\nBRDA:9,2,1,-\n" +
 		"LF:2\nLH:2\nBRF:6\nBRH:3\nend_of_record\n"
 	if got != want {
@@ -220,8 +188,6 @@ func TestCoverReportBranchLcov(t *testing.T) {
 	}
 }
 
-// A branch row that does not parse is a truncated or corrupted stream —
-// skipping it would move a percentage silently, same as for a line row.
 func TestCoverReportRejectsMalformedBranchRows(t *testing.T) {
 	for _, bad := range []string{
 		"fern-branch: a.fern:2:5 E\n",
@@ -236,9 +202,6 @@ func TestCoverReportRejectsMalformedBranchRows(t *testing.T) {
 	}
 }
 
-// A count that would make the false edge negative is a nonsense the
-// report must not propagate — clamp rather than underflow a uint64 into
-// billions of phantom hits.
 func TestCoverReportClampsImpossibleBranchCounts(t *testing.T) {
 	files, err := parseCoverStream(strings.NewReader(
 		"fern-branch: a.fern:1:1 E 1\nfern-branch: a.fern:1:1 T 5\n"))

@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// An arm that RETURNS the payload of a fresh heap-box scrutinee (#10673): the
-// return takes the transfer inc, so the caller holds its own reference and
-// the box is the arm's to release on the way out. Before, the returned
-// binding refused the reclaim and the box leaked per call. `lab` is kept
-// off the pair-form ABI by returning through a local, and `f` reaches it
-// through a function value, the other route to a heap box.
 const matchReturnPayloadSrc = `import "std/i32";
 struct Box { s: string }
 function lab(n: i32): Option[string] {

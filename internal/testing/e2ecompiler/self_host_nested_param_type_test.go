@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// Keep the interpreter result independently pinned: signedness, element
-// width and pointer kind must survive both parameter and foreach bindings.
 var nestedParamTypeCases = []struct {
 	name string
 	src  string

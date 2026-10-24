@@ -7,27 +7,11 @@ import (
 	"testing"
 )
 
-// closureLocalOptRetCases pin the Option/Result return recovery for a closure
-// LOCAL (#5646 option 3).
-//
-// A match on a call through a closure local must name its scrutinee type the
-// way a call through a fn-typed PARAM (`ParamDecl.fn_ret`) does; the `alias`
-// case pins that. The lift runs BEFORE lowering, so by then `let f = <lambda>`
-// is initialised by a `__mkclo$<cloname>` marker call: the return type belongs
-// to `<cloname>`, after the 8-char prefix, not to the callee ident itself.
-//
-// The guards are neighbouring shapes that share the same recovery, so a
-// regression there shows on a guard as well as on the new case.
-//
-// Every `want` stays in [0, 126) — the wasm leg exits through WASI, which
-// rejects anything above that.
 var closureLocalOptRetCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The case this closes: an alias of a closure local propagates the
-	// recorded return type.
 	{"alias", `
 function main(): i32 {
     let f: () => Option[i32] = (): Option[i32] => { return Some(7); };
@@ -35,14 +19,12 @@ function main(): i32 {
     match (g()) { Some(v) => { return v; }, None => { return 1; } }
 }
 `, 7},
-	// Guard: the fn-PARAM path, which the param seeding already covered.
 	{"fn-param", `
 function call(f: () => Option[i32]): i32 {
     match (f()) { Some(v) => { return v; }, None => { return 1; } }
 }
 function main(): i32 { return call((): Option[i32] => { return Some(6); }); }
 `, 6},
-	// Guard: a local bound to a NAMED function.
 	{"named-fn-init", `
 function g(): Option[i32] { return Some(5); }
 function main(): i32 {
@@ -50,14 +32,12 @@ function main(): i32 {
     match (f()) { Some(v) => { return v; }, None => { return 1; } }
 }
 `, 5},
-	// A lambda bound straight to the local, matched on the call.
 	{"direct", `
 function main(): i32 {
     let f: () => Option[i32] = (): Option[i32] => { return Some(5); };
     match (f()) { Some(v) => { return v; }, None => { return 1; } }
 }
 `, 5},
-	// Guard: splitting the call out of the scrutinee.
 	{"split-call", `
 function main(): i32 {
     let f: () => Option[i32] = (): Option[i32] => { return Some(5); };
@@ -65,15 +45,12 @@ function main(): i32 {
     match (o) { Some(v) => { return v; }, None => { return 1; } }
 }
 `, 5},
-	// Guard: a closure array with a non-Option return — unaffected by any of
-	// the Option recovery.
 	{"non-option-closure-array", `
 function main(): i32 {
     let fs: (() => i32)[] = [(): i32 => { return 9; }];
     return fs[0]();
 }
 `, 9},
-	// Guard: a closure local returning a non-Option composite.
 	{"string-closure-local", `
 function main(): i32 {
     let f: () => string = (): string => { return "abcde"; };
@@ -82,9 +59,6 @@ function main(): i32 {
 `, 5},
 }
 
-// TestSelfHostClosureLocalOptRetIRX86_64 asserts each shape lowers on the IR
-// path — proven by running under FERN_STRICT_IR, where a bail is exit 3 — and
-// still produces the interpreter's answer.
 func TestSelfHostClosureLocalOptRetIRX86_64(t *testing.T) {
 	gcc, runner, driverBin := strictIRDriver(t)
 	dir := filepath.Dir(driverBin)
@@ -110,8 +84,6 @@ func TestSelfHostClosureLocalOptRetIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostClosureLocalOptRetIRWasm runs the same cases through the wasm IR
-// backend, which shares the resolver.
 func TestSelfHostClosureLocalOptRetIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host closure-local opt-ret wasm IR e2e")

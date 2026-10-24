@@ -1,13 +1,13 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The claiming shape, looping so the container's freed blocks are
-// recycled into the next round. Every field kind the retain has to
-// know about is extracted from a fresh container: an array, a heap
-// string past SSO, and a scalar (which takes the no-retain path).
-// An unbalanced retain leaks — invisible here — but an unbalanced
-// DROP hands a live block to the freelist, and the next round's
-// construction reads it back.
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/i32";
 import "std/string";

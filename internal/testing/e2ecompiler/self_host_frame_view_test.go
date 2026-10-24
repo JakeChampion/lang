@@ -8,13 +8,6 @@ import (
 	"testing"
 )
 
-// A string view read only within the instruction that uses it keeps its box
-// in the frame that made it (#8920). Each probe runs 100 rounds and prints its
-// result times 1000 plus the heap allocations the rounds made. On the register
-// backends scan and reads allocate nothing per round, copy_tail allocates only
-// its copy, and wrapped still allocates a view per round because the view
-// goes into a Some. Wasm's slice copies the bytes into a fresh block, so there
-// every slice allocates.
 const frameViewProgram = `@noinline function has_prefix(row: string, head: string): boolean {
     return row.len() > head.len() && slice_unchecked(row, 0, head.len()) == head;
 }
@@ -83,7 +76,6 @@ function main(): i32 {
 }
 `
 
-// Before frame views the register backends matched wasm's line for line.
 const frameViewNative = "100000\n600100\n10539000\n200200\n"
 
 func TestSelfHostFrameViews(t *testing.T) {
@@ -97,11 +89,6 @@ func TestSelfHostFrameViews(t *testing.T) {
 		})
 }
 
-// runSemanticProgram lowers every function of `program` but main through the
-// semantic path, runs it on each target in `wants` (x86-64-sanitize is the
-// x86-64 emit under FERN_SANITIZE), and checks its output starts with that
-// target's want and its allocations balance. notSpliced lists functions whose
-// bodies must remain rather than being spliced into their callers.
 func runSemanticProgram(t *testing.T, name, program string, produced []string, wants map[string]string, notSpliced ...string) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
@@ -128,7 +115,6 @@ func runSemanticProgram(t *testing.T, name, program string, produced []string, w
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			// A function spliced into every caller was produced there.
 			for _, fn := range produced {
 				if !strings.Contains(diagnostics.String(), "produced "+fn+"\n") && !strings.Contains(diagnostics.String(), "spliced "+fn+"\n") {
 					t.Fatalf("%s was not produced:\n%s", fn, diagnostics.String())

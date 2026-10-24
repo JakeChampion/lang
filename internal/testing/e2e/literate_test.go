@@ -9,10 +9,6 @@ import (
 	"testing"
 )
 
-// A literate `.fern.md` document — Knuth-style named chunks, defined
-// out of narrative order — tangles and runs end to end through
-// `fern -interp`. The root chunk pulls the helper in *before* it is
-// textually defined, which is the whole point of named chunks.
 const factLiterate = "# Factorial\n" +
 	"\n" +
 	"The program is assembled from named chunks:\n" +
@@ -52,9 +48,6 @@ const factLiterate = "# Factorial\n" +
 	"}\n" +
 	"```\n"
 
-// `fern -interp FILE.fern.md` tangles the literate document in memory
-// and runs it: out-of-order chunks resolve, main() returns 5! = 120,
-// and that becomes the exit code.
 func TestLiterateInterpEndToEnd(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -76,8 +69,6 @@ func TestLiterateInterpEndToEnd(t *testing.T) {
 	}
 }
 
-// `fern -tangle FILE.fern.md` writes plain Fern source with the chunks
-// expanded in dependency order (imports, then fact, then main).
 func TestLiterateTangleStdout(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -93,19 +84,14 @@ func TestLiterateTangleStdout(t *testing.T) {
 		t.Fatalf("tangle failed: %v\nstderr: %s", err, errb.String())
 	}
 	got := out.String()
-	// No literate machinery leaks into the tangled source.
 	if strings.Contains(got, "<<") || strings.Contains(got, "# Factorial") {
 		t.Errorf("tangled output still contains literate markup:\n%s", got)
 	}
-	// fact must be defined before main uses it (dependency order).
 	if i, j := strings.Index(got, "function fact"), strings.Index(got, "function main"); i < 0 || j < 0 || i > j {
 		t.Errorf("expected fact defined before main in tangled output:\n%s", got)
 	}
 }
 
-// `fern -weave FILE.fern.md` writes a cross-referenced Markdown reading
-// document: prose survives, chunks get ⟨name⟩≡ labels, references show
-// as ⟨ref⟩, and a "used in" footer cross-links them.
 func TestLiterateWeaveStdout(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -128,30 +114,23 @@ func TestLiterateWeaveStdout(t *testing.T) {
 	}
 }
 
-// A type error inside a chunk is reported against the line the author
-// wrote in the `.fern.md` document — not the line in the generated,
-// reordered source. This is the literate diagnostic-remapping contract.
 func TestLiterateDiagnosticPointsAtDocumentLine(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	// The offending line ("let f: i32 = "oops";") is deliberately late
-	// in the document but, after tangling, would land early in the
-	// generated source — so a naive (non-remapped) diagnostic would
-	// report the wrong line.
-	doc := "# Buggy\n" + // line 1
-		"\n" + // 2
-		"```fern\n" + // 3
-		"<<*>>=\n" + // 4
-		"<<main>>\n" + // 5
-		"```\n" + // 6
-		"\n" + // 7
-		"```fern\n" + // 8
-		"<<main>>=\n" + // 9
-		"function main(): i32 {\n" + // 10
-		"    let f: i32 = \"oops\";\n" + // 11  <-- type error here
-		"    return f;\n" + // 12
-		"}\n" + // 13
-		"```\n" // 14
+	doc := "# Buggy\n" +
+		"\n" +
+		"```fern\n" +
+		"<<*>>=\n" +
+		"<<main>>\n" +
+		"```\n" +
+		"\n" +
+		"```fern\n" +
+		"<<main>>=\n" +
+		"function main(): i32 {\n" +
+		"    let f: i32 = \"oops\";\n" +
+		"    return f;\n" +
+		"}\n" +
+		"```\n"
 	src := filepath.Join(dir, "buggy.fern.md")
 	if err := os.WriteFile(src, []byte(doc), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
@@ -165,8 +144,6 @@ func TestLiterateDiagnosticPointsAtDocumentLine(t *testing.T) {
 		t.Fatalf("expected -check to fail on a type error\nstdout: %s", out.String())
 	}
 	msg := errb.String()
-	// The diagnostic must reference the document file and the document
-	// line (11), and render the line the author actually wrote.
 	if !strings.Contains(msg, "buggy.fern.md:11:") {
 		t.Errorf("diagnostic should point at buggy.fern.md line 11, got:\n%s", msg)
 	}

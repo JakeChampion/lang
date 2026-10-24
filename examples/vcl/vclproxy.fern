@@ -1,32 +1,3 @@
-// examples/vcl/vclproxy.fern — a real HTTP caching reverse proxy, driven
-// by VCL.
-//
-//   $ fern -target x86-64-linux -o vclproxy vclproxy.fern
-//   $ ./vclproxy testdata/proxy.vcl 8080
-//   $ curl -i http://127.0.0.1:8080/some/path
-//
-// This is the whole stack working end to end: a real listening socket,
-// a real HTTP/1.1 request parsed off the wire, the policy's own
-// subroutines deciding what happens, a real TCP fetch from the declared
-// backend on a miss, an in-memory cache that survives between requests,
-// and a real response written back.
-//
-// The policy is parsed and CHECKED once at startup, exactly as `varnishd`
-// loads VCL: a policy with a scoping error never reaches the accept loop.
-//
-// Two known gaps, both from the runtime rather than the design:
-//
-//   * `serve.run` does not surface the peer address, so `client.ip` comes
-//     from `X-Forwarded-For` when the request carries one and is
-//     127.0.0.1 otherwise. An ACL on `client.ip` is therefore only as
-//     trustworthy as that header — which is to say, not, unless something
-//     in front is setting it.
-//   * The accept loop is single-threaded, so the cache needs no locking.
-//     That is why a plain `Cell` is sound here and would not be under
-//     concurrency.
-//
-// The sockets are native builtins: this program compiles and runs, it
-// does not work under `fern -interp`.
 import "std/string";
 import "std/i32";
 import "std/i64";
@@ -46,9 +17,6 @@ import "./machine";
 import "./wire";
 import "./store";
 
-// real_fetch sends `bereq` to the declared backend through std/fetch. This
-// is the one function that separates the proxy from the mock origin the
-// tests use; everything above it is the same code.
 function real_fetch(b: machine.Backend, t: runtime.Txn): machine.FetchOut {
   let empty: runtime.Headers = runtime.headers_new();
   let host: string = b.host;
@@ -65,9 +33,6 @@ function real_fetch(b: machine.Backend, t: runtime.Txn): machine.FetchOut {
       return machine.FetchOut { status: 0, reason: "", headers: empty, body: "", ttl: 0.0 - 1.0, ok: false, err: "backend '" + b.name + "': " + e.message() };
     }
   }
-  // The proxy's messages hold text, so a non-UTF-8 origin response is a
-  // backend error here rather than something to reinterpret. A proxy
-  // that must pass binary bodies through needs byte-bodied messages.
   let body: string = "";
   match (resp.body_text()) {
     Some(text) => {
@@ -78,8 +43,6 @@ function real_fetch(b: machine.Backend, t: runtime.Txn): machine.FetchOut {
     }
   }
   let h: runtime.Headers = wire.headers_of(resp.headers);
-  // An origin's Cache-Control is what decides how long its answer may be
-  // kept; without one the built-in default applies.
   let ttl: f64 = 0.0 - 1.0;
   match (resp.headers.get("Cache-Control")) {
     Some(cc) => {
@@ -95,8 +58,6 @@ function real_fetch(b: machine.Backend, t: runtime.Txn): machine.FetchOut {
   return machine.FetchOut { status: resp.status as i64, reason: http.http_status_text(resp.status), headers: h, body: body, ttl: ttl, ok: true, err: "" };
 }
 
-// client_ip_of reads the forwarded address, since the accept loop does not
-// expose the peer. The FIRST element is the original client, per RFC 7239.
 function client_ip_of(h: HeaderMap): string {
   match (h.get("X-Forwarded-For")) {
     Some(v) => {
@@ -113,9 +74,6 @@ function client_ip_of(h: HeaderMap): string {
   }
 }
 
-// to_response turns the finished transaction into what goes back on the
-// wire. `Content-Length` and `Connection` are added by the serialiser, so
-// forwarding the origin's copies would duplicate them.
 function to_response(o: machine.Outcome): HttpResponse {
   let h: HeaderMap = headers.header_map_new();
   let i: i32 = 0;
@@ -133,9 +91,6 @@ function to_response(o: machine.Outcome): HttpResponse {
   return HttpResponse { status: status, body: BodyText(o.txn.resp.body), headers: h, trailers: headers.header_map_new(), background: None };
 }
 
-// error_response is what a VCL runtime error produces. 503 with the
-// failing subroutine named, because a proxy that silently 200s on a broken
-// policy is worse than one that says so.
 function error_response(o: machine.Outcome): HttpResponse {
   let h: HeaderMap = headers.header_map_new();
   h = h.set("Content-Type", "text/plain");
@@ -158,13 +113,8 @@ function report_problems(path: string, ps: check.Problem[]): void {
   }
 }
 
-// serve wires the loaded policy to the socket.
-// The server holds the cache cell, so each request sees the previous updates.
 function serve(decls: ast.Decl[], port: i32): i32 {
   let d: machine.Driver = machine.Driver { run_sub: machine.interpreting(decls).run_sub, backends: machine.backends_of(decls), fetch: real_fetch };
-  // The cache outlives each request as a STRING: `Cell` holds a scalar or
-  // a string and nothing composite, so the cache is encoded on the way out
-  // and decoded on the way in. See store.fern for why, and for the cost.
   let cache: Cell[string] = cell_new("");
   let handler: (HttpRequest, platform.Host) => HttpResponse = (req: HttpRequest, plat: platform.Host): HttpResponse => {
     let names: string[] = req.headers.names;
@@ -219,8 +169,6 @@ function main(): i32 {
         report_diags(path, p.diags);
         return 2;
       }
-      // Checked at load time, as varnishd does: a policy with a scoping
-      // error never reaches the accept loop.
       let problems: check.Problem[] = check.check(p.decls);
       if (problems.len() > 0) {
         report_problems(path, problems);

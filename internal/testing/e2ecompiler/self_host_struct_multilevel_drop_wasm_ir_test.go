@@ -8,17 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructMultiLevelDropWasm is the wasm mirror of the MULTI-LEVEL
-// deep-drop (the x86 sibling is TestSelfHostStructMultiLevelDropIRX86_64): the
-// typed lowering's drop helpers `$__sem_drop_A/_B/_C` chain through every level.
-//
-// Reclaim is proven by a memory-cap differential: a long alloc->drop churn over a
-// fresh 3-level `A -> B -> C{ items }` stays bounded under a tight max-memory-size cap
-// with trap-on-grow-failure (the whole chain's boxes + the items buffer recycle onto
-// the freelist); a regression to the leaf-only drop leaks B.c + C.items past the cap
-// and traps. The WAT assertion pins that the non-leaf inner's $__sem_drop_B is
-// emitted. items goes through id so the chain is built on the heap rather than
-// placed as a constant.
 func TestSelfHostStructMultiLevelDropWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm multi-level deep-drop e2e")
@@ -28,7 +17,7 @@ func TestSelfHostStructMultiLevelDropWasm(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	const cap = "16777216" // 16 MiB
+	const cap = "16777216"
 	prog := `struct C { items: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 struct B { c: C, bt: i32 }

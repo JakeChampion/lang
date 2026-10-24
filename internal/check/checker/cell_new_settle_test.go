@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// An unsuffixed literal handed to `cell_new` settles to the element type its
-// destination names, as it does inside an array or a variant constructor
-// (#10220). A value that cannot settle there is still refused.
 func TestCellNewSettlesToItsDestination(t *testing.T) {
 	good := []struct{ name, src string }{
 		{"let", `function main(): i32 { let c: Cell[i64] = cell_new(1); c.set(5); let v: i64 = c.get(); return v as i32; }`},

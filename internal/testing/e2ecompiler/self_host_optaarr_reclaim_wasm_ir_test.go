@@ -4,8 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostOptAarrReclaimWasmIR runs the shared Option-array reclaim
-// cases on WASI, exercising the typed release pipeline.
 func TestSelfHostOptAarrReclaimWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range optAarrReclaimCases {

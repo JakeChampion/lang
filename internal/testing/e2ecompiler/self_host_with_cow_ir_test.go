@@ -6,38 +6,11 @@ import (
 	"testing"
 )
 
-// withCowIRCases pin the rc-guarded copy-on-write behind the self-host's
-// `a = a.with(i, v)` self-reassign on a scalar-element array.
-//
-// The in-place-versus-clone choice used to be a STATIC scan of the function
-// body for alias shapes (a bare-ident bind, a container literal element). Two
-// things were wrong with that. The scan missed most of the ways a buffer gets a
-// second holder — an append or `.with` into a nested array, an enum or Option
-// payload, a callee that stores or returns its parameter, an element read out
-// of a container, a foreach over the array — so every one of those shapes
-// wrote through the alias. And a static answer cannot separate the first
-// iteration of a loop from the rest, so a slot the scan did flag cloned the
-// whole buffer on every update (`core/bigint`'s limb loops: 4.78M allocations
-// against native's 15k on `od -t fL`).
-//
-// Now the slot's count is read at run time, as native's __fern_arr_cow_inplace
-// reads it: a sole owner writes in place, a shared buffer is copied once and the
-// copy is the sole owner from then on. A slot whose ownership is the hidden
-// "$ownflag" bit (a borrowed parameter or a foreach / match projection the body
-// rebinds) copies while it holds the borrow and reads the count once it owns a
-// replacement.
-//
-// Each case is oracle-checked against the interpreter under FERN_STRICT_IR, and
-// its allocation census must balance at live 0 within `maxAllocs` — a loop of
-// a hundred updates that allocated a hundred times is the volume this removes,
-// and an in-place write under a wrong uniqueness answer is a wrong exit code,
-// not a census reading.
 var withCowIRCases = []struct {
 	name      string
 	src       string
 	maxAllocs int64
 }{
-	// A sole owner: every update in place, nothing allocated past the literal.
 	{"unique-local", `function main(): i32 {
     let a: i32[] = [1, 2, 3];
     let i: i32 = 0;
@@ -46,7 +19,6 @@ var withCowIRCases = []struct {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 1},
-	// `let b = a`: the first update copies, the other ninety-nine write the copy.
 	{"local-alias", `function main(): i32 {
     let a: i32[] = [1, 2, 3];
     let b: i32[] = a;
@@ -68,7 +40,6 @@ var withCowIRCases = []struct {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 3},
-	// The alias is mutated and the original read back.
 	{"alias-mutated", `function main(): i32 {
     let a: i32[] = [1, 2, 3];
     let b: i32[] = a;
@@ -79,7 +50,6 @@ var withCowIRCases = []struct {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 2},
-	// core/bigint's `__bi_mul_small` shape: a local bound from a borrowed param.
 	{"param-alias", `@noinline
 function churn(p: u64[]): u64 {
     let cur: u64[] = p;
@@ -95,7 +65,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 2},
-	// `BigInt.to_string`'s shape: a local bound from a struct field.
 	{"field-alias-local", `struct Box { mag: u64[], n: i32 }
 function main(): i32 {
     let b: Box = Box { mag: [1u64, 2u64, 3u64], n: 0 };
@@ -123,9 +92,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 3},
-	// A borrowed parameter updated directly: the borrow is copied once, the
-	// owned replacement is written in place, and the frame releases it at exit
-	// because an i32 result cannot hand it back.
 	{"param-direct", `@noinline
 function churn(p: i32[], n: i32): i32 {
     let i: i32 = 0;
@@ -140,8 +106,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 2},
-	// The same, handing the replacement back — and a zero-update call hands the
-	// borrow back untouched.
 	{"param-direct-u64-returned", `@noinline
 function churn(p: u64[], n: i32): u64[] {
     let i: i32 = 0;
@@ -172,7 +136,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 2},
-	// Every element width the scalar path admits, each with a live alias.
 	{"widths", `function main(): i32 {
     let a: u8[] = [1u8, 2u8];
     let b: u8[] = a;
@@ -198,7 +161,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 8},
-	// Holders the static alias scan credited.
 	{"struct-lit-alias", `struct H { xs: i32[] }
 function main(): i32 {
     let a: i32[] = [1, 2, 3];
@@ -246,9 +208,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 2},
-	// A holder created AFTER each update and kept across the back edge: the
-	// buffer is shared at every update, so every update copies — the volume is
-	// the program's, not the compiler's.
 	{"backedge-alias", `function main(): i32 {
     let a: i32[] = [1, 2, 3];
     let keep: i32[] = [];
@@ -266,8 +225,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 101},
-	// Holders the static alias scan did NOT credit: each of these wrote through
-	// the alias before the count was read at run time.
 	{"enum-payload-alias", `enum E { Hold(i32[]), Empty }
 function main(): i32 {
     let a: i32[] = [1, 2, 3];
@@ -356,9 +313,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 4},
-	// A row stored into a nested array by `.with` is held by the container, so
-	// the container takes a count of it — the `.with` twin of the append arm's
-	// retain (the row is not released: the nested array is a leak-only class).
 	{"elem-store-alias", `function main(): i32 {
     let a: i32[] = [1, 2, 3];
     let outer: i32[][] = [[0], [0]];
@@ -370,7 +324,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// A foreach over the array the body rebinds reads the value held at entry.
 	{"foreach-iter-rebound", `function main(): i32 {
     let a: i32[] = [1, 2, 3];
     let seen: i32 = 0;
@@ -385,8 +338,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// Projections the body rebinds: the hidden ownership flag copies the borrow
-	// once and writes the owned replacement in place.
 	{"foreach-row-projection", `function main(): i32 {
     let outer: i32[][] = [[1, 2, 3], [4, 5, 6]];
     let sum: i32 = 0;
@@ -449,11 +400,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 3},
-	// An if-expression handing back a local: the value block is inlined, so
-	// its mention of `a` is no capture and `a` stays a plain slot, and the
-	// ident leaf takes the alias retain so `b` owns the reference its exit
-	// sweep releases. Before: `a` was boxed into a capture cell for the whole
-	// function and every update cloned into the cell with no release, 103 / 3.
 	{"if-expression-alias", `function main(): i32 {
     let a: i32[] = [1, 2, 3];
     let c: i32[] = [4];
@@ -477,8 +423,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 2},
-	// The underflow is read after the owning frame's exit sweep, which is where
-	// an unretained if-expression result was released a second time.
 	{"if-expression-alias-exit-sweep", `@noinline
 function exercise(): i32 {
     let a: i32[] = [1, 2, 3];
@@ -494,9 +438,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 2},
-	// The same second holder read out of a struct field, a nested-array element
-	// and a tuple element: each is the container-read retain the `let` ladder
-	// applies, and each exited 99 from the sweep before the leaf took it.
 	{"if-expression-field-leaf-exit-sweep", `struct Box { mag: u64[], n: i32 }
 @noinline
 function exercise(): i32 {
@@ -560,10 +501,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 4},
-	// The indexed array is a nested-array STRUCT FIELD. The uncounted leaf let
-	// the binding's sweep free a row the struct still holds; the struct is
-	// handed back and a caller that allocates over the freed row reads 7 for
-	// 1. Nested arrays are a leak-only class, so the exit code is the pin.
 	{"if-expression-field-index-leaf-handback", `struct Box { grid: i32[][], n: i32 }
 @noinline
 function mk(): Box {
@@ -587,7 +524,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// A doubly-indexed element, the same read one level deeper.
 	{"if-expression-nested-index-leaf-handback", `@noinline
 function mk(): i32[][][] {
     let m: i32[][][] = [[[1, 2], [3]], [[4]]];
@@ -610,7 +546,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// The indexed array is a TUPLE element holding a nested array.
 	{"if-expression-tuple-nested-index-leaf-handback", `@noinline
 function mk(): i32[][] {
     let t: (i32, i32[][]) = (2, [[1, 2], [3]]);
@@ -633,7 +568,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// The same receiver one index deeper: a tuple element holding `T[][][]`.
 	{"if-expression-tuple-nested2-index-leaf-handback", `@noinline
 function mk(): i32[][][] {
     let t: (i32, i32[][][]) = (2, [[[1, 2], [3]], [[4]]]);
@@ -671,11 +605,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 3},
-	// A string[] keeps the static clone: its elements are counted references
-	// the scalar path does not admit.
-	// #9191: `let b = a; a = a.append(x)`. The plain push un-shares into a fresh
-	// buffer and leaves the original to `b`; the store releases this frame's
-	// reference to it, so `b`'s sweep is the one free of the original.
 	{"alias-append", `function main(): i32 {
     let a: i32[] = [1, 2, 3];
     let b: i32[] = a;
@@ -685,9 +614,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 2},
-	// The same target grown a hundred times: after the un-share every grow
-	// supersedes a buffer only this frame holds, and each is released as the
-	// copy replaces it (7 on x86-64: the un-share and the doublings).
 	{"alias-append-loop", `function main(): i32 {
     let a: i32[] = [1, 2, 3];
     let b: i32[] = a;
@@ -698,7 +624,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 8},
-	// Both holders grow: each un-shares once and releases what it superseded.
 	{"alias-append-both", `function main(): i32 {
     let a: i32[] = [1, 2, 3];
     let b: i32[] = a;
@@ -710,7 +635,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 3},
-	// The 8-byte widths take the same store.
 	{"alias-append-wide", `function main(): i32 {
     let a: i64[] = [1, 2, 3];
     let b: i64[] = a;
@@ -724,9 +648,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 4},
-	// The foreach snapshot is the same alias, bound by the lowering rather
-	// than the source; the loop reads the entry buffer and the body's grow
-	// un-shares away from it.
 	{"alias-append-foreach", `function main(): i32 {
     let a: i32[] = [1, 2, 3];
     let n: i32 = 0;
@@ -739,10 +660,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 2},
-	// #9190: a match on an `Option[i32[]]` LOCAL bound the payload by the
-	// walk's element tag, so `xs.append(v)` keyed `i32.append` and bailed.
-	// The payload is spelled as the array it is; the arm binds it borrowed
-	// from the box, and the rebind un-shares away from it.
 	{"option-local-payload-append", `function main(): i32 {
     let o: Option[i32[]] = Some([1, 2, 3]);
     let n: i32 = 0;
@@ -765,8 +682,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 3},
-	// The nested payload spells one level deeper; nested arrays are a
-	// leak-only class, so the exit code is the pin.
 	{"option-local-nested-payload-append", `function main(): i32 {
     let o: Option[i32[][]] = Some([[1, 2], [3]]);
     let n: i32 = 0;
@@ -778,13 +693,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// The Some-arm binding of a scalar-array payload ESCAPES: returned from
-	// the arm, and handed to a call. Each refused the consuming match once,
-	// which left the box to leak and, with the payload bound as the array
-	// it is, its buffer too (2 / 0 on the return shape). A scalar-array
-	// payload's escapes are counted or flag-tracked, so the candidate is
-	// admitted: the claimed reference moves out with the return, the box
-	// goes at the match, and the caller's sweep frees the buffer.
 	{"option-payload-return", `@noinline
 function pick(i: i32): i32[] {
     let o: Option[i32[]] = Some([i, i + 1]);
@@ -809,12 +717,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// A borrowed STRUCT param or receiver handed back bare is COUNTED (#9203):
-	// the callee retains it exactly as it does an array, the binding owns the
-	// count it holds, and the caller gives the extra count back where the result
-	// turns out to be the argument's own box — at a dying source's last-use
-	// release, at a self-rebind, at a read-through. Each row read allocs / 0 on
-	// the parent commit (the credits were refused for the uncounted handback).
 	{"struct-handback-bind", `struct Big { neg: boolean, mag: u64[] }
 @noinline
 function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }; }
@@ -833,12 +735,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 2},
-	// A counted member's result read THROUGH a field, both paths in one
-	// expression. The release is the field walk gated on the temp being the sole
-	// owner, then the box dec: on the identity path the receiver still holds the
-	// box so the walk does not fire, and on the fresh path the temp owns the
-	// literal outright. The bare dec alone stranded the count the callee's field
-	// read had added (#9235).
 	{"struct-handback-readthrough", `struct Big { neg: boolean, mag: u64[] }
 @noinline
 function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }; }
@@ -855,13 +751,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 4},
-	// A forwarding LAYER between the caller and the producer, written as a
-	// method: it must balance exactly as the same layer written as a free
-	// function does, rather than leak one buffer a round by dropping the
-	// receiver box-only (#9235). Three rows: the
-	// fresh path through the layer, the same with the layer's own identity return
-	// present, and the identity path, where the result IS the receiver's box and
-	// an over-release would read 99 rather than a leak.
 	{"struct-handback-fwd-method", `struct Big { neg: boolean, mag: u64[] }
 @noinline
 function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }; }
@@ -916,8 +805,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 4},
-	// Two layers, so the row the outer one earns has to come from the row the
-	// inner one earned in an earlier pass — the fixpoint, not a single lookahead.
 	{"struct-handback-fwd-two-layers", `struct Big { neg: boolean, mag: u64[] }
 @noinline
 function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }; }
@@ -938,10 +825,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 4},
-	// The same program written WITHOUT the annotations. The credit is resolved
-	// from the callee's declared return type the way the
-	// `dyn T` arm already does it, so the unannotated spelling reclaims like
-	// its annotated twin rather than leaking the box and its buffer (#9224).
 	{"struct-handback-bind-unannotated", `struct Big { neg: boolean, mag: u64[] }
 @noinline
 function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }; }
@@ -1015,12 +898,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 3},
-	// The fresh path of the same method reads `a.mag` into a local before
-	// forwarding it, so the callee is neither a receiver borrow nor
-	// identity-only. The receiver must still get its deep drop rather than a
-	// box-only one, which would never give back the count the callee's field
-	// read added: both owners take the rc-gated field walk, and whichever
-	// reaches rc 1 walks the fields. A box-only drop reads allocs / allocs - 1.
 	{"struct-handback-fresh-path", `struct Big { neg: boolean, mag: u64[] }
 @noinline
 function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }; }
@@ -1070,10 +947,6 @@ function main(): i32 {
 }`, 0},
 }
 
-// withCowCensus reads a run's leakcheck summary and holds it to the case's
-// contract: balanced at live 0, and no more allocations than the bound. A zero
-// bound pins the exit code only — the case's holder is a leak-only class whose
-// census this change does not own.
 func withCowCensus(t *testing.T, name, stderr string, maxAllocs int64) {
 	t.Helper()
 	if maxAllocs == 0 {

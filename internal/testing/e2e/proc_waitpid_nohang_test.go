@@ -1,26 +1,3 @@
-// `proc_waitpid_nohang` (#8374) end to end on every backend that provides it.
-//
-// The primitive answers the question a blocking `proc_waitpid(-1)` loses.
-// wait4's negative-pid convention reaps whichever child exits first, which is
-// how a supervisor waits on several children with one call — but the builtin
-// reports only the STATUS, so the pid is gone. One nohang probe per candidate
-// recovers it: a child already reaped answers -ECHILD where a live one answers
-// -1. `timeout` is the first caller, using it to tell its command's exit from
-// its deadline timer's.
-//
-// The probe measures each of the three answers, because a lowering that
-// dropped WNOHANG would still compile and would still pass anything that only
-// waited for a child which does exit:
-//
-//   - a live child answers -1 rather than blocking, which is the whole point,
-//   - -1 rather than 0, which is what wait4 itself returns there and what a
-//     clean exit decodes to,
-//   - a reaped child answers -ECHILD, which is the identity signal,
-//   - a signal death decodes to 128+signal, as the blocking sibling does.
-//
-// wasm has no leg at all: neither WASI preview has a process model to reap in,
-// so the `proc` capability withholds the builtin and E066 refuses the program
-// at check time. TestWASMProcWaitpidNohangRefused is that half.
 package e2e
 
 import (
@@ -31,7 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// Each failing step returns its own code.
 const procWaitpidNohangSource = `function main(): i32 {
     // No children at all: -ECHILD, the same failure the blocking sibling
     // reports. Not -1, which would claim a child is still running.
@@ -93,9 +69,6 @@ func TestArm64ProcWaitpidNohang(t *testing.T) {
 	}
 }
 
-// The interpreter cannot bare-fork (Go's runtime is threaded), so its whole
-// contract is the no-children answer — and it has to be -ECHILD rather than
-// -1, or a caller polling for a child that can never exist would spin.
 const procWaitpidNohangInterpSource = `function main(): i32 {
     if (proc_waitpid_nohang(0 - 1) != 0 - 10) { return 1; }
     if (proc_waitpid_nohang(1) != 0 - 10) { return 2; }
@@ -109,10 +82,6 @@ func TestInterpProcWaitpidNohang(t *testing.T) {
 	}
 }
 
-// The wasm answer is a refusal, and it has to arrive from the capability scan
-// rather than as an `unknown callee` out of the emitter — the difference
-// between "this target has no processes" and "the backend forgot one". Both
-// previews, since `proc` is withheld by each.
 func TestWASMProcWaitpidNohangRefused(t *testing.T) {
 	src := `function main(): i32 { return proc_waitpid_nohang(1); }`
 	prog, err := parser.Parse(src)

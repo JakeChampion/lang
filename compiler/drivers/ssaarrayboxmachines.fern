@@ -30,7 +30,6 @@ function sizes(body: string): void {
   for to in ["leaq 16(,%rdi,8), %rdi", "leaq 32(,%rdi,8), %rdi", "leaq 24(,%rdi,4), %rdi", "leaq 24(,%rsi,8), %rdi", "leaq 24(%rdi,%rdi,8), %rdi", "movq $48, %rdi"] {
     altered(body, request, to, false);
   }
-  // Both concrete record capacities fit32 bits; these are semantic positives.
   altered(body, request, "addq $3, %rdi\nshlq $3, %rdi", true);
   altered(body, request, "addl $3, %edi\nshll $3, %edi", true);
   altered(body, request, request + "\nshlq $64, %rdi", true);
@@ -41,13 +40,9 @@ function sizes(body: string): void {
 }
 
 function pops(body: string): void {
-  // A class the small list does not hold, or a stale flag, must take the call;
-  // the recycled block's next head must reach the slot, and nothing else may.
   for to in ["cmpq $40, %rdi", "cmpq $32, %rdi", "cmpq $2048, %rax", ""] {
     altered(body, "cmpq $2048, %rdi", to, false);
   }
-  // Only the two concrete capacities are certified, so a bound they both
-  // clear, or a condition they never take, is a semantic positive.
   for to in ["cmpq $48, %rdi", "cmpl $2048, %edi"] {
     altered(body, "cmpq $2048, %rdi", to, true);
   }
@@ -72,7 +67,6 @@ function pops(body: string): void {
   for to in ["", "pushq (%rax)", "popq (%rdi)", "pushq (%rax)\npopq (%rax)", "pushq (%rdi)\npopq (%rdi)", "pushq 8(%rax)\npopq (%rdi)", "pushq (%rax)\npopq 8(%rdi)", "pushq (%rax)\npopq (%rdi)\npushq (%rax)\npopq (%rdi)", "movq (%rax), %rcx\nmovq %rcx, (%rdi)", "movq (%rax), %rdi"] {
     altered(body, "pushq (%rax)\npopq (%rdi)", to, false);
   }
-  // The next head stays at S-16 after the pop, as the slot holds it.
   altered(body, "pushq (%rax)\npopq (%rdi)", "pushq (%rax)\npopq (%rdi)\nmovq (%rdi), %rdi\nmovq -8(%rsp), %rdi", true);
   altered(body, "pushq (%rax)\npopq (%rdi)", "pushq (%rax)\npopq (%rdi)\nmovq -8(%rsp), %rdi\nmovq %rdi, (%rdi)", false);
   for to in ["leaq __fern_large_freelist(%rip), %rax", "leaq __fern_freelist+8(%rip), %rax", "movq __fern_freelist(%rip), %rax", "leaq __fern_freelist(%rip), %rcx"] {
@@ -128,8 +122,6 @@ function identities(body: string): void {
     }
     i = i + 1;
   }
-  // An early save is valid because the subsequent capacity save overwrites
-  // its scratch. Restoring a register alone cannot rescue damaged return data.
   altered(body, "pushq %rdi", "pushq %rcx\nmovq $0, %rcx\npopq %rcx\npushq %rdi", true);
   altered(body, "movq %rdi, (%rax)", "movq %rcx, -16(%rsp)\nmovq %rdi, %rcx\nmovq %rcx, (%rax)\nmovq -16(%rsp), %rcx", false);
   altered(body, "popq %rdi", "movq %rdi, %rcx\npopq %rdi", false);
@@ -159,8 +151,6 @@ pub function run(output: string): void {
   require(selected.error == "" && selected.register_entry == -1, "actual selection");
   require(machine.check(output), "actual complete output");
   let body = selected.lines.join("\n");
-  // This deliberately omits the allocator definition. Success is ONLY the
-  // documented implication under the unproved allocator boundary contract.
   require(!fixture(body).contains("__fern_alloc:") && machine.check(fixture(body)), "conditional premise, not linkage");
   require(!machine.check("") && !machine.check(fixture("ret")), "missing effects");
   sizes(body);

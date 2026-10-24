@@ -5,13 +5,6 @@ import (
 	"testing"
 )
 
-// A generic call or a generic struct literal in a match arm's guard is
-// instantiated as one in the arm's body is: the monomorphisers walked the body
-// and passed the guard through, so `g(v, 1, 2)` kept its template name and the
-// typed lowering refused main (`call target has no semantic contract: g`),
-// which fernsmith's differential seed 386 reached, and `Holder { v: x }` kept
-// its base name (`unsupported record literal`). The guard reads the arm's own
-// binding.
 const genericCallInGuardSrc = `trait Tr {
   function m(self: Self, x: i32): i32;
 }

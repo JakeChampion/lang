@@ -11,19 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternRecordParamDeepNestedCustomProvider is the self-host port of
-// the deeper-nesting (arbitrary depth) record *parameter* gate
-// (docs/WIT-BRING-YOUR-OWN.md, Go-side TestExternRecordParamDeepNestedCustomProvider).
-// A self-host struct whose field is a struct whose field is itself a struct is
-// passed to an `@import` extern; the canonical ABI flattens every nested record
-// inline, so the leaves arrive as positional core args in declaration order. A
-// self-host struct field of struct type is a pointer, so a leaf nested N levels
-// deep is reached by deref-ing N inner value pointers then loading the leaf —
-// emitted by the recursive extern_emit_record_param_leaves.
-//
-// Shape: `record outer { l: mid, r: mid }`, `record mid { p: point, n: s32 }`,
-// `record point { x: s32, y: s32 }` — three levels. `sum-outer: func(o: outer) ->
-// s32` weights the six leaves so ordering (hence the deref recursion) is checked.
 func TestSelfHostExternRecordParamDeepNestedCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -51,9 +38,6 @@ func TestSelfHostExternRecordParamDeepNestedCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// sum-outer receives the doubly-nested record flattened to six i32 params in
-	// declaration order (l.p.x, l.p.y, l.n, r.p.x, r.p.y, r.n) and returns the
-	// weighted sum a + b*10 + c*100 + d*1000 + e*10000 + f*100000.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (func (export "local:test/sink@0.1.0#sum-outer") (param $a i32) (param $b i32) (param $c i32) (param $d i32) (param $e i32) (param $f i32) (result i32)

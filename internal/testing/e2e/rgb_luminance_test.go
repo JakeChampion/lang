@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/math.rgb_luminance / rgb_is_dark across
-// backends: the black/white extremes, the BT.601 channel weighting
-// (green reads brighter than red brighter than blue at equal value),
-// exact integer luma values, and the is_dark threshold that drives
-// readable-foreground selection. All integer math, so exact on every
-// backend. Returns 42 iff every check holds. Each leg skips itself when
-// its toolchain is absent.
 const rgbLuminanceProg = `
 import "std/math" as math;
 function main(): i32 {

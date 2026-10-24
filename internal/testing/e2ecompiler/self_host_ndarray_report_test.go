@@ -64,8 +64,6 @@ function main(): i32 {
 }
 `
 
-// reachesCall reports whether body calls sym, a call in tail position
-// leaving through a jump to it.
 func reachesCall(body, sym string) bool {
 	return strings.Contains(body, "call "+sym) || strings.Contains(body, "jmp "+sym)
 }

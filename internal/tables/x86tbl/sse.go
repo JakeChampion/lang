@@ -1,28 +1,13 @@
 package x86tbl
 
-// SSEHalf says which of the self-host assembler's two lookup functions
-// carries a row. The split is not cosmetic: x86_gas_emit consults the float
-// half before the integer one, so a row in the wrong half is reachable only
-// if no earlier arm claims the mnemonic first.
 type SSEHalf int
 
 const (
-	// SSEFloatHalf is x86_gas_sse_fp_op — the scalar and packed FLOAT forms.
 	SSEFloatHalf SSEHalf = iota
-	// SSEIntHalf is x86_gas_sse_int_op — the packed-INTEGER forms, all
-	// 66-prefixed.
 	SSEIntHalf
-	// SSENoHalf marks a row kept OUT of both lookups. movdqa / movdqu are
-	// the only ones: AT&T decides store-versus-load from which operand is
-	// the xmm, so they go to a dedicated encoder (x86_gas_movdq) rather
-	// than a table lookup that assumes a direction.
 	SSENoHalf
 )
 
-// SSEOp is one two-operand `[prefix] 0F op /r` form with an xmm destination.
-//
-// Prefix 0 means none — the packed-single forms take no mandatory prefix, and
-// the self-host writes those as a bare opcode rather than `0 * 256 + op`.
 type SSEOp struct {
 	Mnemonic string
 	Prefix   byte
@@ -30,9 +15,6 @@ type SSEOp struct {
 	Half     SSEHalf
 }
 
-// SSEOps is the two-byte-opcode SSE vocabulary, in the order the self-host
-// dispatch reads it — which is why this is a slice and not a map. Generating
-// the Fern side from a Go map would reorder it on every run.
 var SSEOps = []SSEOp{
 	{"addsd", 0xF2, 0x58, SSEFloatHalf},
 	{"subsd", 0xF2, 0x5C, SSEFloatHalf},
@@ -141,17 +123,12 @@ var SSEOps = []SSEOp{
 	{"psrlq", 0x66, 0xD3, SSEIntHalf},
 	{"psraw", 0x66, 0xE1, SSEIntHalf},
 	{"psrad", 0x66, 0xE2, SSEIntHalf},
-	// Not in either half — see SSENoHalf.
 	{"movdqu", 0xF3, 0x6F, SSENoHalf},
 	{"movdqa", 0x66, 0x6F, SSENoHalf},
 }
 
-// SSERegOnly is the rows whose source must be an xmm register. With a memory
-// source their opcode is another instruction: 0F 12 is movlps and 0F 16 is
-// movhps.
 var SSERegOnly = []string{"movhlps", "movlhps"}
 
-// SSEHalfOps is the rows of one half, in dispatch order.
 func SSEHalfOps(h SSEHalf) []SSEOp {
 	var out []SSEOp
 	for _, o := range SSEOps {

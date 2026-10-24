@@ -1,7 +1,7 @@
 import "core/int";
 
-// Leaving a value block does not run cleanup. The block-local binding stays
-// available until iteration exit, and replay observes its replacement.
+
+
 function main(): i32 {
     let seen: i32 = 0;
     let before: i32 = 0;

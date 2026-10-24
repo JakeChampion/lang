@@ -14,8 +14,6 @@ import (
 	"time"
 )
 
-// WorkersPerCPUServerSource is a supervised server with the
-// default options, whose worker count is one per processing unit.
 func WorkersPerCPUServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -29,11 +27,6 @@ function main(): i32 {
 `)
 }
 
-// CheckWorkersPerCPU waits for the supervisor at cmd to have forked one
-// worker per processing unit the test process may use (the affinity
-// mask Fern's `cpu_count()` and Go's runtime.NumCPU both count), read
-// from the supervisor's children under /proc, and for the service to
-// answer.
 func CheckWorkersPerCPU(t *testing.T, cmd *exec.Cmd, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -62,8 +55,6 @@ func CheckWorkersPerCPU(t *testing.T, cmd *exec.Cmd, addr string) {
 	}
 }
 
-// BurstServerSource is a supervised server with four workers
-// and a 100 ms accept grace, answering everything at once.
 func BurstServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -78,11 +69,6 @@ function main(): i32 {
 `)
 }
 
-// CheckShutdownAfterBurst answers 64 connections in a row over the
-// four workers and then sends SIGTERM: every worker must exit. A wake-up
-// over the shared listener can reach a worker that another beat to the
-// connection, and one held in a blocking accept from then on would
-// never see the signal.
 func CheckShutdownAfterBurst(t *testing.T, cmd *exec.Cmd, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -100,8 +86,6 @@ func CheckShutdownAfterBurst(t *testing.T, cmd *exec.Cmd, addr string) {
 	}
 }
 
-// OrphanedWorkersServerSource is a supervised server with two
-// workers.
 func OrphanedWorkersServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -116,11 +100,6 @@ function main(): i32 {
 `)
 }
 
-// CheckWorkersStopWithSupervisor SIGKILLs the supervisor at cmd while an
-// idle keep-alive connection is open: the supervisor forwards nothing,
-// so each worker must see its parent's exit itself and shut down. The
-// idle connection is closed, both workers exit, and with them the last
-// holder of the listener, so the port refuses connections.
 func CheckWorkersStopWithSupervisor(t *testing.T, cmd *exec.Cmd, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -170,9 +149,6 @@ func CheckWorkersStopWithSupervisor(t *testing.T, cmd *exec.Cmd, addr string) {
 	}
 }
 
-// ParentGoneProbe forks: the parent prints the child's pid and exits, and
-// the child, once its parent has long gone, prints what `watch_parent`
-// answers and exits.
 func ParentGoneProbe() string {
 	return `import "std/async";
 import "core/int";
@@ -190,10 +166,6 @@ function main(): i32 {
 `
 }
 
-// CheckParentGone drives a started ParentGoneProbe at cmd whose stdout is
-// `out`: once its parent has exited, the child's watch_parent answers
-// -ESRCH (-3) when the kernel reparented it to init, and 0 when a
-// subreaper took it, which hides the parent's death from it.
 func CheckParentGone(t *testing.T, cmd *exec.Cmd, out io.Reader) {
 	t.Helper()
 	lines := bufio.NewScanner(out)

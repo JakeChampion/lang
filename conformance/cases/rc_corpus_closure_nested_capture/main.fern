@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Stage 3 safety: a NESTED closure captures the outer array via
-// a CaptureRef (not inc'd at MakeEnv), so its drop must fall
-// back to the generic env-only path — the per-closure thunk's
-// unconditional capture-drop would over-release it. outer(0) →
-// inner(1) → xs[2] + 0 + 1 = 31. Counter must stay 0.
+
+
+
+
+
+
+
+
 import "core/int";
 function main(): i32 {
     let xs: i32[] = [10, 20, 30];

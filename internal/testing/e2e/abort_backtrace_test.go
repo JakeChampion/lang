@@ -17,13 +17,6 @@ import (
 
 var backtraceHexRe = regexp.MustCompile(`0x[0-9a-f]{16}`)
 
-// deepAbortSrc is the shared inner→mid→main chain: `inner` indexes past the
-// end of a 3-element array, so the abort fires three frames deep and a walk
-// has something to report.
-// @noinline prevents inlining and arithmetic after calls prevents tail calls.
-// Thirteen distinct live values cross calls in every function: they exceed
-// both native saved-register pools, so spill slots require real frame pointers
-// even when an optimized x86 caller could otherwise use a bare frame.
 const deepAbortSrc = `@noinline function step(n: i64): i64 { return n + 1; }
 @noinline function inner(xs: i32[]): i32 {
   let a: i64 = step(xs.len() as i64);
@@ -76,11 +69,6 @@ function main(): i32 {
 }
 `
 
-// buildAndAbort compiles deepAbortSrc with `-g` for target (plus extraArgs,
-// with extraEnv added to the COMPILER's environment — the backtrace toggle is
-// a build-time switch), runs the binary, and asserts the abort's exit code and
-// cause line. Returns the binary path and its stderr for the caller to make
-// its backtrace-specific assertions against.
 func buildAndAbort(t *testing.T, target string, run func(bin string) *exec.Cmd, extraArgs, extraEnv []string) (string, string) {
 	t.Helper()
 	bin := buildFernCLI(t)
@@ -101,9 +89,6 @@ func buildAndAbort(t *testing.T, target string, run func(bin string) *exec.Cmd, 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	_ = cmd.Run()
-	// The opt-out suppresses the backtrace, never the safety contract: an
-	// out-of-range index still exits 134 and still names its cause
-	// (ARRAY-BOUNDS.md).
 	if code := cmd.ProcessState.ExitCode(); code != 134 {
 		t.Errorf("exit = %d, want 134", code)
 	}
@@ -114,10 +99,6 @@ func buildAndAbort(t *testing.T, target string, run func(bin string) *exec.Cmd, 
 	return out, errOut
 }
 
-// runBacktraceCase asserts the DEFAULT build's frame-pointer backtrace (#5538
-// slice 2) prints return addresses that resolve — through the -g .symtab — to
-// mid, main, and _start (inner is the aborting leaf; the printed addresses are
-// the *return* sites up the chain).
 func runBacktraceCase(t *testing.T, target string, run func(bin string) *exec.Cmd) {
 	t.Helper()
 	out, errOut := buildAndAbort(t, target, run, nil, nil)
@@ -135,9 +116,6 @@ func runBacktraceCase(t *testing.T, target string, run func(bin string) *exec.Cm
 		t.Fatalf("Symbols() (expected .symtab under -g): %v", err)
 	}
 	sort.Slice(syms, func(i, j int) bool { return syms[i].Value < syms[j].Value })
-	// .symtab carries the emitted symbol, so resolving an address to a source
-	// name means demangling it — what any symbolising tool does with a mangled
-	// table. `_start` is not a Fern function and comes back untouched.
 	resolve := func(a uint64) string {
 		for _, s := range syms {
 			if s.Value <= a && a < s.Value+s.Size {
@@ -175,15 +153,11 @@ func runBacktraceCase(t *testing.T, target string, run func(bin string) *exec.Cm
 	}
 }
 
-// TestX86_64AbortBacktrace: the x86-64 abort backtrace walks the rbp chain and
-// its frames resolve to the calling functions via the -g symbol table.
 func TestX86_64AbortBacktrace(t *testing.T) {
 	qemu := x86QemuOrEmpty(t)
 	runBacktraceCase(t, "x86-64-linux", func(bin string) *exec.Cmd { return runX86Bin(qemu, bin) })
 }
 
-// TestArm64AbortBacktrace is the arm64 parity check: the x29 frame-chain walk
-// produces the same resolved backtrace as x86-64.
 func TestArm64AbortBacktrace(t *testing.T) {
 	qemu := arm64QemuOrEmpty(t)
 	runBacktraceCase(t, "arm64-linux", func(bin string) *exec.Cmd {
@@ -194,8 +168,6 @@ func TestArm64AbortBacktrace(t *testing.T) {
 	})
 }
 
-// Debug metadata preserves the normal build's tail-call decisions for both
-// register and stack entries. Non-tail physical walks are exercised above.
 func TestArm64DebugPreservesTailCalls(t *testing.T) {
 	bin := buildFernCLI(t)
 	for _, tc := range []struct {
@@ -235,7 +207,6 @@ function main(): i32 { return mid(); }
 					if tc.register {
 						symbol += ".r"
 					}
-					// Zero-argument calls use the stack entry in both modes.
 					wantTail := tc.register
 					tail := "    b " + symbol + "\n"
 					call := "    bl " + symbol + "\n"
@@ -248,11 +219,6 @@ function main(): i32 { return mid(); }
 	}
 }
 
-// runBacktraceOffCase is the #5538 slice-4 opt-out: with the walk suppressed at
-// compile time the abort keeps its exit code and its cause line, but writes no
-// backtrace header and no addresses at all. Run for both surfaces — the
-// FERN_BACKTRACE=0 env var the issue names and the -backtrace=false CLI flag —
-// since they set the same compile-time switch by different routes.
 func runBacktraceOffCase(t *testing.T, target string, run func(bin string) *exec.Cmd) {
 	t.Helper()
 	for _, tc := range []struct {
@@ -275,14 +241,11 @@ func runBacktraceOffCase(t *testing.T, target string, run func(bin string) *exec
 	}
 }
 
-// TestX86_64AbortBacktraceOff: -backtrace=false / FERN_BACKTRACE=0 drops the
-// x86-64 walk without touching the exit code or the cause line.
 func TestX86_64AbortBacktraceOff(t *testing.T) {
 	qemu := x86QemuOrEmpty(t)
 	runBacktraceOffCase(t, "x86-64-linux", func(bin string) *exec.Cmd { return runX86Bin(qemu, bin) })
 }
 
-// TestArm64AbortBacktraceOff is the arm64 parity check for the opt-out.
 func TestArm64AbortBacktraceOff(t *testing.T) {
 	qemu := arm64QemuOrEmpty(t)
 	runBacktraceOffCase(t, "arm64-linux", func(bin string) *exec.Cmd {

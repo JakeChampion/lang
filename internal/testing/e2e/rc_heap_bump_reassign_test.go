@@ -4,18 +4,6 @@ import (
 	"testing"
 )
 
-// Struct reassignment-overwrite deep reclamation (RC-Perceus). A
-// self-overwrite of an owned struct local with a same-type struct
-// literal (`b = Box{ data: [...], tag: i }`) reuses the box in place
-// (tryStructReuseOverwrite), but before this slice it released the OLD
-// rc-tracked fields with a flat __fern_rc_dec — which doesn't free an
-// array field's buffer (rc_dec has no free path). So a REPLACED array
-// field leaked its buffer every iteration. The fix routes the old-field
-// release through a per-field deep drop (emitFieldDropOnStack →
-// __fern_arr_dec for arrays, __drop_* for nested), freeing the replaced
-// buffer at rc 0 while the helper's own is_unique gate keeps a
-// CARRIED-OVER field (e.g. `data: b.data`, eval-inc'd to rc>1) alive.
-
 func reassignReplacedFieldSrc(n string) string {
 	return `struct Box { data: i32[], tag: i32 }
 function main(): i32 {
@@ -32,10 +20,6 @@ function main(): i32 {
 }`
 }
 
-// reassignCarryOverSrc keeps the array field across iterations
-// (`data: b.data`); the carried-over buffer must NOT be freed (its
-// eval-inc makes it rc>1 at the old-field release, so is_unique is
-// false → dec only). Returns 0 iff value-correct AND no over-release.
 const reassignCarryOverSrc = `struct Box { data: i32[], tag: i32 }
 function main(): i32 {
     let b: Box = Box { data: [10, 20, 30], tag: 0 };

@@ -9,40 +9,12 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64NativeViaGoBackend drives the flipped `-target
-// arm64-darwin` path under the *Go x86-64 reference backend* — the backend
-// the unified `fern` CLI is built with on the Linux CI box. It builds the
-// CLI from fern.fern (which now `import`s arm64_native and assembles +
-// links the Mach-O in-process — no clang/ld64), emits a binary for each
-// program, and asserts a valid arm64 MH_EXECUTE. The main
-// TestSelfHostArm64DarwinBuilds additionally *executes* the binaries on the
-// macOS arm64 runner; this is the Linux-side structural guard.
-//
-// The cases deliberately span the instruction forms a real compiler emits:
-// string concat (the signed-offset `stp/ldp [sp, #off]` large-frame forms),
-// i64 math (`sxtw`), and bitwise ops (the register `lsl/lsr/asr` shifts) —
-// forms originally unhandled by arm64_native (the `ldp` offset form indexed
-// ops[3] out of range, a bounds abort that *looked* like a Go x86 backend
-// miscompile but was a real assembler gap; `stp [sp,#off]` was silently
-// mis-encoded as pre-index; the register shifts / `sxtw` were missing). See
-// SELF-HOST-REMAINING-PLAN.md (slice 3p) and the byte-pinned
-// TestSelfHostArm64OffsetPairGas.
-//
-// (This also guards the struct spread-update self-overwrite miscompile the
-// flip surfaced: `p = T { ...p, f: v }` of a parameter mis-lowered in the
-// shared IR FBIP-reuse fast path. It was originally worked around
-// with per-function local copies in arm64_native; those are gone now that the
-// IR bug is fixed (slice 3r / TestStructUpdateParamSpreadReuse), and this test
-// would surface a regression of that fix when arm64_native is compiled by the
-// Go x86 backend.)
 func TestSelfHostArm64NativeViaGoBackend(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
 		t.Skip("native x86-64 run required")
 	}
 
-	// Stage the full self-host project + fern.fern's transitive closure
-	// (incl. arm64_native.fern, which the flipped fern.fern now imports).
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")

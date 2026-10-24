@@ -8,54 +8,26 @@ import (
 	"testing"
 )
 
-// std/regex on the self-host IR path through the REAL module import. The
-// 2026-06-22 FEATURE-AUDIT recorded array-payload enums (#3720) — std/regex's
-// RNode variants RAlt / RSeq / RClass built during the recursive parse — as
-// crashing the self-host binary. That gap is now closed for the matching
-// surface: importing the real std/regex and calling regex_match compiles the
-// recursive RNode construction + the matcher through the self-host IR path and
-// matches the interpreter. Each case below exercises a different array-payload
-// RNode shape (alternation, character class, grouped repetition), routes "ir"
-// through the self-hosted x86-64 loader (asm_load_run), and is oracle-checked
-// against the interpreter.
 var regexModuleIRCases = []struct {
 	name string
 	src  string
 }{
-	// Alternation -> RAlt(RNode[]). "a|b" matches "b".
 	{"alt-match", `import "std/regex";
 function main(): i32 { if (regex.regex_match("a|b", "b")) { return 42; } return 0; }`},
-	// Alternation negative: "a|b" does not match "c".
 	{"alt-nomatch", `import "std/regex";
 function main(): i32 { if (!regex.regex_match("a|b", "c")) { return 42; } return 0; }`},
-	// #6049: alternation whose branches are SEQUENCES — RAlt(RSeq[]) — the
-	// shape that separated the six failing regex fixtures from the passing
-	// ones. `__rx_alt` builds its branches array out of `RParse.node` field
-	// reads, so the un-duped RSeq box was freed by the enclosing `first`'s
-	// struct drop and the freelist handed the block back for the RGroup that
-	// wraps it: a tree pointing at itself, and `__rx_match` alternated between
-	// its RGroup and RAlt arms until the stack ran out. A bare `a|b` (RAlt of
-	// RChar) never allocated a branch box, which is why it always passed.
 	{"alt-of-seq", `import "std/regex";
 function main(): i32 { if (regex.regex_match("(ab|cd)", "xxcdyy")) { return 42; } return 0; }`},
-	// #6049 sibling: anchored multi-way alternation, and a SEARCH that re-enters
-	// __rx_match once per start position — the second entry is where the swept
-	// enum-payload array binding (`RSeq(xs)` / `RAlt(xs)`) had already taken the
-	// buffer's count to zero.
 	{"anchored-alt", `import "std/regex";
 function main(): i32 {
     if (!regex.regex_match("^(cat|dog|bird)$", "dog")) { return 0; }
     if (!regex.regex_match("(foo|barbaz)qux", "aaaa barbazqux")) { return 0; }
     return 42;
 }`},
-	// Character class + repetition -> RClass / RStar. "[abc]+" matches "cab".
 	{"class-plus", `import "std/regex";
 function main(): i32 { if (regex.regex_match("[abc]+", "cab")) { return 42; } return 0; }`},
-	// Grouped repetition -> RSeq(RNode[]) under a repeat. "(ab)+c" matches "ababc".
 	{"group-plus", `import "std/regex";
 function main(): i32 { if (regex.regex_match("(ab)+c", "ababc")) { return 42; } return 0; }`},
-	// Capturing groups -> RGroup + the compiled RInst capture program
-	// (Pike-VM thread simulation with RThread[] state).
 	{"captures", `import "std/regex";
 function main(): i32 {
     let Some(m) = regex.regex_captures("(\\d+)-(\\d+)", "order 123-456 shipped") else { return 1; };
@@ -70,7 +42,6 @@ function require_regex_text(result: Option[string]): string {
     return "";
 }
 `},
-	// Non-capturing (?:...) group + captures_all over multiple matches.
 	{"captures-all", `import "std/regex";
 function main(): i32 {
     let Some(nc) = regex.regex_captures("(?:ab)+(c)", "ababc") else { return 1; };
@@ -86,7 +57,6 @@ function require_regex_text(result: Option[string]): string {
     return "";
 }
 `},
-	// Template replacement over capture spans and checked UTF-8 output.
 	{"replace-groups", `import "std/regex";
 function main(): i32 {
     if (require_regex_text(regex.regex_replace_all_groups("(\\w+)@(\\w+)", "a@b c@d", "$2@$1")) == "b@a d@c") { return 42; }
@@ -100,8 +70,6 @@ function require_regex_text(result: Option[string]): string {
     return "";
 }
 `},
-	// Named groups (?<name>…): RGroupData.name payload + the __rx_names walk
-	// + ${name} template through the self-host IR path.
 	{"named-groups", `import "std/regex";
 function main(): i32 {
     let Some(m) = regex.regex_captures("(?<y>\\d+)-(?<m>\\d+)", "12-34") else { return 1; };

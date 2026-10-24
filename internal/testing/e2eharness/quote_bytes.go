@@ -8,7 +8,6 @@ import (
 	"testing"
 )
 
-// WriteQuoteBytesFixture imports the actual GNU diagnostic module.
 func WriteQuoteBytesFixture(t testing.TB) string {
 	t.Helper()
 	lib, err := os.ReadFile(RepoPath("coreutils", "lib", "gnu.fern"))

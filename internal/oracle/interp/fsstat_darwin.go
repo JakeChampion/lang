@@ -4,14 +4,6 @@ package interp
 
 import "syscall"
 
-// fsStatFields on Darwin takes three calls, because its `struct statfs` has
-// the counts and NOT the name length: `statfs(2)` for the geometry, then
-// `pathconf(2)` — a real syscall here, where Linux has none — for each limit.
-//
-// Not constants. APFS and HFS+ both answer 255 today, but a mounted FAT or
-// SMB volume does not, and `pathchk` is the caller that would notice.
-//
-// The record has no fundamental block size either, so `frag_size` is f_bsize.
 func fsStatFields(path string) (rawFsStat, error) {
 	const (
 		pcNameMax = 4

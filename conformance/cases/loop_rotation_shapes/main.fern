@@ -1,46 +1,46 @@
-// The shapes a rotated loop can get wrong.
-//
-// Rotation moves a `while` / `for` test to the bottom, where it doubles as the
-// back edge, and guards entry with a copy. Four things have to survive that:
-//
-//   - a loop whose condition is false on arrival must not run its body once;
-//   - `continue` must land on the bottom test, and in a `for` must still run
-//     the step — landing at the body top instead loops forever;
-//   - `break` must leave past the bottom test, not through it;
-//   - a labelled `break` / `continue` must cross the inner loop's own guard
-//     and bottom test to reach the outer one.
-//
-// The hash is multiplicative and folds the loop variable in order, so a body
-// that runs the wrong number of times cannot land on the same answer by
-// cancellation. It overflows i32 on the way, which is fine and deterministic,
-// but leaves h negative — so the result is folded back into 0..250 before it
-// is returned. A fixture that returns a negative value reads as its low byte
-// through a process exit status and as the raw i32 through the wasm harness,
-// which is a disagreement in the fixture rather than in any backend.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 function main(): i32 {
   let h: i32 = 1;
 
   let i: i32 = 0;
   while (i < 5) { h = h * 31 + i; i = i + 1; }
 
-  // Guard must skip the body entirely.
+
   let z: i32 = 0;
   while (z > 10) { h = h * 7; z = z + 1; }
   for (let y: i32 = 9; y < 3; y = y + 1) { h = h * 7; }
 
-  // `continue` reaches the bottom test; the increment is in the body here, so
-  // a continue that skipped it would not terminate.
+
+
   let j: i32 = 0;
   while (j < 6) { j = j + 1; if (j % 2 == 0) { continue; } h = h * 13 + j; }
 
-  // `continue` in a `for` must still run the step.
+
   for (let q: i32 = 0; q < 6; q = q + 1) { if (q % 2 == 0) { continue; } h = h * 13 + q; }
 
   let k: i32 = 0;
   while (k < 100) { if (k == 4) { break; } h = h * 17 + k; k = k + 1; }
   for (let r: i32 = 0; r < 100; r = r + 1) { if (r == 4) { break; } h = h * 17 + r; }
 
-  // Labelled break/continue out of a nested loop.
+
   let a: i32 = 0;
   outer: while (a < 4) {
     a = a + 1;
@@ -55,8 +55,8 @@ function main(): i32 {
     }
   }
 
-  // A condition the cheapness test refuses (a call), so this loop keeps the
-  // unrotated shape — both forms have to agree on the same answer.
+
+
   let n: i32 = 0;
   while (n < five()) { h = h * 11 + n; n = n + 1; }
 

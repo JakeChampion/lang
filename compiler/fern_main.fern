@@ -1,17 +1,3 @@
-// compiler/fern_main.fern — the shipped `fern`: fern.fern's CLI carrying its
-// own stdlib, so it needs nothing beside the binary.
-//
-//     scripts/fern-embed-stage build/fern-embed
-//     fern -target <host> -embed build/fern-embed -o fern compiler/fern_main.fern internal/stdlib
-//
-// The stdlib, the diagnostic explanations and VERSION travel as `-embed`
-// assets and are written once, under a directory named by their digest, to
-// the user cache directory. That directory is the stdlib root every compile
-// reads, so the loader, diagnostics and the language server see ordinary
-// files, and `-explain` / `-version` read theirs beside the modules.
-// fern.fern stays the entry for builds that pass their stdlib root on the
-// command line (the bootstrap chain and the tests).
-
 import "./fern";
 import "./pkgfetch";
 import "./util";
@@ -26,9 +12,6 @@ function main(): i32 {
   return util.arr_push_cliff_report("fern", fern.run_with(args(), root, fern.Fetcher { fetch: pkgfetch.fetch }));
 }
 
-// stdlib_digest names the embedded tree by the SHA-256 of every asset's name
-// and contents, so a `fern` carrying a different one gets its own directory
-// and two binaries never share a stale one.
 function stdlib_digest(): string {
   let h: crypto.Sha256 = crypto.sha256_new();
   for a in __fern_assets() {
@@ -37,10 +20,6 @@ function stdlib_digest(): string {
   return slice_unchecked(h.final_hex(), 0, 16) + "";
 }
 
-// stdlib_root returns the directory holding the embedded tree, writing it
-// first when this digest has none. The files are written to a private
-// directory and renamed into place, so a reader never sees a partial tree;
-// losing that rename to a concurrent `fern` leaves the winner's identical tree.
 function stdlib_root(): string {
   let base: string = util.cache_base();
   if (base.len() == 0) {

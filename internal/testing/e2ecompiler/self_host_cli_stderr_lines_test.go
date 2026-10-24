@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// The driver's stderr reports are one line each. eprint appends the newline
-// itself, so a message that also ends in "\n" leaves a blank line after it, and
-// one split across several eprint calls comes out over several lines. stderr
-// is compared whole, trailing newline included, so either shape fails.
 func TestSelfHostCLIStderrIsOneLine(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -24,8 +20,6 @@ func TestSelfHostCLIStderrIsOneLine(t *testing.T) {
 	}
 	entry := write("ok.fern", "function main(): i32 {\n  return 0;\n}\n")
 	doc := write("doc.fern.md", "# doc\n\n```fern file=a.fern\nfunction main(): i32 { return 0; }\n```\n")
-	// A regular file standing where a directory is expected: a write under it
-	// fails with ENOTDIR even for root, which a read-only directory does not.
 	plain := write("plain", "x\n")
 
 	cases := []struct {
@@ -58,7 +52,6 @@ func TestSelfHostCLIStderrIsOneLine(t *testing.T) {
 		})
 	}
 
-	// The usage block is several lines, one eprint each; none of them is blank.
 	t.Run("usage-has-no-blank-lines", func(t *testing.T) {
 		cmd := exec.Command(h.cli)
 		var stderr strings.Builder

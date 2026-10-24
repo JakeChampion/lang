@@ -54,7 +54,6 @@ function declarations(output: ssaprepare.Output, row: ssaprepare.Emitted): void 
   check(coherent(output, row, lea, lea + "\n" + lea), false, "ambiguous symbol use");
   check(coherent(output, row, lea, "leaq absent(%rip), %rsi"), false, "missing declaration");
   check(coherent(output, row, lea, "leaq .SB0(%rip), %rsi"), false, "descriptor is not shape bytes");
-  // This API deliberately does not prove reachability, effects or stored shape.
   check(coherent(output, row, lea, "leaq .S0(%rip), %rcx"), true, "unused address remains boundary data");
   check(coherent(output, row, "movq $3, %rdi", "unknown_instruction"), true, "not a machine certificate");
   check(coherent(output, row, "movq %rsi, 0(%rax)", ""), true, "missing emitted store still requires machine proof");

@@ -5,15 +5,6 @@ import (
 	"testing"
 )
 
-// A fresh SCALAR `Option` consumed by a match one block deeper is released
-// (#6319's class, scalar arm): the scrutinee is a borrow, so the box is freed
-// after the match rather than leaked every round, the same as the flat
-// spelling. Both an inline ctor and a CALL init are covered, nested and flat;
-// a box released twice shows as `__rc_underflow_count() == -1`, which the
-// `*_flat_control` rows would catch.
-
-// The fn-scoped nested spelling. `__rc_underflow_count()` is the return value,
-// so an over-release shows up as a nonzero exit rather than as a byte count.
 const scalarOptNestedIfSrc = `function round(i: i32): i32 {
     let acc: i32 = 0;
     let o: Option[i32] = Some(i + 1);
@@ -31,7 +22,6 @@ function main(): i32 {
 }
 `
 
-// The `while` body, the other nesting #6127's note names.
 const scalarOptNestedWhileSrc = `function round(i: i32): i32 {
     let acc: i32 = 0;
     let o: Option[i32] = Some(i + 1);
@@ -51,8 +41,6 @@ function main(): i32 {
 }
 `
 
-// Bound from a CALL to a producer that returns a fresh Option rather than from
-// an inline ctor.
 const scalarOptCallNestedIfSrc = `function mk(i: i32): Option[i32] {
     if (i < 0) { return None; }
     return Some(i + 1);
@@ -74,8 +62,6 @@ function main(): i32 {
 }
 `
 
-// The call-init FLAT control. It must be released exactly once, and only the
-// underflow counter would show a second release.
 const scalarOptCallFlatSrc = `function mk(i: i32): Option[i32] {
     if (i < 0) { return None; }
     return Some(i + 1);
@@ -95,8 +81,6 @@ function main(): i32 {
 }
 `
 
-// The inline-ctor FLAT control. It must stay balanced and be released exactly
-// once.
 const scalarOptFlatSrc = `function round(i: i32): i32 {
     let acc: i32 = 0;
     let o: Option[i32] = Some(i + 1);
@@ -112,10 +96,6 @@ function main(): i32 {
 }
 `
 
-// BLOCK-scoped — the local declared inside a loop, with the match nested one
-// deeper again. Both inits appear in ONE program deliberately: running the two
-// locals' releases in the same block is what would surface an ordering bug
-// between them.
 const scalarOptBlockNestedSrc = `function mk(i: i32): Option[i32] {
     if (i < 0) { return None; }
     return Some(i + 1);
@@ -145,8 +125,6 @@ function main(): i32 {
 }
 `
 
-// The block-scoped FLAT control — already worked, and must keep working with
-// exactly one credit.
 const scalarOptBlockFlatSrc = `function mk(i: i32): Option[i32] {
     if (i < 0) { return None; }
     return Some(i + 1);
@@ -170,9 +148,6 @@ function main(): i32 {
 }
 `
 
-// The hazard: the arm binding is a scalar, but the OPTION itself is read again
-// after the match, so the box is still live where a drop inside the arm would
-// land.
 const scalarOptUsedAfterSrc = `function olen(o: Option[i32]): i32 { match (o) { Some(a) => { return a; }, None => { return 0; } } }
 function round(i: i32): i32 {
     let acc: i32 = 0;
@@ -200,10 +175,6 @@ func TestSelfHostScalarOptNestedMatchX86_64(t *testing.T) {
 
 	counts := func(t *testing.T, name, src string) (int64, int64, int64) {
 		t.Helper()
-		// NOT compared against `fern -interp` here, unlike the sibling reclaim
-		// suites: these programs return `__rc_underflow_count()`, which the
-		// interpreter has no rc runtime to answer, so it exits 1 on every one of
-		// them. The oracle IS the constant 0 — the counter is the detector.
 		asm := hevCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1"})
 		progBin := buildBin(t, gcc, dir, name, asm)
 		stderr, exit := hevRun(t, runner, progBin)
@@ -238,8 +209,6 @@ func TestSelfHostScalarOptNestedMatchX86_64(t *testing.T) {
 		{"call_init_flat_control", scalarOptCallFlatSrc},
 		{"block_scoped_nested", scalarOptBlockNestedSrc},
 		{"block_scoped_flat_control", scalarOptBlockFlatSrc},
-		// The option is read again after the match, so the box is live where a
-		// drop inside the arm would land; the underflow counter guards that.
 		{"read_after_the_enclosing_if", scalarOptUsedAfterSrc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

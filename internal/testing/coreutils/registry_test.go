@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// The corpus registry replaced a single map literal that every coreutils PR
-// appended to (#8840). Two properties came free from that literal and have to
-// be asserted now that it is gone: the compiler refused a duplicate key, and
-// writing a key at all required naming it next to every other one, so a key
-// for a utility that no longer exists was visible.
-
-// registryProbe is not a legal file name on any target, so registering it
-// cannot collide with a real utility.
 const registryProbe = "\x00probe"
 
 func TestRegisterCorpusRejectsDuplicates(t *testing.T) {
@@ -31,9 +23,6 @@ func TestRegisterCorpusRejectsDuplicates(t *testing.T) {
 	registerCorpus(registryProbe, cases)
 }
 
-// TestCorpusRegistryHasNoStrays is TestSelfHostCoreutilsCoverage's other
-// direction: a registration whose utility was deleted would otherwise sit in
-// the registry unreferenced, and the self-host leg would never run it.
 func TestCorpusRegistryHasNoStrays(t *testing.T) {
 	have := make(map[string]bool, len(corpusRegistry))
 	for _, util := range utilNames(t) {
@@ -46,16 +35,6 @@ func TestCorpusRegistryHasNoStrays(t *testing.T) {
 	}
 }
 
-// scripts/coreutils-bench had the same shape as the corpus map — one case
-// statement per utility, in one file (#8840) — and is now one file per utility
-// under scripts/coreutils-bench.d/. Missing one used to be a runtime error from
-// the bench's default arm, which nobody sees until they benchmark; this is the
-// same check, at test time.
-//
-// A `_`-prefixed file is a body shared by several utilities (the digests, the
-// base encodings), each of which has its own file sourcing it. No coreutils
-// utility name starts with `_`, so a shared body has no `.fern` of its own and
-// is held to the members that source it instead.
 func TestCoreutilsBenchWorkloadCoverage(t *testing.T) {
 	dir := filepath.Join(repoRoot(t), "scripts", "coreutils-bench.d")
 	entries, err := os.ReadDir(dir)
@@ -77,8 +56,6 @@ func TestCoreutilsBenchWorkloadCoverage(t *testing.T) {
 		unclaimed[name] = true
 	}
 
-	// A shared body is reached only through a member's one-line source, so the
-	// members are what say it is still live.
 	sourced := map[string]bool{}
 	for _, util := range utilNames(t) {
 		if !have[util] {
@@ -110,7 +87,4 @@ func TestCoreutilsBenchWorkloadCoverage(t *testing.T) {
 	}
 }
 
-// The one-line body a member of a shared group contains, and nothing else: an
-// arm that sourced a shared body conditionally would not be matched, and is
-// not a shape any member has.
 var benchSharedSource = regexp.MustCompile(`(?m)^\.[ \t]+"?scripts/coreutils-bench\.d/(_[A-Za-z0-9_]+)\.sh"?[ \t]*$`)

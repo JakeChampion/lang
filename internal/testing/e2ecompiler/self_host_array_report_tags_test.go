@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// Pin every public reason constant to both its ordinal and printed tag. A
-// table reorder must not silently change the meaning of a planner decision.
 func TestSelfHostArrayReportReasonTags(t *testing.T) {
 	groups := []struct {
 		prefix, table string

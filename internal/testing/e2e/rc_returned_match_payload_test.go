@@ -10,17 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A pair-form match payload the arm RETURNS is released (#11479).
-//
-// `return v` on a payload binding takes the Return lowering's transfer retain,
-// so the caller gets a count of its own, but the count the callee handed over
-// in the (tag, payload) pair was never released: reclaimablePairFormPayload
-// refused any arm that returned its binding. One payload leaked per match.
-//
-// Option[string] is pair-form only on x86-64, where a string is one word, so
-// the string shape leaked only there; on arm64 and wasm it is a heap box whose
-// deep drop already balanced it. Option[i32[]] is pair-form on every target,
-// so the array shape is the same bug on all three.
 func TestReturnedPairFormMatchPayloadIsReleased(t *testing.T) {
 	shapes := []struct{ name, src string }{
 		{"string_payload", `
@@ -85,10 +74,6 @@ function main(): i32 {
 		"the payload a returning arm hands back leaks once per match (#11479)")
 }
 
-// checkCensusOnEveryTarget builds each shape with the fern CLI under
-// FERN_LEAKCHECK for x86-64, arm64 and wasm, runs it, and requires a
-// zero exit and a balanced census. A shape returns 99 for a non-zero
-// __rc_underflow_count() and 1 for a wrong answer.
 func checkCensusOnEveryTarget(t *testing.T, shapes []struct{ name, src string }, leakWhy string) {
 	t.Helper()
 	fern := buildFernCLI(t)

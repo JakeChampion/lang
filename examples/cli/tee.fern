@@ -1,17 +1,3 @@
-// tee.fern — copy stdin to stdout and to each named file, like
-// `tee(1)`.
-//
-//   -a   append to the files instead of truncating
-//
-//   $ echo hi | ./tee a.txt b.txt        # writes hi to stdout, a, b
-//   $ printf 'more\n' | ./tee -a a.txt    # appends to a.txt
-//
-// `tee` buffers stdin as raw bytes, then writes the buffer to each output.
-// Append opens the file in append mode, preserving its existing bytes.
-//
-// Showcases: reading all of stdin, fanning one buffer out to stdout
-// plus N files, raw Writer operations, and reporting per-file
-// errors without aborting the whole run.
 import "std/io";
 import "std/array";
 

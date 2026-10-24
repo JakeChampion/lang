@@ -7,28 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64LitPoolGas byte-checks two instruction-selection rules
-// arm64_native originally got wrong (they silently mis-assembled, so the
-// darwin tests — which only check exit codes / Mach-O parseability — never
-// caught them):
-//
-//   - `ldr Xd, =N` + `.ltorg`: the PC-relative literal pool. asm_arm64
-//     loads every integer immediate this way and flushes the pool after each
-//     function. The old code parsed `ldr x0, =42` as `ldr x0, [x0]` (a
-//     memory load from a garbage base) and dropped `.ltorg` entirely.
-//   - `str/ldr Xt, [Xn, #neg]`: a negative frame offset can't use the scaled
-//     unsigned form (it mis-encoded `[x29, #-8]` as `[x29, #0x7ff8]`); it
-//     must fall back to the unscaled signed-imm9 stur/ldur, as GAS does.
-//   - `ldr/str Xt, [Xn, Xm{, lsl #3}]`: the register-offset (array-indexing)
-//     form was parsed as a scalar `[Xn]` (the index register dropped), so
-//     `a[i]` read the wrong slot.
-//   - `ldrb/strb Wt, [Xn], #1`: the post-index byte-copy form (used by
-//     __fern_str_concat) ignored the writeback, so the copy never advanced.
-//   - `ldr/str Dt, [Xn{, #off}]`: the SIMD&FP load/store (f64 constants) was
-//     encoded as a general-register load, so floats never reached d-registers.
-//
-// Expected bytes pinned against llvm-mc. Run through the self-host wasm
-// pipeline; exit 0 = all pass, else the 1-based failing check id.
 func TestSelfHostArm64LitPoolGas(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64 litpool gas e2e")

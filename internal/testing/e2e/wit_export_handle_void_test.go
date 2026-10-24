@@ -12,14 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExportHandleVoidComposes is the P6 Slice 6b gate (docs/WIT-BRING-YOUR-OWN.md):
-// the composer lifts a VOID export taking MULTIPLE resource-handle params — the
-// shape of `wasi:http`'s `incoming-handler#handle`
-// (`func(own<incoming-request>, own<response-outparam>)`, no result). This slice
-// proves the void-result + multi-handle-param composer path with `borrow`
-// handles (never auto-dropped); the `own`-consume + `[resource-drop]`-in-reactor
-// path follows. Gated by `wasm-tools validate` + the WIT declaring the void
-// two-handle export.
 func TestExportHandleVoidComposes(t *testing.T) {
 	wasmtools, err := exec.LookPath("wasm-tools")
 	if err != nil {
@@ -37,9 +29,6 @@ func TestExportHandleVoidComposes(t *testing.T) {
 	if err := os.MkdirAll(witDir, 0o755); err != nil {
 		t.Fatalf("mkdir wit: %v", err)
 	}
-	// Two imported resources + a void handler taking a borrow of each — the
-	// incoming-handler#handle shape (own→borrow to avoid the auto-drop, which is
-	// the next slice).
 	src := `package local:test@0.1.0;
 interface types { resource req; resource resp; }
 interface handler {
@@ -65,8 +54,6 @@ world m {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// Reactor: a void handler taking two borrowed handles (not named `handle` —
-	// that triggers the checker's handler-main synthesis).
 	prog := `@import("local:test/types@0.1.0", "req")
 resource Req;
 @import("local:test/types@0.1.0", "resp")
@@ -100,7 +87,6 @@ function on_request(r: borrow Req, o: borrow Resp): void { return; }`
 	if !bytes.Contains(wit, []byte("local:test/handler@0.1.0")) {
 		t.Fatalf("component WIT missing the exported handler interface:\n%s", wit)
 	}
-	// The exported handle must be void and take both borrowed handles.
 	if !bytes.Contains(wit, []byte("borrow<req>")) || !bytes.Contains(wit, []byte("borrow<resp>")) {
 		t.Fatalf("component WIT missing the borrow handle params:\n%s", wit)
 	}

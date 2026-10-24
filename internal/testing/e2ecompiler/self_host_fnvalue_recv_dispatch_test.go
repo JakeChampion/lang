@@ -8,30 +8,6 @@ import (
 	"testing"
 )
 
-// A method called on the RESULT of a call through a fn value must dispatch on
-// that value's declared return type.
-//
-// `keyed_sum[T, K: Key](xs, key: (T) => K)` instantiated at `K = string` calls
-// `key(xs[i]).k_id()`, where the receiver is a call through a PARAMETER holding
-// a closure. Falling back to an "i32" receiver there keys `i32.k_id`, and
-// because the program's OTHER `impl Key for i32` supplies a symbol of exactly
-// that name, strict-IR is satisfied and the module lowers: the i32 impl runs
-// with a string BOX as its integer receiver and the program returns a heap
-// address (#7187).
-//
-// That is the silent branch of the same failure
-// `TestSelfHostArrayRecvMisdispatchRefuses` pins one receiver kind further out:
-// no diagnostic, no refusal, only an oracle disagreement.
-//
-// The first four cases are the issue's own table — the i32 forward, the string
-// forward, a two-hop forward, and a lambda passed directly with no forwarding.
-// The i32 rows keep the other half visible: a generic forwarding its closure
-// parameter to another bounded generic has to instantiate at all. The
-// direct-lambda row shows the defect never needed the forwarding.
-//
-// The remaining cases sweep the rest of the scalar family through the same
-// shape — `string` / `f64` / `boolean` / `u32` / `f32` / `u64` — since an
-// "i32" fallback would capture every one of them.
 const fnValueRecvKeyTrait = `trait Key { function k_id(self: Self): i32; }
 impl Key for i32 { function k_id(self: Self): i32 { return self; } }
 impl Key for string { function k_id(self: Self): i32 { return self.len(); } }
@@ -51,9 +27,6 @@ struct Row { n: i32, name: string }
 
 `
 
-// The scalar sweep uses a distinct constant per impl, so the exit code names
-// which impl ran rather than being a value the arithmetic could reach by
-// accident.
 const fnValueRecvScalarTrait = `import "std/i32";
 import "std/f64";
 
@@ -75,7 +48,6 @@ var fnValueRecvDispatchCases = []struct {
 	want int
 	src  string
 }{
-	// The issue's table, row by row. rows = [{7,"abcd"}, {9,"ef"}].
 	{"fwd_i32", 16, fnValueRecvKeyTrait + `function main(): i32 {
     let rows: Row[] = [Row { n: 7, name: "abcd" }, Row { n: 9, name: "ef" }];
     return fwd_i32(rows, (r: Row): i32 => r.n);
@@ -93,18 +65,12 @@ var fnValueRecvDispatchCases = []struct {
     return keyed_sum(rows, (r: Row): i32 => r.n)
          + keyed_sum(rows, (r: Row): string => r.name);
 }`},
-	// The issue's repro as written: both forwards in one program. It is its
-	// own row because the wrong answer was CONTEXT-dependent — what `K` bound
-	// to moved with what else the unit monomorphised — so a per-term table
-	// measured one at a time would not have caught every shape.
 	{"both_forwards", 22, fnValueRecvKeyTrait + `function main(): i32 {
     let rows: Row[] = [Row { n: 7, name: "abcd" }, Row { n: 9, name: "ef" }];
     return fwd_i32(rows, (r: Row): i32 => r.n)
          + fwd_str(rows, (r: Row): string => r.name);
 }`},
 
-	// The scalar sweep: one row per key type, each answering its own impl's
-	// constant. A wrong dispatch answers 1 (i32's) or refuses the module.
 	{"key_i32", 1, fnValueRecvScalarTrait + `function main(): i32 { return pick(0, (q: i32): i32 => 9); }`},
 	{"key_string", 2, fnValueRecvScalarTrait + `function main(): i32 { return pick(0, (q: i32): string => "abc"); }`},
 	{"key_f64", 3, fnValueRecvScalarTrait + `function main(): i32 { return pick(0, (q: i32): f64 => 1.5); }`},
@@ -114,10 +80,6 @@ var fnValueRecvDispatchCases = []struct {
 	{"key_u64", 7, fnValueRecvScalarTrait + `function main(): i32 { return pick(0, (q: i32): u64 => 1u64); }`},
 }
 
-// runFnValueRecvDispatch drives one case through a self-host driver: it must
-// route "ir" (a refusal is a regression too — the point is that the call
-// dispatches, correctly), then the linked binary's exit code must equal both
-// the interpreter oracle and the hand-computed expectation.
 func runFnValueRecvDispatch(t *testing.T, dir, driver, root string, runner, target []string, link func(t *testing.T, name, asm string) string, run func(bin string) *exec.Cmd) {
 	t.Helper()
 	for _, tc := range fnValueRecvDispatchCases {
@@ -168,11 +130,6 @@ func TestSelfHostFnValueRecvDispatch(t *testing.T) {
 		func(bin string) *exec.Cmd { return runX86_64Bin(runner, bin) })
 }
 
-// arm64 parity: the dispatch decision is target-agnostic (it happens in the lowering,
-// before backend selection), but the aarch64 emitter is the only path where the
-// self-host compiler produces the finished binary itself, so the gate runs there
-// too. The driver is an x86 host binary emitting aarch64 asm; aarch64 gcc links
-// it; qemu-aarch64 runs it.
 func TestSelfHostFnValueRecvDispatchArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

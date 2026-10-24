@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// Editing a dependency after the second import on the same line must produce
-// a new driver, even when the entry source, target and compiler are unchanged.
 func TestSelfHostDriverCacheTracksSameLineImports(t *testing.T) {
 	runner := x86_64Runner(t)
 	dir := t.TempDir()

@@ -1,27 +1,6 @@
-// coreutils/lib/colordb.fern — the built-in colour database, which is
-// one text serving two programs. `dircolors` prints it, parses it into
-// an LS_COLORS value, and filters it by $TERM; `ls --color` consults
-// only its TERM lines, and only when LS_COLORS is unset or empty —
-// which is the whole of why `--color=always` writes no escape at all in
-// an environment with neither LS_COLORS nor a recognized terminal.
 import "std/string";
 import "./fnmatch";
 
-// ---- the built-in database -------------------------------------------------
-//
-// GNU coreutils 9.12's, transcribed from what its own `dircolors -p`
-// prints. The text carries a copyright notice and the permission to
-// copy and distribute it with that notice preserved, which is what
-// keeps it here; nothing was taken from GNU sources.
-//
-// It is VERSION-PINNED: the copyright year in the third line moves with
-// each release, and the entries below it change too, so `dircolors -p`
-// and the no-operand output are compared against a 9.12 oracle. A
-// different reference fails those cases loudly (docs/COREUTILS.md's
-// version rule, and `uname -p`'s precedent) rather than passing
-// something wrong, and the fix is to transcribe that `dircolors -p`
-// here. 9.4 to 9.12 moved the year, added a `TERM vt220` line, said
-// "regular file" in three descriptions, and changed the extension list.
 pub function text(): string {
   let out: string = "";
   out = out + "# Configuration file for dircolors, a utility to help you set the\n";
@@ -272,10 +251,6 @@ pub function text(): string {
   return out;
 }
 
-// `term_known(term)` — whether any TERM line of the database matches
-// `$TERM`, as fnmatch(3) with no flags. It is the second half of
-// `ls --color`'s gate on an empty LS_COLORS, COLORTERM being the first.
-// An unset or empty TERM matches nothing.
 pub function term_known(term: string): boolean {
   if (term.len() == 0) {
     return false;

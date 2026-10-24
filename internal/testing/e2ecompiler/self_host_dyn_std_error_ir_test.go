@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// dynStdErrorSrc propagates a concrete error through `?` into a
-// `Result[i32, dyn error.Error]` and calls `message()` on the boxed value.
-// The typed lowering refused the call (`dyn method has no implementation:
-// message`, #10765) before an impl record carried its trait's module
-// (#10844). handler(true) is Ok(43); handler(false)'s message is "missing".
 const dynStdErrorSrc = `import "std/error" as error;
 import "std/i32";
 struct NotFound { what: string }

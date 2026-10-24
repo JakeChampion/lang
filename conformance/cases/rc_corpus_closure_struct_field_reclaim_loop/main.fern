@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The reclaiming shape: a struct holding a capturing closure, built
-// and discarded in a loop so the freed pair / env / capture blocks are
-// recycled into the next round. An over-release here hands a live
-// block to the freelist and the next round reads it back — which the
-// value check catches even when the underflow counter does not.
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/i32";
 import "std/string";

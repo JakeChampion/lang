@@ -1,14 +1,14 @@
-// An open-ended slice evaluates its base EXACTLY ONCE.
-//
-// `a[lo:]` and `a[:]` name no upper bound, so the bound is the
-// receiver's own length. Producing that by rewriting the base into
-// `base.len()` puts two independent copies of the base in the tree, and
-// a side-effecting base then runs twice — `mk()[2:]` called `mk()`
-// twice. Nothing caught it because no test used a base with an effect;
-// each print below is the effect, and a doubled line is the bug.
-//
-// Both legs are pinned: a string slice (checked, `Option[str]`) and an
-// array slice (a view), under both the open-high and fully-open forms.
+
+
+
+
+
+
+
+
+
+
+
 
 function mk(): string {
     print("mk");

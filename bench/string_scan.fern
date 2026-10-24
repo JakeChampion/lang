@@ -1,8 +1,5 @@
 import "std/i32";
 
-// string_scan — the self-hosted compiler's dominant shape: a needle compared
-// against every entry of a string array until it matches. Exercises string
-// equality (`__fern_strcmp`) at the rate a linear symbol table hits it.
 function build(n: i32): string[] {
   let out: string[] = [];
   let i: i32 = 0;

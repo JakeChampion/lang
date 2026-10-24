@@ -8,23 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostClosureEnvRcIRX86_64 pins the memory behaviour of a capturing
-// closure bound to a local and only called: no over-release, no per-call
-// growth, right answers.
-//
-// The mechanism these cases actually exercise is the PARAM-LIFT, not an
-// env-box capture-RC arc. try_lift_binding runs as a whole-module AST pre-pass
-// before lowering; a capturing lambda bound to a var and never used as a value
-// is hoisted to `__lam_N(args, caps…)` with the captures passed directly, so
-// no env box is built and the captured local stays an ordinary local that the
-// "STR:" / array sweeps free. The #4354 capture-RC family that once claimed
-// these cases was measured inert — 0 approvals over the whole conformance
-// corpus, because the lift always got there first — and was deleted (#7253).
-//
-// What still makes them worth running: they are the coverage that the lift
-// leaves captures balanced. A regression that stops lifting one of these
-// shapes lands it on the env-box path, and that path leaks (98) or
-// over-releases (99) rather than failing quietly.
 func TestSelfHostClosureEnvRcIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -56,40 +39,27 @@ func TestSelfHostClosureEnvRcIRX86_64(t *testing.T) {
 		}
 	}
 
-	// STRING capture: nm (a fresh concat) is captured and the closure called.
-	// The lift turns `c()` into `__lam_0(nm)`, so nm is a plain fresh string
-	// local the "STR:" sweep frees once. After a 3000-iteration warmup a
-	// second churn stays flat (< 256 B slack).
 	run(t, `function go(pre: string): i32 { let nm: string = pre + "xyz"; let c = () => nm.len(); return c(); }
 function churn(m: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"closure-string-capture-flat", 0)
 
-	// SCALAR-ARRAY capture: xs is lifted to an argument of __lam_0 and freed by
-	// its own slot's array sweep — one owner, one dec (underflow 0), flat
-	// across the second churn.
 	run(t, `function go(k: i32): i32 { let xs: i32[] = [k, k + 1, k + 2]; let c = () => xs[0] + xs[2]; return c(); }
 function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(i)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"closure-array-capture-flat", 0)
 
-	// CAPTURE USED AFTER the closure: nm is read directly after c(), so the
-	// lift's rewrite must leave the local live for that read and its free at
-	// exit. Values + detector checked.
 	run(t, `function go(pre: string): i32 { let nm: string = pre + "xy"; let c = () => nm.len(); let r: i32 = c(); return r + nm.len(); }
 function churn(m: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(pre) != 8) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"closure-capture-used-after-balanced", 0)
 
-	// PARAM-STRING capture: pre belongs to the caller, so the lift must pass it
-	// through without the callee claiming ownership. Detector 0.
 	run(t, `function go(pre: string): i32 { let c = () => pre.len(); return c(); }
 function churn(m: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(pre) != 2) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"closure-param-capture-balanced", 0)
 }
 
-// TestSelfHostClosureEnvRcWasmIR: the wasm sibling through the wasm_ir_run driver.
 func TestSelfHostClosureEnvRcWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping closure-env RC wasm IR e2e")
@@ -140,7 +110,6 @@ function main(): i32 { let w: i32 = churn(2000); let b1: i32 = (__heap_bump_byte
 	}
 }
 
-// TestSelfHostClosureEnvRcIRArm64: the arm64 sibling under qemu.
 func TestSelfHostClosureEnvRcIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

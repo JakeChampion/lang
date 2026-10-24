@@ -8,16 +8,6 @@ import (
 	"testing"
 )
 
-// Both front ends share one constant grammar — literals, earlier consts,
-// arithmetic / comparison / logical operations on them, and array, tuple and
-// struct literals of those. The self-host once enforced none of it and
-// admitted a strictly larger const language (#6618); struct literals of
-// constant fields then joined the grammar on both sides at once (#6685).
-//
-// The diagnostic is UNCODED on both sides, so the checker-code differential
-// cannot gate it: an uncoded diagnostic contributes no code, and a row there
-// would pass whether or not the rule exists. This compares the message TEXT
-// and position against native instead.
 func TestSelfHostConstGrammarX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -36,8 +26,6 @@ func TestSelfHostConstGrammarX86_64(t *testing.T) {
 		name string
 		src  string
 	}{
-		// Rejected — outside the grammar. Each is a distinct AST shape, so a
-		// fix that only special-cased struct literals would fail the others.
 		{"struct-literal-call-field", "struct Cfg { n: i32 }\nfunction f(): i32 { return 1; }\nconst C: Cfg = Cfg { n: f() };\nfunction main(): i32 { return C.n; }\n"},
 		{"struct-update", "struct Cfg { n: i32, m: i32 }\nconst A: Cfg = Cfg { n: 1, m: 2 };\nconst C: Cfg = Cfg { ...A, n: 41 };\nfunction main(): i32 { return C.n; }\n"},
 		{"call", "function f(): i32 { return 1; }\nconst C: i32 = f();\nfunction main(): i32 { return C; }\n"},
@@ -45,23 +33,14 @@ func TestSelfHostConstGrammarX86_64(t *testing.T) {
 		{"cast-scalar", "const N: u8 = 7 as u8;\nfunction main(): i32 { return N as i32; }\n"},
 		{"cast-earlier-const", "const A: i32 = 7;\nconst N: u8 = A as u8;\nfunction main(): i32 { return N as i32; }\n"},
 		{"cast-arithmetic", "const N: i32 = (2.5 as i32) + 1;\nfunction main(): i32 { return N; }\n"},
-		// Native words the non-earlier IDENT case differently, so these pin
-		// that the second message is reproduced rather than folded into the
-		// generic one.
 		{"forward-reference", "const B: i32 = A + 1;\nconst A: i32 = 2;\nfunction main(): i32 { return B; }\n"},
 		{"unknown-ident", "const B: i32 = ZZZ;\nfunction main(): i32 { return B; }\n"},
-		// The SATURATING and CHECKED operator families sit outside
-		// constfold's integer switch, so folding one is an error there
-		// rather than a value. The self-host walked into a binary's
-		// operands without ever judging the operator, so it admitted
-		// both — the larger-const-language direction again.
 		{"saturating-add", "const B: u8 = 300 +| 1;\nfunction main(): i32 { return B as i32; }\n"},
 		{"saturating-mul", "const B: i32 = 3 *| 2;\nfunction main(): i32 { return B; }\n"},
 		{"saturating-shl", "const B: i32 = 3 <<| 2;\nfunction main(): i32 { return B; }\n"},
 		{"checked-add", "const B: i32 = 3 +? 2;\nfunction main(): i32 { return B; }\n"},
 		{"checked-div", "const B: i32 = 6 /? 2;\nfunction main(): i32 { return B; }\n"},
 
-		// Accepted — what stops the rule being a blanket rejection of consts.
 		{"struct-literal-ok", "struct Cfg { n: i32 }\nconst B: i32 = 40;\nconst C: Cfg = Cfg { n: B + 1 };\nfunction main(): i32 { return C.n; }\n"},
 		{"array-literal-ok", "const XS: i32[] = [1, 2];\nfunction main(): i32 { return 0; }\n"},
 		{"typed-array-literal-ok", "const XS: u8[] = [0u8, 7u8];\nfunction main(): i32 { return XS[1] as i32; }\n"},
@@ -90,24 +69,13 @@ func TestSelfHostConstGrammarX86_64(t *testing.T) {
 	}
 }
 
-// constDiagLines keeps only the const-grammar diagnostics, normalising away
-// the leading file path native prints and the self-host does not. Other
-// diagnostics are filtered out: a const-bearing program can also trip the
-// self-host's #9053 "cannot represent yet" note, which is a separate gap and
-// would otherwise mask this comparison.
 func constDiagLines(out string) []string {
 	var keep []string
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		line = strings.TrimSpace(line)
-		// Every const-grammar diagnostic is prefixed `const <name>: ` on both
-		// sides, which is what makes one recognisable without a code. Keying
-		// on the message instead misses a family: a filter for "is not a
-		// constant" alone drops the refused-OPERATOR wording entirely, and
-		// rows comparing it then pass empty-vs-empty whatever the rule does.
 		if !strings.Contains(line, ": const ") {
 			continue
 		}
-		// both: "<path>:2:1: error: const C: …"
 		if i := strings.Index(line, ": const "); i >= 0 {
 			if j := strings.LastIndex(line[:i], ".fern:"); j >= 0 {
 				line = line[j+len(".fern:"):]

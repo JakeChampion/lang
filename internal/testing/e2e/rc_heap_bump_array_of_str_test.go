@@ -4,19 +4,6 @@ import (
 	"testing"
 )
 
-// Array-of-string[] (`string[][]`) inner-buffer reclamation (RC-Perceus).
-// The nested-array slice handled only PRIMITIVE inner arrays; a
-// `string[][]` kept the flat __fern_drop_arr_ptr, freeing the outer
-// buffer but leaking each inner string[] buffer AND its strings
-// (profiling probe: 3264 B → 320064 B). This routes the array-of-array
-// drop with a STRING inner through a generated __drop_arr_arr_str loop:
-// per outer element, reclaim the inner string[] via the ABI-correct
-// helper (__fern_drop_arr_str on two-word wasm/arm64 — walk + str_dec +
-// free; __fern_drop_arr_ptr on native single-word x86_64), then free the
-// outer buffer. Each helper is_unique-gates internally.
-
-// `ids` hides a literal from the static-box plan, so each inner string[] is a
-// heap box.
 func arrOfStrBumpSrc(n string) string {
 	return `@noinline function ids(s: string): string { return s; }
 function main(): i32 {
@@ -32,7 +19,6 @@ function main(): i32 {
 }`
 }
 
-// Inner strings + buffers must reclaim AND not over-release.
 const arrOfStrUnderflowSrc = `@noinline function ids(s: string): string { return s; }
 function main(): i32 {
     let i: i32 = 0;

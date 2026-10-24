@@ -136,7 +136,6 @@ func RunStdioByteCases(t *testing.T, bin string, runner []string, census func(*t
 		{mode: "closed-empty"},
 		{mode: "closed-flush", status: 1, diagnostic: "Bad file descriptor\n"},
 	}
-	// Exercise both sides of the small-append/bulk-copy boundary with every byte.
 	for _, size := range []int{63, 64, 65, 127, 128, 129} {
 		cases = append(cases, testCase{mode: "bytes", size: size, data: all, want: all})
 	}
@@ -171,8 +170,6 @@ func RunStdioByteCases(t *testing.T, bin string, runner []string, census func(*t
 			defer cancel()
 			argv := append(append([]string{}, runner...), bin, tc.mode, fmt.Sprint(tc.size))
 			cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-			// The fixture assembles input before selecting write ranges, so valid
-			// short reads cannot change the operation being tested.
 			path := filepath.Join(t.TempDir(), "input")
 			if err := os.WriteFile(path, tc.data, 0o600); err != nil {
 				t.Fatal(err)

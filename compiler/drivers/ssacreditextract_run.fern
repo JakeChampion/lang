@@ -33,11 +33,6 @@ function expect(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, ok: boolean, 
   }
 }
 
-// Start every mutation with the normal lowering's emitted stack operations.
-// Keep the stack balanced so the independent credit proof, not a parse error,
-// rejects a missing free or retain, a duplicate release, a token compared
-// with anything but zero, a load from a scalar slot, a released result and a
-// free of a shared parent.
 function mutate(r: irtables.LowerResult, mode: i32): irtables.LowerResult {
   let ops: ir.Op[] = [];
   let hits: i32 = 0;
@@ -71,14 +66,11 @@ function mutate(r: irtables.LowerResult, mode: i32): irtables.LowerResult {
   return irtables.LowerResult { ...r, ops: ops };
 }
 
-// Whether ops[i] frees the parent itself: `__fern_rc_dec` of local 0, which
-// the unique arm uses in place of the release helper once the slots are spent.
 function freed_parent(ops: ir.Op[], i: i32): boolean {
   let op = ops[i];
   return i > 0 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec" && ops[i - 1].kind_tag == ir.kind_id("load_local") && ops[i - 1].i32_imm == 0;
 }
 
-// Five scalar fields retain the boxed result this credit proof checks.
 function target_checks(target: string): void {
   let source = "struct Leaf { n: i32, a:i32, b:i32, c:i32, d:i32 }\nstruct Parent { child: Leaf }\n@noinline\nfunction extract(own p: Parent): Leaf { return p.child; }\nfunction main(): i32 { let p = Parent { child: Leaf { n: 7, a:7, b:7, c:7, d:7 } }; return extract(p).n; }\n";
   let driven = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
@@ -140,8 +132,6 @@ function target_checks(target: string): void {
   expect(ssa.SFunc { ...f, blocks: bad }, d, r, false, 19);
   expect(ssa.SFunc { ...f, nvals: 2147483647 }, d, r, false, 20);
   expect(ssa.SFunc { ...f, nparams: 2 }, d, r, false, 21);
-  // Releasing the parent before the shared-path child retain is valid: the
-  // external shared parent still supplies the child's borrowed anchor.
   let early: ir.Op[] = [];
   let inserted: i32 = 0;
   let removed: i32 = 0;
@@ -176,8 +166,6 @@ function target_checks(target: string): void {
   require(!reserved_release.ok && reserved_release.function_name == "__fern_rc_dec", 29);
   let reserved_drop = extract.check(f, ssa.SFunc { ...d, name: "__fern_rc_dec" }, r, helper.FlatChild { offset: 8 });
   require(!reserved_drop.ok && reserved_drop.function_name == "__fern_rc_dec", 30);
-  // Freeing the parent has no readable result. Reading it must not invent a
-  // scalar zero that a later condition could use to discard a feasible path.
   let free_use: ssa.SBlock[] = [];
   let frees: i32 = 0;
   for b in f.blocks {
@@ -197,10 +185,6 @@ function target_checks(target: string): void {
   require(extract.check(unreadable, d, r, helper.FlatChild { offset: 8 }).message == "undefined physical operand", 32);
 }
 
-// The unique arm's inline release of the sibling at `other`, edited four
-// ways the proof must refuse: freeing the parent with the sibling unspent,
-// releasing it a second time through the helper, loading it again after its
-// release, and a nonzero scalar joining the uniqueness token.
 function sibling_mutated(f: ssa.SFunc, other: i32, mode: i32, release: string): ssa.SFunc {
   let load: i32 = -1;
   let constant: i32 = -1;
@@ -288,8 +272,6 @@ function sibling_checks(target: string): void {
         sm = sm + 1;
       }
       require(!extract.check(f, d, r, helper.FlatChild { offset: offset }).ok, 62);
-      // Inverting the uniqueness test sends the shared parent down the arm that
-      // releases the sibling inline, which is refused before the free.
       let reasons: string[] = ["return without child credit", "return without child credit", "parent used after release", "uniqueness token compared with a nonzero value", "unsupported containment operation", "return without child credit", "releasing a shared parent's child"];
       let mode: i32 = 0;
       while (mode < 7) {
@@ -297,8 +279,6 @@ function sibling_checks(target: string): void {
         require(!result.ok && result.function_name == f.name && result.message == reasons[mode], 63 + mode);
         mode = mode + 1;
       }
-      // Releasing the selected slot in the sibling's place must not discharge
-      // the sibling's credit, even though runtime child pointers may be equal.
       let changed: ir.Op[] = [];
       let loads: i32 = 0;
       for op in body.ops {
@@ -316,8 +296,6 @@ function sibling_checks(target: string): void {
       require(loads == 2, 70);
       let wrong = extract.check_selected(lift(irtables.LowerResult { ...body, ops: changed }), d, r, layout, offset);
       require(!wrong.ok && wrong.function_name == f.name && wrong.message == "child release without local credit", 71);
-      // Corrupt only the sibling's actual release; its obligation cannot be
-      // ignored just because the other child is the function's result.
       let ops: ir.Op[] = [];
       let slot: i32 = -1;
       let hits: i32 = 0;

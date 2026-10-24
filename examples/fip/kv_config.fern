@@ -1,4 +1,3 @@
-// Usage: kv_config fip|map|pmap capacity key_bytes value_bytes batch turns mixed|read|write load_pct unique|shared [samples]
 import "./kv_config_core";
 import "./kv_config_map";
 import "./kv_config_pmap";

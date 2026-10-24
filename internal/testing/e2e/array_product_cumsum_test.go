@@ -2,15 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/array's `product` and `cumsum` at an f64
-// element — the product of all elements (empty product = 1) and the running
-// prefix sum (same length as the input). product returns a plain f64; cumsum
-// returns an f64[] (scalar payload). Since #2663 `product` is the bounded
-// generic `[T: Mul + One]` and `cumsum` is `[T: Add + Zero]`, so these pin
-// their f64 instantiations rather than `_f64` siblings; the empty cases name
-// their element type for that reason. Both lower on all four backends including wasmbin. Returns 42 iff
-// every check holds across interp / x86-64 / wasm / arm64; each leg skips itself
-// when its toolchain is absent.
 const arrayProductCumsumProg = `
 import "std/array";
 import "std/num" as num;

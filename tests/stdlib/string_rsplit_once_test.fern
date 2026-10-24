@@ -1,15 +1,6 @@
 import "std/test";
 import "std/string";
 
-// tests/stdlib/string_rsplit_once_test.fern — pure-Fern coverage of
-// std/string.rsplit_once: split at the LAST occurrence of the separator (the
-// mirror of split_once). Covers multi-occurrence (last wins), no-match,
-// empty-sep, separator at the very start / very end, and a multi-char
-// separator, plus the split_once-vs-rsplit_once contrast. Kept as its own suite
-// so the self-host merged bundle stays under the asm_ir IR budget. The Go-side
-// TestStringRsplitOnce pins these across all four backends; this is the
-// migration-shaped (pure-Fern, std/test-driven) companion.
-
 function pair_is(o: Option[(string, string)], h: string, t: string): boolean {
   match (o) {
     Some(p) => {
@@ -68,7 +59,6 @@ function test_multichar_sep(): test.TestOutcome {
 }
 
 function test_differs_from_split_once(): test.TestOutcome {
-  // split_once takes the FIRST separator, rsplit_once the LAST.
   if (!pair_is("a.b.c".split_once("."), "a", "b.c")) {
     return test.fail("split_once first");
   }

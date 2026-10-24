@@ -4,31 +4,6 @@ import (
 	"testing"
 )
 
-// Enum-payload-struct STRING-field reclamation (#4355): a local bound to a
-// fresh constructor result whose payload struct carries a STRING field
-// (`let e: E = mk(i); match (e) { … }` with `enum E { A(S), B }`,
-// `struct S { name: string, n: i32 }`) leaked the WHOLE chain — enum box +
-// payload struct box + its string — once per iteration, while the identical
-// scalar- or array-field payload reclaimed fine.
-//
-// Root cause was in the ANALYSIS, not the drop machinery: exprNoParamEscape
-// had no case for string literals / concats, so any constructor embedding a
-// string field lost its returnsNoParamEscape verdict; rhsTainted's call case
-// then fell through to the generic any-arg-tainted rule, a noise-tainted
-// scalar arg poisoned the call result, and the local was never swept. The fix
-// teaches exprNoParamEscape the three provenance-free-fresh string shapes
-// (literal = static sentinel; concat = byte-copy into a fresh buffer; string
-// slice = fresh copy, not a view) — the same rule rhsTainted's IsStringConcat
-// case already encodes. The reclaim itself takes the existing, proven route:
-// freeEligible → emitVarReinitDropOld → __drop_enum_<E> → __drop_struct_<S>
-// (string fields dec'd inline) — the machinery the scalar-payload sibling has
-// exercised all along.
-//
-// A constructor that embeds a PARAM string (`S { name: nm }`, nm a param)
-// still fails the verdict and keeps the prior safe leak — pinned below.
-
-// Bounded churn 1: pair-form-shaped enum (single payload + sentinel), string
-// field from a LITERAL — the ep-probe shape that leaked box+box+string.
 func enumPayloadStructStrLitBumpSrc(n string) string {
 	return `struct S { name: string, n: i32 }
 enum E { A(S), B }
@@ -48,9 +23,6 @@ function main(): i32 {
 }`
 }
 
-// Bounded churn 2: the string field is a RUNTIME CONCAT (fresh heap string
-// per construction), payload struct + a second scalar payload so the enum is
-// heap-boxed on every backend.
 func enumPayloadStructStrConcatBumpSrc(n string) string {
 	return `struct S { name: string, n: i32 }
 enum E { A(S, i32), B(i32, i32) }
@@ -70,9 +42,6 @@ function main(): i32 {
 }`
 }
 
-// SOUNDNESS 1: a constructor that embeds its PARAM string into the field is
-// NOT escape-free — the local must keep the prior safe leak, the caller's
-// string stays readable across every iteration, detector zero.
 const enumPayloadStructStrParamEmbedSafe = `struct S { name: string, n: i32 }
 enum E { A(S), B }
 function mk(nm: string, n: i32): E { return A(S { name: nm, n: n }); }
@@ -90,9 +59,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// SOUNDNESS 2: a field READ extracted from the payload (`last = s.name`) is a
-// counted alias — it must survive the next iteration's reinit deep-drop of
-// the previous box chain, detector zero.
 const enumPayloadStructStrAliasedReadSafe = `struct S { name: string, n: i32 }
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E { return A(S { name: nm + "xy", n: n }, n); }
@@ -110,9 +76,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// SOUNDNESS 3: an ALIASED box (id2 returns its param; rc >= 2 via the
-// return-transfer inc) must only be dec'd at the reinit — never freed under
-// the alias. Values stay right, detector zero.
 const enumPayloadStructStrAliasedBoxSafe = `struct S { name: string, n: i32 }
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E { return A(S { name: nm + "x", n: n }, n); }
@@ -164,12 +127,6 @@ func TestArm64EnumPayloadStructStrReclaim(t *testing.T) {
 	checkEnumPayloadStructStrSafe(t, compileAndRunArm64FreeOn)
 }
 
-// Wasm-only correctness pin for the CONCAT-field shape: on wasm32 the enum
-// and struct boxes reclaim but the two-word CONCAT string field keeps a
-// documented sound leak (~one string box per iteration — the string-field
-// ownership discipline in enum-payload structs is the wasm follow-up, the
-// sibling of tryScrutStringWasmSound's pair-form payload exclusion). Values
-// stay right and nothing over-releases.
 const enumPayloadStructStrConcatWasmSound = `struct S { name: string, n: i32 }
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E { return A(S { name: nm + "x", n: n }, n); }
@@ -186,9 +143,6 @@ function main(): i32 {
 }`
 
 func TestWASMEnumPayloadStructStrReclaim(t *testing.T) {
-	// The LITERAL-field shape is fully bounded on wasm (boxes reclaim, the
-	// literal payload is static). The CONCAT-field shape keeps a documented
-	// sound string-field leak on wasm32 — see the WasmSound pin below.
 	small := runWasm(t, enumPayloadStructStrLitBumpSrc("50"))
 	large := runWasm(t, enumPayloadStructStrLitBumpSrc("5000"))
 	if small != large {

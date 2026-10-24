@@ -2,8 +2,6 @@ package e2eharness
 
 import "strings"
 
-// MismatchBytesSource exercises every mismatch position around vector widths,
-// bounds clamping, retained aliases and allocation-free borrowed calls.
 func MismatchBytesSource(allocations bool) string {
 	probe := ""
 	if allocations {

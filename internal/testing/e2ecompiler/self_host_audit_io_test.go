@@ -7,15 +7,10 @@ import (
 	"testing"
 )
 
-// auditIOCases isolate stdout/stderr built-in functions and run them
-// through the SELF-HOSTED compiler, checking the compiled program's
-// stdout and exit code. Self-host arm of the §B audit
-// (docs/FEATURE-AUDIT.md); the conformance case `audit_io_builtins` covers
-// the same builtins. `putchar` is covered by self_host_putchar_ir_test.go.
 var auditIOCases = []struct {
 	name string
 	src  string
-	out  string // expected stdout
+	out  string
 	exit int
 }{
 	{"print", `function main(): i32 { print("hello"); return 0; }`, "hello\n", 0},
@@ -24,8 +19,6 @@ var auditIOCases = []struct {
 	{"exit-code", `function main(): i32 { exit(42); return 0; }`, "", 42},
 }
 
-// TestSelfHostAuditIOX86_64 runs each I/O builtin through the self-hosted
-// x86-64 driver, checking the compiled program's stdout + exit code.
 func TestSelfHostAuditIOX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

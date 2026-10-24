@@ -32,8 +32,6 @@ func TestArm64DarwinNativePollScratch(t *testing.T) {
 	checkPollScratch(t, "arm64-darwin", "")
 }
 
-// The poll helpers must reclaim their temporary kernel buffers on every
-// return path, including empty/negative sets and failed registrations (#9853).
 func checkPollScratch(t *testing.T, target, qemu string) {
 	t.Helper()
 	fern := buildFernCLI(t)

@@ -1,30 +1,9 @@
-// examples/fip/kv_pmap.fern — the persistent-map variant of the bounded
-// key/value core (#9585).
-//
-// The same program as `kv_baseline.fern` — the same request records, the
-// same response records, the same counters and digest, the same
-// classify-then-update shape and the same threading of the map beside the
-// counters — with the built-in hash map replaced by `std/pmap`, a hash array
-// mapped trie with structural sharing. It exists to answer the issue's
-// question about persistent structures: whether Perceus reuse makes one
-// competitive, and what sharing costs it.
-//
-// Two modes. In the default mode the map is uniquely owned throughout, so the
-// reuse pass can write each insert's path nodes into the boxes they came from.
-// With `shared` as the fourth argument the driver keeps a snapshot of the map
-// across each batch — the shape a reader holding a consistent view would take
-// — so every update inside the batch finds its path shared and copies it. The
-// difference between the two columns is the price of a live snapshot.
-//
-// `kv_baseline.fern` documents the protocol and the workload.
 import "core/cmp";
 import "std/pmap";
 import "std/bench";
 import "std/i32";
 import "std/i64";
 import "std/string";
-
-// ===================== CAPACITIES =====================
 
 function max_entries(): i32 {
   return 4096;
@@ -41,8 +20,6 @@ function value_size(): i32 {
 function batch_size(): i32 {
   return 64;
 }
-
-// ===================== PROTOCOL =====================
 
 function op_put(): i32 {
   return 1;
@@ -99,8 +76,6 @@ struct Response {
   value: string,
 }
 
-// The counters and the digest. The map travels beside this rather than
-// inside it — see the header.
 struct Counters {
   m_ok: i64,
   m_miss: i64,
@@ -108,8 +83,6 @@ struct Counters {
   m_val: i64,
   digest: i64,
 }
-
-// ===================== BYTE HELPERS =====================
 
 function pow256(k: i32): i64 {
   let v: i64 = 1 as i64;
@@ -135,9 +108,6 @@ function read_i64(s: string, at: i32): i64 {
   return v;
 }
 
-// ===================== OPERATIONS =====================
-
-// The status a request will get, read without touching the map.
 function classify(entries: pmap.PMap[string, string], req: Request): i32 {
   let present: boolean = entries.contains(req.key);
   if (req.op == op_put()) {
@@ -166,11 +136,6 @@ function incremented(current: string, delta: i64): string {
   return string_from_bytes_unchecked(bytes);
 }
 
-// The map after each request classify did not refuse. One mutator per
-// function, returned directly: the analysis that lets a mutator write in
-// place reads the receiver's last use in source order over the whole
-// function, so a second mutator later in the same body — even on another
-// path — makes the first one copy the map (#11119 records the shape).
 function put(own entries: pmap.PMap[string, string], req: Request): pmap.PMap[string, string] {
   return entries.insert(req.key, req.value);
 }
@@ -231,9 +196,6 @@ function digest_responses(own c: Counters, rsps: Response[]): Counters {
   return Counters { ...c, digest: d };
 }
 
-// Answers the batch into an array of records, then folds those records into
-// the digest: the responses exist as values, which is the shape a caller that
-// serialises them would want and the allocation a bounded design avoids.
 function process_batch(own entries: pmap.PMap[string, string], own c: Counters, reqs: Request[]): (pmap.PMap[string, string], Counters) {
   let out: Response[] = [];
   let i: i32 = 0;
@@ -257,8 +219,6 @@ function process_batch(own entries: pmap.PMap[string, string], own c: Counters, 
 function fresh_counters(): Counters {
   return Counters { m_ok: 0 as i64, m_miss: 0 as i64, m_full: 0 as i64, m_val: 0 as i64, digest: 0 as i64 };
 }
-
-// ===================== THE WORKLOAD =====================
 
 function mix64(n: i64): i64 {
   let x: i64 = n * (2654435761 as i64);
@@ -359,8 +319,6 @@ function gen_prefill(first_key: i64): Request[] {
   return reqs;
 }
 
-// ===================== DRIVER =====================
-
 function mix_of(name: string): i32 {
   if (name == "read") {
     return mix_read();
@@ -371,8 +329,6 @@ function mix_of(name: string): i32 {
   return mix_mixed();
 }
 
-// `mix load_pct rounds` from the command line, each defaulting when absent
-// or unreadable.
 function options(argv: string[]): (string, i32, i32) {
   let mix_name: string = "mixed";
   let load_pct: i32 = 50;
@@ -434,9 +390,6 @@ function main(): i32 {
   while (r < rounds) {
     let t0: i64 = monotonic_ns();
     if (shared) {
-      // A reader's view of the map for the duration of the batch. Holding it
-      // is what makes every update's path shared rather than unique, and
-      // reading its size afterwards is what keeps it alive that long.
       let snapshot: pmap.PMap[string, string] = entries;
       let (e2, c2) = process_batch(entries, c, gen_batch(r as i64 * (97 as i64) + 1 as i64, universe, mix));
       entries = e2;

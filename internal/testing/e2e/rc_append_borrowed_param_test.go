@@ -2,14 +2,6 @@ package e2e
 
 import "testing"
 
-// A local bound to an append on a BORROWED array parameter is released
-// (#11487).
-//
-// The receiver's borrow taint reached the binding, so its scope-exit release
-// was the flat __fern_rc_dec, which never frees: the copy the append made
-// leaked on every call, and with string elements the pushed element leaked
-// with it. The grow helper counts its result on both arms, so the binding owns
-// a reference of its own and reclaims it.
 func TestAppendOnBorrowedParamIsReleased(t *testing.T) {
 	shapes := []struct{ name, src string }{
 		{"i32_elements", `
@@ -49,9 +41,6 @@ function main(): i32 {
   if (base.len() != 2) { return 1; }
   return t - 9;
 }`},
-		// The argument dies at the call, so nothing brackets it and the
-		// append grows the caller's buffer in place: the binding shares it
-		// at rc 2, and its release must leave the caller's count standing.
 		{"in_place_on_a_dying_argument", `
 import "std/i32";
 

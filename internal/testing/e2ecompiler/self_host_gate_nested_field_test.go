@@ -2,12 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A read through a struct-typed field, then a method on what it reads. The
-// pre-codegen gate (asmcore.infer_expr_type) used to drop a struct-typed
-// field to unknown and then type the next field by its NAME across every
-// struct, so `t.memo.names` read as `Rows.names: string` and `.find` typed as
-// the string method, refusing the program with E003 (#11066). Rows is
-// declared first on purpose: the by-name scan answers with the first struct.
 const gateNestedFieldSrc = `struct Rows { names: string }
 
 struct Index { keys: string[] }
@@ -41,11 +35,6 @@ function main(): i32 {
 }
 `
 
-// The same method-on-a-field shape through a user variant's payload binding.
-// The gate never bound `ix`, so `ix.names` fell to the by-name scan and typed
-// as `Rows.names: string` (E003 on `at`). The binding is typed from the
-// variant's declaration now, and an object the gate cannot type reads as
-// unknown rather than as whichever struct spells the field first.
 const gateVariantPayloadFieldSrc = `struct Rows { names: string }
 
 struct Keys { items: string[] }

@@ -9,12 +9,6 @@ import (
 	"testing"
 )
 
-// TestArm64DarwinReplacedZoneLocal runs #9165's reproducer: a struct local
-// conditionally replaced, then handed to a separate function with a wide
-// string-carrying struct live beside it. On arm64-darwin the replacing branch
-// segfaulted where the other did not, which is how `date -u` crashed. The
-// imports are coreutils' own, so the program sits beside a link to
-// coreutils/lib.
 func TestArm64DarwinReplacedZoneLocal(t *testing.T) {
 	const prog = `import "std/string";
 import "std/array";

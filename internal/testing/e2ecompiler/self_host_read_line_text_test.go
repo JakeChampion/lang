@@ -30,7 +30,6 @@ func checkReadLineTextComponent(t *testing.T, compiler string, runner []string, 
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("component compile: %v\n%s", err, out)
 	}
-	// Components do not emit an exit-time census; native/core legs do.
 	e2eharness.CheckReadLineText(t, func() *exec.Cmd { return exec.Command("wasmtime", "run", bin) }, nil)
 }
 

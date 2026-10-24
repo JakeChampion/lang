@@ -9,13 +9,6 @@ import (
 	"testing"
 )
 
-// clockIRCases exercise monotonic_ns() / now_unix_ms() — 0-arg i64 clock
-// readings — through the IR path. Each lowers to a dedicated IR op
-// (op_monotonic_ns / op_now_unix_ms) that the x86-64 / arm64 backends emit as a
-// call into its __fern_* clock helper. The monotonic clock is non-decreasing,
-// and a fresh wall-clock reading is too over the handful of instructions
-// between the two calls, so `b >= a` ⇒ exit 7 (1 would mean time went
-// backwards).
 var clockIRCases = []struct {
 	name, src, helper string
 }{
@@ -24,10 +17,6 @@ var clockIRCases = []struct {
 	{"now_ns", `function main(): i32 { let a: i64 = now_ns(); let b: i64 = now_ns(); if (b >= a) { return 7; } return 1; }`, "__fern_now_ns"},
 }
 
-// TestSelfHostClockIRX86_64 proves each case (a) routes through the IR path
-// (asm_pathprobe_run prints "ir", not "refused") and (b) compiles + runs to exit 7
-// through the production x86-64 driver (asm_run, IR default-on), with the
-// emitted asm calling the clock helper.
 func TestSelfHostClockIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -37,16 +26,10 @@ func TestSelfHostClockIRX86_64(t *testing.T) {
 
 	for _, tc := range clockIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// (a) path probe: the module must be fully IR-eligible.
 			probe := runCapture(t, gcc, runner, probeBin, []byte(tc.src))
 			if strings.TrimSpace(string(probe)) != "ir" {
 				t.Fatalf("%s: path probe = %q, want \"ir\" (clock builtin bailed the module to the AST path)", tc.name, probe)
 			}
-			// (b) compile + run through the IR-default driver. Both native IR
-			// paths host the clock helpers as Fern runtime functions (#2649),
-			// so the op handler calls the stack-ABI __fn_-prefixed symbol.
-			// wasm is the exception: it keeps `call $__fern_<clock>` over the
-			// preview1 clock_time_get import.
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
 			if !bytes.Contains(asm, []byte("call __fn_"+tc.helper)) {
 				t.Fatalf("%s: emitted asm has no `call __fn_%s`", tc.name, tc.helper)
@@ -66,11 +49,6 @@ func TestSelfHostClockIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostClockIRWasm runs the same cases through the wasm IR backend under
-// wasmtime. Each clock op emits `call $__fern_<clock>` (wasm_ir), and the
-// module pulls in the preview1 wasi clock_time_get import + the clock_funcs
-// helpers when it reads any clock. The non-decreasing-clock contract again
-// gives exit 7.
 func TestSelfHostClockIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host clock wasm IR e2e")
@@ -93,8 +71,6 @@ func TestSelfHostClockIRWasm(t *testing.T) {
 			if err != nil || len(wat) == 0 {
 				t.Fatalf("driver failed for %q: %v", tc.src, err)
 			}
-			// IR routing: the clock op must lower to `call $__fern_<clock>`
-			// (wasm_ir's op arm), not bail.
 			if !bytes.Contains(wat, []byte("call $"+tc.helper)) {
 				t.Fatalf("%s: emitted wat has no `call $%s` — clock builtin did not lower through the wasm IR path", tc.name, tc.helper)
 			}
@@ -114,13 +90,6 @@ func TestSelfHostClockIRWasm(t *testing.T) {
 	}
 }
 
-// TestSelfHostClockIRArm64 runs the same cases through the arm64 IR backend
-// under qemu (CI-gated). arm64 hosts the clocks as Fern runtime functions too
-// (#2649), so the op handler calls the stack-ABI `bl __fn___fern_<clock>` —
-// note that `bl __fern_<clock>`, what this asserted before the migration, is
-// NOT a substring of it: the `__fn___` prefix sits between. That is what makes
-// this a t.Fatalf that silently skipped the qemu run rather than a mismatch
-// something downstream would have caught.
 func TestSelfHostClockIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

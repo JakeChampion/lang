@@ -8,21 +8,6 @@ import (
 	"testing"
 )
 
-// chroot(path), setgroups(gids), setgid(gid) and setuid(uid) — the four
-// primitives chroot(1) needs beyond what the tree already had (#9678).
-//
-// PRIVILEGE DECIDES WHICH HALF OF THIS RUNS, so the source branches on
-// geteuid() rather than assuming either. The GitHub runners are uid 1001 and
-// reach only the refusals; `scripts/devbox` and the dev container are root and
-// reach the syscalls for real. Asserting one and skipping the other would
-// leave whichever half CI does not run ungated forever.
-//
-// The range refusals are the part that is the same everywhere, because they
-// never reach the kernel at all: an id outside 32 unsigned bits is EINVAL in
-// the helper. That is not defensive tidiness — the kernel reads the low 32
-// bits of the register for a uid_t argument, so setuid(2^32 + 1) would
-// otherwise set uid 1, and GNU's "no id" spelling (uid_t) -1 has every high
-// bit set as an i64 and would set uid 0xFFFFFFFF.
 const chrootCredsSource = `
 // Naming every variant forces each builtin's Err payload to BE the IoError
 // enum rather than a struct of that name — the shape chdir shipped with
@@ -178,12 +163,6 @@ func TestArm64ChrootCreds(t *testing.T) {
 	})
 }
 
-// The Mach-O leg, run natively on Apple Silicon. XNU's BSD numbers for these
-// four are 61 / 23 / 181 / 80 and share no arithmetic with Linux's 51 / 146 /
-// 144 / 159 — 4.3BSD put getgroups and setgroups adjacent at 79 and 80 while
-// setuid and setgid came from different eras of the ABI — so a table filled in
-// by offsetting the Linux row would issue four different syscalls here. This
-// is what notices.
 func TestArm64DarwinChrootCreds(t *testing.T) {
 	bin := buildFernCLI(t)
 	runChrootCredsChecks(t, func(t *testing.T, src string) int {

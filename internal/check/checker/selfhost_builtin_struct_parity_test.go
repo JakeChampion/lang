@@ -11,33 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// The self-host mirrors part of the checker's builtin struct table — in
-// TWO places, and both have to agree with it.
-//
-// builtinStructDecls injects HttpRequest / HttpResponse / HeaderMap /
-// Stream and friends into every native program. The
-// self-host cannot inject them the same way, so it carries its own
-// copies, and that is where it reads field OFFSETS and the shapes for
-// chained access from:
-//
-//   - compiler/builtins.fern, `struct` declarations for the
-//     import-driven driver;
-//   - compiler/parser.fern, which appends StructDecl values
-//     to the table for the paths that never read builtins.fern (the
-//     asm_load_run driver, loading from a stdlib root).
-//
-// Nothing pinned any of them together. A field added, removed or
-// retyped on the native side leaves the self-host resolving the old
-// offsets against a struct the native backend now lays out
-// differently, which is a wrong-address read rather than a diagnostic;
-// and a field whose STRUCT type is stale there stops chained access
-// (`req.body.data`) resolving at all, which bails the whole module out
-// of the IR path. Both happened when HttpRequest.body became a Stream:
-// builtins.fern was updated and parser.fern was not.
-//
-// Each mirror is deliberately a SUBSET: it declares only what its
-// sources need. A checker builtin absent from a mirror is fine; one
-// that disagrees is not.
 func TestSelfHostBuiltinStructsMatchChecker(t *testing.T) {
 	native := map[string]string{}
 	for _, sd := range builtinStructDecls() {
@@ -61,7 +34,7 @@ func TestSelfHostBuiltinStructsMatchChecker(t *testing.T) {
 			for name, fields := range mirror {
 				want, isBuiltin := native[name]
 				if !isBuiltin {
-					continue // a self-host-only record; not this gate's business
+					continue
 				}
 				checked++
 				if fields != want {
@@ -71,8 +44,6 @@ func TestSelfHostBuiltinStructsMatchChecker(t *testing.T) {
 						name, filepath.Base(m.path), fields, want)
 				}
 			}
-			// Guard the gate itself: a rename or a reshaped injection site
-			// that made every name stop matching would otherwise pass silently.
 			if checked < m.min {
 				t.Errorf("only %d builtin structs were compared in %s; it should mirror at least "+
 					"HeaderMap, Stream, HttpRequest and HttpResponse", checked, filepath.Base(m.path))
@@ -81,7 +52,6 @@ func TestSelfHostBuiltinStructsMatchChecker(t *testing.T) {
 	}
 }
 
-// parseFernStructDecls reads plain `struct N { a: T, ... }` declarations.
 func parseFernStructDecls(t *testing.T, src string) map[string]string {
 	t.Helper()
 	decl := regexp.MustCompile(`(?m)^struct\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{([^}]*)\}`)
@@ -95,14 +65,8 @@ func parseFernStructDecls(t *testing.T, src string) map[string]string {
 	return out
 }
 
-// parseInjectedStructDecls reads parser.fern's table injections: an
-// `if (!name_declared(structs, "N"))` block whose body appends one
-// StructFieldDecl per field, in order.
 func parseInjectedStructDecls(t *testing.T, src string) map[string]string {
 	t.Helper()
-	// The guard is `name_declared`, which answers for an enum of that name
-	// as well as a struct; `struct_declared` is the struct-only half it calls.
-	// A block ends at the first `}` indented as far as its `if` line.
 	head := regexp.MustCompile(`(?m)^([ \t]*)if \(!(?:name|struct)_declared\(structs, "([A-Za-z_][A-Za-z0-9_]*)"\)\) \{`)
 	field := regexp.MustCompile(`StructFieldDecl \{[^}]*\}`)
 	out := map[string]string{}
@@ -126,10 +90,6 @@ func parseInjectedStructDecls(t *testing.T, src string) map[string]string {
 	return out
 }
 
-// injectedFieldSpelling renders one StructFieldDecl literal as builtins.fern
-// spells the field. A fn-typed field carries the flat "fn" tag with its
-// return and parameter spellings in the fn_ret / fn_param_types sidecars,
-// which is where the `(P) => R` spelling is rebuilt from.
 func injectedFieldSpelling(lit string) string {
 	attr := func(key string) string {
 		m := regexp.MustCompile(key + `: "([^"]*)"`).FindStringSubmatch(lit)
@@ -145,7 +105,6 @@ func injectedFieldSpelling(lit string) string {
 	return name + ": " + ty
 }
 
-// fernStructBody spells a builtin's fields the way builtins.fern does.
 func fernStructBody(t *testing.T, sd *ast.StructDecl) string {
 	t.Helper()
 	parts := make([]string, 0, len(sd.Fields))
@@ -209,8 +168,6 @@ func fernTypeSpelling(t *testing.T, ty ast.Type) string {
 	return ""
 }
 
-// normaliseFields collapses whitespace so the comparison is on field
-// names and types, not on how the declaration is laid out.
 func normaliseFields(s string) string {
 	var fields []string
 	depth, start := 0, 0

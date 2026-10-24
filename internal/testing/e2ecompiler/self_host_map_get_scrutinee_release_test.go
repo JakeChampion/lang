@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// A match over a builtin `m.get(k)` releases the Option box its answer came
-// in, an arm that `return`s included: no block per early exit (#9038's
-// neighbour).
 const mapGetScrutineeSrc = `import "core/map";
 @noinline
 function find(m: Map[string, i32], k: string): i32 {

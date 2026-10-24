@@ -1,11 +1,5 @@
 package e2e
 
-// Differential coverage for std/string `rsplitn` — `splitn` scanning from the
-// END: at most n pieces, in reverse order, with the FIRST (leftmost) piece
-// carrying the unsplit head. Mirrors Rust's `str::rsplitn`; pairs with
-// `splitn` / `rsplit`. Returns 42 iff every check holds across interp /
-// x86-64 / wasm / arm64.
-
 import "testing"
 
 const stringRsplitnProg = `

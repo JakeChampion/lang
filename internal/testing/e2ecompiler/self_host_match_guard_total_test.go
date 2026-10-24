@@ -6,14 +6,6 @@ import (
 	"testing"
 )
 
-// A value match whose plain variant arms cover the union is total however
-// many guarded arms stand ahead of them: a guard decides nothing about
-// coverage, since its false edge reaches the arms after it. Counted against the
-// variant count, one guarded arm makes the match "fall through" and the typed
-// lowering refuses it with `value block match falls through` (found by
-// fernsmith's guard production). Each case runs under the self-host CLI for
-// every target this host can run and through the Go `fern` CLI for the same
-// program; the two must agree.
 var matchGuardTotalCases = []struct {
 	name string
 	src  string
@@ -26,32 +18,32 @@ var matchGuardTotalCases = []struct {
     }
 }
 function main(): i32 { return choose(None); }
-`}, // 37
+`},
 	{"guard_then_plain", `function main(): i32 {
     let v: Option[i32] = Some(5i32);
     let r: i32 = (match (v) { Some(g) when (g > 3i32) => g, Some(x) => x + 100i32, None => 0i32 });
     return r;
-}`}, // 5
+}`},
 	{"guard_false_reaches_plain", `function main(): i32 {
     let v: Option[i32] = Some(5i32);
     let r: i32 = (match (v) { Some(g) when (g > 9i32) => 100i32, None when (true) => 200i32, Some(x) => x, None => 300i32 });
     return r;
-}`}, // 5
+}`},
 	{"guard_with_at_binding", `function main(): i32 {
     let v: Option[i32] = Some(5i32);
     let r: i32 = (match (v) { Some(g) when (g > 3i32) => g, w @ Some(x) => (match (w) { Some(y) => y + x, None => 0i32 }), None => 0i32 });
     return r;
-}`}, // 5
+}`},
 	{"result_guard_then_plain", `function main(): i32 {
     let v: Result[i32, i32] = Err(7i32);
     let r: i32 = (match (v) { Ok(g) when (g > 3i32) => g, Ok(x) => x + 100i32, Err(e) when (e > 10i32) => 50i32, Err(e) => e + 20i32 });
     return r;
-}`}, // 27
+}`},
 	{"plain_arms_out_of_order", `function main(): i32 {
     let v: Option[i32] = Some(2i32);
     let r: i32 = (match (v) { Some(g) when (g > 3i32) => 100i32, None => 200i32, Some(x) => x + 10i32 });
     return r;
-}`}, // 12
+}`},
 }
 
 func TestSelfHostMatchGuardTotal(t *testing.T) {

@@ -9,10 +9,6 @@ import (
 	"testing"
 )
 
-// A named type's release frees a box it solely owns without building a frame:
-// it runs the type's drop and then frees the box, holding the box on the stack
-// across both calls. The program builds and drops records that own a string
-// and an array, so that path runs on every round.
 const releaseTailProg = `struct P { name: string, xs: i32[] }
 
 @noinline function make(i: i32): P {
@@ -65,8 +61,6 @@ func TestSelfHostReleaseUniqueTail(t *testing.T) {
 	if drop < 0 || free < drop {
 		t.Errorf("P's release does not drop and then free a unique box before building a frame:\n%s", head)
 	}
-	// Only a count of exactly one may take that path: a zero falls to the
-	// body, whose helper reports the underflow.
 	if guard < 0 || guard > drop {
 		t.Errorf("P's release drops without first branching away every count but one:\n%s", head)
 	}

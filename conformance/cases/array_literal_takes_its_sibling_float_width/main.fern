@@ -1,6 +1,6 @@
-// An unsuffixed literal in an array literal takes the type of a concrete
-// sibling: beside an f32 element a float literal is an f32, and so is an
-// integer literal, wherever in the array the concrete element appears.
+
+
+
 function half(x: f32): f32 { return x / 2.0; }
 function id[T](x: T): T { return x; }
 

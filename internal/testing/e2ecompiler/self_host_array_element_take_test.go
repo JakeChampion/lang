@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// An array element read takes its slot when the array is the frame's own
-// (ssaunits.payload_root), and that take is the read's unit. The read must not
-// also be held as an element outliving its array (held_elements): the hold's
-// retain and release pair up, and the take's unit was never released. Here the
-// `.with` copies `xs` because `xs` is still read, so `xs` is unique at its
-// read and the take empties slot 0; the element then outlives the array.
-//
-// The exit code: 1 for a wrong sum, 99 for a count that went under.
 const arrayElementTakeProg = `struct In { v: i32 }
 function round(i: i32): i32 {
     let xs: In[] = [In { v: i }, In { v: i + 1 }];

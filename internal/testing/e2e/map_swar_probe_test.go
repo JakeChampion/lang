@@ -1,30 +1,5 @@
 package e2e
 
-// Coverage for core/map's SWAR group probe (#6198).
-//
-// The probe loops in __map_lookup_keyed / __map_set_keyed_impl /
-// __map_delete_keyed_impl scan 8 ctrl bytes at a time and only touch the
-// bucket column on an H2 tag match. Probe order is unchanged from the
-// scalar linear probe, so this program pins the behaviours that the group
-// rewrite could plausibly break and the older map tests do not target
-// directly:
-//
-//   - the ctrl mirror at the minimum capacity (cap 4, where every group
-//     load wraps and the one group covers the table twice);
-//   - lookup/insert/delete of missing keys over tombstone runs (the probe
-//     must stop at the first EMPTY, not at a tombstone, and must not cycle
-//     in a table holding only full + tombstone buckets);
-//   - tombstone reuse on re-insert (the ctrl byte must flip back from
-//     tombstone to the new key's H2);
-//   - growth with tombstones present (the rebuilt table starts all-empty
-//     and re-derives every ctrl byte);
-//   - the len<=8 entry-scan fast path boundary in both directions;
-//   - churn at a size where probe chains cross group boundaries, for the
-//     scalar (Wang mix), seeded string, and wide (i64) key kinds.
-//
-// Values follow arithmetic in the key, so verification needs no oracle
-// container: presence and value are both recomputable per key.
-
 import "testing"
 
 const mapSwarProbeProg = `

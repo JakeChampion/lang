@@ -1,21 +1,4 @@
-// std/tls/keyshare — the key exchange a TLS 1.3 key_share carries (RFC 8446
-// §4.2.8): X25519, X25519MLKEM768, the hybrid of ML-KEM-768 and X25519
-// (draft-ietf-tls-ecdhe-mlkem), secp256r1, the exchange every TLS 1.3
-// implementation must have (§9.1), and SecP256r1MLKEM768, the hybrid of
-// ML-KEM-768 and secp256r1.
-//
-//   let mine: keyshare.ClientShare = keyshare.client_share(keyshare.X25519MlKem768, entropy)?;
-//   let theirs: keyshare.ServerShare = keyshare.server_share(mine.group, mine.public, server_entropy)?;
-//   let shared: u8[] = mine.shared_secret(theirs.public)?;   // theirs.shared_secret
-//
-// The caller supplies the randomness, so a handshake replays exactly. In
-// X25519MLKEM768 ML-KEM's part comes first throughout: the client's share is
-// the encapsulation key then the X25519 public key, the server's the
-// ciphertext then its X25519 public key, and the shared secret ML-KEM's then
-// X25519's. A secp256r1 share is an uncompressed SEC 1 point, and its
-// scalar is a 40-byte draw reduced modulo the order (FIPS 186-5 A.2.1), so
-// no draw is refused. In SecP256r1MLKEM768 the P-256 part comes first
-// throughout, and its draw before ML-KEM's.
+// This module provides TLS 1.3 key agreement operations.
 
 import "core/int";
 import "std/crypto/ecdsa";
@@ -26,7 +9,6 @@ import "std/hex";
 import "std/error";
 import "core/cmp";
 
-// Group — a key exchange group (NamedGroup).
 pub enum Group {
   X25519,
   X25519MlKem768,
@@ -52,8 +34,6 @@ pub function (g: Group) code(): i32 {
   return 0;
 }
 
-// group is the Group with a NamedGroup code, or None for one not
-// implemented.
 pub function group(code: i32): Option[Group] {
   if (code == 0x001d) {
     return Some(X25519);
@@ -70,10 +50,6 @@ pub function group(code: i32): Option[Group] {
   return None;
 }
 
-// client_entropy and server_entropy are how many random bytes each side's
-// share takes: an X25519 scalar, then ML-KEM's d and z for the client or
-// its message m for the server; 40 for a secp256r1 scalar, first in its
-// hybrid.
 pub function (g: Group) client_entropy(): i32 {
   match (g) {
     X25519 => {
@@ -110,8 +86,6 @@ pub function (g: Group) server_entropy(): i32 {
   return 0;
 }
 
-// client_share_len and server_share_len are the lengths of each side's
-// key_exchange.
 pub function (g: Group) client_share_len(): i32 {
   match (g) {
     X25519 => {
@@ -148,11 +122,6 @@ pub function (g: Group) server_share_len(): i32 {
   return 0;
 }
 
-// KeyShareError — entropy or a peer's share of the wrong length (the length
-// it had, then the length wanted), an X25519 key whose shared secret is all
-// zeros, an ML-KEM encapsulation key with a coefficient not below q, a
-// secp256r1 point not on the curve, or a secp256r1 draw that reduces to
-// zero. All but the first and last end a handshake with illegal_parameter.
 pub enum KeyShareError {
   EntropyLength(i32, i32),
   ShareLength(i32, i32),
@@ -194,14 +163,10 @@ pub function (e: KeyShareError) message(): string {
   return "";
 }
 
-// The order of secp256r1, and 2^256 modulo it: a 40-byte draw hi || lo is
-// hi * 2^256 + lo, reduced in Montgomery form without a branch on it.
 const P256_ORDER: string = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551";
 
 const P256_R256: string = "ffffffff00000000000000004319055258e8617b0c46353d039cdaaf";
 
-// __p256_key is the scalar a 40-byte draw makes; only the one draw in 2^256
-// that reduces to zero is refused.
 function __p256_key(entropy: [u8]): Result[ecdsa.PrivateKey, KeyShareError] {
   let order: montgomery.Modulus = montgomery.modulus(P256_ORDER, 32);
   let hi: i64[] = montgomery.mul(order, montgomery.from_bytes(order, entropy[0:8]), montgomery.from_bytes(order, hex.hex_decode(P256_R256)));
@@ -229,13 +194,8 @@ function __p256_agree(k: ecdsa.PrivateKey, peer: [u8]): Result[u8[], KeyShareErr
   return Err(OffCurve);
 }
 
-// ClientShare — the client's half of a key exchange: `public` goes in the
-// ClientHello, and the secrets stay to finish the exchange once the server
-// answers. `decapsulation_key` is empty for X25519.
 pub struct ClientShare { group: Group, public: u8[], scalar: u8[], decapsulation_key: u8[] }
 
-// ServerShare — the server's answer: `public` goes in the ServerHello, and
-// `shared_secret` feeds the handshake secret.
 pub struct ServerShare { public: u8[], shared_secret: u8[] }
 
 function __cat(a: [u8], b: [u8]): u8[] {
@@ -268,7 +228,6 @@ function __x25519_error(e: x25519.X25519Error): KeyShareError {
   return KeyShareError.LowOrder;
 }
 
-// Only a reduced key can fail once the lengths are checked.
 function __mlkem_error(e: mlkem768.MlKemError): KeyShareError {
   return BadEncapsulationKey;
 }
@@ -297,8 +256,6 @@ function __agree(scalar: [u8], point: [u8]): Result[u8[], KeyShareError] {
   return Err(KeyShareError.LowOrder);
 }
 
-// client_share makes the client's share from g.client_entropy() random
-// bytes.
 pub function client_share(g: Group, entropy: [u8]): Result[ClientShare, KeyShareError] {
   if (entropy.len() != g.client_entropy()) {
     return Err(EntropyLength(entropy.len(), g.client_entropy()));
@@ -357,8 +314,6 @@ function __p256_hybrid_client(g: Group, entropy: [u8]): Result[ClientShare, KeyS
   return Err(BadEncapsulationKey);
 }
 
-// server_share answers the client's share for g from g.server_entropy()
-// random bytes.
 pub function server_share(g: Group, client_public: [u8], entropy: [u8]): Result[ServerShare, KeyShareError] {
   if (entropy.len() != g.server_entropy()) {
     return Err(EntropyLength(entropy.len(), g.server_entropy()));
@@ -422,7 +377,6 @@ function __p256_hybrid_server(client_public: [u8], entropy: [u8]): Result[Server
   return Err(BadEncapsulationKey);
 }
 
-// shared_secret finishes the exchange with the server's share.
 pub function (c: ClientShare) shared_secret(server_public: [u8]): Result[u8[], KeyShareError] {
   if (server_public.len() != c.group.server_share_len()) {
     return Err(ShareLength(server_public.len(), c.group.server_share_len()));
@@ -469,7 +423,6 @@ function __p256_hybrid_secret(c: ClientShare, server_public: [u8]): Result[u8[],
   return Err(BadEncapsulationKey);
 }
 
-// __p256_scalar is the key a client share's reduced scalar makes again.
 function __p256_scalar(scalar: [u8]): Result[ecdsa.PrivateKey, KeyShareError] {
   match (ecdsa.private_key(ecdsa.P256, scalar)) {
     Ok(k) => {

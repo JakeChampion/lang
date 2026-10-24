@@ -1,23 +1,23 @@
-// A match EXPRESSION whose arm body is just the name the arm binds. The
-// result slot is sized before any arm is lowered, from each arm body's
-// type — and the IR derives an identifier's type by NAME, against locals
-// and params, neither of which a pattern binder is. So a bare binder body
-// answered "no type", the slot fell back to i32, and a two-word `string`
-// result was emitted through a one-word slot: the wasm module failed
-// validation with `expected i32 but nothing on stack`, while the natives
-// happened to survive it.
-//
-// A second arm whose body has a derivable type (a literal, a local) sizes
-// the slot correctly and hides the defect, so every probe here keeps every
-// arm body a bare binder.
-//
-// The tuple and payload-SUB-PATTERN spellings are the same rule reached
-// through the desugars that route their arm values through a synthesised
-// LOCAL rather than through `return`: the local was declared from the first
-// arm's syntax, where a binder reads as i32, so a `string` or `i64` binder
-// was stored into an i32 (#8657). Both halves are here because both are the
-// same question — what type does a bare binder body have — asked of two
-// desugars.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 enum One { Only(string) }
 enum Two { Left(string), Right(string) }
 enum Res { Ok1(string), Err1(string) }
@@ -38,7 +38,7 @@ function two_arms(): string {
     };
 }
 
-// Tuple scrutinee: the value local's declaration is what sizes the result.
+
 function tuple_arm(): string {
     let t: (string, i32) = ("elem", 4);
     return match (t) {
@@ -46,7 +46,7 @@ function tuple_arm(): string {
     };
 }
 
-// The same at 64-bit width rather than two words.
+
 function tuple_arm_i64(): i64 {
     let t: (i64, i32) = (5000000000i64, 4);
     return match (t) {
@@ -54,7 +54,7 @@ function tuple_arm_i64(): i64 {
     };
 }
 
-// A tuple pattern nested inside a tuple pattern.
+
 function nested_tuple_arm(): string {
     let t: (i32, (string, i32)) = (1, ("elem", 4));
     return match (t) {
@@ -62,7 +62,7 @@ function nested_tuple_arm(): string {
     };
 }
 
-// A payload SUB-pattern, which takes the flag-chain desugar.
+
 function payload_sub_arm(): string {
     let w: Wrap = Box(Ok1("elem"));
     return match (w) {
@@ -71,8 +71,8 @@ function payload_sub_arm(): string {
     };
 }
 
-// The `@` whole-value binder names the SCRUTINEE, so its type is the one
-// position the arm's own binding lists cannot supply.
+
+
 function at_binder_arm(): One {
     let o: One = Only("elem");
     return match (o) {

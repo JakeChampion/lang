@@ -1,20 +1,3 @@
-// Differential regression for #6665: an array field aliased into the same
-// container literal that appends to it must see the PRE-append buffer.
-//
-// `o = S { xs: o.xs.append(i), inner: I { tag: i, data: o.xs } }` evaluates
-// both fields against the container `o` still names, so `data` is the array
-// one shorter than `xs`. Native took the rc==1 in-place grow — the field
-// receiver carried no last-use information the way a bare ident does — and
-// `data` observed the growth: interp returned 24 where native returned 34.
-//
-// The alias does not have to be a nested literal (a flat sibling field, a
-// call argument, and the whole container passed on all do it), does not have
-// to be in the same statement (a later read of the same place, or a struct
-// alias bound before the append, do it too), and needs a buffer with spare
-// CAPACITY to show at all — a literal-built array reallocates on the first
-// grow and hides it, which is why the loop builds one first. Each case prints
-// its result so the oracle (interp) and all three backends are compared by
-// stdout.
 package e2e
 
 import "testing"
@@ -26,7 +9,6 @@ func TestNestedLiteralAppendAliasDifferential(t *testing.T) {
 	cases := []struct {
 		name, src string
 	}{
-		// The #6665 repro. Per call: 10 + 9 + 2 + 7 = 28 (native: 29).
 		{"nested_literal_alias", `import "std/i32";
 struct I { tag: i32, data: i32[] }
 struct S { xs: i32[], inner: I, n: i32 }
@@ -43,7 +25,6 @@ function main(): i32 {
     print(work(8).to_string());   // 28
     return 0;
 }`},
-		// FLAT sibling field, no nesting — the alias is one field over.
 		{"flat_sibling_alias", `import "std/i32";
 struct S { xs: i32[], ys: i32[], n: i32 }
 function work(k: i32): i32 {
@@ -59,7 +40,6 @@ function main(): i32 {
     print(work(8).to_string());   // 1097
     return 0;
 }`},
-		// The alias is built by a CALL inside the same literal.
 		{"alias_through_call_arg", `import "std/i32";
 struct I { tag: i32, data: i32[] }
 struct S { xs: i32[], inner: I, n: i32 }
@@ -77,8 +57,6 @@ function main(): i32 {
     print(work(8).to_string());   // 1097
     return 0;
 }`},
-		// The WHOLE container is handed to a call in the same literal, which
-		// reaches the field itself.
 		{"alias_through_whole_container", `import "std/i32";
 struct I { tag: i32, data: i32[] }
 struct S { xs: i32[], inner: I, n: i32 }
@@ -96,7 +74,6 @@ function main(): i32 {
     print(work(8).to_string());   // 1097
     return 0;
 }`},
-		// A two-hop place: the append and the alias both read `o.a.b`.
 		{"nested_field_chain", `import "std/i32";
 struct A { b: i32[] }
 struct S { a: A, ys: i32[], n: i32 }
@@ -113,8 +90,6 @@ function main(): i32 {
     print(work(8).to_string());   // 1097
     return 0;
 }`},
-		// No rebinding at all: the container survives the append, so a LATER
-		// statement reading the same place sees the pre-append length.
 		{"later_statement_reads_place", `import "std/i32";
 struct S { xs: i32[], n: i32 }
 function work(k: i32): i32 {
@@ -133,9 +108,6 @@ function main(): i32 {
     print(work(8).to_string());   // 44
     return 0;
 }`},
-		// The container is rebound, but a STRUCT ALIAS taken before the append
-		// still names the old one — the rebinding forwards the name, not the
-		// reference.
 		{"struct_alias_outlives_rebind", `import "std/i32";
 struct S { xs: i32[], n: i32 }
 function work(k: i32): i32 {
@@ -154,9 +126,6 @@ function main(): i32 {
     print(work(8).to_string());   // 44
     return 0;
 }`},
-		// Guard: a sibling read of a DISJOINT field does not alias the grown
-		// buffer, so this shape must keep the in-place grow (its O(1) is what
-		// TestWASMSelfReassignFieldBounded pins) and still be correct.
 		{"disjoint_sibling_guard", `import "std/i32";
 struct S { xs: i32[], ys: i32[], n: i32 }
 function work(k: i32): i32 {
@@ -172,10 +141,6 @@ function main(): i32 {
     print(work(8).to_string());   // 1027
     return 0;
 }`},
-		// Guard: the struct-update SPREAD form the self-host assemblers emit
-		// with — `a = A { ...a, code: a.code.append(v) }`. The spread copies
-		// every field EXCEPT the one it overrides, so it is not an alias of the
-		// grown buffer and the append stays in place.
 		{"struct_update_spread_guard", `import "std/i32";
 struct Asm { code: i32[], fix_offs: i32[], names: i32[] }
 function emit(a: Asm, opcode: i32, w: i32): Asm {

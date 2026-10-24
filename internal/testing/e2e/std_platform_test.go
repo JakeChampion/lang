@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// Cross-backend coverage for the capability methods of `std/platform`'s
-// host platform (docs/PLATFORM-RESEARCH.md Rec §1): the log sink, the two
-// clocks, the invocation environment, entropy. Each is a thin route to the
-// same builtin the free-function form reaches, so what this pins is that
-// the route EXISTS on every backend — a trait method on `platform.Host`,
-// dispatched through modload's method hoist. Returns 42 iff every check
-// holds; each leg skips itself when its toolchain is absent.
 const stdPlatformProg = `
 import "std/platform" as platform;
 function main(): i32 {

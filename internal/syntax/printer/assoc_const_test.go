@@ -19,8 +19,6 @@ function chunk[T: Lanes](n: i32): i32 { return n / T.LANES + f64.LANES; }
 function main(): i32 { return 0; }
 `
 
-// An associated constant survives formatting in both bodies, and its reads
-// stay field accesses on the type name.
 func TestFormatKeepsAssocConsts(t *testing.T) {
 	got := formatSrc(t, assocConstSrc)
 	for _, want := range []string{"  const LANES: i32;\n", "  const NAME: string = \"lanes\";\n", "  const LANES: i32 = 2;\n", "Self.LANES", "T.LANES", "f64.LANES"} {

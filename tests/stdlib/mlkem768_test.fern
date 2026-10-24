@@ -3,13 +3,6 @@ import "std/hex";
 import "std/crypto" as crypto;
 import "std/crypto/mlkem768";
 
-// tests/stdlib/mlkem768_test.fern — std/crypto/mlkem768 against FIPS 203
-// known answers from Go's crypto/internal/fips140/mlkem (Go 1.27.1): two
-// key pairs, an encapsulation and a decapsulation under each, implicit
-// rejection of a modified ciphertext, and every input-check refusal. Keys
-// and ciphertexts are compared by their SHA3-256.
-
-// __seq is the 32 bytes start, start + 1, …, start + 31.
 function __seq(start: i32): u8[] {
   let b: u8[] = __alloc_u8(32);
   let i: i32 = 0;
@@ -117,8 +110,6 @@ function test_keygen(): test.TestOutcome {
   return test.assert_eq(__h(k.decapsulation_key), "1149f17c3c4ac6ab1e3e2d9d8bd0171355ac0fa31bb8855c48ceade874c0864b");
 }
 
-// Encapsulating and decapsulating under the sequential key pair agree with
-// the reference and with each other.
 function test_round_trip(): test.TestOutcome {
   let k: mlkem768.KeyPair = seq_keys();
   let s: mlkem768.Encapsulation = encaps(k.encapsulation_key, __seq(64));
@@ -151,8 +142,6 @@ function test_second_pair(): test.TestOutcome {
   return test.assert_eq(shown(mlkem768.decaps(k.decapsulation_key, s.ciphertext)), ss);
 }
 
-// A modified ciphertext decapsulates to J(z || c) = SHAKE256(z || c), with
-// z the last 32 bytes of the decapsulation key.
 function test_implicit_rejection(): test.TestOutcome {
   let k: mlkem768.KeyPair = seq_keys();
   let ct: u8[] = encaps(k.encapsulation_key, __seq(64)).ciphertext;
@@ -197,8 +186,6 @@ function test_lengths(): test.TestOutcome {
   return test.assert_eq(shown(mlkem768.decaps(k.decapsulation_key, ct[0:1087])), "mlkem768: the ciphertext is 1087 bytes, want 1088");
 }
 
-// The modulus check refuses a first coefficient of 4095 and of exactly q,
-// 3329 = 0xd01; Go refuses both keys too.
 function test_modulus_check(): test.TestOutcome {
   let ek: u8[] = seq_keys().encapsulation_key;
   let refused: string = "mlkem768: the encapsulation key has a coefficient not below q";

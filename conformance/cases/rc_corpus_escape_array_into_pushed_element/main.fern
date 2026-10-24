@@ -1,10 +1,10 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Escape into a pushed array element: emitArrayPush stores
-// the element without an inc, so an owned inner array
-// pushed into a grid escapes uncounted and must survive the
-// helper's exit. Churn forces reuse of any freed block.
+
+
+
+
+
+
+
 import "core/int";
 import "std/array";
 import "std/string";

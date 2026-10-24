@@ -1,19 +1,9 @@
-// std/textwrap — greedy word wrapping for terminal / help text.
-//
-// `word_wrap(text, width)` breaks `text` into lines no longer than
-// `width` code points, breaking only between words (runs of spaces).
-// Existing newlines are preserved as hard breaks (each line is wrapped
-// independently, so blank lines stay blank). A single word longer than
-// `width` is placed on its own line rather than split. Inter-word runs
-// of spaces collapse to a single space (standard word-wrap behaviour).
-// A non-positive `width` returns `text` unchanged.
+// This module divides text into lines of a specified width.
 
 import "std/utf8";
 import "std/string";
 import "std/array";
 
-// __tw_words splits a line into its space-separated words, dropping the
-// empty strings that runs of spaces produce.
 function __tw_words(line: string): string[] {
   let raw: string[] = line.split(" ");
   let out: string[] = [];
@@ -27,8 +17,6 @@ function __tw_words(line: string): string[] {
   return out;
 }
 
-// __tw_wrap_line greedily packs `words` into lines of at most `width`
-// code points, joined by newlines.
 function __tw_wrap_line(words: string[], width: i32): string {
   let lines: string[] = [];
   let cur: string = "";
@@ -56,8 +44,6 @@ function __tw_wrap_line(words: string[], width: i32): string {
   return lines.join("\n");
 }
 
-// `word_wrap(text, width)` — wrap `text` to `width` code points per
-// line, breaking on spaces and preserving hard newlines.
 pub function word_wrap(text: string, width: i32): string {
   if (width <= 0) {
     return text;

@@ -6,11 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A local initialised from a qualified unit variant (`Pick.First`) owns
-// the static sentinel, so a payload box assigned over it later is released
-// like any other owned enum (#10103). Each shape runs six trips. A string
-// payload goes through ids so it is built on the heap rather than placed as
-// a constant.
 func TestEnumLocalReassignedFromAUnitVariant(t *testing.T) {
 	e2eharness.BoxedProbes(t)
 	const loop = `

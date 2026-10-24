@@ -12,23 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// On the single-word string ABI a string local passed to a user function is
-// tainted out of reclaim unless the counted-retain summary clears the callee's
-// position, and the summary had no arm for the plainest thing a callee can do
-// with a string parameter: bind it to a local. The caller's buffer was then
-// never freed, once per call (#9549).
-//
-// x86-64 is where this is measured, and that is the point: it runs the
-// single-word ABI under its DEFAULT emitter, so the shape is reachable without
-// naming a backend at all. arm64's default runs the two-word ABI and has no
-// such taint — TestArm64DefaultReclaimsStringPassedToAFunction is that side.
-//
-// The two spellings are compiled and run as a pair rather than asserting an
-// absolute figure. `tag` differs between them only in whether it binds the
-// parameter to a local before reading it, which changes nothing about what
-// either body retains, so any gap between their free counts is the defect.
-// An absolute bound would move with the allocator and the stdlib; this does
-// not.
 const singleWordAliasReclaimSrc = `function seed(i: i32): string {
     if (i % 2 == 0) { return "a string long enough to defeat the small-string optimisation A"; }
     return "a string long enough to defeat the small-string optimisation B";
@@ -51,8 +34,6 @@ function main(): i32 {
 
 var leakcheckCensus = regexp.MustCompile(`allocs=(\d+) frees=(\d+)`)
 
-// censusAtExit builds src for x86-64-linux with the CLI's default emitter and
-// returns the allocation and free counts FERN_LEAKCHECK reports at exit.
 func censusAtExit(t *testing.T, bin string, runner []string, dir, name, src string) (allocs, frees int) {
 	t.Helper()
 	srcPath := filepath.Join(dir, name+".fern")
@@ -69,9 +50,6 @@ func censusAtExit(t *testing.T, bin string, runner []string, dir, name, src stri
 	run.Env = e2eharness.ChildEnv()
 	var errBuf strings.Builder
 	run.Stderr = &errBuf
-	// The program exits with `acc % 83`, so a non-zero status is the normal
-	// path and says nothing about whether the run was good. The census line
-	// is the result, and its absence is the failure.
 	_ = run.Run()
 	m := leakcheckCensus.FindStringSubmatch(errBuf.String())
 	if m == nil {
@@ -119,8 +97,6 @@ func TestSingleWordABIReclaimsAStringParamBoundToALocal(t *testing.T) {
 			"Do not fix this by relaxing the comparison: the two numbers are supposed to be equal.",
 			aliasFrees, aliasAllocs, directFrees)
 	}
-	// Non-vacuous: the shape must really allocate. A const-folded concat or an
-	// SSO-inline result would make both columns zero and the test silent.
 	if aliasAllocs < 400 {
 		t.Errorf("only %d allocations for 400 rounds — the fixture stopped heap-allocating "+
 			"(const-fold collapsed the concat, or the strings became SSO-inline), so it no "+

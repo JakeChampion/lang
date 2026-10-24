@@ -1,41 +1,3 @@
-// Differential-execution oracle for the SELF-HOST compiler.
-//
-// Every other oracle in this package drives the NATIVE compiler:
-// diff_oracle_test.go builds each generated program with x86_64.Emit /
-// arm64.Emit / wasmbin.Build. The self-host compiler — the one that is meant to become
-// the product — was in none of those chains, so a green differential
-// run said the native backends agree and said nothing at all about
-// self-host lowering (#6138).
-//
-// That gap had a specific cost. The closure-dispatch cluster
-// docs/TEST-GATES.md names (#5001 / #5007 / #5009 / #5026 — escaping closures and closure
-// arrays that lowered on the self-host IR path and then SIGSEGV'd or
-// silently miscompiled) was found by hand-written differential probes,
-// one program at a time, because nothing swept a corpus down that path.
-// #6073 then taught fernsmith to emit exactly those shapes — closures
-// in 43% of the corpus, escaping ones in 6% — and fed them to oracles
-// that could not see the path the cluster was on. This leg closes that
-// loop: the shape is generated AND the comparison that catches it runs.
-//
-// It found real miscompiles on its first run and continues to; see the
-// known-divergences file for the current list.
-//
-// # Why exit code rather than stdout
-//
-// The byte oracle is the one that sees crashes, and crashes are what
-// this class of bug produces: a SIGSEGV arrives as 139, an arena
-// exhaustion as 125, and both are distinguishable here from a merely
-// wrong answer. A native binary propagates main's return over 0..255,
-// so unlike a wasm leg there is no WASI [0..126) cap to work around.
-//
-// # Cost, and why it is opt-in
-//
-// Building the self-host CLI is a heavy driver build (~4.3 GB reserved
-// by the harness's memory limiter, minutes of wall clock). It is paid
-// ONCE and amortised over the corpus; each seed is then a ~1.3s compile
-// plus a link and a run. That is still far more than the native oracle's
-// per-seed cost, so this is gated on FERN_SELFHOST_DIFF=1 and sharded in
-// CI rather than slowing every local `go test ./internal/testing/e2e`.
 package e2e
 
 import (
@@ -54,42 +16,10 @@ import (
 	"github.com/jakechampion/lang/internal/testing/fernsmith"
 )
 
-// selfHostDiffMinRunRatio is the floor on sampled-and-executed seeds.
-//
-// Compile gaps are a legitimate endpoint — the self-host backends route
-// IR-or-error, so a construct outside the IR subset is a diagnostic
-// naming the bail site rather than a miscompile. Without a floor, a
-// regression that widened the bail set would turn this lane green by
-// testing almost nothing, and the shape of the corpus means nobody would
-// notice the count moving.
-//
-// Set below the measured runnable fraction with room for the natural
-// drift a generator change causes, and well above "the leg has hollowed
-// out". Measured 2026-08-20 over seeds 0..511: 512 compile and run, 0
-// bail, 0 seeds skip on the interpreter side — a 1.00 ratio. The floor
-// stays well under it: the bail set is empty today, but a generator change
-// can reopen one at any time and this floor is what stops that from
-// hollowing the lane out unnoticed.
 const selfHostDiffMinRunRatio = 0.85
 
-// selfHostDiffKnownFile lists the seeds whose self-host result is KNOWN
-// to disagree with the interpreter today, one per line, each against its
-// tracking issue. Same contract as the fixture legs' files: a listed seed
-// that starts PASSING fails too, because an allowlist nobody prunes is
-// where bugs get forgotten.
 const selfHostDiffKnownFile = "selfhost-diff-x86_64-known-divergences.txt"
 
-// selfHostDiffSeeds is this leg's corpus size. A seed costs a ~1.3s self-host
-// compile plus a link and a run, so the 2048 seeds the in-process native
-// oracles swept would take hours serially, which is a lane nobody would keep.
-//
-// 512 is where the cost lands in the same range as the other differential
-// lanes once CI's four shards split it, and it is far past the point where
-// the corpus stops finding new SHAPES — measured 2026-08-05, seeds 0..299
-// already produce every divergence class the leg reports. Raise it with
-// SELFHOST_DIFF_SEEDS when hunting; the known-divergences file only covers
-// the default range, so a larger sweep is expected to surface unlisted rows
-// and should be run by hand rather than in the lane.
 func selfHostDiffSeeds(t *testing.T) uint64 {
 	t.Helper()
 	if v := os.Getenv("SELFHOST_DIFF_SEEDS"); v != "" {
@@ -112,43 +42,15 @@ func requireSelfHostDiffLeg(t *testing.T) {
 	}
 }
 
-// TestDifferential_SelfHostX86_64 compiles each generated program with the
-// self-host CLI (`fern.fern -target x86-64-linux`), links the emitted GAS text with
-// gcc, runs it, and asserts the exit byte matches the interpreter's.
-//
-// The CLI driver rather than asm_ir_run, for the reason the fixture legs give:
-// it LOADS MODULES. A driver without a loader silently ignores an unresolved
-// import and then reports a broken program's verdict
-// (parser.warn_unresolved_imports, #6004).
-//
-// gcc rather than an in-process assembler because the self-host x86-64 path has
-// none — it stops at asm text. That puts the external assembler on the critical
-// path, so asm the assembler REJECTS surfaces here as a link failure rather than
-// hiding, which is the #5862 / #6022 class.
-//
-// A seed the typed lowering (docs/SELFHOST-SEMANTIC-SOURCE.md, #9415) refuses
-// fails rather than skipping as a coverage gap.
 func TestDifferential_SelfHostX86_64(t *testing.T) {
 	requireSelfHostDiffLeg(t)
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
-		// The driver takes host filesystem paths as argv, so a qemu runner
-		// would not see the same paths. Native-only, like every other
-		// fern.fern test (see TestSelfHostCLIX86_64).
 		t.Skip("self-host CLI driver runs only natively (argv paths)")
 	}
 	selfHostX86Sweep(t, gcc, selfHostDiffKnownFile, nil, selfHostPassConfig)
 }
 
-// TestDifferential_SelfHostSanitizeX86_64 is the same sweep with every seed
-// built under -sanitize (docs/SANITIZER.md): besides agreeing with the
-// interpreter, the binary must report no rc over-release, no use of a freed
-// block and no leak. The exit-byte oracle cannot see any of the three — a
-// leak, or a double free into a block nothing reads again, leaves the answer
-// right — and they are the class Perceus's inc / dec placement gets wrong.
-// fernsmith's ownership cluster and nested aggregates generate the shapes
-// (an aliased nested value updated, projected and dropped), and this is the
-// oracle that judges them.
 func TestDifferential_SelfHostSanitizeX86_64(t *testing.T) {
 	requireSelfHostDiffLeg(t)
 	gcc, runner := x86_64Tooling(t)
@@ -158,14 +60,8 @@ func TestDifferential_SelfHostSanitizeX86_64(t *testing.T) {
 	selfHostX86Sweep(t, gcc, selfHostSanitizeKnownFile, []string{"-sanitize"}, nil)
 }
 
-// selfHostSanitizeKnownFile is TestDifferential_SelfHostSanitizeX86_64's
-// known-divergences file, on the contract selfHostDiffKnownFile describes.
 const selfHostSanitizeKnownFile = "selfhost-diff-sanitize-known-divergences.txt"
 
-// selfHostX86Sweep runs the fernsmith window through the self-host x86-64
-// CLI with the extra compile flags given, against the interpreter. A
-// -sanitize build is also failed on any sanitizer report. A non-nil passes
-// names the compiler switches each seed is compiled under.
 func selfHostX86Sweep(t *testing.T, gcc, knownFile string, flags []string, passes func(uint64) []string) {
 	t.Helper()
 	stdlibRoot, err := filepath.Abs("../../stdlib")
@@ -218,12 +114,6 @@ func selfHostX86Sweep(t *testing.T, gcc, knownFile string, flags []string, passe
 					bisect(refusalClass(gap))
 					return
 				}
-				// A compile bail is a documented endpoint, so an unlisted seed
-				// SKIPS. A listed one does not: the row says this seed produces
-				// a wrong ANSWER, and a seed that no longer compiles cannot
-				// demonstrate that. Skipping there would let the row outlive
-				// whatever it described, unverified, which is the exact way an
-				// allowlist goes stale — so say the row is stale and make someone look.
 				if !isKnown {
 					t.Skipf("self-host coverage gap: %s", gap)
 				}
@@ -263,11 +153,6 @@ func selfHostX86Sweep(t *testing.T, gcc, knownFile string, flags []string, passe
 	})
 }
 
-// compilerRefusals are the markers of a compile the compiler refused on a
-// finding of its own: the typed lowering refusing part of the program, the rc
-// certifier showing unbalanced reference counting in what was lowered, and
-// the IR verifier finding malformed IR. Each is a compiler bug on a valid
-// program, so the legs fail it rather than skip it as a coverage gap.
 var compilerRefusals = []string{
 	"FERN_SEM_IR: the typed lowering refused",
 	" emits unbalanced reference counting",
@@ -283,12 +168,8 @@ func compilerRefused(out string) bool {
 	return false
 }
 
-// selfHostCompileTimeout bounds one compile of a generated program, which takes
-// a second or two; a compiler that runs past it is hung.
 var selfHostCompileTimeout = 2 * time.Minute
 
-// compileSelfHostSeed runs one self-host compile of a generated program,
-// killed at selfHostCompileTimeout; hung reports that it was.
 func compileSelfHostSeed(fernBin string, env []string, args ...string) (out []byte, hung bool, err error) {
 	cmd := selfHostCompileCmd(fernBin, env, args...)
 	var compiled bytes.Buffer
@@ -297,34 +178,12 @@ func compileSelfHostSeed(fernBin string, env []string, args ...string) (out []by
 	return compiled.Bytes(), hung, err
 }
 
-// reportCompileHang is the failure every leg reports for a hung compile.
 func reportCompileHang(failf failFunc, src string) {
 	failf("the self-host compiler did not finish in %v:\nsrc:\n%s", selfHostCompileTimeout, src)
 }
 
-// runSelfHostSeed compiles src with the self-host CLI, links it, and runs it.
-//
-// Returns (run, "") when the program ran, (nil, gapMessage) when the compiler
-// bailed, and (nil, "") when the compile hung or the LINK failed. Both are
-// already reported through failf: a hung compiler, or asm the assembler
-// rejected, is a finding this leg exists to report rather than a coverage gap
-// to skip.
-//
-// It reports the bail rather than calling t.Skip itself. A skip unwinds the
-// subtest goroutine immediately, which silently bypassed the caller's
-// "listed but agrees now" check — so a listed seed that stopped compiling kept
-// its row forever with nothing left to verify it. Returning the message leaves
-// that decision where the known-list is in scope.
-//
-// Runs through runSelfHostBin so a diverging binary that HANGS is killed at
-// selfHostRunTimeout and reported as such, rather than spending the lane's
-// budget. That matters more here than on the fixture legs: these programs are
-// generated, so nobody has ever eyeballed one to know it should terminate.
 func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, flags, env []string, failf failFunc) (*selfHostRun, string) {
 	t.Helper()
-	// Absolute paths throughout: a relative one was unopenable from an
-	// arm64-darwin binary until #6002, and absolute is what every other
-	// self-host harness uses anyway.
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -343,8 +202,6 @@ func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, flags, env [
 			strictIRBailSite(fernBin, "x86-64-linux", append(flags, "-emit", "asm"), env, srcPath, stdlibRoot, out))
 	}
 	binPath := filepath.Join(dir, "prog")
-	// The flags every other self-host x86 link uses (linkSelfHostAsm's small
-	// path).
 	if out, err := exec.Command("gcc", "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		failf("the assembler/linker REJECTED the self-host asm — the artifact never ran (%v):\n%s\nsrc:\n%s", err, out, src)
 		return nil, ""
@@ -353,13 +210,6 @@ func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, flags, env [
 	return &r, ""
 }
 
-// checkSelfHostSeedExit is checkSelfHostNativeRun's oracle-side sibling: the
-// same three-way split (hang / signal / wrong number), against the
-// interpreter's byte rather than a fixture's declared exit. Kept apart from a
-// plain equality check because the three mean different things — a signal is a
-// miscompile in the emitted code, 125 is the arena, a wrong number is a wrong
-// answer — and collapsing them is what makes a differential failure take an
-// afternoon to triage.
 func checkSelfHostSeedExit(r selfHostRun, want int, src string, failf failFunc) {
 	switch {
 	case r.timedOut:

@@ -2,21 +2,6 @@ package e2e
 
 import "testing"
 
-// normalizeProgram pins std/unicode's canonical normalization (#5631,
-// decision D5) across every backend.
-//
-// The bug this closes: "é" written as one code point (U+00E9) and as
-// "e" plus a combining acute are the same text, and before this they
-// compared unequal with nothing in the language able to say otherwise.
-//
-// `==` deliberately STAYS byte equality — step 1 asserts that, because
-// it is a design decision, not an accident. Making `==` canonical would
-// put a normalization pass in front of every string-keyed map lookup;
-// Rust, Go, Python, JS, C# and Java all declined for that reason, and
-// Fern's handler path is full of such maps. Canonical comparison is the
-// explicit `eq_canonical`.
-//
-// Exits 0 on success, a distinct code per failed step.
 const normalizeProgram = `
 import "std/unicode" as unicode;
 import "std/utf8" as utf8;

@@ -11,15 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternBoolArrayParamCustomProvider is the self-host port of the
-// bool[] `@import` parameter (docs/WIT-BRING-YOUR-OWN.md, Go-side
-// TestExternBoolArrayParamCustomProvider). A self-host boolean[] stores each
-// bool widened to a full 4-byte element slot (0/1), while the canonical
-// list<bool> wants the bytes packed one-per-byte — identical to u8[] — so the
-// wrapper byte-repacks: it allocs `len` bytes and writes each element's low byte
-// contiguously, then forwards (buf, len). The provider exports
-// `count-true: func(b: list<bool>) -> s32` summing the bytes; the self-host
-// program builds [true, false, true] and checks 2.
 func TestSelfHostExternBoolArrayParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -47,8 +38,6 @@ func TestSelfHostExternBoolArrayParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// list<bool> is lowered into the provider's memory (1 byte/elem) via
-	// cabi_realloc; count-true sums the bytes.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))

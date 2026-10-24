@@ -9,48 +9,34 @@ import (
 	"testing"
 )
 
-// Generic numeric reducers in std/num — `sum_with[T: Add]` / `product_with[T:
-// Mul]` (#2706, the trait-spine epic #2691). One generic body folds an array via
-// the `.add` / `.mul` trait method, working for every primitive width AND any
-// user type that impls the trait. A bounded-generic method call monomorphises to
-// a direct call, so these lower on the self-host IR path. All oracles < 256 so
-// the i32 result survives the process exit code.
 var numReducerCases = []struct {
 	name string
 	main string
 	want int
 }{
-	// sum_with over i32: 10+20+5+7 starting from 0 = 42.
 	{"sum-i32", `pub trait Add { function add(self: Self, o: Self): Self; }
 impl Add for i32 { function add(self: Self, o: Self): Self { return self + o; } }
 function sum_with[T: Add](xs: T[], zero: T): T { let acc = zero; for x in xs { acc = acc.add(x); } return acc; }
 function main(): i32 { return sum_with([10, 20, 5, 7], 0); }`, 42},
-	// product_with over i32: 1*2*3*4 starting from 1 = 24.
 	{"product-i32", `pub trait Mul { function mul(self: Self, o: Self): Self; }
 impl Mul for i32 { function mul(self: Self, o: Self): Self { return self * o; } }
 function product_with[T: Mul](xs: T[], one: T): T { let acc = one; for x in xs { acc = acc.mul(x); } return acc; }
 function main(): i32 { return product_with([1, 2, 3, 4], 1); }`, 24},
-	// empty array returns the identity unchanged: sum_with([], 9) = 9.
 	{"sum-empty", `pub trait Add { function add(self: Self, o: Self): Self; }
 impl Add for i32 { function add(self: Self, o: Self): Self { return self + o; } }
 function sum_with[T: Add](xs: T[], zero: T): T { let acc = zero; for x in xs { acc = acc.add(x); } return acc; }
 function main(): i32 { let e: i32[] = []; return sum_with(e, 9); }`, 9},
-	// the SAME generic sum over a user Add struct (2D vector): (1,1)+(2,3)+(3,5) =
-	// (6,9); 6*10 + 9 = 69.
 	{"sum-user-vector", `pub trait Add { function add(self: Self, o: Self): Self; }
 struct V2 { x: i32, y: i32 }
 impl Add for V2 { function add(self: Self, o: Self): Self { return V2 { x: self.x + o.x, y: self.y + o.y }; } }
 function sum_with[T: Add](xs: T[], zero: T): T { let acc = zero; for x in xs { acc = acc.add(x); } return acc; }
 function main(): i32 { let vs: V2[] = [V2 { x: 1, y: 1 }, V2 { x: 2, y: 3 }, V2 { x: 3, y: 5 }]; let t = sum_with(vs, V2 { x: 0, y: 0 }); return t.x * 10 + t.y; }`, 69},
-	// the SAME generic sum at a different width (i64): 30+11 = 41.
 	{"sum-i64", `pub trait Add { function add(self: Self, o: Self): Self; }
 impl Add for i64 { function add(self: Self, o: Self): Self { return self + o; } }
 function sum_with[T: Add](xs: T[], zero: T): T { let acc = zero; for x in xs { acc = acc.add(x); } return acc; }
 function main(): i32 { let xs: i64[] = [30, 11]; let s = sum_with(xs, 0); return s as i32; }`, 41},
 }
 
-// TestNativeNumReducers runs the inline reducer programs on the native interp /
-// x86-64 / wasm backends, oracle-checked.
 func TestNativeNumReducers(t *testing.T) {
 	for _, tc := range numReducerCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -72,7 +58,6 @@ func TestNativeNumReducers(t *testing.T) {
 	}
 }
 
-// TestNativeNumReducersArm64 is the arm64 leg (CI-gated; qemu).
 func TestNativeNumReducersArm64(t *testing.T) {
 	for _, tc := range numReducerCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -88,8 +73,6 @@ func TestNativeNumReducersArm64(t *testing.T) {
 	}
 }
 
-// TestNativeNumReducersModule exercises the shipped `import "std/num"` module's
-// sum_with / product_with over primitives AND a user Add struct.
 func TestNativeNumReducersModule(t *testing.T) {
 	src := `import "std/num" as num;
 struct V2 { x: i32, y: i32 }
@@ -114,8 +97,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostNumReducersIRX86_64 routes each inline case through the self-hosted
-// x86-64 IR driver, pins routing to "ir", and oracle-checks it.
 func TestSelfHostNumReducersIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -149,7 +130,6 @@ func TestSelfHostNumReducersIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostNumReducersIRWasm runs the same cases through the wasm IR backend.
 func TestSelfHostNumReducersIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host num-reducers wasm IR e2e")

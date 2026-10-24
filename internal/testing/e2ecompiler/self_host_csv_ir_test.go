@@ -8,13 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostCsvParseLineIR covers std/csv's RFC-4180 single-line parser
-// through the self-hosted x86-64 IR path (a "self-host pending" audit gap).
-// csv_parse_line is self-contained — it uses only builtins (string byte index
-// `s[i]`, `slice_unchecked`, concat, and a `string[]` builder), no std/string
-// methods — so it lowers through the IR path directly. (csv_escape / csv_join
-// pull in `index_of` / `replace`, deferred.) The program self-checks the parse
-// of a quoted-field-with-comma line and returns 42 on success.
 func TestSelfHostCsvParseLineIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -55,7 +48,6 @@ func TestSelfHostCsvParseLineIR(t *testing.T) {
 		return inner.ProcessState.ExitCode()
 	}
 
-	// std/csv's csv_parse_line, verbatim.
 	const parser = `
 function csv_parse_line(s: string): string[] {
     let out: string[] = [];
@@ -83,7 +75,6 @@ function csv_parse_line(s: string): string[] {
 		name string
 		src  string
 	}{
-		// 4 fields, a quoted field with an embedded comma ("c,d"), and tail field.
 		{"quoted-comma", parser + `function main(): i32 {
     let f: string[] = csv_parse_line("a,bb,\"c,d\",e");
     if (f.len() != 4) { return 100; }
@@ -91,7 +82,6 @@ function csv_parse_line(s: string): string[] {
     if (f[2][0] != 99 || f[2][1] != 44 || f[2][2] != 100) { return 102; }
     return 42;
 }`},
-		// Doubled quote inside a quoted field decodes to one quote: "a""b" -> a"b.
 		{"doubled-quote", parser + `function main(): i32 {
     let f: string[] = csv_parse_line("\"a\"\"b\",x");
     if (f.len() != 2) { return 100; }
@@ -99,7 +89,6 @@ function csv_parse_line(s: string): string[] {
     if (f[0][0] != 97 || f[0][1] != 34 || f[0][2] != 98) { return 102; }
     return 42;
 }`},
-		// Plain unquoted line.
 		{"plain", parser + `function main(): i32 {
     let f: string[] = csv_parse_line("x,y,z");
     if (f.len() != 3) { return 100; }

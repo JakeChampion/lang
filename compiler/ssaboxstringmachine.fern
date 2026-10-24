@@ -1,9 +1,5 @@
-// Supplied-text boxed-string effects under explicit disjoint permissions.
-// Decoder records are data; this module constructs every machine state.
 import "./ssacapacityisa" as isa;
 
-// invalid, numeric limb, original GPR, S+offset, return, arbitrary cell,
-// P+offset, small freelist+offset, original selected head.
 struct Half { kind: i32, id: i32, part: i32, number: i64 }
 
 struct Word { low: Half, high: Half }
@@ -181,7 +177,6 @@ function compare(a: Word, b: Word, width: i32): Flags {
   if (!numeric(x) || !numeric(y)) {
     return unknown_flags();
   }
-  // Each subtraction fits signed i64, including the low-limb borrow.
   let lo = x.low.number - y.low.number;
   let hi = x.high.number - y.high.number - bit(lo < 0) as i64;
   let result = if (width == 32) { lo } else { hi };
@@ -197,7 +192,6 @@ function compare(a: Word, b: Word, width: i32): Flags {
 function comparison(s: State, op: isa.Op): State {
   let w = s.regs[op.source];
   if (op.width == 64 && same_word(w, identity(6, 0)) && op.immediate == 65536) {
-    // Only unsigned lower-bound knowledge is needed. Do not infer equality.
     return State { ...s, flags: Flags { zero: -1, carry: 0, sign: -1, overflow: -1 } };
   }
   return State { ...s, flags: compare(w, immediate(op.immediate), op.width) };
@@ -371,7 +365,6 @@ function finished(s: State, register_entry: boolean): boolean {
     }
     i = i + 1;
   }
-  // Plain RET consumes the original word at proven S and ends S+8.
   return true;
 }
 
@@ -379,12 +372,6 @@ function in_program(p: isa.ArrayProgram, pc: i32): boolean {
   return pc >= 0 && pc < p.ops.len();
 }
 
-// The `.u` entry is reached on the register path with the entry state, apart
-// from the flags of the floor test it skips and the scratch registers the
-// body may clobber, the argument excepted. Those go back to their entry
-// values and the flags are forgotten, so the rest of the walk is the walk
-// from `.u`, which the caller enters having tested the floor, and proves the
-// body for every value a prefix could leave in a scratch register.
 function unguarded(s: State, original: State): State {
   let regs = s.regs;
   let i = 0;
@@ -444,11 +431,6 @@ function path(p: isa.ArrayProgram, register_entry: boolean): boolean {
   return false;
 }
 
-// RC=1, BOX=1112494674, aligned canonical P>=65536, disjoint writable
-// P-8..P-1 and small-freelist slot3, readable S..S+15. The .r argument is
-// arbitrary. No permission to read buffer/length is assumed. Linked
-// permissions, valid allocation/metadata, caller credits and freelist
-// integrity remain unproved. Public records never supply effect evidence.
 pub function check(output: string): boolean {
   let p = isa.string_program(output);
   return p.error == "" && p.register_entry >= 0 && p.unguarded_entry >= 0 && path(p, false) && path(p, true);

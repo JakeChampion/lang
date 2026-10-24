@@ -9,11 +9,6 @@ import (
 	"testing"
 )
 
-// `fern -interp FILE.fern` — script-mode end-to-end. The
-// interpreter runs the lang program through the AST evaluator
-// (no codegen, no link, no temp binary) and main()'s return
-// value becomes the process exit code, clamped to 0..255.
-// Mirrors `python script.py` semantics.
 func TestInterpScriptFile(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -46,9 +41,6 @@ function main(): i32 {
 	}
 }
 
-// `fern -interp -` — pipe a program through stdin. Skips
-// modload entirely (no imports available in the stdin form);
-// parses the buffer as a single file.
 func TestInterpScriptStdin(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
@@ -69,11 +61,6 @@ func TestInterpScriptStdin(t *testing.T) {
 	}
 }
 
-// read_all_stdin() — convenience prelude function that loops
-// Reader.read_chunk(4096) until EOF and returns the concat.
-// Writes the program to a file so `-interp <file>` reads the
-// SOURCE from disk and leaves stdin free for the program to
-// consume via the helper.
 func TestInterpScriptReadAllStdin(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -104,8 +91,6 @@ function main(): i32 {
 	}
 }
 
-// io.read_line through the interpreter: one line from stdin answers its
-// length, EOF answers 0.
 func TestInterpScriptReadLine(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -135,14 +120,10 @@ function main(): i32 {
 			t.Errorf("stdin=%q: exit = %d, want %d\nstderr: %s", stdin, got, want, errb.String())
 		}
 	}
-	run("hi\n", 3) // "hi\n" → len 3
-	run("", 0)     // EOF → None → 0
+	run("hi\n", 3)
+	run("", 0)
 }
 
-// Union types + match through the script-mode interp. The union
-// desugar lives in the checker (PRs #390 / #392), so the AST
-// the interpreter sees is the synthesised enum form — no
-// special-case path needed in the interpreter for unions.
 func TestInterpScriptUnions(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
@@ -167,15 +148,6 @@ function main(): i32 {
 	}
 }
 
-// Prelude string helpers that call into raw-memory primitives
-// (`s.bytes()` / `s.as_bytes()` lower to `__memcpy(out as i32,
-// s.as_bytes() as i32, n)`; `s.to_lower()` / `s.to_upper()`
-// route through `__string_case_fold` which uses `__alloc_u8`
-// + `string_from_bytes_unchecked`) all need to round-trip the
-// String→Array conversion without leaning on a flat byte
-// address space. This test exercises every helper so a future
-// prelude rewrite that drops a builtin override would surface
-// here rather than as a silent regression in the playground.
 func TestInterpScriptStringPrelude(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
@@ -213,17 +185,6 @@ function main(): i32 {
 	}
 }
 
-// Random / byte builtins on the interpreter (issue #2747). The
-// interp historically lacked `random_i32` entirely (`undefined
-// function "random_i32"`); this locks in the fix and asserts
-// cross-backend agreement on the shapes the native + wasm
-// backends already support:
-//
-//   - random_i32() is callable and varies across draws.
-//   - random_bytes(n).len() == n even when the random payload
-//     contains embedded NUL bytes (the value is a u8[], whose
-//     length is exact).
-//   - s.as_bytes().len() / indexing match the source string.
 func TestInterpScriptRandomAndBytes(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
@@ -252,9 +213,6 @@ function main(): i32 {
 	}
 }
 
-// std/crypto (#2681): SHA-256 + HMAC-SHA256 against standard
-// known-answer vectors on the interpreter. (x86-64 + wasm have their
-// own crypto tests; arm64 is skipped pending the #2768 freelist bug.)
 func TestInterpScriptCrypto(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
@@ -268,11 +226,6 @@ func TestInterpScriptCrypto(t *testing.T) {
 	}
 }
 
-// std/uuid (#2682): uuid_v4 / uuid_v7 generation, built on the
-// cross-backend random_bytes byte source (#2747). Asserts the
-// canonical 36-char 8-4-4-4-12 shape, the version + variant
-// nibbles, that it validates via uuid.is_valid(), and that two
-// draws differ.
 func TestInterpScriptUuid(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
@@ -300,35 +253,6 @@ function main(): i32 {
 	}
 }
 
-// A program that explicitly imports a stdlib module whose
-// transitive imports include `core/int` (or imports `core/int`
-// directly) hits the modload mangling path: the function name
-// becomes `int__int_to_string` instead of bare `int_to_string`.
-// The interp's Go override for that function is keyed under
-// the bare name, so without an alias the mangled call falls
-// through to the Lang body and crashes on the unrepresentable
-// `scratch as i32` cast.
-//
-// We exercise four shapes of the same bug so a regression
-// shows up wherever it surfaces:
-//
-//  1. Explicit `import "core/int";` + bare `(n).to_string()`
-//     — the smallest reproducer.
-//  2. Explicit `import "std/json";` — drags in core/int
-//     transitively without the user reaching for it directly.
-//     This is what tripped over the std/test PR review.
-//  3. Direct `int.int_to_string(n)` qualified call against
-//     the explicit `core/int` import — same mangling, but
-//     the call site is the user's own qualified reference
-//     rather than the receiver-method dispatch hoist.
-//  4. The auto-prelude path (no extra imports) — sanity
-//     check that the alias doesn't break the original
-//     flat-load route.
-//
-// Each shape writes a `.fern` file to a tempdir and runs
-// `fern -interp FILE` rather than piping over stdin: the
-// stdin path skips modload entirely (no imports), so it
-// wouldn't exercise the mangling code path the fix targets.
 func TestInterpScriptInteropIntToStringViaMangling(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cases := []struct {
@@ -406,19 +330,6 @@ function main(): i32 {
 	}
 }
 
-// TestInterpScriptLambdaBodyMangling pins the #4802 mangler fix
-// end-to-end: a module whose functions reference module-local
-// declarations from exactly the shapes the rewriter used to miss —
-// a bare fn reference in arg position (`apply(add_one, x)`) and
-// module-local calls/refs from inside lambda bodies — plus the
-// shadow rules (a lambda param / body local / captured enclosing
-// local named like a module decl must stay bound to the local).
-// Before the fix, importing such a module failed E001 on the
-// lambda-body references. Runs through -interp with real files
-// (the file path exercises modload; stdin would skip it). The
-// modload-layer sibling is internal/pkg/modload's
-// TestLambdaBodyManglingChecks; the self-host loader sibling is
-// TestSelfHostLambdaMangleX86_64.
 func TestInterpScriptLambdaBodyMangling(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	lib := `pub function add_one(x: i32): i32 { return x + 1; }
@@ -480,12 +391,6 @@ function main(): i32 {
 	}
 }
 
-// TestInterpScriptHeaderMap pins the HeaderMap surface from
-// `std/headers` — case-insensitive `.get` / `.get_all`,
-// duplicate-preserving `.append`, position-stable `.set` (drops
-// any extra duplicates of the same name), and `.len()` matching
-// total entries. Anchors docs/STDLIB-DESIGN-RESEARCH.md Rec §2
-// before the HttpRequest / HttpResponse integration lands.
 func TestInterpScriptHeaderMap(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cases := []struct {
@@ -588,11 +493,6 @@ function main(): i32 {
 	}
 }
 
-// TestInterpScriptHttpRequestHeaders pins the HeaderMap →
-// HttpRequest wiring (docs/STDLIB-DESIGN-RESEARCH.md Rec §2).
-// `http_parse_request` populates `req.headers` from the wire
-// header block; the handler reads values back via the case-
-// insensitive `HeaderMap.get` surface introduced in #858.
 func TestInterpScriptHttpRequestHeaders(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cases := []struct {
@@ -690,14 +590,6 @@ function main(): i32 {
 	}
 }
 
-// TestInterpScriptHttpResponseHeaders pins the HeaderMap →
-// HttpResponse wiring + http_serialize_response emission
-// behaviour (docs/STDLIB-DESIGN-RESEARCH.md Rec §2). Handlers
-// can `resp.headers.set/append` and those headers land in the
-// wire output ahead of the auto-emitted Content-Length /
-// Connection block. The auto block always wins for those two
-// names so a misconfigured handler can't ship a malformed
-// response.
 func TestInterpScriptHttpResponseHeaders(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cases := []struct {
@@ -785,14 +677,6 @@ function main(): i32 {
 	}
 }
 
-// TestInterpScriptTimeTypes pins the type registrations + the
-// Phase-1 constructors from std/time
-// (docs/STDLIB-DESIGN-RESEARCH.md Rec §4). Each subtest exercises
-// one of the seven date/time types as a struct literal + a
-// stdlib constructor, then reads a field back. Anchors the
-// shape against accidental regressions while the rest of the
-// module (now(), arithmetic, RFC 3339, IANA zones) lands in
-// follow-up PRs.
 func TestInterpScriptTimeTypes(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cases := []struct {
@@ -896,7 +780,7 @@ function main(): i32 {
     print((time.SECONDS_PER_HOUR + time.MINUTES_PER_HOUR + time.HOURS_PER_DAY + time.DAYS_PER_WEEK).to_string());
     return 0;
 }`,
-			wantStdout: "3691\n", // 3600 + 60 + 24 + 7
+			wantStdout: "3691\n",
 		},
 	}
 	for _, tc := range cases {
@@ -924,12 +808,6 @@ function main(): i32 {
 	}
 }
 
-// TestInterpScriptInstantNow pins `std/time.instant_now()`
-// (docs/STDLIB-DESIGN-RESEARCH.md Rec §4 Phase 2). Reads the
-// current wall-clock time and asserts the seconds field is
-// in a plausible range — past a sentinel epoch second and
-// before a far-future bound. Catches accidental sign / unit
-// mistakes without baking in a brittle exact value.
 func TestInterpScriptInstantNow(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := `
@@ -968,12 +846,6 @@ function main(): i32 {
 	}
 }
 
-// TestInterpScriptCivilDateArith pins the Phase-3 Hinnant
-// civil-date helpers (docs/STDLIB-DESIGN-RESEARCH.md Rec §4):
-// add_days, weekday, day_of_year, days_since, is_valid,
-// is_leap_year, days_in_month. Pure-function arithmetic
-// — no system clock involved, so the tests pin exact values
-// across month / year / leap-year / pre-epoch boundaries.
 func TestInterpScriptCivilDateArith(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cases := []struct {
@@ -1131,11 +1003,6 @@ function main(): i32 {
 	}
 }
 
-// TestInterpScriptRfc3339 pins the Phase-4 parse + format
-// surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §4): ISO date
-// (`YYYY-MM-DD`) for `Date`, RFC 3339 UTC instant
-// (`YYYY-MM-DDTHH:MM:SS[.fraction]Z`) for `Instant`.
-// Zoned offsets `+HH:MM` land with Phase 5.
 func TestInterpScriptRfc3339(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cases := []struct {
@@ -1189,8 +1056,6 @@ function main(): i32 {
     show("2026-5-19");         // single-digit month
     return 0;
 }`,
-			// 2026-13-01 still PARSES (caller uses .is_valid() to
-			// catch out-of-range month); the others all reject.
 			wantStdout: "rejected \nrejected 2026/05/19\nrejected 2026-05-19T00\nACCEPTED 2026-13-01\nrejected abcd-05-19\nrejected 2026-05-XX\nrejected 2026-5-19\n",
 		},
 		{
@@ -1291,15 +1156,6 @@ function main(): i32 {
 	}
 }
 
-// TestInterpScriptZonedFixedOffset pins the Phase-5 fixed-
-// offset zone surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §4):
-// TimeZone construction, Instant.in_zone, Zoned.to_datetime,
-// Zoned.format_rfc3339, and the zoned RFC 3339 parser.
-//
-// IANA tzdb lookup (with DST transition tables) is a separate
-// follow-up; these tests cover the fixed-offset path that
-// every wasi-http handler running in UTC or a known constant
-// offset needs today.
 func TestInterpScriptZonedFixedOffset(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cases := []struct {
@@ -1442,12 +1298,6 @@ function main(): i32 {
 	}
 }
 
-// TestInterpScriptSpanDurationArith pins the Phase-6 calendar-
-// vs-absolute arithmetic split (docs/STDLIB-DESIGN-RESEARCH.md
-// Rec §4): Span on Date snaps to month-end ("Jan 31 + 1 month
-// = Feb 28/29"), Duration on Instant is straight sec/nsec
-// arithmetic. They diverge precisely on month boundaries and
-// (once Phase 5.x lands IANA tzdb) on DST transitions.
 func TestInterpScriptSpanDurationArith(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cases := []struct {
@@ -1615,12 +1465,6 @@ function main(): i32 {
 	}
 }
 
-// TestInterpScriptHttpRequestBodyShim pins the Tier-A Rec §1
-// forward-compatibility shim
-// (docs/STDLIB-DESIGN-RESEARCH.md). Handler code uses
-// `req.body_string()` / `req.body_bytes()` / `req.body_len()`
-// instead of accessing `req.body` directly so the future
-// Stream[bytes] field migration is invisible to callers.
 func TestInterpScriptHttpRequestBodyShim(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := `import "std/http";
@@ -1660,11 +1504,6 @@ function main(): i32 {
 	}
 }
 
-// TestInterpScriptStreamPrimitive pins the Phase-1 Stream
-// surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §1 Phase 2).
-// Stream is the eventual home for HttpRequest.body; today's
-// in-memory buffer-backed shape gives handler code the
-// future API surface immediately.
 func TestInterpScriptStreamPrimitive(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cases := []struct {
@@ -1752,10 +1591,6 @@ function main(): i32 {
 	}
 }
 
-// TestInterpScriptMockPlatform pins std/mock_platform's recording surface
-// (docs/PLATFORM-RESEARCH.md Rec §6). The log lives in a cell, so `record`
-// mutates through a value rather than returning a new one — which is what lets
-// a handler holding the mock as its Platform write into the log the test reads.
 func TestInterpScriptMockPlatform(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cases := []struct {
@@ -1827,10 +1662,6 @@ function main(): i32 {
 			wantStdout: "ok\n",
 		},
 		{
-			// The seam itself: the handler is handed the mock as its
-			// Platform and only ever touches THAT, so nothing reaches the host — the
-			// asserted stdout would carry the eprint'd log line if
-			// `.log` had fallen through to the host path.
 			name: "handler driven through the mock records its effects",
 			source: `import "std/mock_platform";
 import "std/platform";
@@ -1886,12 +1717,6 @@ function main(): i32 {
 	}
 }
 
-// TestInterpScriptJsonGetters pins the Tier-C Rec §12 Phase 1
-// surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §3). Schema-
-// directed `json_parse[T]` codegen is multi-week; Phase 1
-// ships typed-field extraction helpers that handler code
-// uses to walk a JsonValue DOM without manually pattern-
-// matching every level.
 func TestInterpScriptJsonGetters(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cases := []struct {
@@ -2066,9 +1891,6 @@ function main(): i32 {
 	}
 }
 
-// TestInterpScriptStreamReader pins the Tier-C Rec §13 Phase 1
-// Reader-shape methods on Stream (docs/STDLIB-DESIGN-RESEARCH.md
-// Rec §5).
 func TestInterpScriptStreamReader(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cases := []struct {
@@ -2147,8 +1969,6 @@ function main(): i32 {
 	}
 }
 
-// TestInterpScriptBytesWriter pins the in-memory writer
-// (docs/STDLIB-DESIGN-RESEARCH.md Rec §5's MemoryWriter).
 func TestInterpScriptBytesWriter(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cases := []struct {
@@ -2234,10 +2054,6 @@ function main(): i32 {
 	}
 }
 
-// A program without `main` exits non-zero with a clear error.
-// Catches the case where someone pipes a snippet (function
-// helpers only) and expects the interpreter to find an entry
-// point.
 func TestInterpScriptMissingMain(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")

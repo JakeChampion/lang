@@ -11,13 +11,6 @@ import (
 	"testing"
 )
 
-// TestAndroidJNIExampleBuilds compiles examples/android/fern_jni.fern with
-// `fern -target arm64-android -shared -export <jni symbols>` and checks the
-// result is a position-independent (ET_DYN) AArch64 shared object whose
-// JNI export symbols are present in .dynstr — the artifact an APK ships
-// under lib/arm64-v8a/. (The dlopen+call mechanics are covered on the host
-// by shared_lib_test.go; this guards the documented example + the
-// JNI-mangled export names against bit-rot.)
 func TestAndroidJNIExampleBuilds(t *testing.T) {
 	bin := buildFernCLI(t)
 	src, err := filepath.Abs("../../../examples/android/fern_jni.fern")
@@ -57,8 +50,6 @@ func TestAndroidJNIExampleBuilds(t *testing.T) {
 	}
 }
 
-// TestAndroidManifestValid keeps the example AndroidManifest.xml well-formed
-// (aapt2 needs valid XML to compile it to binary form).
 func TestAndroidManifestValid(t *testing.T) {
 	raw, err := os.ReadFile("../../../examples/android/AndroidManifest.xml")
 	if err != nil {

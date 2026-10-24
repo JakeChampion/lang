@@ -9,24 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64NativeLinuxElfRuns is the arm64-LINUX counterpart of the
-// arm64-darwin Mach-O path: it assembles the self-host asm_arm64 emitter's
-// *actual* Linux output (emit_module(false) — no darwinize) through
-// arm64_native into a static ELF via elf.fern, then RUNS the binary under
-// qemu-aarch64 and checks the exit code. Unlike the darwin path (whose
-// execution can only be checked on a macOS runner), the Linux path runs on
-// the Linux CI box directly, so this is a true end-to-end proof that
-// arm64_native produces *executable* machine code — it caught the
-// literal-pool (`ldr =N` / `.ltorg`) and negative-offset (stur/ldur) gaps
-// the darwin tests silently skipped past.
-//
-// Both arm64_native and elf.fern are import-free, so the driver concatenates
-// them with a small main() (no `pub` needed) and is compiled by the Go x86
-// backend (the CLI's backend). Covers the common surface: literal loads,
-// negative-offset frame stores, branches/calls + ELF entry wiring (exit42 /
-// arith / fib); rodata strings + `:lo12:` addressing (print); the heap
-// (`.bss`/`.skip`, register-offset array indexing, post-index byte copy for
-// string concat) via array / concat / strout.
 func TestSelfHostArm64NativeLinuxElfRuns(t *testing.T) {
 	if _, err := exec.LookPath("qemu-aarch64"); err != nil {
 		t.Skip("qemu-aarch64 not on PATH; skipping arm64-linux ELF run e2e")
@@ -36,14 +18,10 @@ func TestSelfHostArm64NativeLinuxElfRuns(t *testing.T) {
 		t.Skip("native x86-64 run required to build the self-host emitter + driver")
 	}
 
-	// Build the Linux arm64 asm emitter (asm_ir_run.fern (-target arm64-linux), emit_module(false)).
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "asm_arm64_ir.fern", "drivers/asm_ir_run.fern")
 	emitBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "lxemit")
 
-	// Driver: arm64_native + elf.fern + main(), concatenated (no imports).
-	// Reads the asm from "in.s" in its CWD, assembles + ELF-wraps it, writes
-	// the binary to stdout. Compiled by the Go x86 backend.
 	native := string(mustRead(t, "../../../compiler/arm64_native.fern"))
 	elfsrc := string(mustRead(t, "../../../compiler/elf.fern"))
 	const driverMain = `
@@ -76,10 +54,6 @@ function main(): i32 {
 	}
 	drvBin := buildSelfHostBin(t, gcc, edir, "drv.fern", "drv")
 
-	// pieDriverMain mirrors driverMain but emits a static-PIE (ET_DYN) image
-	// via elf_image_pie at the base-0 PIE vaddrs — matches fern.fern's
-	// arm64_elf_binary_pie (-target arm64-android). With the arm64 heap now
-	// mmap'd at the low 0x10000000 hint, these run at the kernel-chosen base.
 	const pieDriverMain = `
 function main(): i32 {
     let asm: string = ""; let ok: boolean = false;
@@ -117,13 +91,6 @@ function main(): i32 {
 		{"array", `function main(): i32 { let a = [1,2,3,4,5]; let i = 0; let s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`, 15},
 		{"strbuild", `function main(): i32 { let s: string = ""; let i: i32 = 0; while (i < 3) { s = s + "ab"; i = i + 1; } return s.len(); }`, 6},
 		{"floats", `function main(): i32 { let x: f64 = 3.5; let y: f64 = 2.0; let z: f64 = x*y + x/y - x; if (z > 5.0) { return 7; } return 1; }`, 7},
-		// The bit-counting intrinsics, which are the only place the arm64
-		// backend emits `rbit` (ctz) or the SIMD pair `cnt`/`addv` (popcount).
-		// This is the leg that proves them: the self-host emitter's output
-		// goes through arm64_native's new encoders and then actually RUNS.
-		// A failing check returns its own id rather than a wrong sum, and
-		// zero comes first — it is the input the definition pins (clz/ctz of
-		// 0 = the width) and where a wrong answer looks most plausible.
 		{"bitcount", `function main(): i32 {
     if (__ctz32(0 as u32) != 32) { return 1; }
     if (__ctz64(0 as u64) != 64) { return 2; }
@@ -164,8 +131,6 @@ function main(): i32 {
 			if f.Machine != elf.EM_AARCH64 || f.Type != elf.ET_EXEC {
 				t.Fatalf("got machine=%v type=%v, want AARCH64/EXEC", f.Machine, f.Type)
 			}
-			// W^X: two PT_LOAD segments (R+X code, R+W data), and no
-			// segment is both writable and executable.
 			loads := 0
 			for _, prog := range f.Progs {
 				if prog.Type != elf.PT_LOAD {
@@ -189,10 +154,6 @@ function main(): i32 {
 				t.Errorf("%s: qemu exit = %d, want %d", c.name, code, c.want)
 			}
 
-			// Same program through the PIE driver (-target arm64-android):
-			// a position-independent ET_DYN with two non-W+X PT_LOAD segments
-			// that runs to the same exit code at the kernel-chosen base. With
-			// the mmap'd low heap, heap-using programs work as PIEs too.
 			pcmd := exec.Command(drvPieBin)
 			pcmd.Dir = rdir
 			pout, perr := pcmd.Output()

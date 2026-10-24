@@ -12,11 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// boundCallSiteCases are generic calls whose type arguments must meet their
-// trait bounds at the call (#12649): whichever module declares the trait,
-// whatever expression the argument is, and for an array method's bound on the
-// element type. wantE021 pins each E021 as "line:col message", so the
-// differential cannot pass with both checkers silent.
 var boundCallSiteCases = []struct {
 	name     string
 	src      string
@@ -58,8 +53,6 @@ var boundCallSiteCases = []struct {
 	{"stdlib-method-generic-primitives-ok",
 		"import \"std/array\";\nfunction main(): i32 { let xs: i32[] = [1, 2]; let bs: u8[] = [3]; let ss: string[] = [\"a\"]; let us: usize[] = []; if (xs.contains(2) && bs.contains(3) && ss.contains(\"a\") && !us.contains(1)) { return 0; } return 1; }\n",
 		nil},
-	// `str` and `string` share one receiver surface, so an impl for either
-	// meets a bound at both.
 	{"impl-for-str-ok",
 		"trait Shout { function shout(self: Self): string; }\nimpl Shout for str { function shout(self: Self): string { return self + \"!\"; } }\nfunction loud[T: Shout](x: T): string { return x.shout(); }\nfunction main(): i32 { let o: string = \"ab\" + \"cd\"; let s: str = slice_unchecked(o, 1, 3); return loud(s).len() + loud(o).len(); }\n",
 		nil},
@@ -69,9 +62,6 @@ var boundCallSiteCases = []struct {
 	{"generic-into-generic-ok",
 		"import \"core/cmp\";\nfunction need[T: cmp.Eq](a: T): i32 { return 1; }\nfunction outer[U](x: U): i32 { return need(x); }\nfunction main(): i32 { return 0; }\n",
 		nil},
-	// A bound naming no trait is reported at the function, and each call
-	// still reports the bound it cannot meet; so is a bound supplying the
-	// wrong number of trait arguments.
 	{"unknown-trait-in-bound",
 		"function need[T: Bogus](a: T): i32 { return 1; }\nfunction need2[T: zz.Bogus](a: T): i32 { return 1; }\nfunction main(): i32 { return need(3) + need2(4); }\n",
 		[]string{
@@ -90,8 +80,6 @@ var boundCallSiteCases = []struct {
 
 var checkDiagRE = regexp.MustCompile(`^[^:]*main\.fern:(\d+):(\d+): error\[(E\d{3})\]: (.*)$`)
 
-// checkDiags runs a `-check` and returns its diagnostics as sorted
-// "line:col CODE message" lines.
 func checkDiags(t *testing.T, cmd *exec.Cmd) []string {
 	t.Helper()
 	out, _ := cmd.CombinedOutput()
@@ -105,8 +93,6 @@ func checkDiags(t *testing.T, cmd *exec.Cmd) []string {
 	return ds
 }
 
-// TestSelfHostBoundCallSiteAgreesWithGo holds `fern -check` to the Go
-// checker's E021 at a generic call: same code, message and position.
 func TestSelfHostBoundCallSiteAgreesWithGo(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	root := e2eharness.SelfHostStdlibRoot(t)
@@ -136,8 +122,6 @@ func TestSelfHostBoundCallSiteAgreesWithGo(t *testing.T) {
 	}
 }
 
-// usizeEqOrdHashSrc exercises core/cmp's usize impls through the generics
-// that need them; it exits 0 when every answer is right.
 const usizeEqOrdHashSrc = `import "core/cmp";
 import "std/array";
 import "std/option";
@@ -153,9 +137,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostUsizeEqOrdHashRuns runs usize through the Eq / Ord / Hash
-// generics compiled and interpreted: core/cmp implements all three for it, so
-// the backend has a usize.eq to call.
 func TestSelfHostUsizeEqOrdHashRuns(t *testing.T) {
 	if _, code := e2eharness.RunInterp(t, usizeEqOrdHashSrc); code != 0 {
 		t.Errorf("interpreter: exit %d, want 0", code)

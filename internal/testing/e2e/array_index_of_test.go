@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// `xs.index_of(target)` returns `Option[i32]` — `Some(i)` for the first element
-// equal to `target`, `None` when absent (#4387). It used to return an `i32`
-// `-1` sentinel while `core/cmp`'s free `index_of` returned an Option, which is
-// the same-name-different-contract pair #4387 opened on.
-//
-// The receivers are a LOCAL, a struct FIELD (the #6784 shape) and a `string[]`,
-// with `.contains` checked alongside on the same receivers.
 const arrayIndexOfProg = `import "std/array";
 
 struct H { xs: i32[] }
@@ -43,7 +36,6 @@ function main(): i32 {
 }
 `
 
-// TestNativeArrayIndexOf runs the shipped std/array on interp / x86-64 / wasm.
 func TestNativeArrayIndexOf(t *testing.T) {
 	p := writeIterProg(t, arrayIndexOfProg)
 	if _, code := runFixtureInterp(t, p, ""); code != 42 {

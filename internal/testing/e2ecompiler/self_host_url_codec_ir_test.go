@@ -2,16 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// urlCodecIRCases exercise std/url's percent-encoding — `url_encode` /
-// `url_decode` — through the self-host IR path on x86-64 + wasm (the `std/url`
-// row was unaudited for self-host). The two functions are inlined with their
-// byte helpers rather than imported; this verifies the constructs the codec
-// lowers to compile on the IR path: byte classification, bit ops (`>>` / `&` /
-// `<<` / `|`), `u8[]` array literals with `as u8` element casts, and the
-// `string_from_bytes_unchecked(u8[])` builtin packing bytes into a string. Each
-// program returns a small deterministic int (kept <= 126); expectations are
-// hardcoded, verified against the native interp + x86-64 backends.
-// FEATURE-AUDIT std/url row.
 const urlCodecIRPrelude = `function url_hex_char(d: i32): i32 { if (d < 10) { return d + 48; } return d + 55; }
 function url_unreserved(b: i32): boolean {
     if (b >= 65 && b <= 90) { return true; }
@@ -72,19 +62,12 @@ var urlCodecIRCases = []struct {
 	main string
 	want int
 }{
-	// "a b/c" -> "a%20b%2Fc": space + '/' each become 3 bytes -> 9.
 	{"encode-escapes", `return url_encode("a b/c").len();`, 9},
-	// all-unreserved input is passed through verbatim -> 5.
 	{"encode-passthrough", `return url_encode("Hello").len();`, 5},
-	// two spaces -> "%20%20" -> 6.
 	{"encode-two-spaces", `return url_encode("  ").len();`, 6},
-	// '/' (47) -> "%2F"; the low nibble's hex digit is UPPERCASE 'F' (70).
 	{"encode-uppercase-hex", `let e: string = url_encode("/"); return e[2] as i32;`, 70},
-	// "a%20b%2Fc" decodes back to "a b/c" -> 5.
 	{"decode-roundtrip", `return url_decode("a%20b%2Fc").len();`, 5},
-	// an invalid escape ("%zz") is left literal -> 3.
 	{"decode-invalid", `return url_decode("%zz").len();`, 3},
-	// no escapes -> verbatim -> 3.
 	{"decode-passthrough", `return url_decode("abc").len();`, 3},
 }
 
@@ -92,8 +75,6 @@ func urlCodecIRSrc(mainBody string) string {
 	return "import \"std/string\";\n" + urlCodecIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostUrlCodecIR compiles each case with the self-host CLI for
-// x86-64 and wasm and checks the exit code.
 func TestSelfHostUrlCodecIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {

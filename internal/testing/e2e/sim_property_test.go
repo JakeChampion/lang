@@ -1,39 +1,3 @@
-// Property-based differential testing for the deterministic
-// simulation platform (docs/DST-PLATFORM-BRIEF.md, slice 4 — #5360).
-// A generator emits small random-but-valid Fern programs over the
-// whole sim surface — Sim + SimNet endpoints (scripted latencies,
-// chunk schedules, the four fault modes) driven through gather_on /
-// race_on / with_deadline_on over mixes of future_at / future_chain /
-// fetch_future — and prints a digest of everything observable
-// (results, winner indices, timed-out slots, final now_ns, rng_state,
-// per-endpoint hits). The property: a sim program is a pure function
-// of (program, seed), so interp, native x86-64, and wasm must produce
-// BYTE-IDENTICAL stdout. Any divergence is a real bug — a miscompile
-// or a nondeterminism leak — and the failing subtest prints the whole
-// program for replay.
-//
-// This extends the numeric_property_test.go pattern to concurrency.
-// Like that harness (and unlike internal/testing/fernsmith, which generates
-// scalar control-flow programs with no stdlib imports and no notion
-// of futures), the generator is a dedicated, small, in-package one:
-// the value here is dense coverage of one API surface, not general
-// grammar coverage.
-//
-// TERMINATION RULE: every generated program terminates, structurally.
-// (a) Each generated future has finitely many Pending steps
-// (future_chain resuspends <= 3, a chunked fetch has one step per
-// chunk), each on a token that either fires at a finite virtual time
-// or is negative (never ready — the stall / partial faults).
-// (b) The sim driver's poll_ready returns -1 once only never-ready
-// tokens remain and no timeout bounds the wait, and all three
-// combinators treat -1 as "stop driving": gather_on breaks and fills
-// on_incomplete ("!"), race_on returns (-1, "!"), with_deadline_on
-// breaks to its None fill. So even a stalled future in a plain
-// gather_on cannot hang the SIM (unlike the real driver, where
-// poll(2) would block forever on the same shape — which is why the
-// "!" slot is part of the digest, not an error). Fetches only target
-// endpoints scripted in the same program, so no future depends on
-// anything outside the (program, seed) pair.
 package e2e
 
 import (
@@ -55,10 +19,6 @@ import "std/i64";
 
 `
 
-// genSimProgram builds one random sim program: a seeded Sim, 1-3
-// scripted endpoints (random latency or chunk schedule, ~half with a
-// fault mode, ~half of those wrapped flaky), then 1-3 combinator
-// stages over 2-4 futures each, then the tail digest.
 func genSimProgram(r *rand.Rand) string {
 	var b strings.Builder
 	b.WriteString(simImports)
@@ -112,7 +72,7 @@ func genSimProgram(r *rand.Rand) string {
 			case 2, 3:
 				fmt.Fprintf(&b, "        sim.future_chain(d, %d as i64, %d as i64, %d, \"c%d_%d\")%s\n",
 					(1+r.Intn(40))*1000000, (1+r.Intn(8))*1000000, r.Intn(4), s, k, sep)
-			case 4: // an unregistered endpoint: the dead upstream, resolves Ready("")
+			case 4:
 				fmt.Fprintf(&b, "        n.fetch_future(9, 80, \"/nope\")%s\n", sep)
 			default:
 				ep := r.Intn(nEp)
@@ -153,10 +113,6 @@ func genSimProgram(r *rand.Rand) string {
 	return b.String()
 }
 
-// simInterpRun runs src through `fern -interp` (the same CLI oracle
-// the slice 1-3 sim gates use — the in-process interp harness in
-// numeric_property_test.go doesn't register impl blocks, and the sim
-// is built on a trait impl) and returns stdout + exit code.
 func simInterpRun(t *testing.T, src string) (string, int) {
 	t.Helper()
 	bin := buildLangBinForInterp(t)
@@ -176,11 +132,6 @@ func simInterpRun(t *testing.T, src string) (string, int) {
 	return out.String(), cmd.ProcessState.ExitCode()
 }
 
-// assertSimProgramAgrees runs one sim program through interp (the
-// oracle), native x86-64, and wasm, and requires byte-identical
-// stdout (modulo the trailing newline) and exit 0 everywhere. Every
-// failure message carries the full program source — that plus the
-// seed in the subtest name is the replay workflow.
 func assertSimProgramAgrees(t *testing.T, src string) {
 	t.Helper()
 	out, _ := simInterpRun(t, src)
@@ -206,8 +157,6 @@ func assertSimProgramAgrees(t *testing.T, src string) {
 	})
 }
 
-// TestSimProperty is the deterministic seeded sweep — bounded for CI,
-// with FuzzSimProperty as the deeper search entry point.
 func TestSimProperty(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping property sweep in -short mode")
@@ -222,43 +171,15 @@ func TestSimProperty(t *testing.T) {
 	}
 }
 
-// TestSimProperty_Regressions pins generator outputs verbatim (the
-// numeric_property pattern), so these exact programs stay covered
-// deterministically no matter how the generator evolves. Each is a
-// generator seed chosen for the surface it composes; none has
-// diverged across backends to date.
 func TestSimProperty_Regressions(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping in -short mode")
 	}
 	cases := []struct{ name, src string }{
-		// Stall + partial(0) + flaky(75) endpoints, a dead upstream,
-		// two with_deadline stages (Some/None mix at an exact virtual
-		// deadline) and a race over an all-faulted set that returns
-		// the no-progress (-1, "!") after dropping every token.
 		{"stall_partial_deadline_race_noprogress", simRegressionStallPartialDeadline},
-		// Flaky(75)-stall chunked endpoint fetched twice inside one
-		// gather: one fetch draws past the fault and drains its chunk
-		// schedule, the other stalls and lands the "!" on_incomplete
-		// fill (sim poll_ready -1 once only never-ready tokens remain).
 		{"flaky_chunked_gather_sentinel", simRegressionFlakyChunkedGather},
-		// Three stages over one flaky-stall endpoint: gather "!"
-		// fill, a 5 ms deadline None, then a race won by a re-
-		// suspending future_chain — five PRNG-coupled fetch draws.
 		{"flaky_stall_three_stage", simRegressionFlakyStallThreeStage},
-		// race_on won immediately by a fault_fail'd endpoint's
-		// Ready("") — no poll at all, so now_ns stays 0 and rng_state
-		// is still the raw seed.
 		{"race_failed_upstream_wins_at_t0", simRegressionRaceFailWins},
-		// A gather over three future_chains and one stall+flaky fetch —
-		// enough re-suspension that a `Pending(fd, resume)` box dies while
-		// the arm that matched it is still calling `resume`. Giving enum
-		// PAYLOADS the container-closure release of #6443 freed that env:
-		// SIGSEGV on both natives, out-of-bounds trap on wasm, across most
-		// of this file's seeds. Pinned verbatim because the synthetic
-		// spellings of "enum carries a closure" do not reproduce it — the
-		// generic instantiation plus the combinators' re-entry is the shape,
-		// and this is the smallest generator output that has it.
 		{"gather_resuspends_enum_payload_closure", simRegressionGatherResuspendClosure},
 	}
 	for _, c := range cases {
@@ -268,10 +189,6 @@ func TestSimProperty_Regressions(t *testing.T) {
 	}
 }
 
-// FuzzSimProperty drives the same generator from fuzz-provided
-// entropy. Run with:
-//
-//	go test -run=^$ -fuzz=FuzzSimProperty ./internal/testing/e2e
 func FuzzSimProperty(f *testing.F) {
 	for s := int64(0); s < 8; s++ {
 		f.Add(s)
@@ -281,11 +198,6 @@ func FuzzSimProperty(f *testing.F) {
 		assertSimProgramAgrees(t, genSimProgram(r))
 	})
 }
-
-// The pinned programs below are verbatim genSimProgram outputs
-// (sweep seeds 5, 7, 22, and 4 of the generator as first landed),
-// frozen so they replay identically no matter how the generator
-// evolves.
 
 const simRegressionStallPartialDeadline = `import "std/async";
 import "std/time";
@@ -460,7 +372,6 @@ function main(): i32 {
 }
 `
 
-// simRegressionGatherResuspendClosure — see the case comment above.
 const simRegressionGatherResuspendClosure = `import "std/async";
 import "std/time";
 import "std/sim";

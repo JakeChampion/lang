@@ -12,19 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternVariantNonUniformResultCustomProvider is the P4c *non-uniform*
-// `variant` gate (docs/WIT-BRING-YOUR-OWN.md): a WIT variant whose payloaded arms
-// carry different scalar types of the same canonical core width — here
-// `variant num { i(s32), f(f32) }` (both 32-bit). The canonical join of a
-// same-width set is the integer bit-container (i32), so the (disc, payload)
-// wrapper moves the payload's *bits* (`i32.load`/store of the box slot) and each
-// side reinterprets per the disc. The f32 arm round-trips bit-exactly: the host
-// writes the f32 bits into the i32 join slot, the wrapper copies them into the
-// Fern box, and the `F(v)` match reads them back as an f32.
-//
-// `classify: func(n: s32) -> num`: n<100 → i(n), else → f(2.5). The Fern side
-// matches; the `F` arm computes `(v * 4.0) as i32` (== 10 only if v is exactly
-// 2.5, i.e. the bits survived — reading the bits as an int would give garbage).
 func TestExternVariantNonUniformResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -51,8 +38,6 @@ func TestExternVariantNonUniformResultCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// classify returns the variant indirectly: an 8-byte area (disc:u8 @0, payload
-	// @4) via cabi_realloc. i=0/f=1; the f arm stores the f32 bits at @4.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))

@@ -1,23 +1,3 @@
-// The Fern server the net-nightly lane runs. scripts/net-bench loads it
-// with bodiless GETs, answered with one static body and no allocation of
-// note, so the loop's own cost is what the load generator sees.
-// scripts/net-interop also uploads to it: a request with a body is
-// answered with the body's length and text, so an upload sent chunked or
-// behind `Expect: 100-continue` shows whether it arrived whole. With
-// TLS_CERT and TLS_KEY set it speaks TLS, requiring a client certificate
-// under the roots TLS_CLIENT_CA names when that is set too, and /bulk is
-// a 16 MiB body: scripts/net-tls-interop's server cases and its
-// throughput record. With H3 set as well it serves HTTP/3 beside TCP:
-// scripts/net-bench's HTTP/3 rows. With H2 set it serves HTTP/2 beside
-// HTTP/1.1, by prior knowledge in the clear and by ALPN under TLS:
-// scripts/net-bench.d/h2tls-bench's rows. WORKERS pins the worker count,
-// for a measurement of one worker, and /count answers
-// `__heap_alloc_count()`, so a run can be bracketed for the allocations
-// it cost. The caps are lifted for the load generator, which is one
-// client holding thousands of connections, and the requests a connection
-// may carry are unbounded as the servers it is compared with leave them:
-// under the default of 1,000 a TLS connection re-handshakes every
-// thousand requests, which the others never do.
 import "std/http";
 import "std/serve";
 import "std/platform";
@@ -48,8 +28,6 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   return http.ok("");
 }
 
-// env_int(name, dflt) — the integer the environment names, dflt when it
-// is unset or not a number.
 function env_int(name: string, dflt: i32): i32 {
   match (env(name)) {
     Some(p) => {
@@ -99,9 +77,6 @@ function identity_from(cert_path: string, key_path: string): Result[identity.Ide
   return Err("identity");
 }
 
-// secured is opts serving TLS when TLS_CERT and TLS_KEY name the
-// certificate chain and key, and HTTP/3 too when H3 is set; opts itself
-// when neither is set.
 function secured(opts: serve.Config): Result[serve.Config, string] {
   let cert_path: string = "";
   match (env("TLS_CERT")) {
@@ -128,8 +103,6 @@ function secured(opts: serve.Config): Result[serve.Config, string] {
   return Ok(opts);
 }
 
-// client_roots is cfg requiring a client certificate under the roots
-// TLS_CLIENT_CA names, cfg itself when it is unset.
 function client_roots(cfg: server.Config): Result[server.Config, string] {
   match (env("TLS_CLIENT_CA")) {
     Some(path) => {

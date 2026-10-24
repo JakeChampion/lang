@@ -6,29 +6,6 @@ import (
 	"testing"
 )
 
-// monomorphSubstCases pin parser.subst_expr's coverage: when a bounded generic
-// is monomorphised, every reference to the type PARAMETER in the cloned body
-// has to become the concrete type.
-//
-// The only way a bare type-param name appears as an expression is as the object
-// of an associated call — `T.zero()` — and the substitution used to recurse
-// through eight expression shapes and stop. A `T.zero()` nested inside an ARRAY
-// LITERAL or a SLICE kept the name `T` into the clone, and lowering then could
-// not resolve it:
-//
-//	FERN_STRICT_IR: __arrm_total__i32 (function value T not defined)
-//
-// The module fell off the IR path entirely, so the failure is a refused
-// compile, not a wrong answer. Native compiles and runs all three.
-//
-// `plain` is the control — the same call in a `let` initialiser, an arm the
-// substitution always had — so a regression that broke substitution outright
-// fails all three rows rather than looking like this bug.
-//
-// std/num rather than a locally-declared trait: a user-declared trait's
-// associated function reached through a bound type parameter does not lower on
-// the self-host at all yet (`function value i32 not defined`), so a local trait
-// cannot isolate this.
 var monomorphSubstCases = []struct {
 	name string
 	src  string

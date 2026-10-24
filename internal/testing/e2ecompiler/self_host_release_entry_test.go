@@ -36,9 +36,6 @@ function main(): i32 {
 }
 `
 
-// Aliased records and enum payloads keep their children alive until the last
-// release. Shared releases bypass the frame, while the debug build uses the
-// ordinary helper so its diagnostics remain observable.
 func TestSelfHostReleaseEntry(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	source := filepath.Join(t.TempDir(), "main.fern")

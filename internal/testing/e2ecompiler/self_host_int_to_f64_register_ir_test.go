@@ -8,26 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostIntToF64X86_64IR is the REGISTER-backend sibling of
-// TestSelfHostIntToF64WasmIR: `<int> as f64` on the self-host x86-64 IR path
-// (#6051).
-//
-// #5992 fixed the wasm half of this and recorded that the register backends
-// "can ignore" the op's width + signedness, one 64-bit cvtsi2sd / scvtf
-// covering all four conversions. That is true of three of the four — i32, u32
-// (which is held in its slot zero-extended) and i64 — and false of the fourth: x86
-// has only a SIGNED int->double, so a u64 >= 2^63 converts to a NEGATIVE
-// double. u64::MAX came out as -1.0, and the fixture asserting it exceeds 1e19
-// returned 1 instead of 0. No fixture leg ran the self-host x86-64 path when
-// #5992 landed, so the half that was still broken looked covered.
-//
-// The u64 case now goes through the round-to-odd halving (`y = (x>>1)|(x&1)`,
-// convert, double) native emitFConvertI64 uses; u32 is zero-extended into the
-// 64-bit source first. Each case asserts the emitted asm reached the expected
-// instruction sequence — so a fix that merely changes the answer cannot pass by
-// accident — then runs it against the interpreter oracle. The expectations are
-// regular expressions over the register path's listing, where the source
-// register is whichever the allocator chose.
 func TestSelfHostIntToF64X86_64IR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -72,11 +52,6 @@ func TestSelfHostIntToF64X86_64IR(t *testing.T) {
 	}
 }
 
-// TestSelfHostIntToF64Arm64IR — CI-gated arm64 counterpart. arm64 has both
-// conversions, so the u64 case is one instruction (ucvtf) rather than x86's
-// halving sequence, but the bug was identical: an unconditional `scvtf` read
-// u64::MAX as -1.0. The destination may be any allocated double register;
-// the opcode and integer source width must still match the conversion.
 func TestSelfHostIntToF64Arm64IR(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -108,10 +83,6 @@ func TestSelfHostIntToF64Arm64IR(t *testing.T) {
 	}
 }
 
-// intToF64Cases are the four (width, signedness) combinations. The signed forms
-// are here for the same reason the wasm test keeps them: a "fix" that made
-// every conversion unsigned would satisfy the u32/u64 cases and silently break
-// these.
 func intToF64Cases() []struct {
 	name      string
 	src       string
@@ -126,8 +97,6 @@ func intToF64Cases() []struct {
 		x86Avoid  []string
 		arm64Want []string
 	}{
-		// u64::MAX as f64 is ~1.8446744e19, not -1.0 (#6051, the
-		// conformance case u64_max_to_f64_is_huge).
 		{"u64-max-is-above-1e19", `function main(): i32 {
     let i: i64 = 0 - 1i64;
     let u: u64 = i as u64;
@@ -136,16 +105,12 @@ func intToF64Cases() []struct {
     if (f > threshold) { return 0; }
     return 1;
 }`, []string{`shrq \$1, %rcx`, `addsd %xmm0, %xmm0`}, nil, []string{`ucvtf d\d+, x\d+\b`}},
-		// A u64 BELOW 2^63 must still take the plain signed convert — the
-		// halving path is only for the values it cannot express.
 		{"u64-below-2p63", `function main(): i32 {
     let u: u64 = 9223372036854775807i64 as u64;
     let f: f64 = u as f64;
     if (f > 9000000000000000000.0f64) { return 0; }
     return 1;
 }`, []string{`cvtsi2sd`}, nil, []string{`ucvtf d\d+, x\d+\b`}},
-		// u32 with bit 31 set: zero-extended into the 64-bit source, so the
-		// signed convert is exact.
 		{"u32-roundtrips-through-f64", `function main(): i32 {
     let u: u32 = 3000000000 as u32;
     let f: f64 = u as f64;

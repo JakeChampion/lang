@@ -8,29 +8,11 @@ import (
 	"testing"
 )
 
-// nestedTupleElemReclaimCases pin an rc-tuple holding a NESTED TUPLE element.
-// Two independent conditions, either of which alone would leave the outer tuple
-// with no reclaim at all — buffer, boxes and nested box.
-//
-//  1. Admission. A nested tuple element need not be reclaimable IN ITS OWN
-//     RIGHT: an all-scalar `(i, j)` carries no array, but the nested box is an
-//     allocation in its own right, so it is a child to free whatever it holds.
-//
-//  2. The read. `t.2.0` — a scalar copied out of a nested tuple element — is a
-//     borrow exactly like the struct scalar-field read beside it, not a bare
-//     pointer extraction. A nested tuple element indexes by POSITION, so its
-//     type comes from the tuple's element tag, not from a struct field.
-//
-// Byte cases return measured bytes per round, so a regression reports its own
-// size. Unreclaimed, as x86-64 | arm64 | wasm: 128 | 128 | 80 for the
-// three-element shapes and 80 | 80 | 48 for `(i, (j, k))`.
 var nestedTupleElemReclaimCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// Defect 1 alone: the nested element is never read, so no read gate is in
-	// play.
 	{"nested-scalar-tuple-elem-unread", `function churn(n: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -51,8 +33,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// Defect 2 on top: the same shape, reading a scalar THROUGH the nested
-	// element. Fixing only the admission leaves this at its full pre-fix size.
 	{"nested-scalar-tuple-elem-read-through", `function churn(n: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -73,8 +53,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// No array anywhere: the nested box is the ONLY thing to free, which is the
-	// case the old "does the inner carry an array" question could never admit.
 	{"nested-scalar-tuple-only", `function churn(n: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -95,9 +73,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// EXTRACTION negative: `keep = t.1` lifts the nested box out whole, so the
-	// read gate must still refuse. Freeing t would free the box keep points at.
-	// keep is read after the loop; over-release corrupts it or ticks 99.
 	{"nested-tuple-whole-extraction-safe", `function churn(n: i32): i32 {
     let keep: (i32, i32) = (0, 0);
     let acc: i32 = 0;
@@ -117,9 +92,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return w;
 }`, 89},
-	// ALIASING negative: a bare-ident array element is a live local's buffer.
-	// The tuple is admitted (its nested box is a child to free) and its box is
-	// released each round, so the walk must leave the aliased buffer alone.
 	{"nested-tuple-with-alias-elem-safe", `function churn(n: i32): i32 {
     let live: i32[] = [7, 8, 9];
     let acc: i32 = 0;
@@ -142,8 +114,6 @@ function main(): i32 {
 
 const nestedTupleElemFailFmt = "%s = %d, want %d (a small non-zero is the leaked bytes per round; 99 = over-release; 97 = value corrupted)"
 
-// TestSelfHostNestedTupleElemReclaimIRX86_64 also requires a balanced census on
-// every case, the negatives included.
 func TestSelfHostNestedTupleElemReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	t.Setenv("FERN_LEAKCHECK", "1")

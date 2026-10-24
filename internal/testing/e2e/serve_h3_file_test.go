@@ -14,9 +14,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// File responses must use the bounded producer, not Body.bytes (which
-// deliberately does not read files). The native file exceeds three times
-// the HTTP/3 producer's unacknowledged-byte cap; hashes check every byte.
 func TestServeH3FileX86_64(t *testing.T) {
 	checkServeH3Files(t, "x86-64-linux", 3*262144+123)
 }
@@ -33,8 +30,6 @@ func checkServeH3Files(t *testing.T, target string, size int) {
 	t.Helper()
 	config := "serve.config()"
 	if target == "interp" {
-		// Match the existing positive interpreted-TLS fixture. Native
-		// servers and all production/negative deadline gates keep defaults.
 		config = "serve.Config { ...serve.config(), recv_deadline: time.duration_seconds(60 as i64) }"
 	}
 	w := newServeH3WorldWithConfig(t, config)

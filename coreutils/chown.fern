@@ -1,59 +1,3 @@
-// chown.fern — GNU-compatible `chown`.
-//
-//   chown [OPTION]... [OWNER][:[GROUP]] FILE...
-//   chown [OPTION]... --reference=RFILE FILE...
-//
-// One fchownat(2) per entry. `lib/owner.fern` is the OWNER[:[GROUP]] operand
-// — the grammar, the `.` fallback, and the wording a `-v` line is built from
-// — and it is shared with `chgrp`, which is this utility with the user half
-// taken away and `--from=` left whole.
-//
-// ---- the walk is POST-order, and chmod's is not ------------------------------
-//
-// `chown -R` visits a directory's children BEFORE the directory itself; GNU
-// hands fts FTS_POST for chown and takes the pre-order visit for chmod. It is
-// observable in two ways: the order `-v` prints, and the order the calls
-// happen in — a directory chowned to an owner that cannot then read it is
-// still fully walked here, where a pre-order walk would have locked itself
-// out. Children come back in raw readdir order; GNU hands fts no comparator.
-//
-// ---- which symlinks are followed, and which are descended --------------------
-//
-// Two separate questions, and `-R` changes the answer to the first one.
-//
-// FOLLOWED is whether the call lands on the link or its target. Without `-R`
-// the default is to follow; `-h` / `--no-dereference` turns that off. With
-// `-R` the default becomes `-P`, which does NOT follow — so `chown -R` over a
-// tree changes the symlinks in it rather than what they point at, and that is
-// the default. `-H` and `-L` both restore following. `-L` beats `-h` whatever
-// order they are written in, because the traversal flag is applied after.
-//
-// DESCENDED is whether a symlink that resolves to a directory is walked into.
-// `-P` never, `-H` only for a command-line operand, `-L` always. Last of the
-// three wins. So `-H` on a symlinked tree chowns what the inner symlinks
-// point at while still refusing to walk through them.
-//
-// `-R --dereference` with neither `-H` nor `-L` is the one option combination
-// refused outright: following every link while descending none would visit a
-// tree the operands do not describe.
-//
-// ---- --from is a filter, not a condition to report ---------------------------
-//
-// A file whose current ownership does not match `--from=` is not an error and
-// not a skip worth mentioning: it takes the ordinary "retained" line and the
-// exit status stays 0. That is what makes `--from` safe to sweep a tree with.
-//
-// ---- the one thing this cannot do -------------------------------------------
-//
-// GNU's fts is fd-relative — it holds a descriptor on each directory and
-// calls fchownat against it — so a tree renamed underneath a running
-// `chown -R` cannot be tricked into chowning something outside it, and a path
-// longer than PATH_MAX is still reachable. The runtime has no fd-relative
-// traversal (#9074 / #9078), so the walk below concatenates paths: it meets
-// ENAMETOOLONG partway down a tree GNU finishes, and a concurrent rename of an
-// interior directory can redirect a chown to another subtree. Nothing in the
-// corpus renames anything under a running chown, so the two agree there; the
-// gap is real all the same.
 import "std/array";
 import "./lib/filetype";
 import "./lib/gnu";
@@ -123,8 +67,6 @@ function v_all(): i32 {
   return 2;
 }
 
-// The three traversal flags, in the order they are declared so `last wins`
-// is a plain assignment.
 function trav_p(): i32 {
   return 0;
 }
@@ -137,9 +79,6 @@ function trav_l(): i32 {
   return 2;
 }
 
-// `deref` is a TRISTATE rather than a boolean: the default differs between
-// the recursive and the non-recursive form, so "the caller did not say" has
-// to survive parsing.
 function deref_default(): i32 {
   return 0;
 }
@@ -154,8 +93,6 @@ function deref_no(): i32 {
 
 pub struct Settings { verbosity: i32, quiet: boolean, recursive: boolean, preserve_root: boolean, deref: i32, traverse: i32, chgrp_mode: boolean }
 
-// What one run does to every file: the spec it is moving them to, and the
-// ownership it insists they currently have.
 pub struct Target { spec: owner.Spec, from: owner.Spec, has_from: boolean, db: owner.Db }
 
 pub struct St { out: gnu.Stdio, status: i32 }
@@ -201,10 +138,6 @@ function help_text(): string {
   return out;
 }
 
-// The long options in GNU's declaration order, which is visible: the
-// ambiguity list prints candidates in it, so `--r` names '--recursive' before
-// '--reference' and `--no` names '--no-dereference' before
-// '--no-preserve-root'. `--help` and `--version` are appended by getopt_new.
 pub function option_table(chgrp_mode: boolean): gnu.Opt[] {
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("R", "recursive", opt_recursive()));
@@ -226,10 +159,6 @@ pub function option_table(chgrp_mode: boolean): gnu.Opt[] {
 
 pub struct Parsed { s: Settings, from: string, has_from: boolean, reference: string, has_reference: boolean, files: string[] }
 
-// `--reference` takes an argument, which the table above declares as a flag
-// so the declaration ORDER stays readable; it is re-declared here with its
-// argument. Keeping the two apart would put `reference` in the wrong place in
-// every ambiguity list.
 function table_with_reference(chgrp_mode: boolean): gnu.Opt[] {
   let opts: gnu.Opt[] = [];
   let base: gnu.Opt[] = option_table(chgrp_mode);
@@ -295,9 +224,6 @@ pub function parse(argv: string[], chgrp_mode: boolean, name: string): Parsed {
   return Parsed { s: s, from: from, has_from: has_from, reference: reference, has_reference: has_reference, files: g.operands() };
 }
 
-// ---- paths -----------------------------------------------------------------
-// fts trims a RUN of trailing slashes to one before the operand is printed,
-// and leaves `/` and `//` alone: `d///` is `d/`, `///` is `/`.
 function fts_trim(p: string): string {
   let n: i32 = p.len();
   if (n > 2 && p[n - 1] as i32 == 47) {
@@ -315,9 +241,6 @@ function child_path(dir: string, name: string): string {
   return dir + "/" + name;
 }
 
-// ---- diagnostics -----------------------------------------------------------
-// A diagnostic `-f` silences. The exit status still moves: `-f` suppresses
-// the message, not the failure.
 function fail_quiet(st: St, s: Settings, msg: string): St {
   if (s.quiet) {
     return St { ...st, status: 1 };
@@ -325,8 +248,6 @@ function fail_quiet(st: St, s: Settings, msg: string): St {
   return St { out: st.out.report(msg), status: 1 };
 }
 
-// A diagnostic `-f` does NOT silence: the root failsafe and a `--reference`
-// that cannot be read.
 function fail_loud(st: St, msg: string): St {
   return St { out: st.out.report(msg), status: 1 };
 }
@@ -338,9 +259,6 @@ function say(st: St, s: Settings, line: string): St {
   return St { ...st, out: st.out.fwrite(line) };
 }
 
-// ---- the root failsafe -----------------------------------------------------
-// Compared by device and inode, so every spelling of `/` is caught — `//`,
-// `/.`, `/tmp/..` — and each one that is not literally `/` says so.
 function is_root_dir(info: FileStat): boolean {
   match (stat("/")) {
     Ok(root) => {
@@ -361,10 +279,6 @@ function refuse_root(st0: St, path: string): St {
   return fail_loud(st, "use --no-preserve-root to override this failsafe");
 }
 
-// ---- the two symlink questions ---------------------------------------------
-// Whether the CALL lands on the link or its target. Under -R the default
-// flips to not following, and -L restores it however it was ordered against
-// -h, because the traversal flag is applied after the dereference one.
 function follows(s: Settings): boolean {
   if (s.recursive && s.traverse == trav_l()) {
     return true;
@@ -378,8 +292,6 @@ function follows(s: Settings): boolean {
   return true;
 }
 
-// Whether a symlink that resolves to a directory is walked into. `top` marks
-// a command-line operand, which is the only place -H differs from -P.
 function descends_links(s: Settings, top: boolean): boolean {
   if (s.traverse == trav_l()) {
     return true;
@@ -387,10 +299,6 @@ function descends_links(s: Settings, top: boolean): boolean {
   return s.traverse == trav_h() && top;
 }
 
-// ---- one entry -------------------------------------------------------------
-// The line a change, a no-op or a failure prints. `old_uid` / `old_gid` are
-// what the entry carried before; an unreadable entry has none, and the
-// "from" clause is left off rather than filled with a guess.
 function describe(t: Target, s: Settings, path: string, old_uid: i64, old_gid: i64, known: boolean, changed: boolean, failed: boolean): string {
   let gv: boolean = t.spec.group_verb(s.chgrp_mode);
   let noun: string = "ownership of ";
@@ -421,8 +329,6 @@ function describe(t: Target, s: Settings, path: string, old_uid: i64, old_gid: i
   return noun + gnu.quotea(path) + " retained as " + from + "\n";
 }
 
-// Whether this entry is one `--from` selects. An omitted half matches
-// anything, which is what makes `--from=:staff` a group-only filter.
 function from_matches(t: Target, uid: i64, gid: i64): boolean {
   if (!t.has_from) {
     return true;
@@ -449,9 +355,6 @@ function change_one(st0: St, s: Settings, t: Target, ent: Ent, uid: i64, gid: i6
   let want_gid: i64 = t.spec.gid;
   let changed: boolean = want_uid >= 0 as i64 && want_uid != uid || want_gid >= 0 as i64 && want_gid != gid;
   if (want_uid < 0 as i64 && want_gid < 0 as i64) {
-    // Nothing to ask the kernel for. GNU still makes the call; the
-    // observable difference would be an errno on an entry it could not
-    // touch, and -1/-1 cannot fail where the entry was stattable.
     if (s.verbosity == v_all()) {
       return St { ...st, out: st.out.fwrite(describe(t, s, path, uid, gid, true, false, false)) };
     }
@@ -475,19 +378,11 @@ function change_one(st0: St, s: Settings, t: Target, ent: Ent, uid: i64, gid: i6
   }
 }
 
-// The entry could not be reached at all. `-v` still prints its line, with no
-// "from" clause because nothing was read to put in one.
 function unreachable(st0: St, s: Settings, t: Target, path: string, msg: string): St {
   let st: St = fail_quiet(st0, s, msg);
   return say(st, s, describe(t, s, path, 0 as i64, 0 as i64, false, false, true));
 }
 
-// ---- the walk --------------------------------------------------------------
-// `Ent` — where an entry is: its full path, which every message names it by,
-// and below an operand the directory holding it and its name there, which
-// every call reaches it through, as GNU's fts does. A path is resolved from
-// the root once per operand rather than once per entry, and a tree deeper
-// than PATH_MAX is walked like any other.
 struct Ent { path: string, dir: Option[Dir], name: string }
 
 function operand(path: string): Ent {
@@ -527,8 +422,6 @@ function ent_chown(e: Ent, uid: i32, gid: i32, follow: boolean): Result[void, Io
   }
 }
 
-// A directory reached through a symlink is opened by its path: opening one
-// by name inside its parent refuses to follow the link.
 function ent_open(e: Ent, via_link: boolean): Result[Dir, IoError] {
   match (e.dir) {
     Some(d) => {
@@ -543,13 +436,6 @@ function ent_open(e: Ent, via_link: boolean): Result[Dir, IoError] {
 
 struct Seen { ok: boolean, uid: i64, gid: i64, is_dir: boolean, is_link: boolean }
 
-// What the walk needs to know about an entry: the ownership the call will
-// report moving FROM, and whether it is a directory to descend.
-//
-// Which of lstat and stat answers depends on the traversal flag, and the two
-// can disagree in a way that matters: under `-L` a symlink's target decides
-// both, and a BROKEN one has no answer at all — that is the `cannot
-// dereference` path rather than `cannot access`.
 function look(s: Settings, ent: Ent, top: boolean): (Seen, string) {
   let path: string = ent.path;
   let want_target: boolean = follows(s) || descends_links(s, top);
@@ -580,8 +466,6 @@ function look(s: Settings, ent: Ent, top: boolean): (Seen, string) {
   }
 }
 
-// One entry, and everything under it. The children are visited BEFORE the
-// entry itself: fts hands chown its post-order visit.
 function process(st0: St, s: Settings, t: Target, ent: Ent, top: boolean): St {
   let st: St = st0;
   let path: string = ent.path;
@@ -594,9 +478,6 @@ function process(st0: St, s: Settings, t: Target, ent: Ent, top: boolean): St {
     return refuse_root(st, path);
   }
   if (s.recursive && seen.is_dir) {
-    // A directory whose children cannot be listed has its own wording,
-    // where an entry that could not be STATTED is `cannot access`. The
-    // directory itself is still chowned afterwards.
     match (ent_open(ent, seen.is_link)) {
       Ok(d) => {
         match (d.entries()) {
@@ -632,15 +513,11 @@ function is_root(path: string): boolean {
   }
 }
 
-// ---- main ------------------------------------------------------------------
 pub function run(argv: string[], chgrp_mode: boolean, name: string): i32 {
   let p: Parsed = parse(argv, chgrp_mode, name);
   let s: Settings = p.s;
   let files: string[] = p.files;
 
-  // Following every link while descending none would visit a tree the
-  // operands do not describe, so the combination is refused rather than
-  // guessed at — ahead of the operand count, which is where GNU checks it.
   if (s.recursive && s.deref == deref_yes() && s.traverse == trav_p()) {
     gnu.error("-R --dereference requires either -H or -L");
     exit(1);

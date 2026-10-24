@@ -1,56 +1,20 @@
-// std/utf8 — UTF-8 codepoint decoding, encoding, and validation.
-//
-// Fern strings are byte arrays: `s[i]` is a byte (0..255) and
-// `s.len()` is the byte length. That's correct and fast for ASCII and
-// raw-byte work, but anything non-ASCII needs codepoint-level
-// operations — `"héllo".len()` is 6, not 5, and `s[1]` is half of an
-// `é`. This module is the bridge: decode the byte stream into Unicode
-// scalar values, encode scalar values back to UTF-8 bytes, count, and
-// validate.
-//
-// A "codepoint" here is a Unicode scalar value: 0..0x10FFFF, excluding
-// the UTF-16 surrogate range 0xD800..0xDFFF. That domain has its own
-// type — `char` (#5629) — so the decoders hand back `char`, not a bare
-// i32, and a byte read off a string is a `u8`. Build one from an integer
-// with `char_from_i32` (checked, `Option[char]`) or `as char` (an
-// unchecked reinterpret; a LITERAL outside the range is E071).
-// U+FFFD (65533) is the REPLACEMENT CHARACTER the lossy decoders
-// substitute for malformed input. They substitute one per MAXIMAL
-// SUBPART (Unicode 15.0 §3.9), which is std/string's rule too — the
-// lossy walkers here ARE the string methods, so `codepoint_count(s)`
-// and `s.codepoint_count()` cannot disagree. `utf8_decode_at` is the
-// strict layer instead: it reports ill-formed input as `None` rather
-// than substituting anything.
+// This module encodes, decodes, and validates UTF-8 code points.
 
 import "std/string";
 
-// `utf8_decode_at(s, i)` — decode the single codepoint whose UTF-8
-// encoding starts at byte index `i`, as `Some((codepoint, byte_len))`,
-// or `None` when `i` is out of range or the bytes there aren't a valid,
-// minimally-encoded, non-surrogate sequence. Strict: overlong forms,
-// stray continuation / lead bytes, truncated tails, surrogates, and
-// values past U+10FFFF all yield None. This is the low-level primitive
-// every other function here is built on.
-//
-// (Locals are uniquely named per byte-width branch — the wasm / self-
-// host emitters name locals by source identifier, so a re-declared
-// `let cp` in sibling scopes would collide; see the json_encode note.)
 pub function utf8_decode_at(s: string, i: i32): Option[(i32, i32)] {
   let n: i32 = s.len();
   if (i < 0 || i >= n) {
     return None;
   }
   let b0: i32 = s[i] as i32;
-  // 1-byte: 0xxxxxxx (ASCII).
   if (b0 < 128) {
     return Some((b0, 1));
   }
-  // 0x80..0xBF is a stray continuation byte; not a valid lead.
   if (b0 < 192) {
     return None;
   }
   if (b0 < 224) {
-    // 2-byte: 110xxxxx 10xxxxxx.
     if (i + 1 >= n) {
       return None;
     }
@@ -59,13 +23,12 @@ pub function utf8_decode_at(s: string, i: i32): Option[(i32, i32)] {
       return None;
     }
     let cp2: i32 = b0 - 192 << 6 | c1 - 128;
-    if (cp2 < 128) {  // overlong
+    if (cp2 < 128) {
       return None;
     }
     return Some((cp2, 2));
   }
   if (b0 < 240) {
-    // 3-byte: 1110xxxx 10xxxxxx 10xxxxxx.
     if (i + 2 >= n) {
       return None;
     }
@@ -78,16 +41,15 @@ pub function utf8_decode_at(s: string, i: i32): Option[(i32, i32)] {
       return None;
     }
     let cp3: i32 = b0 - 224 << 12 | d1 - 128 << 6 | d2 - 128;
-    if (cp3 < 2048) {  // overlong
+    if (cp3 < 2048) {
       return None;
     }
-    if (cp3 >= 55296 && cp3 <= 57343) {  // surrogate
+    if (cp3 >= 55296 && cp3 <= 57343) {
       return None;
     }
     return Some((cp3, 3));
   }
   if (b0 < 248) {
-    // 4-byte: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx.
     if (i + 3 >= n) {
       return None;
     }
@@ -104,56 +66,30 @@ pub function utf8_decode_at(s: string, i: i32): Option[(i32, i32)] {
       return None;
     }
     let cp4: i32 = b0 - 240 << 18 | e1 - 128 << 12 | e2 - 128 << 6 | e3 - 128;
-    if (cp4 < 65536) {  // overlong
+    if (cp4 < 65536) {
       return None;
     }
-    if (cp4 > 1114111) {  // > U+10FFFF
+    if (cp4 > 1114111) {
       return None;
     }
     return Some((cp4, 4));
   }
-  return None;  // 0xF8..0xFF: invalid lead byte
+  return None;
 }
 
-// `utf8_encode(c)` — the UTF-8 byte string for a single scalar. An
-// out-of-range or surrogate value encodes U+FFFD instead (lossy), so the
-// result is always valid UTF-8. Inverse of `utf8_decode_at` for a valid
-// scalar value.
-//
-// `char_from_i32(n)` — the CHECKED way to turn an integer into a `char`
-// (#5629). `Some(c)` when n is a Unicode scalar value, `None` when it is
-// negative, above 0x10FFFF, or one of the UTF-16 surrogates 0xD800..0xDFFF
-// (a lone surrogate only means something as half of a pair, so it is not a
-// character).
-//
-// This is the counterpart to `n as char`, which is the deliberately
-// unchecked reinterpret hatch: the cast rejects an out-of-range LITERAL at
-// compile time (E071), but a runtime integer casts through unvalidated,
-// because std/unicode's table lookups produce values already known to be
-// scalars and should not pay for a re-check. Reach for the cast when you
-// can prove the value; reach for this when you cannot.
-//
-//     utf8.char_from_i32(65)      // Some('A')
-//     utf8.char_from_i32(0xD800)  // None — surrogate
-//     utf8.char_from_i32(-1)      // None
 pub function char_from_i32(n: i32): Option[char] {
   if (n < 0 || n > 1114111) {
     return None;
   }
-  if (n >= 55296 && n <= 57343) {  // UTF-16 surrogate
+  if (n >= 55296 && n <= 57343) {
     return None;
   }
   return Some(n as char);
 }
 
-// Takes a `char` (#5629). The range check stays even though `n as char`
-// now rejects an out-of-range LITERAL: a cast of a runtime i32 is still
-// unchecked by design, so a `char` reaching here can hold a surrogate or
-// an out-of-range value. This is the final check for "the output
-// is always well-formed UTF-8".
 pub function utf8_encode(ch: char): string {
   let c: i32 = ch as i32;
-  if (c < 0 || c > 1114111 || c >= 55296 && c <= 57343) {  // U+FFFD
+  if (c < 0 || c > 1114111 || c >= 55296 && c <= 57343) {
     c = 65533;
   }
   if (c < 128) {
@@ -172,66 +108,14 @@ pub function utf8_encode(ch: char): string {
   return string_from_bytes_unchecked(four);
 }
 
-// `codepoints(s)` — decode the whole string to its sequence of
-// codepoints. LOSSY: an ill-formed run contributes one U+FFFD per
-// MAXIMAL SUBPART (see the module note) and the scan resumes after it,
-// so the result is always well-formed (and non-empty for a non-empty
-// input). The free-function form of `string.chars()`, and literally
-// that function — one substitution rule, one implementation.
 pub function codepoints(s: string): char[] {
   return s.chars();
 }
 
-// `codepoint_count(s)` — the number of codepoints, counted with the
-// same lossy walk as `codepoints` (so it equals `codepoints(s).len()`)
-// without materialising the array. This is the "character length" a
-// user means when `s.len()` (byte length) surprises them.
 pub function codepoint_count(s: string): i32 {
   return s.codepoint_count();
 }
 
-// `is_valid_utf8(s)` — true iff every byte is part of a valid,
-// minimally-encoded, non-surrogate UTF-8 sequence (a strict scan). The
-// empty string is valid.
-//
-// This accepts exactly what `utf8_decode_at` accepts at every offset —
-// same overlong, surrogate, truncation and range rejections — but it
-// checks the continuation bytes inline rather than calling it. That is
-// not a micro-optimisation: `utf8_decode_at` returns
-// `Option[(i32, i32)]`, so routing a scan through it allocates and
-// refcounts a tuple box *per codepoint*. On a 346 KB ASCII JSON body
-// that is 346,000 boxes and ~48 ms; inline it is ~1.5 ms (x86-64).
-// Validation sits on the ingest path — `from_bytes` and every caller
-// that checks bytes arriving from a file, socket, or FFI boundary — so
-// this scan has to cost what a byte walk costs.
-//
-// The ASCII run is skipped by `__ascii_run`, the second fused SIMD
-// kernel (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 2). This is the whole
-// reason that kernel exists: what dominates an ASCII-heavy ingest body
-// is the run *between* the multi-byte sequences, and a vector clears it
-// 16 bytes per iteration where the byte walk it replaced cleared one:
-// 0.22 -> 13.8 GB/s, ~63x, on a 64 KB body with a 2-byte codepoint every
-// 1 KB (x86-64). The per-length, overlong-and-surrogate rules
-// deliberately stay here in Fern rather than moving into the intrinsic —
-// they are branchy logic that would be duplicated across seven backends,
-// and this is the readable place for them.
-//
-// The skip runs only when `b0` is already ASCII, and that condition is
-// essential rather than defensive. Called unconditionally, dense
-// non-ASCII input (every codepoint multi-byte, so the skip finds a hit
-// immediately and never clears a block) pays a call per codepoint where
-// the old code paid none — measured 15% SLOWER on a 43 KB CJK body.
-// Reusing the `b0` this loop already loads costs nothing and removes
-// that: a non-ASCII lead byte goes straight to the length chain, and the
-// CJK body comes back to baseline (0.782 -> 0.773 s) while the ASCII one
-// keeps the 63x. Re-reading `b0` after a skip rather than hoisting the
-// load is the same economy, one level in.
-//
-// Note there is no `i = i + 1` ASCII arm in the chain below any more,
-// and there must not be: whether the skip ran or not, a `b0` reaching it
-// is >= 128 by construction. `__ascii_run` returns `n` rather than -1
-// when the rest is ASCII, which is what lets the skip itself be
-// branch-free once entered.
 pub function is_valid_utf8(s: string): boolean {
   let n: i32 = s.len();
   let i: i32 = 0;
@@ -245,9 +129,8 @@ pub function is_valid_utf8(s: string): boolean {
       b0 = s[i] as i32;
     }
     if (b0 < 192) {
-      return false;  // stray continuation byte
+      return false;
     } else if (b0 < 224) {
-      // 2-byte: 110xxxxx 10xxxxxx.
       if (i + 1 >= n) {
         return false;
       }
@@ -255,12 +138,11 @@ pub function is_valid_utf8(s: string): boolean {
       if (c1 < 128 || c1 >= 192) {
         return false;
       }
-      if ((b0 - 192 << 6 | c1 - 128) < 128) {  // overlong
+      if ((b0 - 192 << 6 | c1 - 128) < 128) {
         return false;
       }
       i = i + 2;
     } else if (b0 < 240) {
-      // 3-byte: 1110xxxx 10xxxxxx 10xxxxxx.
       if (i + 2 >= n) {
         return false;
       }
@@ -273,15 +155,14 @@ pub function is_valid_utf8(s: string): boolean {
         return false;
       }
       let cp3: i32 = b0 - 224 << 12 | d1 - 128 << 6 | d2 - 128;
-      if (cp3 < 2048) {  // overlong
+      if (cp3 < 2048) {
         return false;
       }
-      if (cp3 >= 55296 && cp3 <= 57343) {  // surrogate
+      if (cp3 >= 55296 && cp3 <= 57343) {
         return false;
       }
       i = i + 3;
     } else if (b0 < 248) {
-      // 4-byte: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx.
       if (i + 3 >= n) {
         return false;
       }
@@ -298,39 +179,20 @@ pub function is_valid_utf8(s: string): boolean {
         return false;
       }
       let cp4: i32 = b0 - 240 << 18 | e1 - 128 << 12 | e2 - 128 << 6 | e3 - 128;
-      if (cp4 < 65536) {  // overlong
+      if (cp4 < 65536) {
         return false;
       }
-      if (cp4 > 1114111) {  // > U+10FFFF
+      if (cp4 > 1114111) {
         return false;
       }
       i = i + 4;
     } else {
-      return false;  // 0xF8..0xFF: invalid lead byte
+      return false;
     }
   }
   return true;
 }
 
-// `from_bytes(b)` — the validating bytes-to-string constructor: the
-// string those bytes spell, or None when they are not well-formed
-// UTF-8. This is the boundary decision D9 (#5634) names — the one place
-// bytes arriving from outside the program (a file, a socket, an
-// environment variable, an FFI return) become text.
-//
-// Its unchecked sibling is the `string_from_bytes_unchecked` builtin,
-// whose contract is that the *caller* already knows the bytes are
-// well-formed. Reach for that one only when validity holds by
-// construction — assembling digits, emitting ASCII you just built,
-// re-encoding a scalar you already validated, or transforming the bytes
-// of a string you were handed. Reach for this one whenever the bytes
-// came from outside.
-//
-// Deliberately ordinary Fern rather than a builtin: the `Option` box is
-// built by normal lowering, so no backend has to learn to box an enum
-// for it. The transiently-unchecked string never escapes — it is either
-// returned inside `Some` after passing the same strict scan
-// `is_valid_utf8` applies, or dropped.
 pub function from_bytes(b: u8[]): Option[string] {
   let s: string = string_from_bytes_unchecked(b);
   if (is_valid_utf8(s)) {
@@ -339,14 +201,6 @@ pub function from_bytes(b: u8[]): Option[string] {
   return None;
 }
 
-// `from_bytes_lossy(b)` — the string those bytes spell, with each
-// ill-formed sequence replaced by U+FFFD, one per MAXIMAL SUBPART (the
-// module note; the rule `codepoints` walks by). Total where `from_bytes`
-// is `Option`: the text view of bytes an API has no error channel to
-// refuse with — a stream's `read_line`, `url_decode`, a byte writer's
-// `into_string`. Well-formed input comes back untouched, and a caller
-// who wants the bytes themselves takes the `u8[]` sibling of whichever
-// API handed it these.
 pub function from_bytes_lossy(b: u8[]): string {
   let s: string = string_from_bytes_unchecked(b);
   if (is_valid_utf8(s)) {
@@ -355,9 +209,6 @@ pub function from_bytes_lossy(b: u8[]): string {
   return encode_all(s.chars());
 }
 
-// `encode_all(cps)` — concatenate the UTF-8 encodings of a codepoint
-// sequence into a string. Inverse of `codepoints` for valid input
-// (`encode_all(codepoints(s)) == s` when `s` is valid UTF-8).
 pub function encode_all(cps: char[]): string {
   let out: string = "";
   let i: i32 = 0;
@@ -369,10 +220,6 @@ pub function encode_all(cps: char[]): string {
   return out;
 }
 
-// `codepoint_at(s, byte_index)` — the codepoint whose encoding starts
-// at `byte_index`, or None when the index is out of range or not a
-// valid sequence start. The length-free companion to `utf8_decode_at`
-// for callers that want only the scalar value, not the byte width.
 pub function codepoint_at(s: string, byte_index: i32): Option[char] {
   match (utf8_decode_at(s, byte_index)) {
     Some(pair) => {
@@ -384,12 +231,6 @@ pub function codepoint_at(s: string, byte_index: i32): Option[char] {
   }
 }
 
-// `char_at(s, index)` — the single character at codepoint index `index`
-// (0-based) as a one-character string, or None when `index` is negative
-// or past the last codepoint. This is the "Nth character" byte indexing
-// can't do: `s[i]` is a byte, `char_at(s, i)` is a whole character. A
-// valid character comes back as its exact original bytes; an ill-formed
-// maximal subpart comes back as one U+FFFD (matching `codepoints`).
 pub function char_at(s: string, index: i32): Option[string] {
   if (index < 0) {
     return None;
@@ -411,17 +252,6 @@ pub function char_at(s: string, index: i32): Option[string] {
   return None;
 }
 
-// `is_char_boundary(s, i)` — does byte index `i` sit at the start of a
-// character, rather than inside one? True for `0` and for `s.len()`
-// (both ends of the string are boundaries); false for a negative or
-// past-the-end index; otherwise true iff the byte at `i` is not a UTF-8
-// continuation byte (0x80..0xBF). O(1).
-//
-// This is byte CLASSIFICATION, not validation. On well-formed UTF-8 it
-// means exactly "a codepoint starts here", which is what a slice
-// endpoint needs; it does not claim the sequence starting at `i`
-// decodes — `utf8_decode_at` answers that. Every index into an ASCII
-// string is a boundary.
 pub function is_char_boundary(s: string, i: i32): boolean {
   let n: i32 = s.len();
   if (i < 0 || i > n) {
@@ -434,16 +264,6 @@ pub function is_char_boundary(s: string, i: i32): boolean {
   return b < 128 || b >= 192;
 }
 
-// `floor_char_boundary(s, i)` — the largest index `j <= i` with
-// `is_char_boundary(s, j)`. Always exists (index 0 is a boundary), so
-// unlike the decoders this cannot fail. An index below 0 clamps to 0
-// and one past the end clamps to `s.len()`.
-//
-// Use it to snap a byte offset back to a safe slice start: it never
-// grows the range, so `s[floor_char_boundary(s, a) : b]` keeps every
-// byte `s[a:b]` would have kept. On well-formed UTF-8 the walk is at
-// most 3 steps; on arbitrary bytes it is bounded by the length of the
-// continuation run.
 pub function floor_char_boundary(s: string, i: i32): i32 {
   let n: i32 = s.len();
   if (i <= 0) {
@@ -463,13 +283,6 @@ pub function floor_char_boundary(s: string, i: i32): i32 {
   return 0;
 }
 
-// `ceil_char_boundary(s, i)` — the smallest index `j >= i` with
-// `is_char_boundary(s, j)`. The mirror of `floor_char_boundary`, and
-// likewise total: `s.len()` is a boundary, so the search always
-// terminates. Same clamping at both ends.
-//
-// Snapping a slice END with this never truncates a character that `i`
-// landed inside — it completes it instead.
 pub function ceil_char_boundary(s: string, i: i32): i32 {
   let n: i32 = s.len();
   if (i <= 0) {
@@ -489,13 +302,6 @@ pub function ceil_char_boundary(s: string, i: i32): i32 {
   return n;
 }
 
-// `substring(s, start, end)` — the text spanning codepoint indices
-// `[start, end)` (0-based, half-open) as a string. Bounds are clamped
-// to `[0, codepoint_count]` and start-past-end yields "", so out-of-
-// range indices never fault. This is the codepoint-aware analogue of a
-// byte slice `s[a:b]` — which would split multibyte characters and
-// produce invalid UTF-8. A single O(n) scan records the byte offsets
-// where the codepoint cursor crosses `start` and `end`.
 pub function substring(s: string, start: i32, end: i32): string {
   let n: i32 = s.len();
   let lo: i32 = start;
@@ -504,8 +310,8 @@ pub function substring(s: string, start: i32, end: i32): string {
   }
   let i: i32 = 0;
   let cp_idx: i32 = 0;
-  let byte_start: i32 = 0 - 1;  // sentinel: `lo` not reached
-  let byte_end: i32 = n;  // default: `end` at/after the string
+  let byte_start: i32 = 0 - 1;
+  let byte_end: i32 = n;
   while (i < n) {
     if (cp_idx == lo) {
       byte_start = i;
@@ -516,17 +322,16 @@ pub function substring(s: string, start: i32, end: i32): string {
     i = i + string.__utf8_step(s, i, n);
     cp_idx = cp_idx + 1;
   }
-  // Boundaries landing exactly at the end-of-string (cp_idx == count).
   if (cp_idx == lo) {
     byte_start = i;
   }
   if (cp_idx == end) {
     byte_end = i;
   }
-  if (byte_start < 0) {  // `start` past the last codepoint
+  if (byte_start < 0) {
     return "";
   }
-  if (byte_end < byte_start) {  // `end` <= `start`
+  if (byte_end < byte_start) {
     return "";
   }
   return slice_unchecked(s, byte_start, byte_end) + "";

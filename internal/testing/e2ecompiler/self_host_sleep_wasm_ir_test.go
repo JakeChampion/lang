@@ -9,18 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostSleepWasm is the wasm sibling TestSelfHostSleepMsI64IR never had.
-// That test reads the emitted ASM, so nothing looked at what wasm did with the
-// same program, and two bugs sat behind that gap (#9476, #9477): the wat
-// assembler had no opcode for the 16-bit memory ops the preview1 subscription's
-// subclockflags field is written with, and $__fern_sleep_ms declared an i32
-// parameter where sleep_ms's is i64, so the module failed validation once the
-// assembler could encode it at all. Either one alone made every wasm program
-// containing a sleep unbuildable.
-//
-// Each program is emitted and run under wasmtime, and must exit with the
-// expected value, so a sleep that stops building, or builds to a module that
-// traps, fails here rather than in whatever imports it.
 func TestSelfHostSleepWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wasm sleep e2e")
@@ -62,9 +50,6 @@ func TestSelfHostSleepWasm(t *testing.T) {
 		if run.ProcessState == nil || !run.ProcessState.Exited() {
 			t.Fatalf("wasmtime did not exit normally for %s:\n%s", name, runErr.String())
 		}
-		// A module the assembler or the validator rejects surfaces here as a
-		// load failure rather than a program exit, which reads identically to a
-		// wrong answer unless it is named.
 		if strings.Contains(runErr.String(), "failed to compile") || strings.Contains(runErr.String(), "failed to open") {
 			t.Fatalf("wasmtime could not load the module for %s:\n%s", name, runErr.String())
 		}
@@ -77,7 +62,6 @@ func TestSelfHostSleepWasm(t *testing.T) {
 		want int
 	}{
 		{
-			// The i64 count is what #9477 got wrong: the helper took an i32.
 			name: "sleep-ms-i64-count",
 			src: `function main(): i32 {
     let a: i64 = monotonic_ns();
@@ -89,8 +73,6 @@ func TestSelfHostSleepWasm(t *testing.T) {
 			want: 7,
 		},
 		{
-			// The nanosecond twin, which already had its parameter right and
-			// still could not build: it writes the same 16-bit subclockflags.
 			name: "sleep-ns",
 			src: `function main(): i32 {
     sleep_ns(1000 as i64);
@@ -99,8 +81,6 @@ func TestSelfHostSleepWasm(t *testing.T) {
 			want: 5,
 		},
 		{
-			// A zero count takes the early-out arm, so the subscription is
-			// never built; it must still be a module wasmtime can load.
 			name: "sleep-ms-zero",
 			src: `function main(): i32 {
     sleep_ms(0 as i64);
@@ -119,12 +99,6 @@ func TestSelfHostSleepWasm(t *testing.T) {
 	}
 }
 
-// TestSelfHostSleepWasmBinary is the half the WAT test above cannot reach. That
-// one hands wasmtime the emitted text, so wasmtime's own parser assembles it and
-// the self-host's assembler (watbin.fern) never runs. #9476 lives there: it had
-// no opcode for the 16-bit memory ops, so producing a wasm BINARY from any
-// program containing a sleep failed with "unknown instruction: i32.store16"
-// while the same program's WAT ran fine.
 func TestSelfHostSleepWasmBinary(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wasm sleep binary e2e")
@@ -142,8 +116,6 @@ func TestSelfHostSleepWasmBinary(t *testing.T) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	// The subscription's subclockflags field is the 16-bit store, and it is
-	// written on the arm a positive count takes.
 	const src = `function main(): i32 {
     sleep_ms(1 as i64);
     sleep_ns(1000 as i64);

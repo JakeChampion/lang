@@ -1,14 +1,6 @@
 import "std/test";
 import "std/array";
 
-// tests/stdlib/array_accessors_test.fern — pure-Fern coverage of std/array's
-// foundational accessors is_empty / first / last / get (free + method forms):
-// the safe, bounds-checked alternatives to len()==0 / xs[0] / xs[len-1] / xs[i],
-// returning Option[T] (None on empty / out-of-range; negative index is None).
-// Kept as its own suite so the self-host merged bundle stays under the asm_ir IR
-// budget; uses assert_true + match (no generic assert_eq[i32]). String-element
-// first/get is pinned on every backend by conformance/cases/array_first_last_get_module.
-
 function uw(o: Option[i32]): i32 {
   match (o) {
     Some(v) => {
@@ -77,7 +69,6 @@ function test_get_out_of_range(): test.TestOutcome {
 }
 
 function test_get_negative(): test.TestOutcome {
-  // Negative index is None, never a from-the-end index.
   match ([10, 20, 30].get(0 - 1)) {
     Some(v) => {
       return test.fail("expected None for negative get");

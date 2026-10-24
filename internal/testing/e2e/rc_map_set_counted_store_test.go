@@ -1,36 +1,9 @@
-// #4399 sink 5 — `m.insert(k, v)` and the `Map { k: v }` literal are
-// COUNTED stores: emitMapSetRetains incs an aliased string key and an
-// aliased value the map both retains and drops (arrays, deep-dropped
-// boxes, strings), and appendMapDropChain walks those columns at the
-// map's drop. computeFreeEligible's Map_set arm therefore no longer
-// escape-taints the key / value SOURCE locals, so they reclaim at scope
-// exit and the map's own column release balances the store's retain.
-//
-// Three contracts, on x86-64, arm64 and wasm:
-//   - BALANCED: FERN_LEAKCHECK reads allocs == frees, live 0, on the
-//     natives — pre-change every key / value local built from a fresh
-//     concat or literal was stranded, one block per insert; wasm has no
-//     leak counter, so it uses the __heap_bump_bytes() high-water probe,
-//     flat under reclaim and linear under a leak.
-//   - CORRECT: reading the entry back after the source local is
-//     reclaimable yields the right value (the store's retain kept it alive).
-//   - NO OVER-RELEASE: __rc_underflow_count() stays 0.
-//
-// The insert-only shapes (`_A`) are what the leak balance measures. A
-// lookup by the same key local (`m.get_or(k, …)`) is deliberately kept
-// to the underflow legs: on the native single-word ABI the #4174 blanket
-// string-argument taint fires for a builtin's arguments too, so the key
-// is re-tainted there and its release masked — a separate cost recorded
-// in docs/rc-log/2026-09-03-map-set-counted-store.md, not this sink's.
 package e2e
 
 import (
 	"testing"
 )
 
-// mapSetCountedSrcs are the insert-only shapes: one fresh key / value
-// local per call, stored, then read through the map only by length. Each
-// returns 0 on a correct sum with no rc underflow.
 var mapSetCountedSrcs = map[string]string{
 	"string value": `import "core/map";
 function work(i: i32): i32 {
@@ -98,8 +71,6 @@ function main(): i32 {
 }`,
 }
 
-// mapSetCountedBumpSrc is the "array value" shape as a bump-growth probe
-// over n iterations — the wasm instrument.
 func mapSetCountedBumpSrc(n string) string {
 	return `import "core/map";
 function work(i: i32): i32 {
@@ -120,9 +91,6 @@ function main(): i32 {
 }`
 }
 
-// mapSetReadBackSrcs read the stored entry back through the map after the
-// store — the CORRECT half, with the source locals still live and then
-// released — and return 0 only on the right values with no underflow.
 var mapSetReadBackSrcs = map[string]string{
 	"string value": `import "core/map";
 function work(i: i32): i32 {
@@ -176,13 +144,6 @@ function main(): i32 {
     if (acc != 200 * 16) { return 99; }
     return __rc_underflow_count();
 }`,
-	// The uncounted remainder must not over-release: a nested-Map value is
-	// held by the outer map's column uncounted, so its source stays
-	// tainted and the inner map is still readable through the outer one
-	// after the source's scope ends. Read through a match binding rather
-	// than a bound local: an uncounted kind-1 alias bound to a local takes
-	// the flat exit dec and underflows on its own, before and after this
-	// change (docs/rc-log/2026-09-03-map-set-counted-store.md).
 	"nested map value stays live": `import "core/map";
 function build(i: i32): Map[i32, Map[i32, i32]] {
     let inner: Map[i32, i32] = map_new(2);
@@ -260,7 +221,6 @@ func TestArm64MapSetCountedStoreBalanced(t *testing.T) {
 func TestWasmMapSetCountedStoreBalanced(t *testing.T) {
 	small := runWasm(t, mapSetCountedBumpSrc("50"))
 	large := runWasm(t, mapSetCountedBumpSrc("5000"))
-	// Flat: the pre-change baseline grew 32 B per call here.
 	if small != large {
 		t.Errorf("map store bump should be bounded (sources reclaim): N=50 -> %d, N=5000 -> %d", small, large)
 	}

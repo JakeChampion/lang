@@ -9,13 +9,6 @@ import (
 	"testing"
 )
 
-// joinHomeProg is an else-if chain of twenty arms inside a loop, each arm
-// adding to one of twenty loop-carried sums, more than x86-64 has registers
-// for. At each merge down the chain, the sums the arm left alone arrive as the
-// loop header's phis, which live through the whole body. A merge phi that
-// takes a home of its own copies every one of them on every arm's edge; one
-// that shares the header phi's home copies nothing (ssa.chain_dead_at_def).
-// f is called once, so @noinline keeps the inliner from folding it into main.
 const joinHomeProg = `@noinline function f(ops: i32[]): i32 {
   let v0: i32 = 0; let v1: i32 = 0; let v2: i32 = 0; let v3: i32 = 0; let v4: i32 = 0;
   let v5: i32 = 0; let v6: i32 = 0; let v7: i32 = 0; let v8: i32 = 0; let v9: i32 = 0;
@@ -38,8 +31,6 @@ const joinHomeProg = `@noinline function f(ops: i32[]): i32 {
 function main(): i32 { let xs: i32[] = [1, 2, 3, 19, 0, 7]; return f(xs); }
 `
 
-// Each arm of f's chain is its own sum and the jump: a load, the add and a
-// store when the sum is spilled, at most three instructions.
 func TestSelfHostSSAJoinPhiSharesTheHeaderHome(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()

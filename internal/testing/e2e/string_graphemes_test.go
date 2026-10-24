@@ -2,18 +2,6 @@ package e2e
 
 import "testing"
 
-// graphemesProgram pins UAX #29 extended grapheme cluster segmentation
-// (#5633, decision D6) across every backend.
-//
-// A "character" as a reader means it is a grapheme cluster, not a byte
-// and not a code point. The cases below are the ones that break naive
-// implementations, which is exactly why they are here rather than a
-// handful of happy-path splits.
-//
-// `s.len()` stays BYTES and `s[i]` stays a byte index -- segmentation is
-// opt-in, and these tests do not change that contract.
-//
-// Exits 0 on success, a distinct code per failed step.
 const graphemesProgram = `
 import "std/unicode" as unicode;
 import "std/utf8" as utf8;

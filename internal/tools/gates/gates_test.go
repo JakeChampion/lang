@@ -11,9 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
-// load returns src loaded the two ways `fern -check` reads an entry whose
-// path is not absolute: as a file named relative to the working directory,
-// and from stdin.
 func load(t *testing.T, src string) map[string]func() (string, *ast.Program) {
 	return map[string]func() (string, *ast.Program){
 		"relative-path": func() (string, *ast.Program) {
@@ -38,10 +35,6 @@ func load(t *testing.T, src string) map[string]func() (string, *ast.Program) {
 	}
 }
 
-// A violation in the entry module is placed in it, however the entry was
-// named. Both gates compared the module modload stamps (an absolute path, or
-// LoadSource's) against the entry as given, so a relative path or stdin lost
-// the position and the message named the entry as an imported module.
 func TestCheckPlacesEntryModuleViolations(t *testing.T) {
 	cases := []struct {
 		name, target, src, code string
@@ -86,8 +79,6 @@ function main(): i32 { return 0; }
 	}
 }
 
-// The const fold runs before the type check, so a use of a top-level const
-// is its value, not an undefined name (#11314).
 func TestCheckFoldsConstsBeforeTheTypeCheck(t *testing.T) {
 	prog, _, err := modload.LoadSource("const LIMIT: i32 = 10;\nfunction main(): i32 {\n  return LIMIT;\n}\n")
 	if err != nil {
@@ -98,8 +89,6 @@ func TestCheckFoldsConstsBeforeTheTypeCheck(t *testing.T) {
 	}
 }
 
-// A check that passes still reports the entry's `todo` stubs, at their
-// positions.
 func TestCheckWarnsOfTodoStubs(t *testing.T) {
 	prog, _, err := modload.LoadSource("function f(): i32 {\n  todo;\n}\nfunction main(): i32 {\n  return 0;\n}\n")
 	if err != nil {
@@ -120,9 +109,6 @@ func TestCheckWarnsOfTodoStubs(t *testing.T) {
 	}
 }
 
-// A generic body is checked once with its type parameters open, so a capture
-// of `x: T` is a view only in the instance at `str`: E082 comes from the
-// re-check monomorphisation runs on that instance.
 func TestCheckRefusesAGenericCaptureInstantiatedAtAView(t *testing.T) {
 	const src = `function keep[T](x: T): () => T { return () => x; }
 function main(): i32 {

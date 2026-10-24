@@ -6,17 +6,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostAppendedArrayLocalIsRetainedX86_64 pins #10538: on the
-// per-module driver, an owned array local appended into an array must be
-// retained by the push, since the exit sweep releases the local's own
-// reference. Without the retain the container held a freed buffer, which the
-// sanitizer reports as a use-after-free and a real server hit as a segfault
-// on its second request. Three shapes, all through the sanitizer build: the
-// bare append, the append into a struct field, and a call-born element
-// appended into a struct field the way std/serve grows a connection's buffer.
-//
-// Only the two fatal detectors (use-after-free, over-release) are asserted,
-// not the leak census.
 func TestSelfHostAppendedArrayLocalIsRetainedX86_64(t *testing.T) {
 	t.Setenv("FERN_SANITIZE", "1")
 	gcc, runner, driverBin := buildModloadDriverX86(t)

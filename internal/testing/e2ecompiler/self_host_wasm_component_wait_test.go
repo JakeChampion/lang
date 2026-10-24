@@ -10,11 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The timer and pollable builtins in a wasi:cli/run component built by the
-// self-host CLI (#11411): a sleep is a timer pollable held to completion,
-// poll waits on wasi:io/poll, and the reactor and the datagram sockets reach
-// the host the way native's component does. Each program used to be refused
-// by the component framing, which had no preview-2 body for it.
 func TestSelfHostWasmComponentWaits(t *testing.T) {
 	for _, tool := range []string{"wasm-tools", "wasmtime"} {
 		if _, err := exec.LookPath(tool); err != nil {
@@ -39,8 +34,6 @@ func TestSelfHostWasmComponentWaits(t *testing.T) {
 		return comp
 	}
 
-	// Each sleep is timed inside the guest, on the monotonic clock, so the
-	// host's startup cannot stand in for a sleep that returned at once.
 	t.Run("sleep", func(t *testing.T) {
 		comp := component(t, "sleep", `function main(): i32 {
     let t0: i64 = monotonic_ns();
@@ -60,11 +53,6 @@ func TestSelfHostWasmComponentWaits(t *testing.T) {
 		}
 	})
 
-	// poll over an empty set with no timeout is the program native's
-	// TestPollEmptySetInterpWasm builds, its only host contact the poll, so
-	// the no-I/O framing used to refuse it. Its verdict is printed rather
-	// than returned: a run export collapses any non-zero main to exit 1,
-	// which a component that never instantiated would match.
 	t.Run("poll_empty_set", func(t *testing.T) {
 		const src = `import "core/int";
 
@@ -95,12 +83,6 @@ function main(): i32 {
 		}
 	})
 
-	// The probes native's wasm legs run, each printing "ok" or its first
-	// failing check: the reactor floor (reactor_new / reactor_ctl /
-	// reactor_wait), the raw socket controls (sleep_ms over loopback), the
-	// datagram sockets, and std/net's datagram faces, whose u8[] payloads
-	// reach udp_send_bytes and udp_sendto_bytes. tcpBytesProbe covers the
-	// third typed variant, tcp_send_bytes.
 	for _, p := range []struct {
 		name string
 		src  func() string
@@ -125,10 +107,6 @@ function main(): i32 {
 	}
 }
 
-// tcpBytesProbe sends a u8[] over a loopback connection with tcp_send_bytes
-// and reads it back on the accepted side, printing "ok" or the number of the
-// first failing check. wasi:sockets never blocks, so the accept and the read
-// retry until the peer's side has landed.
 func tcpBytesProbe() string {
 	return `import "core/int";
 
@@ -171,14 +149,6 @@ function main(): i32 {
 `
 }
 
-// reactorGrowProbe watches forty sockets for both readiness bits, past the
-// pollable list, slot table and ready buffer a new reactor holds room for, so
-// the first wait grows all three. Every socket is reported writable, a wait
-// after the growth allocates nothing, the bytes sent to each accepted side are
-// reported and read through the lent ready buffer, and the reactor frees what
-// it grew. wasmtime's poll returns once any pollable is ready, so a wait may
-// report part of what is ready; readiness is collected over waits. Prints
-// "ok" or the number of the first failing check.
 func reactorGrowProbe() string {
 	return `import "core/int";
 

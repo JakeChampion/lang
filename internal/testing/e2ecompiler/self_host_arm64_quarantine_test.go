@@ -16,23 +16,9 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// --- The quarantine on arm64 (#9882) ----------------------------------------
-//
-// The x86-64 half of this detector is in self_host_uaf_quarantine_test.go; this
-// file holds the arm64 half. The contract is the same one — poison every
-// released rc word, decline every freelist push, abort on a stale touch — and
-// the poison word is ast.RcPoison on both sides, so these assertions derive it
-// rather than repeating a literal.
-
-// armPoisonPair is ast.RcPoison as arm64 materialises it: no 32-bit move
-// immediate reaches the value, so it arrives in two halves. Register-agnostic,
-// because which scratch a site is free to clobber is the emitter's business.
 var armPoisonPair = fmt.Sprintf(`movz w\d+, #%d\n\s+movk w\d+, #%d, lsl #16`,
 	ast.RcPoison&0xffff, (ast.RcPoison>>16)&0xffff)
 
-// mustMatch reports whether the multi-line pattern appears in the asm. The
-// patterns here span instructions, so they are compiled per call rather than
-// hoisted: a bad one is a test bug, and failing at the assertion names it.
 func mustMatch(t *testing.T, pat, asm string) bool {
 	t.Helper()
 	re, err := regexp.Compile(pat)
@@ -42,11 +28,6 @@ func mustMatch(t *testing.T, pat, asm string) bool {
 	return re.MatchString(asm)
 }
 
-// armQuarantineSrc churns strings, a string[] and an array, so str_free,
-// str_arr_free and arr_dec are all emitted alongside the always-present rc
-// helpers — every body the quarantine has to reach. The 600 KB block puts a
-// real >=512 KiB free in the module too, so the large tier is scanned at a
-// call site and not only in __fern_large_push's own body.
 const armQuarantineSrc = `import "std/string";
 function mk(a: string): string { return a + "!"; }
 function main(): i32 {
@@ -58,8 +39,6 @@ function main(): i32 {
     return xs.len() + s.len() + n[0];
 }`
 
-// arm64Target picks the arm64-linux entry out of this host's runnable targets,
-// skipping when the host neither is arm64 nor has qemu-aarch64.
 func arm64Target(t *testing.T, h ssaBackendHost) ssaBackendTarget {
 	t.Helper()
 	for _, tg := range h.targets {
@@ -71,8 +50,6 @@ func arm64Target(t *testing.T, h ssaBackendHost) ssaBackendTarget {
 	return ssaBackendTarget{}
 }
 
-// runCapturingStderr is runProduced with the diagnostic kept: the sanitizer
-// writes its report to stderr and nothing else reads it.
 func runCapturingStderr(t *testing.T, tg ssaBackendTarget, bin string) (string, int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -92,8 +69,6 @@ func runCapturingStderr(t *testing.T, tg ssaBackendTarget, bin string) (string, 
 	return stderr.String(), cmd.ProcessState.ExitCode()
 }
 
-// emitArm64Asm compiles src for arm64-linux with the given environment and
-// returns the emitted assembly.
 func emitArm64Asm(t *testing.T, h ssaBackendHost, dir, src, name string, env []string) string {
 	t.Helper()
 	out := filepath.Join(dir, name+".s")
@@ -109,12 +84,6 @@ func emitArm64Asm(t *testing.T, h ssaBackendHost, dir, src, name string, env []s
 	return string(asm)
 }
 
-// The asm contract, in both directions. Under the flag: the poison store, the
-// poison compare routed to the named abort, the abort body with the exact
-// message — and no small-tier freelist push anywhere. Every push site takes the
-// freelist address into x3, x5 or x6; __fern_alloc's own pop uses x1 and
-// survives, so the allocator keeps bumping over empty lists. Without the flag:
-// none of it, the cheap proxy for byte-identical.
 func TestSelfHostUafQuarantineAsmContractArm64(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -141,11 +110,6 @@ func TestSelfHostUafQuarantineAsmContractArm64(t *testing.T) {
 	if mustMatch(t, `add x[356], x[356], :lo12:__fern_freelist`, on) {
 		t.Error("flag-on asm still pushes onto a freelist — a recycled block would overwrite its own poison")
 	}
-	// The large tier is the same hazard one size class up, and it has its own
-	// choke point: every >=512 KiB free tail-branches to __fern_large_push, so
-	// the decline lives in that body rather than at each arm. x3 is the push's
-	// freelist address and x1 the allocator's own pop, as in the small tier —
-	// matching on the bare symbol would also hit the arena checkpoint's copy.
 	if strings.Contains(on, "add x3, x3, :lo12:__fern_large_freelist") {
 		t.Error("flag-on asm still pushes onto the large freelist — a recycled >=512 KiB block would overwrite its own poison")
 	}
@@ -173,9 +137,6 @@ func TestSelfHostUafQuarantineAsmContractArm64(t *testing.T) {
 	}
 }
 
-// The behaviour the asm contract stands for: a retain of a block the runtime
-// already freed dies with the named report, under FERN_SANITIZE and under the
-// standalone FERN_RC_FREE_DEBUG alike.
 func TestSelfHostUafIncAfterFreeReportedArm64(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	tg := arm64Target(t, h)
@@ -198,16 +159,12 @@ func TestSelfHostUafIncAfterFreeReportedArm64(t *testing.T) {
 		if !strings.Contains(stderr, "fern-sanitizer: use-after-free (touched a quarantined block)\n") {
 			t.Errorf("%s: stderr does not carry the diagnostic: %q", flag, stderr)
 		}
-		// Standalone means standalone: the quarantine flag alone must not drag
-		// the census in.
 		if flag == "FERN_RC_FREE_DEBUG=1" && strings.Contains(stderr, "leakcheck:") {
 			t.Errorf("FERN_RC_FREE_DEBUG=1 alone printed a census: %q", stderr)
 		}
 	}
 }
 
-// Without any flag the same program runs to completion silently — the detector
-// is opt-in, not a change to what the compiler emits by default.
 func TestSelfHostUafSilentWithoutFlagArm64(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	tg := arm64Target(t, h)
@@ -231,13 +188,6 @@ func TestSelfHostUafSilentWithoutFlagArm64(t *testing.T) {
 	}
 }
 
-// The over-release report is the second thing FERN_SANITIZE now means on
-// arm64. It has no reachable program in this runtime — __rc_dec maps to the
-// freeing __fn___fern_arr_dec, so a double free hits the quarantine's poison
-// one instruction before the underflow test would see a zero that no longer
-// exists, exactly as the x86-64 leg documents. So this is an asm contract: the
-// bump arms call the report, the report body carries the native text, and both
-// vanish with the flag.
 func TestSelfHostOverReleaseReportArm64(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -263,9 +213,6 @@ func TestSelfHostOverReleaseReportArm64(t *testing.T) {
 	}
 }
 
-// FERN_SANITIZE folds the census in on arm64 as it does on x86-64, and a
-// program that reclaims everything it takes is silent of `fern-sanitizer:`
-// lines — so "was this run clean" is answerable without reading the numbers.
 func TestSelfHostSanitizeCleanRunIsSilentArm64(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	tg := arm64Target(t, h)
@@ -292,9 +239,6 @@ func TestSelfHostSanitizeCleanRunIsSilentArm64(t *testing.T) {
 	}
 }
 
-// The leak verdict, the third: a positive balance at exit prints a
-// `fern-sanitizer: leak` line. The block count is what this asserts — the byte
-// figure depends on an allocation granularity the allocator is free to change.
 func TestSelfHostSanitizeLeakVerdictArm64(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	tg := arm64Target(t, h)

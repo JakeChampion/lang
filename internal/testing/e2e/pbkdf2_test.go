@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/crypto's PBKDF2-HMAC-SHA256 against the
-// standard known-answer vectors, including the c=4096 vectors and a
-// 40-byte multi-block derivation that are too slow for the interpreter
-// oracle (so they run only on the compiled backends here). Returns 42
-// iff every vector matches. Each leg skips itself when its toolchain is
-// absent.
 const pbkdf2Prog = `
 import "std/crypto" as crypto;
 import "std/string";

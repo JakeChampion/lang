@@ -2,29 +2,11 @@ package e2ecompiler
 
 import "testing"
 
-// The receiver-borrow deep drop (#6544).
-//
-// A method call `b.score()` whose callee cannot carry a receiver field out
-// keeps `b`'s deep drop, so the struct's own string / array fields are released
-// with it; taken as a field move, they were stranded for the rest of the scope —
-// 22 bytes a round on a one-string struct. A method body genuinely can carry a
-// receiver field into its result uncounted (`ops: self.ops.append(op)`, the
-// builder shape), and such a call keeps the receiver's fields alive.
-//
-// Both directions are pinned here. The flat cases prove the fields ARE freed;
-// the refusal cases prove a method that really does move something out keeps
-// the receiver's fields alive — each one reads the moved-out value after
-// thousands of further rounds have recycled the freelist, so a wrongly granted
-// deep drop returns garbage rather than merely leaking.
 var recvBorrowDeepDropCases = []struct {
 	name     string
 	src      string
 	expected int
 }{
-	// REFUSED at the CALL SITE — an identity-returning method whose result is
-	// BOUND (`let alias = held.keep()`). The result may be the receiver's own
-	// box, so `held` keeps its box-only release; the alias is read after 4000
-	// further rounds, and a granted deep drop would have freed its tag.
 	{"recvborrow-identity-return-safe", `struct Box { tag: string, n: i32 }
 function (b: Box) keep(): Box { return b; }
 function main(): i32 {
@@ -39,9 +21,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// REFUSED — a field MOVE. `label()` returns `b.tag`, handing the field to a
-	// local that outlives the receiver, so `b` keeps its fields. The moved-out
-	// string is re-read at the end.
 	{"recvborrow-field-move-safe", `struct Box { tag: string, n: i32 }
 function (b: Box) label(): string { return b.tag; }
 function main(): i32 {
@@ -56,9 +35,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// The method calls through its OWN receiver (`b.inner()`). `via()` is a
-	// pure read, so the values must stay correct whether or not `b` keeps its
-	// deep drop.
 	{"recvborrow-self-method-safe", `struct Box { tag: string, n: i32 }
 function (b: Box) inner(): i32 { return b.n; }
 function (b: Box) via(): i32 { return b.inner() + 1; }
@@ -70,10 +46,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// ADMITTED, and balanced: a scalar-reading method over a struct whose
-	// string field is an ALIAS of a live local. The construction retains it, so
-	// the now-granted deep drop DECS the dup rather than freeing the local's
-	// box — the local is read after every round.
 	{"recvborrow-aliased-field-balanced", `struct Box { tag: string, n: i32 }
 function (b: Box) score(): i32 { return b.n * 2; }
 function main(): i32 {
@@ -91,13 +63,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// THE OVER-RELEASE the "RECVRET:" credit gate closes. `keep = b.me()`
-	// assigns the receiver's own box to a name that outlives the loop body, and
-	// `b` was credited anyway — on the strength of a method receiver counting as
-	// a borrow — so its per-rebind reclaim freed the box `keep` still reads.
-	// Measured on the parent as a genuine over-release (__rc_underflow_count() ticked,
-	// not a leak), which is why this row asserts 0 and not merely flatness:
-	// exit 99 is the pre-fix outcome.
 	{"recvret-rebound-outer-no-over-release", `struct Box { tag: string, n: i32 }
 function (b: Box) me(): Box { return b; }
 function rounds(n: i32): i32 {
@@ -112,8 +77,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// The same gate through a RETURN: `me()`'s result leaves the function, so
-	// `b` cannot keep a credit that would free it on the way out.
 	{"recvret-returned-result-safe", `struct Box { tag: string, n: i32 }
 function (b: Box) me(): Box { return b; }
 function mk(k: i32): Box { let b: Box = Box { tag: "start-tag-value", n: k }; return b.me(); }
@@ -125,8 +88,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// The same gate through a CONTAINER: the result is stored into an array
-	// literal, which outlives nothing here but is a move position all the same.
 	{"recvret-container-result-safe", `struct Box { tag: string, n: i32 }
 function (b: Box) me(): Box { return b; }
 function main(): i32 {
@@ -143,8 +104,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// ADMITTED with an rc-ARRAY field: the deep drop walks `items` as well as
-	// `tag`. Read through the method and directly, both must stay valid.
 	{"recvborrow-array-field-safe", `struct Box { tag: string, items: i32[] }
 function (b: Box) total(): i32 { return b.items.len() + b.tag.len(); }
 function main(): i32 {
@@ -157,14 +116,10 @@ function main(): i32 {
 }`, 0},
 }
 
-// recvBorrowDeepDropLeakCases assert heap FLATNESS across the two
-// __heap_bump_bytes() probes.
 var recvBorrowDeepDropLeakCases = []struct {
 	name string
 	src  string
 }{
-	// The main case: a struct local handed to a borrowing method keeps its deep
-	// drop, so its fresh string field is freed every round. 22 B/round before.
 	{"recvborrow-deep-drop-flat", `import "std/i32";
 struct Box { tag: string, n: i32 }
 function (b: Box) score(): i32 { return b.n * 2; }
@@ -184,10 +139,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`},
-	// The IDENTITY-return tier ("RECVIDENT:"): `me()` hands the receiver back on
-	// its only path, and the result is consumed INLINE — read through to a
-	// `.len()` and dead. Nothing outliving `b` holds it, so `b` keeps its deep
-	// drop. 22 B/round before.
 	{"recvident-inline-result-flat", `import "std/i32";
 struct Box { tag: string, n: i32 }
 function (b: Box) me(): Box { return b; }
@@ -207,8 +158,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`},
-	// A BORROWABLE param is not a move position, so `take(b.me())` keeps `b`'s
-	// deep drop too, as a field chain does.
 	{"recvident-borrowable-arg-flat", `import "std/i32";
 struct Box { tag: string, n: i32 }
 function (b: Box) me(): Box { return b; }
@@ -229,7 +178,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`},
-	// The same credit over an rc-ARRAY field: the deep walk frees the buffer.
 	{"recvborrow-array-field-flat", `import "std/i32";
 struct Box { tag: string, items: i32[] }
 function (b: Box) total(): i32 { return b.items.len(); }
@@ -249,10 +197,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`},
-	// A counted handback in RECEIVER position — the fourth consumer that owes
-	// the result's release, after a binding, a discarded statement and an
-	// argument temp. `.val()` lets the receiver escape nowhere, so the count
-	// this frame owes goes back once the call returns.
 	{"recvident-chain-recv-flat", `import "std/i32";
 struct Box { tag: string, n: i32 }
 function (b: Box) me(): Box { return b; }
@@ -273,8 +217,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`},
-	// The same over an rc-ARRAY field: the shallow dec leaves the buffer to the
-	// box's own drop, so the round still flattens.
 	{"recvident-chain-recv-array", `import "std/i32";
 struct Box { tag: string, items: i32[] }
 function (b: Box) me(): Box { return b; }
@@ -295,9 +237,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`},
-	// Two counted handbacks in a row: the inner result stands in the receiver
-	// position of a method that hands the receiver back COUNTED, so the outer
-	// call adds a count of its own and the inner's dec still leaves exactly one.
 	{"recvident-chain-recv-double", `import "std/i32";
 struct Box { tag: string, n: i32 }
 function (b: Box) me(): Box { return b; }
@@ -318,8 +257,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`},
-	// A fresh value from a FREE producer under the same chain: the receiver is
-	// released the same way.
 	{"recvident-chain-recv-freecall", `import "std/i32";
 struct Box { tag: string, n: i32 }
 function mk(i: i32): Box { return Box { tag: "start-tag-value-" + (i % 8).to_string(), n: i % 8 }; }
@@ -343,7 +280,6 @@ function main(): i32 {
 }`},
 }
 
-// recvBorrowAllCases is the safety table plus the flatness table.
 func recvBorrowAllCases() []struct {
 	name     string
 	src      string
@@ -366,8 +302,6 @@ func recvBorrowAllCases() []struct {
 
 const recvBorrowFailFmt = "%s exited %d, want %d (98 = receiver fields leaked; 99 = over-release; 95/96 = a refused move was freed anyway)"
 
-// TestSelfHostRecvBorrowDeepDropX86_64 runs every case through the self-hosted
-// CLI for x86-64.
 func TestSelfHostRecvBorrowDeepDropX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range recvBorrowAllCases() {
@@ -379,8 +313,6 @@ func TestSelfHostRecvBorrowDeepDropX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostRecvBorrowDeepDropArm64 runs the same cases for arm64 under qemu,
-// where the deep drop lands in the same place through a different emitter.
 func TestSelfHostRecvBorrowDeepDropArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)
@@ -393,7 +325,6 @@ func TestSelfHostRecvBorrowDeepDropArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostRecvBorrowDeepDropWasm runs the same cases for wasm32-wasi.
 func TestSelfHostRecvBorrowDeepDropWasm(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range recvBorrowAllCases() {

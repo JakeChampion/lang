@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostImportedParseErrorX86_64 pins #12534: a parse error at the top
-// level of an imported module stops the build, `-check` and `-interp`, as the
-// same error in the entry does. The merge keeps the entry's top-level
-// statements only, so the imported module's error sentinel was dropped and
-// the program built from what parsed. The clean case is the same library
-// without the stray line, which must still build.
 func TestSelfHostImportedParseErrorX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

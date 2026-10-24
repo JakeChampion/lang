@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// A loop threading a record of arrays through a helper that hands it back
-// inside a tuple (#10679). The helper's `return (add(c, fd), true)` is where
-// its `c` dies, so add grows the arrays in place; when only a call that WAS
-// the whole returned value counted as that death, add copied all eleven
-// arrays per append and the loop's bump grew quadratically — 1,346,400
-// bytes over 600 events on x86-64, against 17,072 now. The program exits 42
-// when 600 events bump under 100,000 bytes.
 const tupleReturnHelperHeapSrc = `
 struct C { a: i32[], b: i32[], c: i32[], d: i32[], e: i32[], f: i32[], g: i32[], h: i32[], i: i32[], j: i32[], k: i32[] }
 

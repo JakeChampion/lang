@@ -1,13 +1,5 @@
 import "std/test";
 
-// tests/stdlib/strings_test.fern — exercise the string
-// receiver methods from std/string via the test runner.
-//
-// This is the shape unit tests for a stdlib module will take
-// once the Fern test runner replaces the Go-side `*_test.go`
-// harness: per-module test file, explicit list of cases in
-// main(), single TAP-13 stream on stdout.
-
 function test_uppercase(): test.TestOutcome {
   return test.assert_eq("hello".to_upper(), "HELLO");
 }
@@ -41,15 +33,11 @@ function test_split_join_roundtrip(): test.TestOutcome {
   return test.assert_eq(parts.join("|"), "a|b|c|d");
 }
 
-// Length assertion + array-of-string assertion in one test.
-// Both pass; folded together to keep the test list short.
 function test_split_yields_four_parts(): test.TestOutcome {
   let parts: string[] = "a,b,c,d".split(",");
   return test.assert_len_string(parts, 4);
 }
 
-// The search family: index_of / last_index_of / index_of_ci report a
-// hit as Some(byte-index) and a miss as None.
 function test_index_of_hit(): test.TestOutcome {
   match ("hello world".index_of("world")) {
     Some(i) => {
@@ -102,9 +90,6 @@ function test_non_empty_string(): test.TestOutcome {
   return test.assert_non_empty_string("x");
 }
 
-// truncate: normal cap, unchanged when it fits, and the #4390 guard — a
-// non-positive cap yields "" instead of reaching `s[0:n]` with a negative
-// bound (matching the `ellipsis` sibling).
 function test_truncate(): test.TestOutcome {
   return test.assert_true(
     "hello world".truncate(8, "...") == "hello..."

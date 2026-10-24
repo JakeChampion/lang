@@ -2,26 +2,6 @@ package e2e
 
 import "testing"
 
-// TestTryOpRunsDefersOnErrorPath is a regression test for a bug where the
-// `expr?` (TryOp) failure path returned directly without running the
-// function's registered `defer`s. Every other return site replays defers
-// in LIFO order via emitDeferCleanup before leaving the function; the
-// error-propagation path skipped it, so a `defer f.close()` (or any other
-// cleanup) silently never ran when a `?` short-circuited on Err / None.
-//
-// Each case observes the side effect of a defer that runs only if the
-// error path honoured it: the defer writes a sentinel into a caller-owned
-// array, and main returns that slot. Pre-fix the slot keeps its initial
-// value (defer skipped); post-fix it holds the sentinel.
-//
-// The fallible functions use a string error/payload so they lower to the
-// heap-box (single-pointer) enum ABI rather than the (tag, payload)
-// pair-form ABI — pair-form functions that also carry a defer hit a
-// separate, pre-existing wasmbin codegen gap, so heap-form keeps the wasm
-// leg exercising this fix instead of skipping. Both Result (`Err` →
-// forwards the source box) and Option (`None` → fresh None) failure shapes
-// are covered, on every backend, since the cleanup emission lives in the
-// shared IR lowering.
 func TestTryOpRunsDefersOnErrorPath(t *testing.T) {
 	cases := []struct {
 		name string

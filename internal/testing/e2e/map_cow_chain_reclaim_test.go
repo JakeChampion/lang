@@ -1,57 +1,7 @@
 package e2e
 
-// A Map COW CHAIN reclaims the columns the copy claimed (#6828).
-//
-// The sibling file pins the copy's CLAIM on the columns it copied (#6242).
-// This one pins the release of that claim at the other end: `a = <a COW copy
-// of a>`, where the reassignment ends the old handle's ownership. That release
-// goes through the shared map-drop chain (emitMapSlotDrop): the value column by
-// kind, then a string key column, then the buf and handle, every helper
-// self-guarded on the handle's own rc==1.
-//
-// It did not always. The site kept its own narrower body, which freed only the
-// buf, the handle and the string keys, because the column walks could not run
-// while `__map_cow_inplace` copied the columns shallowly — freeing a column
-// pulled storage out from under the fresh handle (#6227). Every column is
-// claimed now (#7114, #8390, #8420), so that reason expired and the second
-// body went with it (#8431).
-//
-// Once the copy owned its columns, that narrow free became a per-copy leak of
-// everything the copy had just claimed, which in a chain is quadratic: round N
-// reboxes N key cells and the round-N map is then dropped without freeing any
-// of them. Measured on a 100/200/400-round chain, `__heap_bump_bytes()`:
-//
-//	              d(200→400) / d(100→200)
-//	arm64-darwin  3.8x   (357328 → 1354704)
-//	wasm          3.8x   (347088 → 1334224)
-//	x86-64        2.0x   (unchanged — see below)
-//
-// It is a two-word-ABI reading, and for once the single-word side is honestly
-// unaffected rather than accidentally surviving: there the key claim is one inc
-// on the string data, so a missing release inflates a count on a block the
-// chain keeps reachable anyway, where the two-word claim ALLOCATES a cell per
-// entry per copy. The bounded leg below is therefore non-vacuous on wasm and
-// arm64 and vacuous on x86-64, which is stated rather than hidden.
-//
-// A release may only cover the columns the copy CLAIMS, or it frees what the
-// new handle reads — so the value cases below are what keeps the widened walk
-// correct, and they are why widening was safe to do.
-//
-// What the two un-walked columns had been costing, 100 rounds, live_bytes,
-// x86-64 / arm64 / wasm, before #8431 and after:
-//
-//	arr_chain     (kind 2, always walked)  0 / 3200 / 3200   unchanged
-//	str_chain     (kind 5)   3168 / 83648 / 83968  ->  0 / 0 / 0
-//	struct_chain  (kind 4)   6368 /  6400 /  9568  ->  0 / 3200 / 3200
-//
-// TestMapCowChainReclaimCensus below holds those numbers. The residual the two
-// two-word columns still read is #8432's, not this site's — it is present in
-// arr_chain, which this release has always walked.
-
 import "testing"
 
-// Every value kind and every aliasing shape the widened release has to keep
-// correct. A wrong read here is the walk having freed something still live.
 const mapCowChainReclaimProg = `
 import "core/map";
 import "std/i32";
@@ -199,17 +149,6 @@ func TestMapCowChainReclaimArm64(t *testing.T) {
 	}
 }
 
-// The byte census over the same six shapes. The answers above say nothing was
-// freed too early; this says nothing was left behind.
-//
-// ABSOLUTE on every backend — every byte back. Two changes bought that, and
-// the numbers before each are what the shapes below are sized to show:
-// #8431 routed this site through the shared map-drop chain (the struct chain
-// read 6368 on x86-64, the string one 3168, and 83648 / 83968 on the two-word
-// ABIs), and #8432 stopped a `get_or` with a fresh fallback stranding it under
-// a boxed key, which was the last 1280 on arm64 and wasm.
-//
-// A rise here means a column the copy claims is going unreleased again.
 func TestMapCowChainReclaimCensus(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -237,13 +176,6 @@ func TestMapCowChainReclaimCensus(t *testing.T) {
 	}
 }
 
-// The boundedness probe. A chain doubles its own work when the rounds double
-// (each round copies a one-longer buffer), so the assertion is a RATIO and not
-// the sibling file's "must not grow" — linear reclamation lands at 2.0x and the
-// leak at 3.8x, which 2.5x separates with room on both sides.
-//
-// __rc_underflow_count() is included as the other direction: releasing a column
-// the copy does NOT own would show up here rather than as growth.
 const mapCowChainBoundedProg = `
 import "core/map";
 import "std/i32";

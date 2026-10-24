@@ -2,14 +2,6 @@ package e2e
 
 import "testing"
 
-// TestArgsArrayRcHeader pins the `args()` array's refcount header on every
-// target (#7969). The array carries cap / rc / len at data-12 / -8 / -4, and
-// each call hands its caller a counted array to drop. A header written wrong
-// shows as an over-release counted at a walk's scope exit (exit 1), or as the
-// second walk reading argv strings out of a block an earlier drop freed and
-// the churn loop recycled (exit 2 or 3). It holds at any argc: with no
-// arguments both walks see 0 elements, but a freed header block would still
-// be handed back to the churn loop.
 const argsRcHeaderProgram = `function walk(): i32 {
     let n: i32 = 0;
     for a in args() { n = n + a.len(); }

@@ -4,15 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostAsmIRPath compiles ~900 small programs through the self-hosted
-// CLI (`fern.fern`) on x86-64, links and runs each, and checks the exit code.
-// A declaration the typed lowering refuses fails the compile, so every case is
-// also a guard that the typed path produces it whole.
-//
-// Each `want` is the native interpreter's answer, except where that
-// interpreter cannot run the program: the raw-memory intrinsics, the
-// slice traps (134, SIGABRT). There it is the answer the compiled program
-// gave when the case was pinned, checked by hand.
 func TestSelfHostAsmIRPath(t *testing.T) {
 	cli := newStrictCLI(t)
 	emitAndRun := func(t *testing.T, src string) int {
@@ -26,258 +17,99 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		src  string
 		want int
 	}{
-		// Pure i32 single functions.
 		{"const", `function main(): i32 { return 42; }`, 42},
 		{"arith", `function main(): i32 { return 2 + 3 * 4; }`, 14},
 		{"parens", `function main(): i32 { return (1 + 2) * 3; }`, 9},
 		{"locals", `function main(): i32 { let x = 2 + 3 * 4; let y = x - 5; return y * 2; }`, 18},
 		{"reassign", `function main(): i32 { let x = 5; x = x + 3; return x; }`, 8},
-		// Top-level `const` references — a bare ident naming a zero-arg fn lowers
-		// to a call (the const's value) (#2954).
 		{"const-ref", `const LIMIT: i32 = 100; function main(): i32 { return LIMIT + 1; }`, 101},
 		{"const-loop-bound", `const N: i32 = 5; function main(): i32 { let s = 0; let i = 0; while (i < N) { s = s + i; i = i + 1; } return s; }`, 10},
 		{"const-two", `const A: i32 = 40; const B: i32 = 2; function main(): i32 { return A + B; }`, 42},
-		// Bare reference to a module function WITH params is a function VALUE
-		// (a plain function pointer): `let f = namedfn; f(args)`, a fn-value as
-		// a call argument, and a fn-value-returning function. Lowers to
-		// const_func + call_indirect.
 		{"fnval-local", `function dbl(n: i32): i32 { return n * 2; } function main(): i32 { let f = dbl; return f(21); }`, 42},
 		{"fnval-local-arg", `function dbl(n: i32): i32 { return n * 2; } function apply(f: (i32) => i32, n: i32): i32 { return f(n); } function main(): i32 { let g = dbl; return apply(g, 21); }`, 42},
 		{"fnval-two", `function inc(n: i32): i32 { return n + 1; } function dbl(n: i32): i32 { return n * 2; } function main(): i32 { let f = inc; let g = dbl; return f(10) + g(10); }`, 31},
 		{"fnval-return", `function dbl(n: i32): i32 { return n * 2; } function getf(): (i32) => i32 { return dbl; } function main(): i32 { let g = getf(); return g(21); }`, 42},
-		// Calling a function-VALUE stored in a struct field (`h.f(args)`) — the
-		// "fn"-typed field is a plain fn pointer, called via struct_get +
-		// call_indirect (not a `<Type>.method` dispatch).
 		{"fnval-struct-field", `struct H { f: (i32) => i32 } function dbl(n: i32): i32 { return n * 2; } function main(): i32 { let h = H { f: dbl }; return h.f(21); }`, 42},
 		{"fnval-struct-field-mixed", `struct H { f: (i32) => i32, n: i32 } function inc(n: i32): i32 { return n + 1; } function main(): i32 { let h = H { f: inc, n: 100 }; return h.f(h.n); }`, 101},
-		// No-capture LAMBDA as a struct-literal field value (#2994): the lambda is
-		// hoisted to a top-level fn, so the field holds a function pointer — the
-		// same shape as a named-function field above, called as `b.f(args)`.
 		{"clo-struct-field", `struct Box { f: (i32) => i32 } function main(): i32 { let b = Box { f: (x: i32): i32 => { return x * 3; } }; return b.f(7); }`, 21},
 		{"clo-struct-field-mixed", `struct H { f: (i32) => i32, n: i32 } function main(): i32 { let h = H { f: (x: i32): i32 => { return x + 1; }, n: 100 }; return h.f(h.n); }`, 101},
 		{"clo-struct-field-2fn", `struct Ops { add1: (i32) => i32, dbl: (i32) => i32 } function main(): i32 { let o = Ops { add1: (x: i32): i32 => { return x + 1; }, dbl: (x: i32): i32 => { return x * 2; } }; return o.add1(10) + o.dbl(10); }`, 31},
-		// Calling an element of a function-value ARRAY inline (`fns[i](args)`):
-		// the element is an env box, so the call is env-first, as the local-bind
-		// form `let f = fns[i]; f()` is.
 		{"fnarr-elem-call", `function inc(n: i32): i32 { return n + 1; } function dbl(n: i32): i32 { return n * 2; } function main(): i32 { let fns = [inc, dbl]; return fns[0](10) + fns[1](10); }`, 31},
 		{"fnarr-elem-call-loop", `function apply(fns: ((i32) => i32)[], n: i32): i32 { let s = 0; let i = 0; while (i < fns.len()) { s = s + fns[i](n); i = i + 1; } return s; } function inc(n: i32): i32 { return n + 1; } function dbl(n: i32): i32 { return n * 2; } function main(): i32 { return apply([inc, dbl], 10); }`, 31},
 		{"fnarr-elem-call-2arg", `function add(a: i32, b: i32): i32 { return a + b; } function mul(a: i32, b: i32): i32 { return a * b; } function main(): i32 { let ops = [add, mul]; return ops[0](3, 4) + ops[1](3, 4); }`, 19},
-		// Array literals of NO-CAPTURE LAMBDAS (#2994): each element is a `$wrap`
-		// box, as the named-function elements above are, so `fs[i](args)` /
-		// `for f in fs` dispatch env-first.
 		{"clo-arr-call", `function main(): i32 { let fs = [(x: i32): i32 => { return x * 2; }, (x: i32): i32 => { return x + 100; }]; return fs[0](5) + fs[1](5); }`, 115},
 		{"clo-arr-len", `function main(): i32 { let fs = [(x: i32): i32 => { return x + 1; }]; return fs.len() + 9; }`, 10},
 		{"clo-arr-idxvar", `function main(): i32 { let fs = [(x: i32): i32 => { return x * 10; }]; let i = 0; return fs[i](7); }`, 70},
 		{"clo-arr-forin", `function main(): i32 { let fs = [(x: i32): i32 => { return x + 1; }, (x: i32): i32 => { return x + 2; }]; let s = 0; for f in fs { s = s + f(10); } return s; }`, 23},
 		{"clo-arr-mixed", `function dbl(x: i32): i32 { return x * 2; } function main(): i32 { let fs = [dbl, (x: i32): i32 => { return x + 5; }]; return fs[0](10) + fs[1](10); }`, 35},
-		// flat_map shape: `for y in f(x)` where `f` is a closure PARAM whose type
-		// `(T) => U[]` returns an array, so `for y in f(x)` iterates an owned
-		// array as `for x in xs` does. The bare-fn-name arg `apply(dup)` is a
-		// fn-value arg.
 		{"fnval-ret-arr-forin", `function apply(xs: i32[], f: (i32) => i32[]): i32 { let out = 0; for x in xs { for y in f(x) { out = out + y; } } return out; } function dup(n: i32): i32[] { return [n, n]; } function main(): i32 { return apply([1, 2, 3], dup); }`, 12},
 		{"fnval-ret-arr-varlen", `function apply(xs: i32[], f: (i32) => i32[]): i32 { let c = 0; for x in xs { for y in f(x) { c = c + 1; } } return c; } function upto(n: i32): i32[] { let a: i32[] = []; let i = 0; while (i < n) { a = a.append(i); i = i + 1; } return a; } function main(): i32 { return apply([1, 2, 3], upto); }`, 6},
 		{"modulo", `function main(): i32 { return 23 % 5; }`, 3},
 		{"division", `function main(): i32 { return 84 / 2; }`, 42},
 		{"bitwise", `function main(): i32 { return (6 & 3) | 8; }`, 10},
 		{"shift", `function main(): i32 { return 1 << 4; }`, 16},
-		// Hex literals: the literal TEXT is spliced into the assembly
-		// (op_const_i32_text), so the assembler parses the base; a decimal-only
-		// parse turns every `0x..` into 0. Exit codes are mod 256, so these probe
-		// the low byte through shifts/masks where the high bits matter.
 		{"hex-small", `function main(): i32 { return 0xFF & 0x0F; }`, 15},
 		{"hex-shift", `function main(): i32 { return (0x61626380 >> 8) & 255; }`, 99},
 		{"hex-mask-high", `function main(): i32 { return (0x12345678 >> 16) & 255; }`, 52},
 		{"hex-local", `function main(): i32 { let x = 0x100; return (x + 5) & 255; }`, 5},
 		{"hex-or", `function main(): i32 { return (0x40 | 0x01) & 255; }`, 65},
-		// Int→int casts (op_int_cast): `as u8` masks to the low byte.
-		{"cast-u8-mask", `function main(): i32 { let x: i32 = 300; return (x as u8) as i32; }`, 44}, // 300 & 255 = 44
+		{"cast-u8-mask", `function main(): i32 { let x: i32 = 300; return (x as u8) as i32; }`, 44},
 		{"cast-chain", `function main(): i32 { let x: i32 = 65; return ((x as u8) as i32); }`, 65},
-		// Array builder methods: .with (reassign-self -> in-place arr_set) and
-		// .append (-> __fern_arr_push), plus __alloc_u8 / string_from_bytes_unchecked.
 		{"with-reassign", `function main(): i32 { let a = [10, 20, 30]; a = a.with(1, 99); return a[0] + a[1] + a[2]; }`, 139},
-		// __memcpy(dst, src, n): raw byte copy — op_memcpy (rep movsb on x86-64),
-		// which core/int's int_to_string relies on. Cloning a same-size u8[] box
-		// (8-byte header + 3*8-byte slots = 32 bytes) makes the copy observable:
-		// dst[0..2] become src's 5/7/9 -> 21.
 		{"memcpy-clone", `function main(): i32 { let src: u8[] = __alloc_u8(3); src = src.with(0, 5 as u8); src = src.with(1, 7 as u8); src = src.with(2, 9 as u8); let dst: u8[] = __alloc_u8(3); __memcpy(dst as usize, src as usize, 32); return (dst[0] as i32) + (dst[1] as i32) + (dst[2] as i32); }`, 21},
-		// Raw-memory load/store intrinsics — op_load_i32 / op_load_i64 /
-		// op_load_ptr / op_store_i32 / op_store_ptr, which core/map's __map_hash
-		// and friends rely on. A store/load round-trip at a raw usize address
-		// makes them observable.
 		{"rawmem-i32", `function main(): i32 { let buf: u8[] = __alloc_u8(8); let p: usize = buf as usize; __store_i32(p, 1234567); return __load_i32(p); }`, 135},
 		{"rawmem-ptr-i64", `function main(): i32 { let buf: u8[] = __alloc_u8(16); let p: usize = buf as usize; __store_ptr(p, 9999); __store_i32(p + 8, 4242); let c: usize = __load_ptr(p); let b: i64 = __load_i64(p + 8); if ((c as i32) == 9999 && (b % 100000) as i32 == 4242) { return 7; } return 1; }`, 7},
-		// Array-receiver method call `arr.<m>(args)` -> the pinned array receiver
-		// `(arr: i32[]) <m>(args)`, not a prim `i32.<m>`. This is the
-		// shape std/array distinct/distinct_count/mode use (calling index_of via
-		// method syntax). dedup of [x,y,x,z,y] over i32 -> 3.
 		{"arr-method-dispatch", `function (arr: i32[]) idx_i(v: i32): i32 { let i = 0; while (i < arr.len()) { if (arr[i] == v) { return i; } i = i + 1; } return 0 - 1; } function distinct_n(arr: i32[]): i32 { let seen: i32[] = []; let i = 0; while (i < arr.len()) { if (seen.idx_i(arr[i]) < 0) { seen = seen.append(arr[i]); } i = i + 1; } return seen.len(); } function main(): i32 { let a: i32[] = []; a = a.append(3); a = a.append(7); a = a.append(3); a = a.append(9); a = a.append(7); return distinct_n(a); }`, 3},
-		// Chained method call `recv.m().n()` — a method on a method-call RESULT:
-		// the inner `s.m()` is a string, so `.n()` dispatches `string.n`, not
-		// `i32.n` (the shape i32.to_rgb_hex uses: r.to_hex().pad_start(...)).
-		// "ab".dup().dup() -> "abababab", len 8.
 		{"chained-str-method", `function (s: string) dup(): string { return s + s; } function f(s: string): i32 { return s.dup().dup().len(); } function main(): i32 { return f("ab"); }`, 8},
-		// Method-name collision across receiver types with different return types:
-		// `bump` exists on i32 (-> i32) AND string (-> string), and `b.bump()` on an
-		// i32 is an i32, so the chained `.chr()` dispatches `i32.chr`.
-		// f(64): 64+1 -> char 65 'A' -> s[0] -> 65.
 		{"method-name-collision", `function (n: i32) bump(): i32 { return n + 1; } function (s: string) bump(): string { return s + "!"; } function (n: i32) chr(): string { let a: u8[] = __alloc_u8(1); a = a.with(0, n as u8); return string_from_bytes_unchecked(a); } function f(b: i32): i32 { let s: string = b.bump().chr(); return s[0] as i32; } function main(): i32 { return f(64); }`, 65},
-		// Chained ARRAY-method call `arr.m().n()` where the inner m returns an
-		// array — `rev` (-> i32[]) then `.sum2()` on the result.
-		// This is the std/string reverse_words shape (`words.reverse().join(" ")`).
-		// rev([1,2,3])=[3,2,1], sum2 -> 6.
 		{"chained-arr-method", `function (xs: i32[]) rev(): i32[] { let out: i32[] = []; let i = xs.len() - 1; while (i >= 0) { out = out.append(xs[i]); i = i - 1; } return out; } function (xs: i32[]) sum2(): i32 { let s = 0; let i = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; } function f(xs: i32[]): i32 { return xs.rev().sum2(); } function main(): i32 { let a: i32[] = []; a = a.append(1); a = a.append(2); a = a.append(3); return f(a); }`, 6},
-		// f32 method dispatch: an f32 receiver dispatches "f32.<m>", NOT the f64
-		// twin — they can differ (e.g. to_string precision). Here f32.tag returns
-		// 32, f64.tag returns 64; an f32 value must pick 32 and an f64 value 64.
-		// 32*100+64 = 3264 (exit 192 mod 256).
 		{"f32-vs-f64-dispatch", `function (x: f32) tag(): i32 { return 32; } function (x: f64) tag(): i32 { return 64; } function f(): i32 { let v: f32 = 1.0 as f32; let w: f64 = 1.0; return v.tag() * 100 + w.tag(); } function main(): i32 { return f(); }`, 192},
-		// f32-only methods (no f64 twin) on f32 locals — the std/f64 method
-		// shape (`__op_f64(x as f64) as f32`). myabs(-5)=5, myclamp via mymax(7,3)=7
-		// -> 5*10+7 = 57.
 		{"f32-methods", `function (x: f32) myabs(): f32 { let d: f64 = x as f64; if (d < 0.0) { return (0.0 - d) as f32; } return d as f32; } function (x: f32) mymax(y: f32): f32 { if ((x as f64) > (y as f64)) { return x; } return y; } function (x: f32) myclamp(lo: f32, hi: f32): f32 { return lo.mymax(x); } function f(): i32 { let a: f32 = 0.0 - 5.0 as f32; let b = a.myabs(); let c: f32 = 3.0 as f32; let m = c.myclamp(7.0 as f32, 9.0 as f32); return (b as i32) * 10 + (m as i32); } function main(): i32 { return f(); }`, 57},
-		// Built-in struct types (std/time's Date / Span etc. are injected by
-		// parser.inject_builtin_enums, not `struct`-declared): constructing them +
-		// reading fields. d.month*100 + d.day + s.days = 6*100 + 15 + 3 = 618
-		// (exit 106 mod 256).
 		{"builtin-struct-date", `function f(): i32 { let d = Date { year: 2026, month: 6, day: 15 }; let s = Span { years: 0, months: 0, weeks: 0, days: 3, hours: 0, minutes: 0, seconds: 0, nanos: 0 }; return d.month * 100 + d.day + s.days; } function main(): i32 { return f(); }`, 106},
-		// Sub-word (u8[]) array as a STRUCT FIELD — a byte-buffer struct (the
-		// BytesWriter shape from std/io_buffered). The field stores a pointer;
-		// elements use the i32[] 4-byte-slot representation (op_arr_push /
-		// op_arr_get(32)), the sub-word value pre-wrapped by `as u8` at the push
-		// site. Binding the field to a local (`let data = w.data`) aliases via a
-		// Perceus dup, append grows the clone, struct-lit spread rebuilds.
-		// 10+20+33 = 63.
 		{"subword-arr-field", `struct BW { data: u8[] } function bw_new(): BW { let e: u8[] = []; return BW { data: e }; } function (w: BW) push(b: u8): BW { let data: u8[] = w.data; data = data.append(b); return BW { ...w, data: data }; } function (w: BW) sum(): i32 { let data: u8[] = w.data; let t: i32 = 0; let i: i32 = 0; while (i < data.len()) { t = t + (data[i] as i32); i = i + 1; } return t; } function main(): i32 { let w = bw_new(); w = w.push(10 as u8); w = w.push(20 as u8); w = w.push(33 as u8); return w.sum(); }`, 63},
-		// The checker-injected BytesWriter built-in (std/io_buffered): same
-		// u8[]-field shape, injected by inject_builtin_enums so its layout
-		// resolves. write_byte spreads + appends; len() reads the buffer length.
-		// 3 bytes written -> len 3.
 		{"builtin-byteswriter", `function main(): i32 { let w: BytesWriter = BytesWriter { data: [] }; w = BytesWriter { ...w, data: w.data.append(65 as u8) }; w = BytesWriter { ...w, data: w.data.append(66 as u8) }; w = BytesWriter { ...w, data: w.data.append(67 as u8) }; return w.data.len(); }`, 3},
-		// A FRESH scalar-array-returning CALL as a struct-lit field value (move):
-		// `S { data: gen() }` where gen(): i32[]. The call result moves into the
-		// struct with no alias-inc. gen() = [3,4,5]; sum 12.
 		{"scalar-arr-call-field", `struct S { data: i32[] } function gen(): i32[] { let a: i32[] = []; a = a.append(3); a = a.append(4); a = a.append(5); return a; } function (x: S) sum(): i32 { let d: i32[] = x.data; let t: i32 = 0; let i: i32 = 0; while (i < d.len()) { t = t + d[i]; i = i + 1; } return t; } function main(): i32 { let x: S = S { data: gen() }; return x.sum(); }`, 12},
-		// The std/stream `stream_from_string` shape: a string `.bytes()` call (a
-		// fresh u8[] move source) as a u8[] struct-lit field value. 65+66+67 = 198.
 		{"bytes-call-field", `import "std/string";
 struct S { data: u8[], pos: i32 } function mk(s: string): S { return S { data: s.bytes(), pos: 0 }; } function (x: S) sum(): i32 { let d: u8[] = x.data; let t: i32 = 0; let i: i32 = 0; while (i < d.len()) { t = t + (d[i] as i32); i = i + 1; } return t; } function main(): i32 { let x: S = mk("ABC"); return x.sum(); }`, 198},
-		// A sub-word (u8[]) array as a TUPLE element — the std/stream
-		// `(s: Stream) read_all(): (u8[], Stream)` cursor-idiom shape. u8[] uses
-		// the same 4-byte-slot representation as i32[]/u32[]: construction stores
-		// the buffer pointer in one slot, the destructure binds it as an array
-		// local, and `bytes[i]` uses the 4-byte arr_get. Builds [10,20,35], reads
-		// it back through the (u8[], St) return: 10+20+35 + pos 3 = 68.
 		{"subword-arr-tuple-elem", `struct St { data: u8[], pos: i32 } function (s: St) read_all(): (u8[], St) { let out: u8[] = []; let i: i32 = s.pos; let end: i32 = s.data.len(); while (i < end) { out = out.append(s.data[i]); i = i + 1; } return (out, St { ...s, pos: end }); } function main(): i32 { let d: u8[] = []; d = d.append(10 as u8); d = d.append(20 as u8); d = d.append(35 as u8); let s: St = St { data: d, pos: 0 }; let (bytes, s2) = s.read_all(); let total: i32 = 0; let i: i32 = 0; while (i < bytes.len()) { total = total + (bytes[i] as i32); i = i + 1; } return total + s2.pos; }`, 68},
-		// 8-byte-element (i64[]/f64[]) and string[] arrays as a TUPLE element,
-		// returned from a function + destructured. The buffer is a heap pointer in
-		// the tuple slot (width/kind-agnostic at construction); the destructure
-		// marks the bound slot i64arr / f64arr / strarr so `xs[i]` reads at the
-		// right width / as a string. i64: 7+11+3=21; f64: 2+4+1=7; string[]:
-		// len("hello")+len("world!")+2 = 13; `.N` direct access: 100+9=109.
 		{"i64-arr-tuple-elem", `function mk(): (i64[], i32) { let a: i64[] = []; a = a.append(7 as i64); a = a.append(11 as i64); return (a, 3); } function main(): i32 { let (xs, n) = mk(); return (xs[0] as i32) + (xs[1] as i32) + n; }`, 21},
 		{"f64-arr-tuple-elem", `function mk(): (f64[], i32) { let a: f64[] = []; a = a.append(2.5); a = a.append(4.5); return (a, 1); } function main(): i32 { let (xs, n) = mk(); return (xs[0] as i32) + (xs[1] as i32) + n; }`, 7},
 		{"i64-arr-tuple-dotn", `function mk(): (i64[], i32) { let a: i64[] = []; a = a.append(100 as i64); return (a, 9); } function main(): i32 { let t = mk(); return (t.0[0] as i32) + t.1; }`, 109},
 		{"strarr-tuple-elem", `function mk(): (string[], i32) { let a: string[] = []; a = a.append("hello"); a = a.append("world!"); return (a, 2); } function main(): i32 { let (ps, n) = mk(); return ps[0].len() + ps[1].len() + n; }`, 13},
-		// A nominal-enum value as a TUPLE element — the (JsonValue, parser) cursor
-		// shape std/json's parsers use. The enum is a box in one pointer slot, like
-		// a struct/Option element, and `match (t.N)` dispatches on it. payload
-		// variant: A(3)+5 = 8; unit variant via `.N` direct access: Green ->
-		// t.1+10 = 15.
 		{"enum-tuple-elem", `enum E { A(i32), B } function mk(): (E, i32) { return (A(3), 5); } function main(): i32 { let (e, n) = mk(); match (e) { A(x) => { return x + n; }, B => { return n; } } return 0; }`, 8},
 		{"enum-tuple-dotn", `enum Color { Red, Green, Blue } function mk(): (Color, i32) { return (Green, 5); } function main(): i32 { let t = mk(); match (t.0) { Red => { return 1; }, Green => { return t.1 + 10; }, Blue => { return 3; } } return 0; }`, 15},
-		// A match-EXPRESSION (value position) over a STRUCT / TUPLE scrutinee.
-		// Both desugar to a done-flag if-chain wrapped in an IIFE with no terminal
-		// return; parse_match_expr flags these (needs_default_return) so the IIFE
-		// gets a synthetic one (#5749). struct: 5+1 = 6; tuple: 3+4 = 7.
 		{"matchexpr-struct", `struct P { x: i32 } function main(): i32 { let p = P { x: 5 }; let r = match (p) { P { x: v } => v + 1 }; return r; }`, 6},
 		{"matchexpr-tuple", `function main(): i32 { let t = (3, 4); let r = match (t) { (a, b) => a + b }; return r; }`, 7},
-		// A struct field whose type is a TUPLE containing an fn element
-		// (`(i32, () => i32)`); the fn element is a closure box in one pointer
-		// slot, like an Option box (#5749). s.p.0 (=3) + s.p.1() (=7) = 10.
 		{"structfield-tuple-fn", `struct S { p: (i32, () => i32) } function main(): i32 { let s = S { p: (3, () => 7) }; return s.p.0 + s.p.1(); }`, 10},
-		// Binding the tuple field to a LOCAL first (`let t = s.p`) then calling its
-		// fn element (`t.1()`). Same value: 3 + 7 = 10.
 		{"structfield-tuple-fn-local", `struct S { p: (i32, () => i32) } function main(): i32 { let s = S { p: (3, () => 7) }; let t = s.p; return t.0 + t.1(); }`, 10},
-		// DESTRUCTURING a tuple read from an array-of-tuples whose element is a
-		// STRUCT / STRING / ENUM: `let (p, n) = a[i]` over `(P, i32)[]`, then
-		// `p.x` (the destructure sibling of direct `a[i].0.x`). struct: 3+4=7;
-		// string: 2+4=6; enum: G->5+10=15.
 		{"destr-tuparr-struct", `struct P { x: i32 } function main(): i32 { let a: (P, i32)[] = []; a = a.append((P { x: 3 }, 4)); let (p, n) = a[0]; return p.x + n; }`, 7},
 		{"destr-tuparr-string", `function main(): i32 { let a: (string, i32)[] = []; a = a.append(("hi", 4)); let (s, n) = a[0]; return s.len() + n; }`, 6},
 		{"destr-tuparr-enum", `enum C { R, G, B } function main(): i32 { let a: (C, i32)[] = []; a = a.append((G, 5)); let (c, n) = a[0]; match (c) { R => { return 1; }, G => { return n + 10; }, B => { return 3; } } return 0; }`, 15},
-		// A RECURSIVE struct — a self-referential `next: Option[Node]` field (linked
-		// list / tree / AST shape); a type walk that does not stop at the back-edge
-		// recurses forever. Construction + field-read: 5; recursive Option-match
-		// sum over a 3-node list: 1+2+3=6.
 		{"recursive-struct-opt", `struct Node { v: i32, next: Option[Node] } function main(): i32 { let n = Node { v: 5, next: None }; return n.v; }`, 5},
 		{"recursive-list-sum", `struct Node { v: i32, next: Option[Node] } function sum(n: Option[Node]): i32 { match (n) { Some(nd) => { return nd.v + sum(nd.next); }, None => { return 0; } } return 0; } function main(): i32 { let l = Some(Node { v: 1, next: Some(Node { v: 2, next: Some(Node { v: 3, next: None }) }) }); return sum(l); }`, 6},
-		// A NESTED Option whose innermost payload is a struct: `Option[Option[P]]`,
-		// constructed into a local (`Some(Some(P))`) then matched two levels deep;
-		// the outer match binds `inner` as Option[P], not i32. = 9.
 		{"nested-opt-struct", `struct P { x: i32 } function main(): i32 { let x: Option[Option[P]] = Some(Some(P { x: 9 })); match (x) { Some(inner) => { match (inner) { Some(p) => { return p.x; }, None => { return 1; } } }, None => { return 2; } } return 0; }`, 9},
-		// A struct field whose type is a TUPLE with a bare STRUCT element:
-		// `Pair { both: (A, A) }`, read `p.both.N.v`. = 7.
 		{"structfield-tuple-struct", `struct A { v: i32 } struct Pair { both: (A, A) } function main(): i32 { let p = Pair { both: (A { v: 3 }, A { v: 4 }) }; return p.both.0.v + p.both.1.v; }`, 7},
-		// A struct field whose type is an Option of a TUPLE / a NESTED Option:
-		// `H { t: Option[(i32, i32)] }` / `H { o: Option[Option[i32]] }` (the
-		// field siblings of the local-position cases). tuple: 3+4=7; nested: 7.
 		{"structfield-opt-tuple", `struct H { t: Option[(i32, i32)] } function main(): i32 { let h = H { t: Some((3, 4)) }; match (h.t) { Some(pr) => { return pr.0 + pr.1; }, None => { return 0; } } return 0; }`, 7},
 		{"structfield-opt-opt", `struct H { o: Option[Option[i32]] } function main(): i32 { let h = H { o: Some(Some(7)) }; match (h.o) { Some(inner) => { match (inner) { Some(v) => { return v; }, None => { return 1; } } }, None => { return 2; } } return 0; }`, 7},
-		// A DOUBLE-index read of a struct field that is an array-of-struct-arrays:
-		// `h.g[i][j].x` over `H { g: P[][] }` (the field sibling of a local P[][]).
-		// 1+2+3=6.
 		{"structfield-arr2d-struct", `struct P { x: i32 } struct H { g: P[][] } function main(): i32 { let h = H { g: [[P { x: 1 }, P { x: 2 }], [P { x: 3 }]] }; let s = 0; let i = 0; while (i < h.g.len()) { let j = 0; while (j < h.g[i].len()) { s = s + h.g[i][j].x; j = j + 1; } i = i + 1; } return s; }`, 6},
-		// An enum variant whose PAYLOAD is an Option / Result, then matched:
-		// `Maybe(Option[i32])` -> `match (o) { Some(v) => … }`. Option: 9;
-		// Result: 9.
 		{"enum-payload-opt", `enum E { Maybe(Option[i32]), No } function f(e: E): i32 { match (e) { Maybe(o) => { match (o) { Some(v) => { return v; }, None => { return 1; } } }, No => { return 2; } } return 0; } function main(): i32 { return f(Maybe(Some(9))); }`, 9},
 		{"enum-payload-result", `enum E { Res(Result[i32, i32]), No } function f(e: E): i32 { match (e) { Res(r) => { match (r) { Ok(v) => { return v; }, Err(e2) => { return e2; } } }, No => { return 2; } } return 0; } function main(): i32 { return f(Res(Ok(9))); }`, 9},
-		// A struct-array (P[]) / enum-array (E[]) value as a TUPLE element. The
-		// buffer is a heap pointer in the slot; after the destructure,
-		// `xs[i].field` / `match (xs[i])` resolve the element shape. struct:
-		// 7+11+3=21; enum: A(7)->7 + B->100 + 3 = 110.
 		{"structarr-tuple-elem", `struct P { x: i32 } function mk(): (P[], i32) { let a: P[] = []; a = a.append(P { x: 7 }); a = a.append(P { x: 11 }); return (a, 3); } function main(): i32 { let (ps, n) = mk(); return ps[0].x + ps[1].x + n; }`, 21},
 		{"enumarr-tuple-elem", `enum E { A(i32), B } function mk(): (E[], i32) { let a: E[] = []; a = a.append(A(7)); a = a.append(B); return (a, 3); } function main(): i32 { let (es, n) = mk(); let sum: i32 = n; let i: i32 = 0; while (i < es.len()) { match (es[i]) { A(x) => { sum = sum + x; }, B => { sum = sum + 100; } } i = i + 1; } return sum; }`, 110},
-		// A Map-typed enum-variant PAYLOAD (`O(Map[string, J])`) — the std/json
-		// `json_get` shape. The match binds `m` from the variant payload and
-		// `m.get(k)` dispatches as a map op returning Option[V]. Builds
-		// {k: N("42")}, gets it back, reads len = 2.
 		{"map-enum-payload-get", `import "core/map";
 enum J { N(string), O(Map[string, J]) }
 function jget(obj: J, key: string): Option[J] { match (obj) { O(m) => { match (m.get(key)) { Some(v) => { return Some(v); }, None => { return None; } } }, _ => { return None; } } return None; } function main(): i32 { let m: Map[string, J] = map_new(8); m = m.insert("k", N("42")); let o: J = O(m); match (jget(o, "k")) { Some(v) => { match (v) { N(s) => { return s.len(); }, _ => { return 0; } } }, None => { return 99; } } return 0; }`, 2},
-		// A Map[K, V]-RECEIVER method — the shape core/map's contains_value /
-		// get_or_insert / merge use. Built-in map ops on `self` (m.has / m.get_or
-		// / m.len) dispatch as map ops, and a NON-builtin method on `self`
-		// (m.goi / m.total here, or core/map's m.merge) dispatches to the
-		// "Map.<method>" user-method label. goi("a")=10 + goi("z",5)=5 + total
-		// (len 2 *100)=200 = 215.
 		{"map-recv-method", `import "core/map";
 function (m: Map[string, i32]) goi(k: string, fallback: i32): i32 { if (m.contains(k)) { return m.get_or(k, 0); } return fallback; } function (m: Map[string, i32]) total(): i32 { return m.len() * 100; } function main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert("a", 10); m = m.insert("b", 20); return m.goi("a", 0) + m.goi("z", 5) + m.total(); }`, 215},
-		// A Map-receiver method iterating m.values() with a generic `==` — the
-		// core/map contains_value shape. found(20)->+1, not-found(99)->no change.
 		{"map-recv-contains", `import "core/map";
 function (m: Map[string, i32]) cv(target: i32): boolean { for v in m.values() { if (v == target) { return true; } } return false; } function main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert("a", 10); m = m.insert("b", 20); let r: i32 = 0; if (m.cv(20)) { r = r + 1; } if (m.cv(99)) { r = r + 100; } return r; }`, 1},
-		// An ARRAY payload in an Option (`Some(xs)` where xs: string[]) — the
-		// `m.get(k)` shape on a Map[K, V[]] (std/url's query-param parse). The
-		// array is borrowed from the Option box; `xs.len()` / `xs.append(v)`
-		// (clone) resolve. hit: n=2, more.len=3 -> 23; miss -> 7; total 30.
 		{"opt-array-payload", `function pick(o: Option[string[]], fallback: i32): i32 { match (o) { Some(xs) => { let n = xs.len(); let more = xs.append("z"); return n * 10 + more.len(); }, None => { return fallback; } } return 0; } function main(): i32 { let a: string[] = []; a = a.append("p"); a = a.append("q"); let hit = pick(Some(a), 0); let miss = pick(None, 7); return hit + miss; }`, 30},
-		// The checker-injected Url built-in (std/url): `Url { … }` construction +
-		// `{...u, field}` spreads + an Option[Url] return (the url_parse shape).
-		// scheme("http")=4 + host("example.com")=11 + port 80 = 95.
 		{"builtin-url", `function up(s: string): Option[Url] { if (s.len() == 0) { return None; } let u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" }; u = Url { ...u, scheme: "http" }; u = Url { ...u, host: s, port: 80 }; return Some(u); } function main(): i32 { match (up("example.com")) { Some(u) => { return u.scheme.len() + u.host.len() + u.port; }, None => { return 999; } } return 0; }`, 95},
 		{"with-loop", `function main(): i32 { let a = [0, 0, 0, 0]; let i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }`, 14},
 		{"append-build", `function main(): i32 { let a: i32[] = []; let i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }`, 8},
-		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`
-		// reassign-self form): return position and var-init, via op_arr_push
-		// leaving the grown array on the stack. The consumed receiver must not be
-		// freed twice. This is the shape std/string split/splitn/chunks end with
-		// (return out.append).
 		{"append-return", `function build(a: i32[], v: i32): i32[] { return a.append(v); } function main(): i32 { let a: i32[] = []; a = a.append(10); let b = build(a, 20); return b[0] + b[1]; }`, 30},
 		{"append-varinit", `function main(): i32 { let a: i32[] = []; a = a.append(7); let b = a.append(35); return b[0] + b[1]; }`, 42},
 		{"append-return-loop", `function trail(xs: i32[]): i32[] { let out: i32[] = []; let i = 0; while (i < xs.len()) { if (xs[i] > 2) { out = out.append(xs[i]); } i = i + 1; } return out.append(99); } function main(): i32 { let a: i32[] = []; a = a.append(1); a = a.append(5); a = a.append(3); let r = trail(a); return r.len() * 100 + r[r.len() - 1]; }`, 143},
-		// More __alloc_u8 / string_from_bytes_unchecked programs live in
-		// TestSelfHostU32WrapIR (alloc-u8 / str-from-bytes).
 		{"compare", `function main(): i32 { if (5 < 10) { return 1; } return 0; }`, 1},
 		{"unary-not", `function main(): i32 { if (!(5 > 10)) { return 1; } return 0; }`, 1},
 		{"if-taken", `function main(): i32 { let x = 1; if (5 < 10) { x = 7; } return x; }`, 7},
@@ -288,11 +120,8 @@ function (m: Map[string, i32]) cv(target: i32): boolean { for v in m.values() { 
 		{"while-factorial", `function main(): i32 { let i = 1; let f = 1; while (i <= 5) { f = f * i; i = i + 1; } return f; }`, 120},
 		{"if-in-loop", `function main(): i32 { let i = 0; let c = 0; while (i < 10) { if (i > 4) { c = c + 1; } i = i + 1; } return c; }`, 5},
 		{"nested-loop", `function main(): i32 { let i = 0; let t = 0; while (i < 3) { let j = 0; while (j < 3) { t = t + 1; j = j + 1; } i = i + 1; } return t; }`, 9},
-		// Params + direct calls.
 		{"call-one-arg", `function inc(n: i32): i32 { return n + 1; } function main(): i32 { return inc(41); }`, 42},
 		{"call-two-args", `function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return add(40, 2); }`, 42},
-		// Default parameter values: an omitted trailing argument is filled from
-		// the parameter's declared default (parser.fill_default_args_module).
 		{"default-one", `function inc(n: i32, by: i32 = 1): i32 { return n + by; } function main(): i32 { return inc(41); }`, 42},
 		{"default-override", `function inc(n: i32, by: i32 = 1): i32 { return n + by; } function main(): i32 { return inc(40, 2); }`, 42},
 		{"default-multi", `function box(w: i32, h: i32 = 2, d: i32 = 3): i32 { return w * 100 + h * 10 + d; } function main(): i32 { return box(1); }`, 123},
@@ -305,7 +134,6 @@ function (m: Map[string, i32]) cv(target: i32): boolean { for v in m.values() { 
 		{"mutual-recursion", `function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); } function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); } function main(): i32 { return is_even(6); }`, 1},
 		{"call-in-loop", `function sq(x: i32): i32 { return x * x; } function main(): i32 { let i = 1; let s = 0; while (i <= 4) { s = s + sq(i); i = i + 1; } return s; }`, 30},
 		{"compute-via-call", `function compute(a: i32): i32 { let b = a * 2; let c = b + 1; return c; } function main(): i32 { return compute(5); }`, 11},
-		// Within-function i32 arrays, with the freestanding allocator + Perceus RC.
 		{"arr-index", `function main(): i32 { let a = [10, 20, 30]; return a[0] + a[2]; }`, 40},
 		{"arr-loop-sum", `function main(): i32 { let a = [5, 10, 15, 20, 25]; let i = 0; let s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`, 75},
 		{"arr-expr-elems", `function main(): i32 { let x = 4; let a = [x, x * 2, x + 100]; return a[1] + a[2]; }`, 112},
@@ -314,24 +142,15 @@ function (m: Map[string, i32]) cv(target: i32): boolean { for v in m.values() { 
 		{"arr-len", `function main(): i32 { let a = [1, 2, 3, 4]; return a.len(); }`, 4},
 		{"arr-two", `function main(): i32 { let a = [1, 2]; let b = [100, 200]; return a[1] + b[0]; }`, 102},
 		{"arr-alias", `function main(): i32 { let a = [10, 20, 30]; let b = a; return b[0] + b[2] + a.len(); }`, 43},
-		// Cross-function arrays: borrowed array params + array returns
-		// (move-on-return), end to end.
 		{"arr-param-sum", `function sum(a: i32[]): i32 { let i = 0; let s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; } function main(): i32 { let arr = [10, 20, 30]; return sum(arr); }`, 60},
 		{"arr-param-borrow-noreuse", `function len_of(a: i32[]): i32 { return a.len(); } function main(): i32 { let arr = [3, 4, 5]; let n = len_of(arr); let z = [9, 9, 9]; return arr[0] + arr[2] + n; }`, 11},
 		{"arr-return-move", `function make(): i32[] { let a = [10, 20, 30]; return a; } function main(): i32 { let x = make(); let y = [1, 1, 1]; return x[0] + x[2]; }`, 40},
 		{"arr-return-then-mutate", `function make(): i32[] { let a = [1, 2, 3]; return a; } function main(): i32 { let x = make(); x = x.with(1, 99); return x[0] + x[1] + x[2]; }`, 103},
 		{"arr-param-two", `function pick(a: i32[], b: i32[]): i32 { return a[0] + b[1]; } function main(): i32 { let p = [1, 2]; let q = [10, 20]; return pick(p, q); }`, 21},
-		// Array-slot reassignment (Perceus retain-new + cow-guarded release-old
-		// in the lowering): `ys = xs` retains xs and releases
-		// ys's prior buffer; a fresh-literal / loop-rebind reassignment releases
-		// the overwritten buffer.
 		{"arr-reassign-alias", `function main(): i32 { let xs = [1, 2, 3]; let ys = [4, 5, 6]; ys = xs; return ys[0] + ys[2]; }`, 4},
 		{"arr-reassign-source-live", `function main(): i32 { let xs = [7, 8]; let ys = [0, 0]; ys = xs; return xs[1] + ys[1]; }`, 16},
 		{"arr-reassign-fresh", `function main(): i32 { let xs = [1, 2]; xs = [9, 9, 9]; return xs[2]; }`, 9},
 		{"arr-rebind-loop", `function main(): i32 { let s = 0; let i = 0; while (i < 4) { let r = [i, i * 2, i * 3]; s = s + r[2]; i = i + 1; } return s; }`, 18},
-		// Strings (within-function + string params): literal + .len(), concat
-		// (+), equality (==/!=) — str_len / str_concat / str_eq, not the array/i32
-		// ops, over the `[data@0,len@8]` string box.
 		{"str-len", `function main(): i32 { let s = "hello"; return s.len(); }`, 5},
 		{"str-index-local", `function main(): i32 { let s = "hello"; return s[0] as i32; }`, 104},
 		{"str-index-loop", `function main(): i32 { let s = "abc"; let sum = 0; let i = 0; while (i < 3) { sum = sum + (s[i] as i32); i = i + 1; } return sum % 200; }`, 94},
@@ -354,120 +173,80 @@ function (m: Map[string, i32]) cv(target: i32): boolean { for v in m.values() { 
 		{"str-param-len", `function slen(s: string): i32 { return s.len(); } function main(): i32 { let x = "abcd"; return slen(x); }`, 4},
 		{"str-param-concat", `function jn(a: string, b: string): i32 { return (a + b).len(); } function main(): i32 { return jn("xx", "yyy"); }`, 5},
 		{"str-param-eq", `function same(a: string, b: string): i32 { if (a == b) { return 1; } return 0; } function main(): i32 { return same("k", "k"); }`, 1},
-		// String-returning functions: the call result is a string. Param + concat +
-		// return too.
 		{"str-returning", `function greet(): string { return "hi"; } function main(): i32 { let s = greet(); return s.len(); }`, 2},
 		{"str-returning-concat", `function shout(s: string): string { return s + "!"; } function main(): i32 { let g = shout("hey"); return g.len(); }`, 4},
 		{"str-returning-inline", `function tag(): string { return "abcd"; } function main(): i32 { return tag().len(); }`, 4},
-		// String-typed struct/enum fields.
 		{"struct-str-field", `struct Token { text: string, kind: i32 } function main(): i32 { let t = Token { text: "hello", kind: 7 }; return t.text.len() + t.kind; }`, 12},
 		{"struct-str-method", `struct N { s: string } function (n: N) sz(): i32 { return n.s.len(); } function main(): i32 { let x = N { s: "abcd" }; return x.sz(); }`, 4},
 		{"enum-str-payload", `enum T { Word(string), Eof } function g(t: T): i32 { match (t) { Word(w) => { return w.len(); }, Eof => { return 3; } } return 0; } function main(): i32 { return g(Word("hello")) + g(Eof); }`, 8},
-		// Scalar-array struct fields (i32[], fresh literal).
 		{"struct-arr-field", `struct Buf { data: i32[], n: i32 } function main(): i32 { let b = Buf { data: [10, 20, 30], n: 3 }; let s = 0; let i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; }`, 60},
 		{"struct-arr-param", `struct Buf { data: i32[], n: i32 } function sum(b: Buf): i32 { let s = 0; let i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; } function main(): i32 { let b = Buf { data: [5, 10, 15], n: 3 }; return sum(b); }`, 30},
 		{"struct-arr-extract", `struct Buf { data: i32[] } function main(): i32 { let b = Buf { data: [7, 8, 9] }; let a = b.data; return a[0] + a[2]; }`, 16},
-		// u32[] struct fields use the i32[] 4-byte element read. Field round-trip:
-		// construction, indexed read, extract-to-local, by-value param.
 		{"struct-u32arr-field", `struct Vec { vals: u32[], n: i32 } function main(): i32 { let v = Vec { vals: [10, 20, 30], n: 3 }; let s = 0; let i = 0; while (i < v.n) { s = s + (v.vals[i] as i32); i = i + 1; } return s; }`, 60},
 		{"struct-u32arr-extract", `struct Vec { vals: u32[] } function main(): i32 { let v = Vec { vals: [7, 8, 9] }; let a = v.vals; return (a[0] as i32) + (a[2] as i32); }`, 16},
 		{"struct-u32arr-param", `struct Vec { vals: u32[], n: i32 } function sum(v: Vec): i32 { let s = 0; let i = 0; while (i < v.n) { s = s + (v.vals[i] as i32); i = i + 1; } return s; } function main(): i32 { let v = Vec { vals: [5, 10, 15], n: 3 }; return sum(v); }`, 30},
-		// Aliasing a struct/enum-element array local (`let qs = ps`) carries the
-		// element type over, so `qs[i].field` / `qs[i].method()` dispatch.
 		{"struct-arr-alias-field", `struct P { x: i32 } function main(): i32 { let ps = [P{x: 5}, P{x: 6}]; let qs = ps; return qs[1].x; }`, 6},
 		{"struct-arr-alias-method", `struct P { x: i32 } function (p: P) g(): i32 { return p.x; } function main(): i32 { let ps = [P{x: 1}, P{x: 2}]; let qs = ps; return qs[0].g() + qs[1].g(); }`, 3},
 		{"enum-arr-alias-method", `enum C { R, G } function (c: C) k(): i32 { match (c) { R => { return 1; }, G => { return 2; } } return 0; } function main(): i32 { let a = [R, G]; let b = a; return b[0].k() * 10 + b[1].k(); }`, 12},
-		// Typed string[] arrays (literals/indexing/params/loop; elements leak).
 		{"strarr-index", `function main(): i32 { let names = ["foo", "bar", "hello"]; return names[0].len() + names[2].len(); }`, 8},
 		{"strarr-param", `function f(names: string[]): i32 { return names[0].len(); } function main(): i32 { return f(["abcd"]); }`, 4},
 		{"strarr-loop", `function main(): i32 { let names = ["a", "bb", "ccc"]; let s = 0; let i = 0; while (i < 3) { s = s + names[i].len(); i = i + 1; } return s; }`, 6},
-		// string[]-returning functions (move-on-return; the call result is a
-		// string[], so xs[i] is a string).
 		{"strarr-ret", `function names(): string[] { return ["a", "bb", "ccc"]; } function main(): i32 { let xs = names(); return xs[1].len(); }`, 2},
 		{"strarr-ret-direct-index", `function names(): string[] { return ["a", "bb", "ccc"]; } function main(): i32 { return names()[2].len(); }`, 3},
 		{"strarr-ret-len", `function names(): string[] { let a = ["x", "yy"]; return a; } function main(): i32 { let xs = names(); return xs.len() + xs[1].len(); }`, 4},
 		{"strarr-ret-param", `function id(a: string[]): string[] { return a; } function main(): i32 { let xs = ["q", "ww", "eee"]; let ys = id(xs); return ys[1].len() + ys.len(); }`, 5},
 		{"strarr-ret-loop", `function names(): string[] { return ["a", "bb", "ccc", "dddd"]; } function main(): i32 { let xs = names(); let i = 0; let s = 0; while (i < xs.len()) { s = s + xs[i].len(); i = i + 1; } return s; }`, 10},
-		// Scalar-field structs (struct_make / struct_get): literal + field read,
-		// field-order independence, params, boolean fields.
 		{"struct-lit-fields", `struct P { x: i32, y: i32 } function main(): i32 { let p = P { x: 3, y: 4 }; return p.x + p.y; }`, 7},
 		{"struct-field-order", `struct P { x: i32, y: i32 } function main(): i32 { let p = P { y: 40, x: 2 }; return p.x + p.y; }`, 42},
 		{"struct-three-fields", `struct V { a: i32, b: i32, c: i32 } function main(): i32 { let v = V { a: 1, b: 2, c: 3 }; return v.a * 100 + v.b * 10 + v.c; }`, 123},
 		{"struct-param", `struct P { x: i32, y: i32 } function sum(p: P): i32 { return p.x + p.y; } function main(): i32 { let p = P { x: 30, y: 12 }; return sum(p); }`, 42},
 		{"struct-bool-field", `struct F { on: boolean, n: i32 } function main(): i32 { let f = F { on: true, n: 7 }; if (f.on) { return f.n; } return 0; }`, 7},
-		// A struct with a ≤32-bit non-i32 integer field (u32 / sub-word u8) — these
-		// occupy the same i32 slot. Covers local / param / struct-returning /
-		// mixed-field / functional-update shapes.
 		{"struct-u32-field", `struct B { hi: u32, n: i32 } function main(): i32 { let b = B { hi: 4000000000 as u32, n: 7 }; let hi: u32 = b.hi >> 30; return (hi as i32) + b.n; }`, 10},
 		{"struct-u8-field", `struct B { c: u8, n: i32 } function main(): i32 { let b = B { c: 250 as u8, n: 5 }; return (b.c as i32) + b.n; }`, 255},
 		{"struct-u32-ret", `struct B { hi: u32, n: i32 } function mk(): B { return B { hi: 100 as u32, n: 4 }; } function main(): i32 { let b = mk(); return (b.hi as i32) + b.n; }`, 104},
 		{"struct-u32-param", `struct B { hi: u32, n: i32 } function sz(b: B): i32 { return b.n; } function main(): i32 { return sz(B { hi: 1 as u32, n: 9 }); }`, 9},
 		{"struct-mixed-int-fields", `struct B { a: u8, c: u32, d: i32 } function main(): i32 { let x = B { a: 1 as u8, c: 3 as u32, d: 4 }; return (x.a as i32) + (x.c as i32) + x.d; }`, 8},
 		{"struct-u32-update", `struct B { hi: u32, n: i32 } function main(): i32 { let b = B { hi: 5 as u32, n: 1 }; let c = B { ...b, n: 9 }; return (c.hi as i32) + c.n; }`, 14},
-		// A u64 struct field is a 64-bit integer field read at 64 bits. The full 64
-		// bits must survive (high half via `>> 32`); local / struct-returning /
-		// param shapes.
 		{"struct-u64-field", `struct B { hi: u64, n: i32 } function main(): i32 { let b = B { hi: 5000000000 as u64, n: 3 }; let q: u64 = b.hi / (1000000000 as u64); return (q as i32) + b.n; }`, 8},
 		{"struct-u64-ret", `struct B { hi: u64, n: i32 } function mk(): B { return B { hi: 8000000000 as u64, n: 2 }; } function main(): i32 { let b = mk(); let q: u64 = b.hi / (1000000000 as u64); return (q as i32) + b.n; }`, 10},
 		{"struct-u64-param", `struct B { hi: u64, n: i32 } function f(b: B): i32 { let q: u64 = b.hi >> 32; return (q as i32) + b.n; } function main(): i32 { return f(B { hi: 4294967296 as u64, n: 5 }); }`, 6},
 		{"struct-in-loop", `struct P { x: i32, y: i32 } function main(): i32 { let s = 0; let i = 0; while (i < 4) { let p = P { x: i, y: i * 2 }; s = s + p.x + p.y; i = i + 1; } return s; }`, 18},
 		{"struct-update-one", `struct P { x: i32, y: i32 } function main(): i32 { let p = P { x: 1, y: 2 }; let q = P { ...p, y: 9 }; return q.x + q.y; }`, 10},
 		{"struct-update-keeps-base", `struct P { x: i32, y: i32 } function main(): i32 { let p = P { x: 5, y: 6 }; let q = P { ...p, x: 50 }; return p.x + q.x; }`, 55},
-		// Functional update with a NON-IDENT base (`P { ...<expr>, f: v }`): the
-		// base is spilled into a scratch local once, so each copied field re-reads
-		// the same evaluated value. Covers a struct-returning call, a struct field
-		// read, and a struct-array element as the base.
 		{"struct-update-call-base", `struct P { x: i32, y: i32 } function mk(): P { return P { x: 3, y: 4 }; } function main(): i32 { let p = P { ...mk(), y: 9 }; return p.x * 10 + p.y; }`, 39},
 		{"struct-update-field-base", `struct Inner { a: i32, b: i32 } struct Outer { inner: Inner } function main(): i32 { let o = Outer { inner: Inner { a: 5, b: 6 } }; let n = Inner { ...o.inner, b: 20 }; return n.a * 10 + n.b; }`, 70},
 		{"struct-update-index-base", `struct P { x: i32, y: i32 } function main(): i32 { let a: P[] = [P { x: 1, y: 2 }, P { x: 3, y: 4 }]; let q = P { ...a[1], y: 9 }; return q.x * 10 + q.y; }`, 39},
-		// Field mutation `p.x = v` (struct_set).
 		{"field-mutate", `struct P { x: i32, y: i32 } function main(): i32 { let p = P { x: 1, y: 2 }; p = P { ...p, x: 40 }; return p.x + p.y; }`, 42},
 		{"field-mutate-loop", `struct C { n: i32 } function main(): i32 { let c = C { n: 0 }; let i = 0; while (i < 5) { c = C { ...c, n: c.n + i }; i = i + 1; } return c.n; }`, 10},
 		{"field-mutate-alias", `struct P { x: i32 } function main(): i32 { let p = P { x: 1 }; let q = p; q = P { ...q, x: 9 }; return p.x * 10 + q.x; }`, 19},
-		// Tuples (tuple_make / tuple_get; no shape slot, numeric .N access) + 2-elem destructure.
 		{"tuple-access", `function main(): i32 { let t = (3, 4); return t.0 + t.1; }`, 7},
 		{"tuple-three", `function main(): i32 { let t = (1, 2, 3); return t.0 * 100 + t.1 * 10 + t.2; }`, 123},
 		{"tuple-destructure", `function main(): i32 { let (a, b) = (40, 2); return a + b; }`, 42},
 		{"tuple-expr-elems", `function main(): i32 { let x = 5; let t = (x * 2, x + 1); return t.0 + t.1; }`, 16},
-		// A tuple-returning function with a `boolean` element.
 		{"tuple-bool-first", `function f(): (boolean, i32) { return (true, 7); } function main(): i32 { let t = f(); if (t.0) { return t.1; } return 0; }`, 7},
 		{"tuple-bool-first-false", `function f(): (boolean, i32) { return (false, 7); } function main(): i32 { let t = f(); if (t.0) { return t.1; } return 99; }`, 99},
 		{"tuple-bool-second", `function f(): (i32, boolean) { return (9, true); } function main(): i32 { let t = f(); if (t.1) { return t.0; } return 0; }`, 9},
 		{"tuple-bool-destructure", `function f(): (boolean, i32) { return (true, 42); } function main(): i32 { let (b, n) = f(); if (b) { return n; } return 0; }`, 42},
 		{"tuple-bool-both", `function f(): (boolean, boolean) { return (true, false); } function main(): i32 { let t = f(); let r = 0; if (t.0) { r = r + 1; } if (t.1) { r = r + 10; } return r; }`, 1},
-		// A tuple return with a ≤32-bit non-i32 integer element (u32 / sub-word
-		// u8) — these occupy the same i32 slot. Covers the high-bit u32 case and
-		// sub-word wrap.
 		{"tuple-u32", `function f(): (u32, i32) { return (4000000000 as u32, 7); } function main(): i32 { let t = f(); let hi: u32 = t.0 >> 30; return (hi as i32) + t.1; }`, 10},
 		{"tuple-u8", `function f(): (u8, i32) { return (250 as u8, 5); } function main(): i32 { let t = f(); return (t.0 as i32) + t.1; }`, 255},
 		{"tuple-u32-second", `function f(): (i32, u32) { return (3, 9 as u32); } function main(): i32 { let t = f(); return t.0 + (t.1 as i32); }`, 12},
-		// A u64 tuple element occupies an 8-byte slot; `.N` access, destructure,
-		// and the 2nd-element position all preserve the full 64 bits, and the
-		// element stays UNSIGNED for shifts (bit-63-set >> case).
 		{"tuple-u64-access", `function f(): (u64, i32) { return (4294967296 as u64, 5); } function main(): i32 { let t = f(); let q: u64 = t.0 >> 32; return (q as i32) + t.1; }`, 6},
 		{"tuple-u64-destr", `function f(): (u64, i32) { return (5000000000 as u64, 3); } function main(): i32 { let (hi, n) = f(); let q: u64 = hi / (1000000000 as u64); return (q as i32) + n; }`, 8},
 		{"tuple-u64-second", `function f(): (i32, u64) { return (2, 8000000000 as u64); } function main(): i32 { let t = f(); let q: u64 = t.1 / (1000000000 as u64); return t.0 + (q as i32); }`, 10},
 		{"tuple-u64-unsigned", `function f(): (u64, i32) { return (18000000000000000000 as u64, 1); } function main(): i32 { let t = f(); let q: u64 = t.0 >> 60; return (q as i32) + t.1; }`, 16},
-		// A 4-byte scalar-array (i32[]/u32[]) tuple element is a pointer in one
-		// slot like a string/struct element; destructure binds it as an array so
-		// `arr[i]` reads back. Covers both element positions.
 		{"tuple-i32arr-destr", `function f(): (i32[], i32) { return ([5, 10], 7); } function main(): i32 { let (arr, n) = f(); return arr[0] + arr[1] + n; }`, 22},
 		{"tuple-u32arr-destr", `function f(): (u32[], i32) { return ([5, 10], 7); } function main(): i32 { let (arr, n) = f(); return (arr[0] as i32) + (arr[1] as i32) + n; }`, 22},
 		{"tuple-i32arr-second", `function f(): (i32, i32[]) { return (3, [10, 20]); } function main(): i32 { let (n, arr) = f(); return n + arr[0] + arr[1]; }`, 33},
-		// f32 in composites occupies the f64 8-byte slot (Fern represents f32 as f64
-		// internally), so tuple elements + struct fields lower like f64: `.N`
-		// access, destructure, 2nd-position, and float arithmetic on the element.
 		{"tuple-f32-access", `function f(): (f32, i32) { return (4.5 as f32, 3); } function main(): i32 { let t = f(); return (t.0 as i32) + t.1; }`, 7},
 		{"tuple-f32-destr", `function f(): (f32, i32) { return (6.5 as f32, 2); } function main(): i32 { let (a, n) = f(); return (a as i32) + n; }`, 8},
 		{"tuple-f32-second", `function f(): (i32, f32) { return (1, 9.5 as f32); } function main(): i32 { let t = f(); return t.0 + (t.1 as i32); }`, 10},
 		{"tuple-f32-arith", `function f(): (f32, i32) { return (2.5 as f32, 1); } function main(): i32 { let t = f(); let d: f32 = t.0 * 2.0; return (d as i32) + t.1; }`, 6},
 		{"struct-f32-field", `struct B { v: f32, n: i32 } function main(): i32 { let b = B { v: 2.5 as f32, n: 3 }; return (b.v as i32) + b.n; }`, 5},
 		{"struct-f32-ret", `struct B { v: f32, n: i32 } function mk(): B { return B { v: 7.5 as f32, n: 1 }; } function main(): i32 { let b = mk(); return (b.v as i32) + b.n; }`, 8},
-		// Methods (receiver = arg 0, static dispatch).
 		{"method-field", `struct P { x: i32 } function (p: P) get(): i32 { return p.x; } function main(): i32 { let p = P { x: 42 }; return p.get(); }`, 42},
 		{"method-with-arg", `struct B { v: i32 } function (b: B) scale(n: i32): i32 { return b.v * n; } function main(): i32 { let x = B { v: 4 }; return x.scale(3); }`, 12},
 		{"method-same-name-two-types", `struct A { n: i32 } struct B { n: i32 } function (a: A) get(): i32 { return a.n + 1; } function (b: B) get(): i32 { return b.n + 100; } function main(): i32 { let a = A { n: 5 }; let b = B { n: 5 }; return a.get() + b.get(); }`, 111},
-		// Enums + match (variant construction + variant_is dispatch + payload bind).
 		{"enum-payload", `enum E { A(i32), B } function f(e: E): i32 { match (e) { A(n) => { return n * 2; }, B => { return 9; } } return 0; } function main(): i32 { return f(A(21)); }`, 42},
 		{"match-guard-fallthrough", `enum E { Pos(i32), Neg(i32), Zero } function f(e: E): i32 { match (e) { Pos(n) when n > 10 => { return 1; }, Pos(n) => { return 2; }, _ => { return 3; } } return 0; } function main(): i32 { return f(Pos(20)) * 100 + f(Pos(5)) * 10 + f(Zero); }`, 123},
 		{"match-guard-mixed", `enum E { A(i32), B } function f(e: E): i32 { match (e) { A(n) when n > 3 => { return n * 2; }, A(n) => { return n; }, B => { return 99; } } return 0; } function main(): i32 { return f(A(5)) + f(A(1)) + f(B); }`, 110},
@@ -479,102 +258,55 @@ function (m: Map[string, i32]) cv(target: i32): boolean { for v in m.values() { 
 		{"opt-bind-result", `function chk(n: i32): Result[i32, i32] { if (n > 0) { return Ok(n * 2); } return Err(n + 50); } function f(n: i32): i32 { match (chk(n)) { Ok(x) => { return x; }, Err(e) => { return e; } } return 0; } function main(): i32 { return f(3) + f(0); }`, 56},
 		{"opt-bind-guard", `function g(n: i32): Option[i32] { if (n > 0) { return Some(n); } return None; } function f(n: i32): i32 { match (g(n)) { Some(x) when x > 10 => { return 1; }, Some(x) => { return x; }, None => { return 0; } } return 0; } function main(): i32 { return f(20) * 100 + f(5) * 10 + f(0); }`, 150},
 		{"opt-bind-string", `function name(n: i32): Option[string] { if (n > 0) { return Some("hello"); } return None; } function f(n: i32): i32 { match (name(n)) { Some(s) => { return s.len(); }, None => { return 0; } } return 0; } function main(): i32 { return f(1); }`, 5},
-		// Option/Result payload that is itself an ENUM value — bound by pointer
-		// and typed with the enum name, so a nested `match (c)` / `c.method()`
-		// resolves (the Option/Result-path analog of #2979).
 		{"opt-bind-enum", `enum C { R, G } function g(b: i32): Option[C] { if (b > 0) { return Some(G); } return None; } function main(): i32 { match (g(1)) { Some(c) => { match (c) { R => { return 1; }, G => { return 2; } } }, None => { return 0; } } return 0; }`, 2},
 		{"opt-bind-enum-method", `enum C { R, G } function (c: C) k(): i32 { match (c) { R => { return 1; }, G => { return 2; } } return 0; } function g(): Option[C] { return Some(G); } function main(): i32 { match (g()) { Some(c) => { return c.k(); }, None => { return 0; } } return 0; }`, 2},
 		{"result-bind-enum", `enum C { R, G } function g(): Result[C, i32] { return Ok(G); } function main(): i32 { match (g()) { Ok(c) => { match (c) { R => { return 1; }, G => { return 2; } } }, Err(e) => { return e; } } return 0; }`, 2},
-		// NESTED Option/Result payload — `Some(inner)` where inner is itself an
-		// Option/Result: bound by pointer + typed so the inner match recovers.
 		{"opt-bind-nested-opt", `function g(n: i32): Option[Option[i32]] { if (n > 0) { return Some(Some(n)); } return None; } function main(): i32 { match (g(5)) { Some(inner) => { match (inner) { Some(x) => { return x; }, None => { return 99; } } }, None => { return 0; } } return 0; }`, 5},
 		{"opt-bind-nested-none", `function g(n: i32): Option[Option[i32]] { if (n > 3) { return Some(None); } return None; } function main(): i32 { match (g(5)) { Some(inner) => { match (inner) { Some(x) => { return x; }, None => { return 99; } } }, None => { return 0; } } return 0; }`, 99},
 		{"opt-bind-nested-result", `function g(n: i32): Option[Result[i32, i32]] { return Some(Ok(n)); } function main(): i32 { match (g(7)) { Some(r) => { match (r) { Ok(x) => { return x; }, Err(e) => { return e; } } }, None => { return 0; } } return 0; }`, 7},
-		// `match (a[i])` on an Option/Result ARRAY element — the element type is
-		// recovered from the array slot's annotated `Option[T][]` / `Result[…][]`
-		// (stripping the trailing `[]`), incl. via a local bind, a manual
-		// while-loop, and an array alias. (`for o in a { match(o) }` is blocked
-		// upstream by an asmcore checker mis-inference, tracked separately.)
 		{"optarr-index-match", `function main(): i32 { let a: Option[i32][] = [Some(7), None]; match (a[0]) { Some(x) => { return x; }, None => { return 0; } } return 0; }`, 7},
 		{"optarr-index-via-local", `function main(): i32 { let a: Option[i32][] = [Some(7), None]; let o = a[0]; match (o) { Some(x) => { return x; }, None => { return 0; } } return 0; }`, 7},
 		{"optarr-while-match", `function main(): i32 { let a: Option[i32][] = [Some(5), None, Some(3)]; let i = 0; let s = 0; while (i < a.len()) { match (a[i]) { Some(x) => { s = s + x; }, None => {} } i = i + 1; } return s; }`, 8},
 		{"resultarr-index-match", `function main(): i32 { let a: Result[i32, i32][] = [Ok(5), Err(3)]; match (a[1]) { Ok(x) => { return x; }, Err(e) => { return e * 10; } } return 0; }`, 30},
-		// Option/Result-ARRAY struct field: construction + `.len()` +
-		// `match (b.o[i])` (field-array element).
 		{"optarr-field-match", `struct B { o: Option[i32][] } function main(): i32 { let b = B { o: [Some(7), None] }; match (b.o[0]) { Some(x) => { return x; }, None => { return 0; } } return 0; }`, 7},
 		{"resultarr-field-match", `struct B { o: Result[i32, i32][] } function main(): i32 { let b = B { o: [Ok(5), Err(3)] }; match (b.o[1]) { Ok(x) => { return x; }, Err(e) => { return e * 10; } } return 0; }`, 30},
-		// An Option/Result payload that is a u32 — a full i32 slot like i32 (no
-		// narrowing on read), so the box stores / reads at the default 32-bit
-		// width; the bound payload is typed u32 so its arithmetic wraps.
 		{"opt-u32-field-match", `struct S { o: Option[u32] } function main(): i32 { let s = S { o: Some(7) }; match (s.o) { Some(n) => { return n as i32; }, None => { return 1; } } return 0; }`, 7},
 		{"result-u32-field-match", `struct S { r: Result[u32, i32] } function main(): i32 { let s = S { r: Ok(9) }; match (s.r) { Ok(n) => { return n as i32; }, Err(e) => { return e; } } return 0; }`, 9},
 		{"opt-u32-payload-shift", `function main(): i32 { let o: Option[u32] = Some(4294967294 as u32); match (o) { Some(n) => { return (n >> 31) as i32; }, None => { return 0; } } return 0; }`, 1},
 		{"opt-u32-tuple-field", `struct S { t: (Option[u32], i32) } function main(): i32 { let s = S { t: (Some(7), 3) }; return s.t.1; }`, 3},
-		// A u64 Option/Result payload occupies the i64 8-byte slot: construction tags
-		// a u64 arg "i64" (8-byte store), and the match binding reads via
-		// op_opt_payload_w(64) and marks the slot u64. The full 64 bits must
-		// survive the box round-trip — `5000000000 >> 32 == 1` (a 32-bit-truncated
-		// read would give 0). The value is < 2^63, so the shift is signedness-
-		// agnostic: this pins the 8-byte WIDTH, independent of the separate
-		// frontend gap that a match-bound u64 isn't typed unsigned for `>>`.
 		{"opt-u64-field-match", `struct S { o: Option[u64] } function main(): i32 { let s = S { o: Some(42 as u64) }; match (s.o) { Some(n) => { return n as i32; }, None => { return 1; } } return 0; }`, 42},
 		{"result-u64-field-match", `struct S { r: Result[u64, i32] } function main(): i32 { let s = S { r: Ok(9 as u64) }; match (s.r) { Ok(n) => { return n as i32; }, Err(e) => { return e; } } return 0; }`, 9},
 		{"opt-u64-payload-wide", `function main(): i32 { let o: Option[u64] = Some(5000000000 as u64); match (o) { Some(n) => { return (n >> 32) as i32; }, None => { return 0; } } return 0; }`, 1},
 		{"opt-u64-tuple-field", `struct S { t: (Option[u64], i32) } function main(): i32 { let s = S { t: (Some(7 as u64), 3) }; return s.t.1; }`, 3},
 		{"optarr-alias-index-match", `function main(): i32 { let a: Option[i32][] = [Some(9), None]; let b = a; let o = b[0]; match (o) { Some(x) => { return x; }, None => { return 0; } } return 0; }`, 9},
-		// `for o in optArray { match (o) }` — the `Option[T][]` / `Result[…][]`
-		// annotation is an array of Option, not `Option[unknown]` (#3000):
-		// `ty_from_name` strips the trailing array `[]` before the Option[/Result[
-		// prefix.
 		{"foreach-optarr-match", `function main(): i32 { let a: Option[i32][] = [Some(1), Some(2), None]; let s = 0; for o in a { match (o) { Some(x) => { s = s + x; }, None => { s = s + 100; } } } return s; }`, 103},
 		{"foreach-resultarr-match", `function main(): i32 { let a: Result[i32, i32][] = [Ok(5), Err(3)]; let s = 0; for r in a { match (r) { Ok(x) => { s = s + x; }, Err(e) => { s = s + e * 10; } } } return s; }`, 35},
 		{"opt-bind-result-strerr", `function chk(n: i32): Result[i32, string] { if (n > 0) { return Ok(n); } return Err("fail"); } function f(n: i32): i32 { match (chk(n)) { Ok(x) => { return x; }, Err(e) => { return e.len(); } } return 0; } function main(): i32 { return f(7) * 10 + f(0); }`, 74},
 		{"opt-bind-local", `function g(n: i32): Option[i32] { if (n > 0) { return Some(n + 100); } return None; } function f(n: i32): i32 { let r = g(n); match (r) { Some(x) => { return x; }, None => { return 0; } } return 0; } function main(): i32 { return f(5); }`, 105},
 		{"opt-bind-local-strerr", `function chk(n: i32): Result[i32, string] { if (n > 0) { return Ok(n); } return Err("oops"); } function f(n: i32): i32 { let r = chk(n); match (r) { Ok(x) => { return x; }, Err(e) => { return e.len(); } } return 0; } function main(): i32 { return f(7) * 10 + f(0); }`, 74},
 		{"opt-bind-param", `function f(o: Option[i32]): i32 { match (o) { Some(x) => { return x * 2; }, None => { return 0; } } return 0; } function main(): i32 { return f(Some(21)) + f(None); }`, 42},
-		// The std/array `position` / std/string `find` body shape: scan a string[]
-		// for an equal element, returning `Some(index)` or `None` (a while-loop +
-		// string equality + Option construction in one function).
 		{"strarr-position-hit", `function pos(a: string[], s: string): Option[i32] { let i = 0; while (i < a.len()) { if (a[i] == s) { return Some(i); } i = i + 1; } return None; } function main(): i32 { match (pos(["a", "b", "c"], "b")) { Some(i) => { return i; }, None => { return 99; } } return 0; }`, 1},
 		{"strarr-position-miss", `function pos(a: string[], s: string): Option[i32] { let i = 0; while (i < a.len()) { if (a[i] == s) { return Some(i); } i = i + 1; } return None; } function main(): i32 { match (pos(["a", "b"], "z")) { Some(_) => { return 1; }, None => { return 7; } } return 0; }`, 7},
-		// match on a STRUCT-METHOD call returning Option/Result, binding the
-		// payload (#2969 follow-up). Direct and via-local forms, Option + Result,
-		// i32 + string payloads.
 		{"opt-method-bind", `struct Box { v: i32 } function (b: Box) get(): Option[i32] { if (b.v > 0) { return Some(b.v); } return None; } function main(): i32 { let x = Box { v: 5 }; match (x.get()) { Some(n) => { return n; }, None => { return 0; } } return 0; }`, 5},
 		{"opt-method-bind-local", `struct Box { v: i32 } function (b: Box) get(): Option[i32] { if (b.v > 0) { return Some(b.v); } return None; } function main(): i32 { let x = Box { v: 5 }; let o = x.get(); match (o) { Some(n) => { return n; }, None => { return 0; } } return 0; }`, 5},
 		{"result-method-bind", `struct Box { v: i32 } function (b: Box) chk(): Result[i32, i32] { if (b.v > 0) { return Ok(b.v + 30); } return Err(b.v); } function main(): i32 { let x = Box { v: 5 }; match (x.chk()) { Ok(n) => { return n; }, Err(e) => { return e; } } return 0; }`, 35},
 		{"opt-method-bind-string", `struct Box { v: i32 } function (b: Box) name(): Option[string] { if (b.v > 0) { return Some("hello"); } return None; } function main(): i32 { let x = Box { v: 5 }; match (x.name()) { Some(s) => { return s.len(); }, None => { return 0; } } return 0; }`, 5},
-		// Enum-receiver method calls `c.method()` — an unannotated enum-value local
-		// (`let c = Green`) dispatches to `<Enum>.<method>` (#2947).
 		{"enum-method-payloadless", `enum Color { Red, Green } function (c: Color) code(): i32 { match (c) { Red => { return 1; }, Green => { return 2; } } return 0; } function main(): i32 { let c = Green; return c.code(); }`, 2},
 		{"enum-method-payload", `enum E { A(i32), B } function (e: E) v(): i32 { match (e) { A(n) => { return n; }, B => { return 0; } } return 0; } function main(): i32 { let e = A(9); return e.v(); }`, 9},
 		{"enum-method-args", `enum Op2 { Add, Mul } function (o: Op2) ap(a: i32, b: i32): i32 { match (o) { Add => { return a + b; }, Mul => { return a * b; } } return 0; } function main(): i32 { let o = Add; let p = Mul; return o.ap(5, 7) * 100 + p.ap(5, 7); }`, 211},
 		{"enum-method-from-ctor", `enum E { A(i32), B } function (e: E) v(): i32 { match (e) { A(n) => { return n; }, B => { return 5; } } return 0; } function main(): i32 { let e = A(30); return e.v() + B.v(); }`, 35},
-		// Method call on a bound ENUM-typed match payload — `Node(l, r) =>
-		// l.sum() + r.sum()` dispatches `<Enum>.<method>` because the payload
-		// slot is typed with its enum name. Recursive enum (binary tree) +
-		// single recursive payload.
 		{"enum-method-recursive-tree", `enum Tree { Leaf(i32), Node(Tree, Tree) } function (t: Tree) sum(): i32 { match (t) { Leaf(n) => { return n; }, Node(l, r) => { return l.sum() + r.sum(); } } return 0; } function main(): i32 { return Node(Leaf(3), Node(Leaf(4), Leaf(5))).sum(); }`, 12},
 		{"enum-method-recursive-single", `enum Box { Wrap(Box), Base(i32) } function (b: Box) v(): i32 { match (b) { Base(n) => { return n; }, Wrap(inner) => { return inner.v(); } } return 0; } function main(): i32 { return Wrap(Wrap(Base(7))).v(); }`, 7},
-		// Enum-ARRAY element method calls `a[i].method()` — the element slot is
-		// typed with the enum, so dispatch resolves to `<Enum>.<method>` (#2954 item 2).
 		{"enum-array-method-annot", `enum C { R, G } function (c: C) k(): i32 { match (c) { R => { return 1; }, G => { return 2; } } return 0; } function main(): i32 { let a: C[] = [R, G]; return a[1].k(); }`, 2},
 		{"enum-array-method-literal", `enum C { R, G } function (c: C) k(): i32 { match (c) { R => { return 1; }, G => { return 2; } } return 0; } function main(): i32 { let a = [R, G]; return a[0].k() * 10 + a[1].k(); }`, 12},
 		{"enum-array-method-payload", `enum E { A(i32), B } function (e: E) v(): i32 { match (e) { A(n) => { return n; }, B => { return 9; } } return 0; } function main(): i32 { let a: E[] = [A(7), B]; return a[0].v() + a[1].v(); }`, 16},
 		{"enum-array-elem-local-method", `enum C { R, G } function (c: C) k(): i32 { match (c) { R => { return 1; }, G => { return 2; } } return 0; } function main(): i32 { let a: C[] = [R, G]; let c = a[1]; return c.k(); }`, 2},
 		{"enum-arr-forin", `enum C { R, G } function (c: C) k(): i32 { match (c) { R => { return 1; }, G => { return 2; } } return 0; } function main(): i32 { let a = [R, G, G]; let s = 0; for x in a { s = s + x.k(); } return s; }`, 5},
 		{"enum-arr-match", `enum C { R, G } function main(): i32 { let a = [R, G]; match (a[1]) { R => { return 10; }, G => { return 20; } } return 0; }`, 20},
-		// A struct with an enum-ARRAY field (`Box { items: C[] }`): construction +
-		// `.len()` + element index/match.
 		{"struct-enumarr-len", `enum C { R, G } struct Box { items: C[] } function main(): i32 { let b = Box { items: [R, G] }; return b.items.len(); }`, 2},
 		{"struct-enumarr-index-match", `enum C { R, G } struct Box { items: C[] } function main(): i32 { let b = Box { items: [R, G, R] }; match (b.items[1]) { R => { return 1; }, G => { return 2; } } return 0; }`, 2},
-		// Method dispatch on an ENUM-array field element (`b.items[i].method()`)
-		// — the field-array index recovers the enum element type so it dispatches
-		// `<Enum>.<method>` (the field analog of the local enum-array case).
 		{"struct-enumarr-elem-method", `enum C { R, G } function (c: C) k(): i32 { match (c) { R => { return 1; }, G => { return 2; } } return 0; } struct Box { items: C[] } function main(): i32 { let b = Box { items: [R, G] }; return b.items[0].k() * 10 + b.items[1].k(); }`, 12},
 		{"struct-enumarr-elem-method-payload", `enum E { A(i32), B } function (e: E) v(): i32 { match (e) { A(n) => { return n; }, B => { return 9; } } return 0; } struct Box { items: E[] } function main(): i32 { let b = Box { items: [A(7), B] }; return b.items[0].v() + b.items[1].v(); }`, 16},
-		// A struct with a NESTED (array-of-array) field `i32[][]`: construction +
-		// `.len()` + element index (incl. via a param).
 		{"struct-nested-arr-index", `struct G { rows: i32[][] } function main(): i32 { let g = G { rows: [[1, 2], [3, 4]] }; return g.rows[1][0]; }`, 3},
 		{"struct-nested-arr-len", `struct G { rows: i32[][] } function main(): i32 { let g = G { rows: [[1, 2], [3, 4]] }; return g.rows.len() + g.rows[0].len(); }`, 4},
 		{"struct-nested-arr-param", `struct G { rows: i32[][] } function first(g: G): i32 { return g.rows[0][0]; } function main(): i32 { let g = G { rows: [[5, 6]] }; return first(g); }`, 5},
@@ -585,9 +317,6 @@ function (m: Map[string, i32]) cv(target: i32): boolean { for v in m.values() { 
 		{"forin-i32-param", `function total(xs: i32[]): i32 { let s = 0; for v in xs { s = s + v; } return s; } function main(): i32 { let a = [1, 2, 3, 4, 5]; return total(a); }`, 15},
 		{"forin-nested", `function main(): i32 { let xs = [1, 2, 3]; let t = 0; for a in xs { for b in xs { t = t + a * b; } } return t; }`, 36},
 		{"forin-string", `function main(): i32 { let ss: string[] = ["a", "bb", "ccc", "dddd"]; let n = 0; for s in ss { n = n + s.len(); } return n; }`, 10},
-		// Array-of-arrays (#2987): `let a: T[][]` / `[[…], …]` records the slot as
-		// an array-of-arrays, so the inner binding (`let row = a[i]` or the loop
-		// var of `for row in a`) types as an array and `for x in row` flows.
 		{"arr2d-forin-annot", `function main(): i32 { let a: i32[][] = [[1, 2], [3, 4]]; let s = 0; for row in a { for x in row { s = s + x; } } return s; }`, 10},
 		{"arr2d-forin-literal", `function main(): i32 { let a = [[1, 2], [3, 4]]; let s = 0; for row in a { for x in row { s = s + x; } } return s; }`, 10},
 		{"arr2d-manual-bind", `function main(): i32 { let a: i32[][] = [[1, 2], [3, 4]]; let row = a[1]; let s = 0; for x in row { s = s + x; } return s; }`, 7},
@@ -595,17 +324,11 @@ function (m: Map[string, i32]) cv(target: i32): boolean { for v in m.values() { 
 		{"arr2d-alias", `function main(): i32 { let a = [[1, 2], [3, 4]]; let b = a; let s = 0; for row in b { for x in row { s = s + x; } } return s; }`, 10},
 		{"arr2d-rowlen", `function main(): i32 { let a = [[1, 2, 3], [4]]; let s = 0; for row in a { s = s + row.len(); } return s; }`, 4},
 		{"enum-struct-payload", `struct BinExpr { left: i32, right: i32 } enum Expr { Lit(i32), Binary(BinExpr) } function eval(e: Expr): i32 { match (e) { Lit(n) => { return n; }, Binary(b) => { return b.left + b.right; } } return 0; } function main(): i32 { return eval(Lit(7)) + eval(Binary(BinExpr { left: 3, right: 9 })); }`, 19},
-		// UNION-type (`type Node = A | B`) variant payload binding (#3179). Each
-		// variant is a pre-existing struct (no synthetic `__ev` field), so the
-		// match arm binds the WHOLE scrutinee box pointer typed with the variant's
-		// struct name — a later `x.value` then resolves.
 		{"union-eval", `struct Num { value: i32 } struct Add { left: i32, right: i32 } type Node = Num | Add; function eval(n: Node): i32 { match (n) { Num(x) => { return x.value; }, Add(a) => { return a.left + a.right; } } return 0; } function main(): i32 { return eval(Num { value: 7 }) * 100 + eval(Add { left: 3, right: 9 }); }`, 200},
 		{"union-multifield", `struct Pt { x: i32, y: i32 } struct Pt3 { x: i32, y: i32, z: i32 } type V = Pt | Pt3; function sum(v: V): i32 { match (v) { Pt(p) => { return p.x + p.y; }, Pt3(q) => { return q.x + q.y + q.z; } } return 0; } function main(): i32 { return sum(Pt { x: 3, y: 4 }) * 100 + sum(Pt3 { x: 1, y: 2, z: 3 }); }`, 194},
 		{"union-field-in-expr", `struct VInt { v: i32 } struct VStr { s: string } type Val = VInt | VStr; function size(x: Val): i32 { match (x) { VInt(i) => { return i.v * 2; }, VStr(s) => { return s.s.len() + 1; } } return -1; } function main(): i32 { return size(VInt { v: 20 }) + size(VStr { s: "abc" }); }`, 44},
 		{"union-nested-match", `struct Lit { n: i32 } struct Bin { l: i32, r: i32 } type Expr2 = Lit | Bin; function ev(e: Expr2): i32 { match (e) { Lit(x) => { return x.n; }, Bin(b) => { let t = 0; match (b.l > b.r) { _ => { t = b.l + b.r; } } return t; } } return 0; } function main(): i32 { return ev(Lit { n: 5 }) + ev(Bin { l: 10, r: 20 }); }`, 35},
 		{"union-method-on-field", `struct Box1 { v: i32 } struct Box2 { v: i32 } type B = Box1 | Box2; function (a: Box1) g(): i32 { return a.v + 1; } function (b: Box2) g(): i32 { return b.v + 100; } function pick(x: B): i32 { match (x) { Box1(p) => { return p.g(); }, Box2(q) => { return q.g(); } } return 0; } function main(): i32 { return pick(Box1 { v: 5 }) + pick(Box2 { v: 5 }); }`, 111},
-		// A `_` binding on a union member skips the box bind (no field use) — must
-		// still lower and dispatch on the variant tag alone.
 		{"union-wildcard-bind", `struct On { } struct Off { } type Sw = On | Off; function f(s: Sw): i32 { match (s) { On(_) => { return 1; }, Off(_) => { return 0; } } return 9; } function main(): i32 { return f(On { }) * 10 + f(Off { }); }`, 10},
 		{"enum-struct-payload-guard", `struct P { x: i32, y: i32 } enum Shape { Rect(P), Dot } function area(s: Shape): i32 { match (s) { Rect(p) when p.x > 0 => { return p.x * p.y; }, _ => { return 0; } } return 0; } function main(): i32 { return area(Rect(P { x: 4, y: 5 })); }`, 20},
 		{"enum-struct-payload-nested", `struct Inner { v: i32 } struct Mid { i: Inner } enum E { A(Mid), B } function f(e: E): i32 { match (e) { A(m) => { return m.i.v; }, B => { return 9; } } return 0; } function main(): i32 { return f(A(Mid { i: Inner { v: 42 } })) + f(B); }`, 51},
@@ -616,267 +339,142 @@ function (m: Map[string, i32]) cv(target: i32): boolean { for v in m.values() { 
 		{"enum-strarr-payload-forin", `enum E { Words(string[]), None } function f(e: E): i32 { match (e) { Words(w) => { let n = 0; for s in w { n = n + s.len(); } return n; }, None => { return 0; } } return 0; } function main(): i32 { return f(Words(["a", "bb", "ccc"])); }`, 6},
 		{"struct-strarr-field-len", `struct Doc { lines: string[] } function nl(d: Doc): i32 { return d.lines.len(); } function main(): i32 { let d = Doc { lines: ["x", "y", "z"] }; return nl(d); }`, 3},
 		{"struct-strarr-field-index", `struct Doc { lines: string[] } function f(d: Doc): i32 { return d.lines[1].len(); } function main(): i32 { let d = Doc { lines: ["a", "bb", "ccc"] }; return f(d); }`, 2},
-		// `for c in r.field` over an array-typed struct field (string[] / struct[] /
-		// enum[]): the loop borrows the field, so the buffer's lifetime stays with
-		// the owning struct (#3003).
 		{"struct-strarr-field-forin", `struct R { tags: string[] } function main(): i32 { let r = R { tags: ["ab", "cde"] }; let n = 0; for t in r.tags { n = n + t.len(); } return n; }`, 5},
 		{"struct-structarr-field-forin", `struct P { x: i32 } struct R { items: P[] } function (p: P) dbl(): i32 { return p.x * 2; } function main(): i32 { let r = R { items: [P { x: 3 }, P { x: 4 }] }; let n = 0; for p in r.items { n = n + p.dbl(); } return n; }`, 14},
 		{"struct-enumarr-field-forin", `enum C { A, B } struct R { cells: C[] } function main(): i32 { let r = R { cells: [C.A, C.B] }; let n = 0; for c in r.cells { match (c) { C.A => { n = n + 1; }, C.B => { n = n + 2; } } } return n; }`, 3},
-		// The owning struct is read AFTER the loop — the borrow must not free its
-		// field buffer.
 		{"struct-strarr-field-forin-after", `struct R { tags: string[] } function main(): i32 { let r = R { tags: ["ab", "cd", "e"] }; let n = 0; for t in r.tags { n = n + t.len(); } return n + r.tags.len(); }`, 8},
-		// The same loop over a scalar-array field (i32[]) (#3003).
 		{"struct-i32arr-field-forin", `struct R { nums: i32[] } function main(): i32 { let r = R { nums: [3, 4] }; let n = 0; for v in r.nums { n = n + v; } return n; }`, 7},
-		// Discarded fresh-ret-CALL local (#3457 follow-up): `let r = mk()` where mk
-		// returns a fresh struct; r is READ (field copies) then goes dead without
-		// escaping, so it is deep-dropped at scope end (the freed buffers are
-		// sole-owned, never a caller alias).
 		{"fresh-ret-call-discarded", `struct Box { ops: i32[] } function mk(): Box { return Box { ops: [1, 2, 3] }; } function use_it(): i32 { let r: Box = mk(); let a = r.ops[0]; let b = r.ops[1]; let c = r.ops[2]; return a + b + c; } function main(): i32 { return use_it(); }`, 6},
-		// Same, but the discarded local's field is forwarded into a fresh builder
-		// (the builder-style `s = s.append_all(r.ops)`) then r dies — the field
-		// read is a borrow, so r stays reclaimable.
 		{"fresh-ret-call-discarded-forward", `struct Box { ops: i32[] } function mk(): Box { return Box { ops: [5, 6, 7] }; } function sum(xs: i32[]): i32 { let s = 0; let i = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; } function use_it(): i32 { let r: Box = mk(); return sum(r.ops); } function main(): i32 { return use_it(); }`, 18},
 		{"tuple-str-i32-dotn", `function main(): i32 { let t = ("hello", 7); return t.0.len() + t.1; }`, 12},
 		{"tuple-str-i32-destructure", `function main(): i32 { let (a, b) = ("world", 3); return a.len() + b; }`, 8},
 		{"tuple-struct-dotn", `struct P { x: i32, y: i32 } function main(): i32 { let t = (P { x: 4, y: 5 }, 2); return t.0.x * t.0.y + t.1; }`, 22},
-		// A function-VALUE tuple element call `t.N(args)` lowers to tuple_get +
-		// call_indirect, like the fn-typed struct field (#3016).
 		{"tuple-fn-value-call", `function inc(n: i32): i32 { return n + 1; } function main(): i32 { let t = (inc, 5); return t.0(t.1); }`, 6},
 		{"tuple-fn-value-call-multi", `function inc(n: i32): i32 { return n + 1; } function dbl(n: i32): i32 { return n * 2; } function main(): i32 { let t = (inc, dbl, 5); return t.0(t.2) + t.1(t.2); }`, 16},
 		{"tuple-fn-value-call-2args", `function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { let t = ("x", add); return t.1(3, 4); }`, 7},
-		// An Option value in a tuple, matched via `t.N`, recovers the payload
-		// (#3018).
 		{"tuple-option-i32-match", `function main(): i32 { let t = (Some(7), 3); match (t.0) { Some(x) => { return x + t.1; }, None => { return 0; } } return 0; }`, 10},
 		{"tuple-option-i32-idx1-match", `function main(): i32 { let t = (3, Some(7)); match (t.1) { Some(x) => { return x + t.0; }, None => { return 0; } } return 0; }`, 10},
 		{"tuple-option-string-match", `function main(): i32 { let t = (Some("hello"), 3); match (t.0) { Some(s) => { return s.len() + t.1; }, None => { return 0; } } return 0; }`, 8},
 		{"tuple-option-from-call-none", `function f(b: boolean): Option[i32] { if (b) { return Some(7); } return None; } function main(): i32 { let t = (f(false), 5); match (t.0) { Some(x) => { return x + t.1; }, None => { return t.1 + 100; } } return 0; }`, 105},
-		// A direct `Some(x)` construction matched/bound recovers the payload, the
-		// construction analogue of the Option-returning-call case (#3024).
 		{"some-local-i32-match", `function main(): i32 { let o = Some(7); match (o) { Some(x) => { return x; }, None => { return 0; } } return 0; }`, 7},
 		{"some-local-string-match", `function main(): i32 { let o = Some("hello"); match (o) { Some(s) => { return s.len(); }, None => { return 0; } } return 0; }`, 5},
 		{"some-local-struct-match", `struct S { x: i32 } function main(): i32 { let o = Some(S { x: 5 }); match (o) { Some(s) => { return s.x; }, None => { return 0; } } return 0; }`, 5},
 		{"some-direct-match", `function main(): i32 { match (Some(9)) { Some(x) => { return x; }, None => { return 0; } } return 0; }`, 9},
 		{"some-local-reassign-none", `function pick(b: boolean): i32 { let o = Some(7); if (b) { o = None; } match (o) { Some(x) => { return x; }, None => { return 99; } } return 0; } function main(): i32 { return pick(true) + pick(false); }`, 106},
-		// An unannotated array literal of Option values (#3027, array sibling of
-		// #3024).
 		{"some-array-foreach", `function main(): i32 { let a = [Some(1), Some(2), None]; let n = 0; for o in a { match (o) { Some(x) => { n = n + x; }, None => {} } } return n; }`, 3},
 		{"some-array-index", `function main(): i32 { let a = [Some(4), Some(2)]; match (a[0]) { Some(x) => { return x; }, None => { return 0; } } return 0; }`, 4},
 		{"some-array-string", `function main(): i32 { let a = [Some("ab"), None, Some("c")]; let n = 0; for o in a { match (o) { Some(s) => { n = n + s.len(); }, None => {} } } return n; }`, 3},
-		// A function returning a tuple with an Option element (#3029);
-		// var-bind / destructure recover the payload.
 		{"tuple-ret-opt-var", `function mk(): (Option[i32], i32) { return (Some(3), 4); } function main(): i32 { let t = mk(); match (t.0) { Some(x) => { return x + t.1; }, None => { return 0; } } return 0; }`, 7},
 		{"tuple-ret-opt-destr", `function mk(): (Option[i32], i32) { return (Some(3), 4); } function main(): i32 { let (o, n) = mk(); match (o) { Some(x) => { return x + n; }, None => { return 0; } } return 0; }`, 7},
 		{"tuple-ret-opt-string", `function mk(): (Option[string], i32) { return (Some("ab"), 4); } function main(): i32 { let t = mk(); match (t.0) { Some(s) => { return s.len() + t.1; }, None => { return 0; } } return 0; }`, 6},
 		{"tuple-ret-opt-none", `function mk(b: boolean): (Option[i32], i32) { if (b) { return (None, 9); } return (Some(3), 4); } function main(): i32 { let t = mk(true); match (t.0) { Some(x) => { return x; }, None => { return t.1; } } return 0; }`, 9},
-		// A method with an Option/Result receiver (#3033): match(self) recovers the
-		// payload; the call dispatches to Option.<method>.
 		{"opt-recv-method-bound", `function (o: Option[i32]) unwrap_or(d: i32): i32 { match (o) { Some(x) => { return x; }, None => { return d; } } return d; } function main(): i32 { let o = Some(7); return o.unwrap_or(0); }`, 7},
 		{"opt-recv-method-direct", `function (o: Option[i32]) unwrap_or(d: i32): i32 { match (o) { Some(x) => { return x; }, None => { return d; } } return d; } function main(): i32 { return Some(7).unwrap_or(0); }`, 7},
 		{"opt-recv-method-none", `function (o: Option[i32]) unwrap_or(d: i32): i32 { match (o) { Some(x) => { return x; }, None => { return d; } } return d; } function main(): i32 { let o: Option[i32] = None; return o.unwrap_or(99); }`, 99},
 		{"opt-recv-method-string", `function (o: Option[string]) ln(): i32 { match (o) { Some(s) => { return s.len(); }, None => { return 0; } } return 0; } function main(): i32 { return Some("hello").ln(); }`, 5},
 		{"opt-recv-method-callrecv", `function get(b: boolean): Option[i32] { if (b) { return Some(8); } return None; } function (o: Option[i32]) unwrap_or(d: i32): i32 { match (o) { Some(x) => { return x; }, None => { return d; } } return d; } function main(): i32 { return get(true).unwrap_or(0) + get(false).unwrap_or(5); }`, 13},
-		// matching/binding the result of an Option-receiver method (#3051).
 		{"opt-recv-method-chain-direct", `function (o: Option[i32]) mi(): Option[i32] { match (o) { Some(x) => { return Some(x + 1); }, None => { return None; } } return None; } function main(): i32 { match (Some(5).mi()) { Some(x) => { return x; }, None => { return 0; } } return 0; }`, 6},
 		{"opt-recv-method-chain-bind", `function (o: Option[i32]) mi(): Option[i32] { match (o) { Some(x) => { return Some(x + 1); }, None => { return None; } } return None; } function main(): i32 { let r = Some(5).mi(); match (r) { Some(x) => { return x; }, None => { return 0; } } return 0; }`, 6},
 		{"opt-recv-method-chain-local", `function (o: Option[i32]) mi(): Option[i32] { match (o) { Some(x) => { return Some(x + 1); }, None => { return None; } } return None; } function main(): i32 { let o = Some(5); match (o.mi()) { Some(x) => { return x; }, None => { return 0; } } return 0; }`, 6},
-		// An Option-receiver method on a struct-method's Option result, and the
-		// chain matched (#3067).
 		{"opt-chain-on-struct-method", `struct B { v: i32 } function (b: B) find(): Option[i32] { return Some(b.v); } function (o: Option[i32]) uo(d: i32): i32 { match (o) { Some(x) => { return x; }, None => { return d; } } return d; } function main(): i32 { let b = B { v: 7 }; return b.find().uo(0); }`, 7},
 		{"opt-chain-on-struct-method-match", `struct B { v: i32 } function (b: B) find(): Option[i32] { return Some(b.v); } function main(): i32 { let b = B { v: 9 }; match (b.find()) { Some(x) => { return x; }, None => { return 0; } } return 0; }`, 9},
-		// An Option-receiver method on a struct's Option field or a tuple's Option
-		// element (#3070).
 		{"opt-method-on-struct-field", `struct B { v: Option[i32] } function (o: Option[i32]) uo(d: i32): i32 { match (o) { Some(x) => { return x; }, None => { return d; } } return d; } function main(): i32 { let b = B { v: Some(7) }; return b.v.uo(0); }`, 7},
 		{"opt-method-on-tuple-elem", `function (o: Option[i32]) uo(d: i32): i32 { match (o) { Some(x) => { return x; }, None => { return d; } } return d; } function main(): i32 { let t = (Some(5), 3); return t.0.uo(0) + t.1; }`, 8},
-		// An enum-receiver method returning Option, matched/chained (#3077).
 		{"enum-method-opt-result-match", `enum E { V(i32), N } function (e: E) get(): Option[i32] { match (e) { V(x) => { return Some(x); }, N => { return None; } } return None; } function main(): i32 { match (V(7).get()) { Some(x) => { return x; }, None => { return 0; } } return 0; }`, 7},
 		{"enum-method-opt-result-chain", `enum E { V(i32), N } function (e: E) get(): Option[i32] { match (e) { V(x) => { return Some(x); }, N => { return None; } } return None; } function (o: Option[i32]) uo(d: i32): i32 { match (o) { Some(x) => { return x; }, None => { return d; } } return d; } function main(): i32 { return V(6).get().uo(0) + N.get().uo(9); }`, 15},
-		// A match-EXPRESSION in value position (`return match (...) { arm => E }`)
-		// on a call-returning Option/Result scrutinee (#3081).
 		{"match-expr-call-result-ok", `function f(n: i32): Result[i32, i32] { return Ok(n); } function main(): i32 { return match (f(5)) { Ok(v) => v, Err(e) => e }; }`, 5},
 		{"match-expr-call-result-err", `function f(n: i32): Result[i32, i32] { if (n > 0) { return Ok(n); } return Err(99); } function main(): i32 { return match (f(0)) { Ok(v) => v, Err(e) => e }; }`, 99},
 		{"match-expr-call-option", `function f(n: i32): Option[i32] { if (n > 0) { return Some(n); } return None; } function main(): i32 { return match (f(7)) { Some(v) => v, None => 13 }; }`, 7},
-		// An UNANNOTATED nested Option local (`let a = Some(Some(5))`): the outer
-		// match binds `b` as Option[i32] and the inner `match (b)` recovers its
-		// payload (#3106).
 		{"nested-opt-unannot", `function main(): i32 { let a = Some(Some(5)); match (a) { Some(b) => { return match (b) { Some(v) => v, None => 1 }; }, None => { return 2; } } return 9; }`, 5},
 		{"nested-opt-unannot-inner-expr", `function main(): i32 { let a = Some(Some(42)); match (a) { Some(b) => { return match (b) { Some(v) => v * 2, None => 1 }; }, None => { return 2; } } return 9; }`, 84},
-		// The value-position (match-EXPRESSION) form of the nested-Option match: the
-		// outer `Some(b)` binds b: Option[i32] and the inner `match (b)` recovers
-		// its payload (#3111).
 		{"nested-opt-expr-ident", `function main(): i32 { let a = Some(Some(5)); return match (a) { Some(b) => match (b) { Some(v) => v, None => 1 }, None => 2 }; }`, 5},
 		{"nested-opt-expr-ident-derived", `function main(): i32 { let a = Some(Some(21)); return match (a) { Some(b) => match (b) { Some(v) => v * 2, None => 1 }, None => 2 }; }`, 42},
-		// A match-EXPRESSION on a direct `Some(x)` construction scrutinee (#3115).
 		{"match-expr-some-construct", `function main(): i32 { return match (Some(6)) { Some(w) => w, None => 0 }; }`, 6},
 		{"match-expr-some-construct-derived", `function main(): i32 { return match (Some(20)) { Some(w) => w + 1, None => 0 }; }`, 21},
 		{"match-expr-arm-some-construct", `function main(): i32 { let o = Some(5); return match (o) { Some(v) => match (Some(v + 1)) { Some(w) => w, None => 0 }, None => 0 }; }`, 6},
-		// Type ascription to an Option / Result target (#2669): `None as
-		// Option[i32]`. The parser keeps the generic args in the cast op name
-		// (`as_Option[i32]`), so a binding `let x = None as Option[i32]` rebinds
-		// to `let x: Option[i32] = None` (payload type intact). Covers the
-		// bare-None / bare-Err cases, the Some/Ok/[] operands (they carry their
-		// own payload type), the non-binding (return / nested) positions, and the
-		// array ascription that shares the suffix path.
 		{"asc-none-opt-bind", `function main(): i32 { let x = None as Option[i32]; return match (x) { Some(v) => v, None => 7 }; }`, 7},
 		{"asc-none-opt-str", `function main(): i32 { let x = None as Option[string]; return match (x) { Some(v) => v.len(), None => 7 }; }`, 7},
 		{"asc-some-opt-bind", `function main(): i32 { let x = Some(5) as Option[i32]; return match (x) { Some(v) => v, None => 7 }; }`, 5},
 		{"asc-none-opt-ret", `function f(): Option[i32] { return None as Option[i32]; } function main(): i32 { return match (f()) { Some(v) => v, None => 7 }; }`, 7},
 		{"asc-none-opt-nested", `function main(): i32 { return match (None as Option[i32]) { Some(v) => v, None => 7 }; }`, 7},
 		{"asc-opt-arr-suffix", `function main(): i32 { let a = [3, 4] as i32[]; return a[0] + a[1]; }`, 7},
-		// A match-EXPRESSION whose scrutinee is an Option-typed tuple element (t.0)
-		// (#3118).
 		{"match-expr-tuple-elem0", `function main(): i32 { let t = (Some(5), 3); return match (t.0) { Some(v) => v, None => 0 } + t.1; }`, 8},
 		{"match-expr-tuple-elem1", `function main(): i32 { let t = (3, Some(8)); return match (t.1) { Some(v) => v, None => 0 } + t.0; }`, 11},
-		// A match-EXPRESSION whose scrutinee is an Option-array element (a[i])
-		// (#3121).
 		{"match-expr-arr-elem0", `function main(): i32 { let a = [Some(5)]; return match (a[0]) { Some(v) => v, None => 0 }; }`, 5},
 		{"match-expr-arr-elem-idx", `function main(): i32 { let a = [Some(3), Some(8)]; let i = 1; return match (a[i]) { Some(v) => v, None => 0 }; }`, 8},
 		{"match-expr-arr-field-elem", `struct B { xs: Option[i32][] } function main(): i32 { let b = B { xs: [Some(4), None] }; return match (b.xs[0]) { Some(v) => v, None => 0 }; }`, 4},
-		// An unannotated Option bound from an if-/match-EXPRESSION (which desugars to
-		// an IIFE): the later match (o) recovers the payload (#3124).
 		{"ifexpr-opt-bind-some", `function main(): i32 { let x = 5; let o = if (x > 3) { Some(7) } else { None }; match (o) { Some(v) => { return v; }, None => { return 0; } } return 9; }`, 7},
 		{"ifexpr-opt-bind-none", `function main(): i32 { let x = 1; let o = if (x > 3) { Some(7) } else { None }; match (o) { Some(v) => { return v; }, None => { return 42; } } return 9; }`, 42},
 		{"matchexpr-opt-bind", `function main(): i32 { let e = 2; let o = match (e) { 1 => Some(10), _ => Some(20) }; match (o) { Some(v) => { return v; }, None => { return 0; } } return 9; }`, 20},
-		// A struct bound from an if-/match-EXPRESSION (IIFE): p.field resolves (the
-		// struct sibling of #3124) (#3133).
 		{"ifexpr-struct-bind", `struct P { x: i32 } function main(): i32 { let c = 5; let p = if (c > 3) { P { x: 7 } } else { P { x: 1 } }; return p.x; }`, 7},
 		{"ifexpr-struct-bind-else", `struct P { x: i32, y: i32 } function main(): i32 { let c = 1; let p = if (c > 3) { P { x: 7, y: 2 } } else { P { x: 1, y: 0 } }; return p.x + p.y; }`, 1},
 		{"matchexpr-struct-bind", `struct P { x: i32 } function main(): i32 { let c = 1; let p = match (c) { 1 => P { x: 9 }, _ => P { x: 0 } }; return p.x; }`, 9},
-		// A struct ARRAY bound from an if-/match-EXPRESSION (IIFE): ps[i].field /
-		// ps.len() resolve (the struct-array sibling of #3133) (#3138).
 		{"ifexpr-struct-arr-bind", `struct P { x: i32 } function main(): i32 { let c = 5; let ps = if (c > 3) { [P { x: 7 }] } else { [P { x: 1 }] }; return ps[0].x; }`, 7},
 		{"ifexpr-struct-arr-len", `struct P { x: i32 } function main(): i32 { let c = 5; let ps = if (c > 3) { [P { x: 7 }, P { x: 8 }] } else { [P { x: 1 }] }; return ps.len() + ps[1].x; }`, 10},
 		{"matchexpr-struct-arr-bind", `struct P { x: i32 } function main(): i32 { let k = 1; let ps = match (k) { 1 => [P { x: 9 }], _ => [P { x: 0 }] }; return ps[0].x; }`, 9},
-		// Binding an ARRAY-OF-STRUCT field into a local (`let ps: P[] = obj.params`):
-		// aliases the field's buffer with a Perceus dup on the POINTER, released
-		// shallowly — no deep-drop for the bind, since the source struct keeps
-		// owning the elements. `ps[i].field` / ps.len() resolve. The struct-array
-		// sibling of the scalar-array field bind.
 		{"struct-arr-field-bind", `struct P { x: i32 } struct H { ps: P[] } function main(): i32 { let h = H { ps: [P { x: 7 }, P { x: 3 }] }; let ps: P[] = h.ps; return ps[0].x * 10 + ps[1].x; }`, 73},
 		{"struct-arr-field-bind-len", `struct P { x: i32 } struct H { ps: P[] } function main(): i32 { let h = H { ps: [P { x: 1 }, P { x: 2 }, P { x: 3 }] }; let ps: P[] = h.ps; return ps.len(); }`, 3},
 		{"struct-arr-field-bind-param", `struct P { d: boolean } struct H { ps: P[] } function any_d(h: H): boolean { let ps: P[] = h.ps; let i = 0; while (i < ps.len()) { if (ps[i].d) { return true; } i = i + 1; } return false; } function main(): i32 { let yes = H { ps: [P { d: false }, P { d: true }] }; let no = H { ps: [P { d: false }] }; let r = 0; if (any_d(yes)) { r = r + 10; } if (any_d(no)) { r = r + 1; } return r; }`, 10},
-		// Returning / assigning an array-of-struct field — the alias-creating
-		// siblings of the bind above. Same buffer-pointer Perceus dup; the source
-		// struct keeps owning the elements (no deep-drop). Return covers a borrowed-
-		// param source and a reclaimable-local source; assign re-binds an existing
-		// P[] local.
 		{"struct-arr-field-return", `struct P { x: i32 } struct H { ps: P[] } function get(h: H): P[] { return h.ps; } function main(): i32 { let h = H { ps: [P { x: 4 }, P { x: 9 }] }; let got: P[] = get(h); return got[0].x * 10 + got[1].x; }`, 49},
 		{"struct-arr-field-return-local", `struct P { x: i32 } struct H { ps: P[] } function mk(): P[] { let h = H { ps: [P { x: 6 }, P { x: 2 }] }; return h.ps; } function main(): i32 { let ps = mk(); return ps[0].x * 10 + ps[1].x; }`, 62},
 		{"struct-arr-field-assign", `struct P { x: i32 } struct H { ps: P[] } function f(h: H): i32 { let ps: P[] = []; ps = h.ps; let s = 0; let i = 0; while (i < ps.len()) { s = s + ps[i].x; i = i + 1; } return s; } function main(): i32 { let h = H { ps: [P { x: 5 }, P { x: 7 }, P { x: 11 }] }; return f(h); }`, 23},
-		// A struct-array IDENT / PARAM as a struct-literal FIELD VALUE
-		// (`S { es: xs }`) — the alias-creating sibling of the field-access form
-		// (`S { es: s.es }`, already lowered) and the bind/return/assign positions.
-		// Same buffer-pointer Perceus dup; admits the checker's new_scope* /
-		// Scope-construction shape (`Scope { sigs: fs, ... }`) and lexer.fstring_tok
-		// (`TokFString { parts: parts }`). Local-ident source, param source, and a
-		// fresh-empty-then-populate source.
 		{"struct-arr-into-lit-ident", `struct E { v: i32 } struct S { es: E[], tag: i32 } function main(): i32 { let xs: E[] = [E { v: 3 }, E { v: 5 }]; let s = S { es: xs, tag: 7 }; return s.es[0].v * 100 + s.es[1].v * 10 + s.tag; }`, 101},
 		{"struct-arr-into-lit-param", `struct E { v: i32 } struct S { es: E[], tag: i32 } function mk(xs: E[], t: i32): S { return S { es: xs, tag: t }; } function main(): i32 { let s = mk([E { v: 2 }, E { v: 8 }], 4); return s.es[0].v * 100 + s.es[1].v * 10 + s.tag; }`, 28},
 		{"struct-arr-into-lit-empty", `struct E { v: i32 } struct S { es: E[] } function empty(): S { let none: E[] = []; return S { es: none }; } function main(): i32 { let s = empty(); return s.es.len(); }`, 0},
-		// Array-of-ENUM field aliasing (bind / return / assign) — the enum twin of
-		// the struct-array positions. Same buffer-pointer Perceus dup; a later
-		// `match (es[i])` recovers the variant. `Expr[]` / `Stmt[]` field reads in
-		// the parser's AST walkers are exactly this shape (e.g. iter_range_args'
-		// `return c.args`).
 		{"enum-arr-field-bind-match", `enum E { A(i32), B } struct H { es: E[] } function sum(h: H): i32 { let es: E[] = h.es; let s = 0; let i = 0; while (i < es.len()) { match (es[i]) { A(n) => { s = s + n; }, B => { s = s + 100; } } i = i + 1; } return s; } function main(): i32 { let h = H { es: [A(5), B, A(9)] }; return sum(h); }`, 114},
 		{"enum-arr-field-return", `enum E { A(i32), B } struct H { es: E[] } function get(h: H): E[] { return h.es; } function main(): i32 { let h = H { es: [A(3), B] }; let es = get(h); return match (es[0]) { A(n) => n, B => 0 } + es.len(); }`, 5},
 		{"enum-arr-field-assign", `enum E { A(i32), B } struct H { es: E[] } function f(h: H): i32 { let es: E[] = []; es = h.es; let s = 0; let i = 0; while (i < es.len()) { match (es[i]) { A(n) => { s = s + n; }, B => {} } i = i + 1; } return s; } function main(): i32 { let h = H { es: [A(7), A(8), B] }; return f(h); }`, 15},
-		// `.append` / `.with` on a struct/enum-array FIELD receiver, producing a
-		// fresh array (clone-then-grow / clone-then-set, sole-owned) — admits
-		// checker.Scope.bind's `let ts: Type[] = s.types.append(t)`. The clone form
-		// handles pointer elements at width 32 like the scalar case.
 		{"enum-arr-field-append", `enum E { A(i32), B } struct S { es: E[] } function grow(s: S, x: E): E[] { return s.es.append(x); } function main(): i32 { let s = S { es: [A(3), B] }; let g = grow(s, A(7)); let sum = 0; let i = 0; while (i < g.len()) { match (g[i]) { A(n) => { sum = sum + n; }, B => { sum = sum + 100; } } i = i + 1; } return sum; }`, 110},
 		{"struct-arr-field-append", `struct P { x: i32 } struct S { ps: P[] } function grow(s: S): P[] { return s.ps.append(P { x: 9 }); } function main(): i32 { let s = S { ps: [P { x: 1 }, P { x: 2 }] }; let g = grow(s); return g.len() * 100 + g[2].x; }`, 53},
 		{"struct-arr-field-with", `struct P { x: i32 } struct S { ps: P[] } function set1(s: S): P[] { return s.ps.with(1, P { x: 8 }); } function main(): i32 { let s = S { ps: [P { x: 1 }, P { x: 2 }, P { x: 3 }] }; let g = set1(s); return g[0].x * 100 + g[1].x * 10 + g[2].x; }`, 183},
-		// A CALL returning an array-of-struct as a struct-literal field value
-		// (`S { es: build(...) }`) — owned/moved value, no alias-inc; a struct-array
-		// field is never deep-dropped so the missing inc only leaks, never over-frees.
-		// Admits parser.module_with_builtins (`Module { structs: inject_builtin_enums
-		// (mono.structs), funcs: mono.funcs, ... }`) — a call value beside field-access
-		// values. Scalar-array call values stay restricted to .with/.append (deep-
-		// dropped, so they need the fresh guarantee).
 		{"struct-arr-call-into-lit", `struct E { v: i32 } struct S { es: E[], n: i32 } function build(seed: i32): E[] { return [E { v: seed }, E { v: seed + 1 }]; } function mk(seed: i32): S { return S { es: build(seed), n: seed + 5 }; } function main(): i32 { let s = mk(3); return s.es[0].v * 100 + s.es[1].v * 10 + s.n; }`, 92},
 		{"struct-arr-call-and-fieldaccess-into-lit", `struct E { v: i32 } struct M { funcs: E[], structs: E[], n: i32 } function more(xs: E[]): E[] { return xs.append(E { v: 9 }); } function rebuild(m: M): M { return M { funcs: m.funcs, structs: more(m.structs), n: m.n + 1 }; } function main(): i32 { let m = M { funcs: [E { v: 1 }], structs: [E { v: 2 }], n: 10 }; let r = rebuild(m); return r.funcs.len() * 1000 + r.structs.len() * 100 + r.n; }`, 187},
-		// The nested-array motivating shape (parser.module_has_default_params): an
-		// array-of-struct field read out of an element of an outer array-of-struct,
-		// bound in a loop, then indexed for a scalar field.
 		{"struct-arr-field-bind-nested", `struct Param { has_default: boolean } struct Func { params: Param[] } struct Mod { funcs: Func[] } function has_dp(mod: Mod): boolean { let fi = 0; while (fi < mod.funcs.len()) { let ps: Param[] = mod.funcs[fi].params; let pi = 0; while (pi < ps.len()) { if (ps[pi].has_default) { return true; } pi = pi + 1; } fi = fi + 1; } return false; } function main(): i32 { let m = Mod { funcs: [Func { params: [Param { has_default: false }, Param { has_default: true }] }] }; if (has_dp(m)) { return 10; } return 0; }`, 10},
-		// for-in / .len() over an array bound from an if-/match-EXPRESSION (#3141).
 		{"ifexpr-arr-foreach", `function main(): i32 { let c = 5; let a = if (c > 3) { [1, 2, 3] } else { [4] }; let s = 0; for x in a { s = s + x; } return s; }`, 6},
 		{"ifexpr-arr-len", `function main(): i32 { let c = 5; let a = if (c > 3) { [1, 2, 3] } else { [4] }; return a.len(); }`, 3},
 		{"matchexpr-arr-foreach", `function main(): i32 { let k = 1; let a = match (k) { 1 => [10, 20], _ => [1] }; let s = 0; for x in a { s = s + x; } return s; }`, 30},
-		// An Option array bound from an if-/match-EXPRESSION (IIFE): match (a[i]) /
-		// for o in a recover the element payload (the Option-array sibling of #3141)
-		// (#3146).
 		{"ifexpr-optarr-index", `function main(): i32 { let c = 5; let a = if (c > 3) { [Some(7), None] } else { [Some(1)] }; return match (a[0]) { Some(v) => v, None => 0 }; }`, 7},
 		{"ifexpr-optarr-foreach", `function main(): i32 { let c = 5; let a = if (c > 3) { [Some(7), None, Some(3)] } else { [Some(1)] }; let s = 0; for o in a { match (o) { Some(v) => { s = s + v; }, None => {} } } return s; }`, 10},
 		{"matchexpr-optarr-index", `function main(): i32 { let k = 1; let a = match (k) { 1 => [Some(9)], _ => [Some(0)] }; return match (a[0]) { Some(v) => v, None => 0 }; }`, 9},
-		// A binding from a NESTED if-/match-expression (a branch is itself an
-		// if-expression) whose leaf is a struct/Some/array literal (#3156).
 		{"nested-ifexpr-opt", `function main(): i32 { let c = 5; let o = if (c > 3) { if (c > 10) { Some(1) } else { Some(7) } } else { None }; return match (o) { Some(v) => v, None => 0 }; }`, 7},
 		{"nested-ifexpr-struct", `struct P { x: i32 } function main(): i32 { let c = 5; let p = if (c > 3) { if (c > 10) { P { x: 1 } } else { P { x: 7 } } } else { P { x: 0 } }; return p.x; }`, 7},
 		{"nested-ifexpr-arr", `function main(): i32 { let c = 5; let a = if (c > 3) { if (c > 10) { [1] } else { [7, 8] } } else { [0] }; let s = 0; for x in a { s = s + x; } return s; }`, 15},
-		// A match whose scrutinee is directly an if-/match-EXPRESSION (a 0-arg IIFE)
-		// of Option type, as a statement and as an expression (#3161).
 		{"match-scrut-ifexpr-some", `function main(): i32 { let c = 5; return match (if (c > 3) { Some(7) } else { None }) { Some(v) => v, None => 0 }; }`, 7},
 		{"match-scrut-ifexpr-none", `function main(): i32 { let c = 1; return match (if (c > 3) { Some(7) } else { None }) { Some(v) => v, None => 9 }; }`, 9},
 		{"stmt-match-scrut-ifexpr", `function main(): i32 { let c = 5; match (if (c > 3) { Some(7) } else { None }) { Some(v) => { return v; }, None => { return 0; } } return 9; }`, 7},
-		// An if-/match-expression binding whose branch returns an Option-typed LOCAL
-		// (not a fresh Some) (#3165).
 		{"ifexpr-ret-optvar", `function f(c: i32): Option[i32] { if (c > 3) { return Some(7); } return None; } function main(): i32 { let o = f(5); let r = if (true) { o } else { None }; return match (r) { Some(v) => v, None => 0 }; }`, 7},
 		{"matchexpr-ret-optvar", `function main(): i32 { let o = Some(8); let k = 1; let r = match (k) { 1 => o, _ => o }; return match (r) { Some(v) => v, None => 0 }; }`, 8},
-		// A tuple literal with an if-/match-EXPRESSION element (#3172).
 		{"tuple-ifexpr-elem0", `function main(): i32 { let c = 5; let t = (if (c > 3) { 7 } else { 1 }, 3); return t.0 + t.1; }`, 10},
 		{"tuple-ifexpr-elem1", `function main(): i32 { let c = 1; let t = (3, if (c > 3) { 7 } else { 1 }); return t.0 + t.1; }`, 4},
 		{"tuple-matchexpr-elem", `function main(): i32 { let k = 1; let t = (match (k) { 1 => 5, _ => 0 }, 3); return t.0 + t.1; }`, 8},
-		// A struct array field set from an if-/match-EXPRESSION whose every branch is
-		// a fresh array literal (#3179).
 		{"struct-fld-ifexpr-arr", `struct B { xs: i32[] } function main(): i32 { let c = 5; let b = B { xs: if (c > 3) { [1, 2, 3] } else { [4] } }; return b.xs.len(); }`, 3},
 		{"struct-fld-ifexpr-arr-else", `struct B { xs: i32[] } function main(): i32 { let c = 1; let b = B { xs: if (c > 3) { [1, 2, 3] } else { [4, 5] } }; return b.xs.len(); }`, 2},
 		{"struct-fld-matchexpr-arr", `struct B { xs: i32[] } function main(): i32 { let k = 1; let b = B { xs: match (k) { 1 => [7, 8, 9], _ => [0] } }; return b.xs.len() + b.xs[0]; }`, 10},
-		// An array literal whose element is an if-/match-EXPRESSION struct: a[i].field
-		// resolves (#3183).
 		{"arr-ifexpr-struct-elem", `struct P { x: i32 } function main(): i32 { let c = 5; let a = [if (c > 3) { P { x: 7 } } else { P { x: 1 } }]; return a[0].x; }`, 7},
 		{"arr-ifexpr-struct-foreach", `struct P { x: i32 } function main(): i32 { let c = 5; let a = [if (c > 3) { P { x: 7 } } else { P { x: 1 } }, P { x: 2 }]; let s = 0; for p in a { s = s + p.x; } return s; }`, 9},
 		{"arr-matchexpr-struct-elem", `struct P { x: i32 } function main(): i32 { let k = 1; let a = [match (k) { 1 => P { x: 9 }, _ => P { x: 0 } }]; return a[0].x; }`, 9},
-		// Field access / method dispatch directly on an if-/match-EXPRESSION:
-		// `(if (c) { P{..} } else { .. }).field` (#3186).
 		{"ifexpr-field-direct", `struct P { x: i32 } function main(): i32 { let c = 5; return (if (c > 3) { P { x: 7 } } else { P { x: 1 } }).x; }`, 7},
 		{"ifexpr-method-direct", `struct P { x: i32 } function (p: P) g(): i32 { return p.x; } function main(): i32 { let c = 5; return (if (c > 3) { P { x: 7 } } else { P { x: 1 } }).g(); }`, 7},
 		{"matchexpr-field-direct", `struct P { x: i32 } function main(): i32 { let k = 1; return (match (k) { 1 => P { x: 9 }, _ => P { x: 0 } }).x; }`, 9},
-		// Iterating an Option-array struct field: match(o) on the loop var recovers
-		// the payload (#3056).
 		{"opt-arr-field-foreach-i32", `struct B { xs: Option[i32][] } function main(): i32 { let b = B { xs: [Some(1), Some(2), None] }; let n = 0; for o in b.xs { match (o) { Some(x) => { n = n + x; }, None => {} } } return n; }`, 3},
 		{"opt-arr-field-foreach-string", `struct B { xs: Option[string][] } function main(): i32 { let b = B { xs: [Some("ab"), None, Some("c")] }; let n = 0; for o in b.xs { match (o) { Some(s) => { n = n + s.len(); }, None => {} } } return n; }`, 3},
-		// A 2D struct/enum array — the annotation records the innermost element
-		// type so the nested foreach propagates it to p (#3058).
 		{"arr2d-struct", `struct P { x: i32 } function main(): i32 { let a: P[][] = [[P { x: 1 }], [P { x: 2 }, P { x: 3 }]]; let n = 0; for row in a { for p in row { n = n + p.x; } } return n; }`, 6},
 		{"arr2d-struct-method", `struct P { x: i32 } function (p: P) g(): i32 { return p.x * 2; } function main(): i32 { let a: P[][] = [[P { x: 1 }], [P { x: 2 }]]; let n = 0; for row in a { for p in row { n = n + p.g(); } } return n; }`, 6},
 		{"arr2d-enum", `enum C { A, B } function main(): i32 { let a: C[][] = [[C.A], [C.B, C.A]]; let n = 0; for row in a { for c in row { match (c) { C.A => { n = n + 1; }, C.B => { n = n + 2; } } } } return n; }`, 4},
-		// Unannotated 2D struct/enum array literal — element type inferred by
-		// recursing into the inner literal (#3061, unannotated sibling of #3058).
 		{"arr2d-struct-unannot", `struct P { x: i32 } function main(): i32 { let a = [[P { x: 1 }], [P { x: 2 }, P { x: 3 }]]; let n = 0; for row in a { for p in row { n = n + p.x; } } return n; }`, 6},
 		{"arr2d-enum-unannot", `enum C { A, B } function main(): i32 { let a = [[C.A], [C.B, C.A]]; let n = 0; for row in a { for c in row { match (c) { C.A => { n = n + 1; }, C.B => { n = n + 2; } } } } return n; }`, 4},
-		// Unannotated 2D Option-array literal (#3074, depth-2 sibling of #3027).
 		{"arr2d-opt-unannot-i32", `function main(): i32 { let a = [[Some(1)], [Some(2), None]]; let n = 0; for row in a { for o in row { match (o) { Some(x) => { n = n + x; }, None => {} } } } return n; }`, 3},
 		{"arr2d-opt-unannot-string", `function main(): i32 { let a = [[Some("ab")], [None, Some("c")]]; let n = 0; for row in a { for o in row { match (o) { Some(s) => { n = n + s.len(); }, None => {} } } } return n; }`, 3},
-		// A 2D-array param — the nested foreach sees the innermost struct/enum
-		// element type (#3064).
 		{"arr2d-param-i32", `function sum(a: i32[][]): i32 { let n = 0; for row in a { for x in row { n = n + x; } } return n; } function main(): i32 { return sum([[1, 2], [3]]); }`, 6},
 		{"arr2d-param-struct", `struct P { x: i32 } function sum(a: P[][]): i32 { let n = 0; for row in a { for p in row { n = n + p.x; } } return n; } function main(): i32 { return sum([[P { x: 5 }], [P { x: 6 }]]); }`, 11},
 		{"arr2d-param-enum", `enum C { A, B } function cnt(a: C[][]): i32 { let n = 0; for row in a { for c in row { match (c) { C.A => { n = n + 1; }, C.B => { n = n + 2; } } } } return n; } function main(): i32 { return cnt([[C.A], [C.B, C.A]]); }`, 4},
-		// A function returning a struct array — the element struct type is recorded
-		// so a[i].field / foreach over the result resolve (#3037).
 		{"ret-struct-arr-index", `struct P { x: i32 } function mk(): P[] { return [P { x: 1 }, P { x: 2 }]; } function main(): i32 { let a = mk(); return a[0].x + a[1].x; }`, 3},
 		{"ret-struct-arr-foreach", `struct P { x: i32 } function mk(): P[] { return [P { x: 1 }, P { x: 2 }]; } function main(): i32 { let a = mk(); let n = 0; for p in a { n = n + p.x; } return n; }`, 3},
 		{"ret-struct-arr-method", `struct P { x: i32 } function (p: P) g(): i32 { return p.x * 2; } function mk(): P[] { return [P { x: 3 }, P { x: 4 }]; } function main(): i32 { let a = mk(); let n = 0; for p in a { n = n + p.g(); } return n; }`, 14},
 		{"ret-struct-arr-twofield", `struct P { x: i32, y: i32 } function mk(): P[] { return [P { x: 1, y: 10 }, P { x: 2, y: 20 }]; } function main(): i32 { let a = mk(); return a[1].x + a[1].y; }`, 22},
-		// A method returning a struct array (#3042, method sibling of #3037):
-		// a[i].field / foreach resolve.
 		{"method-ret-struct-arr-index", `struct P { x: i32 } struct B { n: i32 } function (b: B) items(): P[] { return [P { x: 1 }, P { x: 2 }]; } function main(): i32 { let b = B { n: 5 }; let a = b.items(); return a[0].x + a[1].x; }`, 3},
 		{"method-ret-struct-arr-foreach", `struct P { x: i32 } struct B { n: i32 } function (b: B) items(): P[] { return [P { x: b.n }, P { x: b.n + 1 }]; } function main(): i32 { let b = B { n: 5 }; let a = b.items(); let s = 0; for p in a { s = s + p.x; } return s; }`, 11},
 		{"method-ret-struct-arr-method", `struct P { x: i32 } struct B { n: i32 } function (p: P) g(): i32 { return p.x * 2; } function (b: B) items(): P[] { return [P { x: 1 }, P { x: 2 }]; } function main(): i32 { let b = B { n: 5 }; let a = b.items(); let s = 0; for p in a { s = s + p.g(); } return s; }`, 6},
-		// A struct-/enum-array enum payload — ps[i].field / foreach over the match
-		// binding resolve (#3046).
 		{"enum-payload-struct-arr-index", `struct P { x: i32 } enum E { Items(P[]), Nil } function f(e: E): i32 { match (e) { Items(ps) => { return ps[0].x; }, Nil => { return 0; } } return 0; } function main(): i32 { return f(Items([P { x: 7 }])); }`, 7},
 		{"enum-payload-struct-arr-foreach", `struct P { x: i32 } enum E { Items(P[]), Nil } function f(e: E): i32 { match (e) { Items(ps) => { let n = 0; for p in ps { n = n + p.x; } return n; }, Nil => { return 0; } } return 0; } function main(): i32 { return f(Items([P { x: 3 }, P { x: 4 }])); }`, 7},
 		{"enum-payload-enum-arr", `enum C { A, B } enum E { Cells(C[]), Nil } function f(e: E): i32 { match (e) { Cells(cs) => { match (cs[0]) { C.A => { return 1; }, C.B => { return 2; } } }, Nil => { return 0; } } return 0; } function main(): i32 { return f(Cells([C.B])); }`, 2},
@@ -944,10 +542,6 @@ function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m
 function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); let s = 0; for (k, v) in m { s = s + k; } return s; }`, 6},
 		{"map-forkv-pair", `import "core/map";
 function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); m = m.insert(2, 3); m = m.insert(3, 4); let s = 0; for (k, v) in m { s = s + k * v; } return s; }`, 20},
-		// UNANNOTATED map-literal bindings (`let m = Map { … }` with no
-		// `: Map[K,V]`): the binding has the full `Map[K,V]` type, so `.get_or`/.has
-		// on an i32-key map use the i32 key kind; key-kind 0 (string) would deref
-		// the i32 key as a string pointer (segfault).
 		{"map-unannot-i32-hit", `import "core/map";
 function main(): i32 { let m = Map { 1: 10, 2: 20 }; return m.get_or(2, 0); }`, 20},
 		{"map-unannot-i32-miss", `import "core/map";
@@ -964,10 +558,6 @@ function main(): i32 { let m = Map { 3: 1, 4: 1, 5: 1 }; let s = 0; for k in m.k
 function main(): i32 { let m = Map { "a": 5, "bb": 6 }; return m.get_or("bb", 0); }`, 6},
 		{"map-unannot-str-miss", `import "core/map";
 function main(): i32 { let m = Map { "a": 5 }; return m.get_or("z", 8); }`, 8},
-		// String-VALUE maps (`Map[K, string]`): `m.get_or(k, d)` returns the
-		// stored string, so `.len()` / concat treat it as a string (else it reads
-		// the box's data-ptr slot as a length — garbage). Covers annotated +
-		// unannotated, i32- and string-key, get_or hit, and .values() iteration.
 		{"map-strval-annot-getor", `import "core/map";
 function main(): i32 { let m: Map[i32, string] = Map { 1: "hi" }; return m.get_or(1, "x").len(); }`, 2},
 		{"map-strval-annot-strkey", `import "core/map";
@@ -990,16 +580,12 @@ function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); m
 function main(): i32 { let m: Map[string, i32] = map_new(4); m = m.insert("a", 1); m = m.insert("bb", 2); return m.get_or("bb", 0) + m.len(); }`, 4},
 		{"map-insert-overwrite", `import "core/map";
 function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(7, 40); m = m.insert(7, 42); return m.get_or(7, 0) + m.len(); }`, 43},
-		// The chain starts from a bound map: a bare map_new(8) at its head binds
-		// no columns, and the inserts on it are E038 (#10214).
 		{"map-insert-chained", `import "core/map";
 function main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert("x", 5).insert("y", 7); return m.get_or("y", 0) + m.len(); }`, 9},
 		{"map-insert-keyword-literal", `import "core/map";
 function main(): i32 { let m: Map[string, i32] = Map { "a": 1, "b": 2 }; return m.get_or("b", 0) + m.len(); }`, 4},
 		{"map-insert-contains", `import "core/map";
 function main(): i32 { let m: Map[string, i32] = map_new(4); m = m.insert("k", 9); let r = 0; if (m.contains("k")) { r = r + 1; } if (m.contains("z")) { r = r + 10; } return r; }`, 1},
-		// m.remove(k) returns the map without k; m.contains(k) says whether it was there (#2926).
-		// Later ops on the returned map work.
 		{"map-remove-len", `import "core/map";
 function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); let e: boolean = m.contains(1); let m2 = m.remove(1); return m2.len(); }`, 1},
 		{"map-remove-existed", `import "core/map";
@@ -1014,8 +600,6 @@ function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); l
 function main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert("a", 1); m = m.insert("b", 2); let e: boolean = m.contains("a"); let m2 = m.remove("a"); return m2.len() + m2.get_or("b", 0); }`, 3},
 		{"map-remove-then-insert", `import "core/map";
 function main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert("a", 1); let e: boolean = m.contains("a"); let m2 = m.remove("a"); m2 = m2.insert("c", 5); return m2.get_or("c", 0); }`, 5},
-		// if-EXPRESSION in value position (#2938): the parser desugars it to a
-		// 0-arg IIFE.
 		{"ifexpr-var", `function main(): i32 { let x = 5; let y = if (x > 3) { 10 } else { 20 }; return y; }`, 10},
 		{"ifexpr-else", `function main(): i32 { let x = 2; let y = if (x > 3) { 10 } else { 20 }; return y; }`, 20},
 		{"ifexpr-return", `function main(): i32 { let x = 5; return if (x > 3) { 10 } else { 20 }; }`, 10},
@@ -1024,24 +608,16 @@ function main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert("a", 1
 		{"ifexpr-nested-in-binary", `function main(): i32 { let a = 3; return (if (a > 0) { 5 } else { 6 }) + (if (a > 10) { 1 } else { 2 }); }`, 7},
 		{"ifexpr-as-arg", `function add1(v: i32): i32 { return v + 1; } function main(): i32 { let x = 5; return add1(if (x > 3) { 10 } else { 20 }); }`, 11},
 		{"matchexpr-literal", `function main(): i32 { let n = 2; let y = match (n) { 1 => 10, 2 => 20, _ => 0 }; return y; }`, 20},
-		// ENUM match-EXPRESSION in value position: unit-variant arms with an i32
-		// result (#2938 follow-up).
 		{"matchexpr-enum-unit", `enum C { A, B, X } function main(): i32 { let c: C = X; let y = match (c) { A => 1, B => 2, X => 3 }; return y; }`, 3},
 		{"matchexpr-enum-first", `enum C { A, B, X } function main(): i32 { let c: C = A; let y = match (c) { A => 1, B => 2, X => 3 }; return y; }`, 1},
 		{"matchexpr-enum-in-binary", `enum C { A, B } function main(): i32 { let c: C = A; return match (c) { A => 5, B => 6 } + 100; }`, 105},
 		{"matchexpr-enum-return-arg", `enum C { Red, Green, Blue } function pick(c: C): i32 { return match (c) { Red => 1, Green => 2, Blue => 3 }; } function main(): i32 { return pick(Green) * 10; }`, 20},
-		// Option/Result match-EXPRESSION with an i32 PAYLOAD binding (`Some(n) => n`).
 		{"matchexpr-opt-unwrap", `function main(): i32 { let o: Option[i32] = Some(7); let y = match (o) { Some(n) => n, None => 0 }; return y; }`, 7},
 		{"matchexpr-opt-none", `function main(): i32 { let o: Option[i32] = None; let y = match (o) { Some(n) => n, None => 42 }; return y; }`, 42},
 		{"matchexpr-opt-expr", `function main(): i32 { let o: Option[i32] = Some(5); return match (o) { Some(n) => n * 2 + 1, None => 0 } + 100; }`, 111},
 		{"matchexpr-result-bind", `function main(): i32 { let r: Result[i32, i32] = Err(3); let y = match (r) { Ok(n) => n, Err(e) => e * 10 }; return y; }`, 30},
-		// USER-enum match-expression with an i32 payload binding (`Has(n) => n`):
-		// the payload type is read from the variant's __ev field.
 		{"matchexpr-userenum-bind", `enum O { Has(i32), Nil } function main(): i32 { let o: O = Has(7); let y = match (o) { Has(n) => n, Nil => 0 }; return y; }`, 7},
 		{"matchexpr-userenum-3var", `enum E { Num(i32), Word, Nil } function main(): i32 { let e: E = Num(5); return match (e) { Num(n) => n * 3, Word => 1, Nil => 0 }; }`, 15},
-		// STRING-valued if / match expressions: the inlined temp holds a string
-		// pointer and is marked a string, so `.len()` / concat dispatch and the
-		// outer binding tracks it as a string (extends the i32-gated IIFE inline).
 		{"ifexpr-str", `function main(): i32 { let n = 5; let s = if (n > 3) { "big" } else { "small" }; return s.len(); }`, 3},
 		{"ifexpr-str-return", `function classify(n: i32): string { return if (n > 0) { "pos" } else { "nonpos" }; } function main(): i32 { return classify(5).len() + classify(0 - 1).len(); }`, 9},
 		{"ifexpr-str-elseif", `function main(): i32 { let n = 5; let s = if (n > 10) { "big" } else if (n > 3) { "mid" } else { "low" }; return s.len(); }`, 3},
@@ -1049,14 +625,11 @@ function main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert("a", 1
 		{"matchexpr-str-unit", `enum C { A, B } function main(): i32 { let c: C = A; let s = match (c) { A => "xx", B => "y" }; return s.len(); }`, 2},
 		{"matchexpr-str-3arm", `enum C { R, G, B } function pick(c: C): string { return match (c) { R => "red", G => "green", B => "blue" }; } function main(): i32 { return pick(G).len(); }`, 5},
 		{"matchexpr-str-payload", `enum E { N(i32), Z } function f(e: E): string { return match (e) { N(n) => if (n > 0) { "pos" } else { "neg" }, Z => "zero" }; } function main(): i32 { return f(N(5)).len() + f(Z).len(); }`, 7},
-		// f64-valued if / match expressions: the result is an 8-byte f64.
 		{"ifexpr-f64", `function main(): i32 { let n = 5; let f = if (n > 3) { 1.5 } else { 2.5 }; return (f * 2.0) as i32; }`, 3},
 		{"ifexpr-f64-return", `function pick(n: i32): f64 { return if (n > 0) { 1.5 } else { 0.5 }; } function main(): i32 { return (pick(5) * 10.0) as i32; }`, 15},
 		{"ifexpr-f64-elseif", `function main(): i32 { let n = 5; let f = if (n > 10) { 1.0 } else if (n > 3) { 2.5 } else { 9.0 }; return (f * 2.0) as i32; }`, 5},
 		{"matchexpr-f64", `enum C { A, B } function main(): i32 { let c: C = A; let f = match (c) { A => 1.5, B => 2.5 }; return (f * 10.0) as i32; }`, 15},
 		{"matchexpr-f64-3arm", `enum C { R, G, B } function w(c: C): f64 { return match (c) { R => 1.5, G => 2.5, B => 3.5 }; } function main(): i32 { return (w(G) * 10.0) as i32; }`, 25},
-		// i64-valued if / match expressions: the result is an 8-byte i64
-		// (annotated, unannotated, either branch order).
 		{"ifexpr-i64-annot", `function main(): i32 { let n = 5; let x: i64 = if (n > 3) { 5000000000 } else { 1 }; return (x % 7) as i32; }`, 2},
 		{"ifexpr-i64-unannot", `function main(): i32 { let n = 5; let x = if (n > 3) { 5000000000 } else { 1 }; return (x % 7) as i32; }`, 2},
 		{"ifexpr-i64-elsebig", `function main(): i32 { let n = 1; let x: i64 = if (n > 3) { 1 } else { 5000000000 }; return (x % 7) as i32; }`, 2},
@@ -1097,9 +670,6 @@ function main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert("a", 1
 		{"i64-rem", `function main(): i32 { let a: i64 = 12000000007; let r = (a % 10) as i32; return r; }`, 7},
 		{"i64-div-trunc", `function main(): i32 { let a: i64 = 10000000000; let c: i64 = a / 3; if (c > 3000000000) { return 5; } return 0; }`, 5},
 		{"i64-div-signed", `function main(): i32 { let a: i64 = 0 - 12000000000; let c: i64 = a / 4; if (c < 0) { return 9; } return 0; }`, 9},
-		// An i64-PRIM-receiver method returning i64 (`n.dbl()` on `(n: i64) dbl`)
-		// dispatches "i64.<m>" / "u64.<m>" and returns the full 64 bits (the
-		// std/i64 gcd/lcm shape).
 		{"i64-method-recv", `function (n: i64) dbl(): i64 { return n * 2; } function main(): i32 { let a: i64 = 3000000000; let r: i64 = a.dbl(); if (r > 5000000000) { return 7; } return 0; }`, 7},
 		{"i64-method-recv-calls-method", `function (n: i64) absv(): i64 { if (n < 0) { return 0 - n; } return n; } function (n: i64) gcdv(m: i64): i64 { let a: i64 = n.absv(); let b: i64 = m.absv(); while (b != 0) { let t: i64 = b; b = a % b; a = t; } return a; } function main(): i32 { let x: i64 = 48; let y: i64 = 36; if (x.gcdv(y) == 12) { return 0; } return 1; }`, 0},
 		{"arr-slice", `function main(): i32 { let a = [10, 20, 30, 40, 50]; let b = a[1:4]; return b[0] + b[2]; }`, 60},
@@ -1109,17 +679,6 @@ function main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert("a", 1
 		{"enum-unit", `enum E { A(i32), B } function f(e: E): i32 { match (e) { A(n) => { return n * 2; }, B => { return 9; } } return 0; } function main(): i32 { return f(B); }`, 9},
 		{"enum-three", `enum Shape { Circle(i32), Square(i32), Empty } function area(s: Shape): i32 { match (s) { Circle(r) => { return r + 1; }, Square(w) => { return w * 2; }, Empty => { return 7; } } return 99; } function main(): i32 { return area(Circle(4)) + area(Square(5)) + area(Empty); }`, 22},
 		{"enum-wildcard", `enum E { A(i32), B, C } function f(e: E): i32 { match (e) { A(n) => { return n; }, _ => { return 100; } } return 0; } function main(): i32 { return f(B); }`, 100},
-		// `@derive(Debug)` (#2708) — the self-host synthesizes a type-directed
-		// `to_debug` (numbers → to_string, strings → quoted, nominal → to_debug),
-		// matching the native structural output; the cases check the rendered
-		// length. (The inline `trait Debug` is discarded by the self-host; it
-		// keeps the program valid for the native interpreter.)
-		// WIDE `.to_string()` receivers (#5826): i64/u64 `.to_string()` with no
-		// `import "std/i64"`. f-strings desugar to `.to_string()`, so the
-		// f-string row is the shape that made this common in ordinary code.
-		// Boundary values are the point: INT64_MIN (whose negation wraps, hence
-		// the unsigned digit arithmetic in rt_src_i64_to_string) and a u64 with
-		// bit 63 set (which the SIGNED formatter renders negative).
 		{"i64-to-string", `import "std/i64";
 function main(): i32 { let n: i64 = 1234567890123; return n.to_string().len(); }`, 13},
 		{"i64-to-string-neg", `import "std/i64";
@@ -1144,18 +703,9 @@ import "core/int";
 		{"derive-debug-nested", `import "core/cmp";
 import "core/int";
 @derive(cmp.Debug) struct P { x: i32, name: string } @derive(cmp.Debug) struct N { p: P, n: i32 } function main(): i32 { return N { p: P { x: 1, name: "z" }, n: 9 }.to_debug().len(); }`, 36},
-		// A struct method call.
 		{"method-dispatch", `struct P { x: i32 } pub function (p: P) get(): i32 { return p.x; } function main(): i32 { let p = P { x: 42 }; return p.get(); }`, 42},
-		// Byte-source builtins (issue #2747) — DETERMINISTIC shapes only:
-		// random_bytes(n).len() is always n; as_bytes / bytes byte values on a
-		// literal are fixed. (random_i32 and the random byte VALUES are
-		// non-deterministic; the cases for them check properties.)
 		{"random-bytes-len", `function main(): i32 { return random_bytes(8).len(); }`, 8},
 		{"random-bytes-len-var", `function main(): i32 { let s: u8[] = random_bytes(13); return s.len(); }`, 13},
-		// Clock leaves in Fern (#2649): asmcore.rt_src_clock, via __syscall3 /
-		// __raw_scratch / __load_i64 + i64 math. The VALUES are non-deterministic,
-		// so these check PROPERTIES: a live clock reads positive; realtime is past
-		// 2023.
 		{"monotonic-ns-positive", `function main(): i32 { let a: i64 = monotonic_ns(); if (a > (0 as i64)) { return 1; } return 0; }`, 1},
 		{"now-unix-ms-past-2023", `function main(): i32 { let ms: i64 = now_unix_ms(); if (ms / (1000 as i64) > (1700000000 as i64)) { return 1; } return 0; }`, 1},
 		{"now-ns-past-2023", `function main(): i32 { let ns: i64 = now_ns(); if (ns / (1000000000 as i64) > (1700000000 as i64)) { return 1; } return 0; }`, 1},
@@ -1165,8 +715,6 @@ import "core/int";
 		{"bytes-vals", `import "std/string";
 function main(): i32 { let b: u8[] = "AB".bytes(); return (b[0] as i32) + (b[1] as i32); }`, 131},
 		{"as-bytes-heap", `function main(): i32 { let b: [u8] = "ABCDEFGHIJ".as_bytes(); return b.len() + (b[9] as i32); }`, 84},
-		// string.split(sep) → string[] (op_str_split), via the Fern runtime body
-		// asmcore.rt_src_str_split: segment count / element lengths.
 		{"split-count", `import "std/string";
 function main(): i32 { let p = "a,b,c".split(","); return p.len(); }`, 3},
 		{"split-first-len", `import "std/string";
@@ -1191,11 +739,6 @@ function main(): i32 { let s = 0; for part in "x,yy,zzz".split(",") { s = s + pa
 function nfields(s: string): i32 { return s.split(",").len(); } function main(): i32 { return nfields("a,b,c,d"); }`, 4},
 		{"split-then-index-direct", `import "std/string";
 function main(): i32 { return "one,two,three".split(",")[1].len(); }`, 3},
-		// f-string interpolation (`f"...{expr}..."`): the parser desugars to a
-		// `+`-chain of literal string parts and `(expr).to_string()` calls. Covers
-		// i32 / string / expression / method-call / negation interpolants, adjacent
-		// interpolants, an interpolant-then-literal, the `{{` brace escape, and
-		// empty / plain.
 		{"fstring-i32", `import "std/i32";
 function main(): i32 { let n = 7; let s = f"n={n}!"; return s.len(); }`, 4},
 		{"fstring-i32-char", `import "std/i32";
@@ -1215,8 +758,6 @@ function main(): i32 { let n = 42; return f"{n} apples".len(); }`, 9},
 		{"fstring-empty", `function main(): i32 { return f"".len(); }`, 0},
 		{"fstring-plain", `function main(): i32 { return f"plain".len(); }`, 5},
 		{"fstring-esc-brace", `function main(): i32 { let s = f"a{{b"; return s[1] as i32; }`, 123},
-		// ASCII case transforms → fresh string (op_str_to_upper / _to_lower), via
-		// asmcore.rt_src_str_to_upper / _to_lower.
 		{"to-upper-len", `import "std/string";
 function main(): i32 { let s = "Hello"; return s.to_ascii_upper().len(); }`, 5},
 		{"to-upper-byte", `import "std/string";
@@ -1235,8 +776,6 @@ function main(): i32 { let s = "Hello"; if (s.to_ascii_upper().to_ascii_lower() 
 function up(s: string): i32 { return s.to_ascii_upper()[0] as i32; } function main(): i32 { return up("xyz"); }`, 88},
 		{"case-on-literal", `import "std/string";
 function main(): i32 { return "Mixed".to_ascii_lower().len(); }`, 5},
-		// String repeat → fresh string (op_str_repeat), via
-		// asmcore.rt_src_str_repeat.
 		{"repeat-len", `import "std/string";
 function main(): i32 { return "ab".repeat(3).len(); }`, 6},
 		{"repeat-byte", `import "std/string";
@@ -1251,8 +790,6 @@ function main(): i32 { let s = "ab"; let n = 5; return s.repeat(n).len(); }`, 10
 function rep(s: string, n: i32): i32 { return s.repeat(n).len(); } function main(): i32 { return rep("xyz", 4); }`, 12},
 		{"repeat-concat", `import "std/string";
 function main(): i32 { let r = "a".repeat(3) + "b".repeat(2); return r.len(); }`, 5},
-		// String trim → fresh string with leading/trailing whitespace removed
-		// (op_str_trim), via asmcore.rt_src_str_trim.
 		{"trim-both", `import "std/string";
 function main(): i32 { return "  hi  ".trim().len(); }`, 2},
 		{"trim-byte", `import "std/string";
@@ -1269,8 +806,6 @@ function main(): i32 { return "".trim().len() + 7; }`, 7},
 function main(): i32 { let t = "   xy".trim(); return t.len() * 10 + (t[0] as i32); }`, 140},
 		{"trim-param", `import "std/string";
 function tn(s: string): i32 { return s.trim().len(); } function main(): i32 { return tn("  padded  "); }`, 6},
-		// String replace -> fresh string with every occurrence of old swapped for
-		// new (op_str_replace), via asmcore.rt_src_str_replace.
 		{"replace-len", `import "std/string";
 function main(): i32 { return "a-b-c".replace("-", "_").len(); }`, 5},
 		{"replace-grow", `import "std/string";
@@ -1287,8 +822,6 @@ function main(): i32 { return "abc".replace("", "X").len(); }`, 3},
 function main(): i32 { return "axxbxxc".replace("xx", "-").len(); }`, 5},
 		{"replace-param", `import "std/string";
 function rp(s: string): i32 { return s.replace("o", "0").len(); } function main(): i32 { return rp("foobar"); }`, 6},
-		// String lines -> string[] split on \n with trailing-empty drop
-		// (op_str_lines), via asmcore.rt_src_str_lines.
 		{"lines-3", `import "std/string";
 function main(): i32 { return "a\nb\nc".lines().len(); }`, 3},
 		{"lines-trailing-nl", `import "std/string";
@@ -1303,91 +836,36 @@ function main(): i32 { return "\n".lines().len() + 5; }`, 6},
 function main(): i32 { let ls = "ab\ncd".lines(); return ls[1].len() * 10 + (ls[1][0] as i32); }`, 119},
 		{"lines-forin", `import "std/string";
 function main(): i32 { let n = 0; for ln in "a\nbb\nccc".lines() { n = n + ln.len(); } return n; }`, 6},
-		// A struct-valued if-/match-EXPRESSION binding: `.field` / method dispatch
-		// on the bound local resolve.
 		{"struct-if-expr-field", `struct P { x: i32, y: i32 } function main(): i32 { let p = if (true) { P{x:1,y:2} } else { P{x:3,y:4} }; return p.x + p.y; }`, 3},
 		{"struct-match-expr-field", `struct P { x: i32, y: i32 } function main(): i32 { let p = match (1) { 1 => P{x:10,y:2}, _ => P{x:3,y:4} }; return p.x + p.y; }`, 12},
 		{"struct-if-expr-direct-field", `struct P { x: i32, y: i32 } function main(): i32 { return (if (true) { P{x:7,y:2} } else { P{x:3,y:4} }).x; }`, 7},
 		{"struct-if-expr-method", `struct P { x: i32, y: i32 } function (p: P) sum(): i32 { return p.x + p.y; } function main(): i32 { let p = if (true) { P{x:1,y:2} } else { P{x:3,y:4} }; return p.sum(); }`, 3},
-		// An enum-valued if-/match-EXPRESSION binding: a method call on the bound
-		// local dispatches to <Enum>.<method>.
 		{"enum-if-expr-method", `enum Shape { Circle(i32), Square(i32) } function (s: Shape) area(): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } return 0; } function main(): i32 { let s = if (true) { Circle(2) } else { Square(3) }; return s.area(); }`, 12},
 		{"enum-match-expr-method", `enum Shape { Circle(i32), Square(i32) } function (s: Shape) area(): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } return 0; } function main(): i32 { let s = match (1) { 1 => Circle(2), _ => Square(3) }; return s.area(); }`, 12},
 		{"enum-unit-if-expr-method", `enum Color { Red, Green, Blue } function (c: Color) code(): i32 { match (c) { Red => { return 1; }, Green => { return 2; }, Blue => { return 3; } } return 0; } function main(): i32 { let c = if (false) { Red } else { Green }; return c.code(); }`, 2},
-		// A NESTED struct-valued if-/match-EXPRESSION binding: the struct type comes
-		// from the innermost struct literal.
 		{"struct-nested-if-expr", `struct P { x: i32, y: i32 } function main(): i32 { let p = if (true) { if (false) { P{x:1,y:2} } else { P{x:5,y:6} } } else { P{x:3,y:4} }; return p.x + p.y; }`, 11},
 		{"struct-match-then-if-expr", `struct P { x: i32, y: i32 } function main(): i32 { let p = match (1) { 1 => if (true) { P{x:4,y:5} } else { P{x:0,y:0} }, _ => P{x:3,y:4} }; return p.x + p.y; }`, 9},
-		// A struct-returning USER function called in each if-/match-expression
-		// branch: the lifted `__lam`'s leaf is a call to `mk`, so the struct type
-		// is read from `mk`'s declared return type.
 		{"struct-fncall-if-expr", `struct P { x: i32, y: i32 } function mk(v: i32): P { return P{x:v, y:v+1}; } function main(): i32 { let p = if (true) { mk(5) } else { mk(2) }; return p.x + p.y; }`, 11},
 		{"struct-fncall-match-expr", `struct P { x: i32, y: i32 } function mk(v: i32): P { return P{x:v, y:v+1}; } function main(): i32 { let p = match (2) { 2 => mk(10), _ => mk(0) }; return p.x + p.y; }`, 21},
-		// An if-/match-expression binding whose first branch CALLS an
-		// Option/Result-returning function (`if (c) { mkO(7) } else { Some(0) }`):
-		// a later `match (o)` recovers the payload.
 		{"opt-fncall-if-expr", `function mkO(v: i32): Option[i32] { return Some(v); } function main(): i32 { let o = if (true) { mkO(7) } else { Some(0) }; match (o) { Some(n) => { return n; }, None => { return 0; } } return 0; }`, 7},
 		{"result-fncall-if-expr", `function div(a: i32, b: i32): Result[i32, i32] { if (b == 0) { return Err(1); } return Ok(a / b); } function main(): i32 { let r = if (true) { div(20, 4) } else { Err(9) }; match (r) { Ok(n) => { return n; }, Err(e) => { return e; } } return 0; }`, 5},
-		// `for x in <u64[]>`: the element uses the i64 8-byte read but is bound
-		// u64, so body compares/shifts on it are unsigned. Both paths must
-		// agree, and the large
-		// element (> 2^63) makes a signed-vs-unsigned miscompile observable — a
-		// signed `>` would mis-order it, picking the wrong max.
 		{"u64-forin-sum", `function main(): i32 { let xs: u64[] = [10u64, 20u64, 5u64]; let s: u64 = 0u64; for x in xs { s = s + x; } return s as i32; }`, 35},
 		{"u64-forin-max-big", `function main(): i32 { let xs: u64[] = [5u64, 9223372036854775809u64, 7u64]; let best: u64 = 0u64; for x in xs { if (x > best) { best = x; } } if (best == 9223372036854775809u64) { return 0; } return 1; }`, 0},
-		// `arr[i]` index read on a u64[] producing a u64 value (param or local):
-		// reads 8 bytes and the use compares it unsigned. The max over a u64[]
-		// PARAM whose middle element is 2^63+1 — the shape cmp.max_of over a u64[]
-		// uses — would pick the wrong element under a signed compare; the answer
-		// is 0.
 		{"u64-param-idx-sum", `function s(arr: u64[]): u64 { let t: u64 = 0u64; let i = 0; while (i < arr.len()) { t = t + arr[i]; i = i + 1; } return t; } function main(): i32 { return s([10u64, 20u64, 5u64]) as i32; }`, 35},
 		{"u64-param-idx-max-big", `function mx(arr: u64[]): u64 { let m: u64 = arr[0]; let i = 1; while (i < arr.len()) { if (arr[i] > m) { m = arr[i]; } i = i + 1; } return m; } function main(): i32 { if (mx([5u64, 9223372036854775809u64, 7u64]) == 9223372036854775809u64) { return 0; } return 1; }`, 0},
-		// `.append` / `.with` on an 8-byte-element array (i64[] / u64[]): grow via
-		// arr_push_i64 (__fern_arr_push on the register backends,
-		// $__fern_arr_push_i64 on wasm) and in-place 8-byte store. Large values
-		// (> 2^32, and > 2^63 for u64) catch a 4-byte truncation; the u64 unsigned
-		// compare catches a signed-compare mishandling.
 		{"i64-append-build", `function main(): i32 { let a: i64[] = []; let i = 0; while (i < 4) { a = a.append((i as i64) * 5000000000); i = i + 1; } if (a[3] == 15000000000 as i64) { return 0; } return 1; }`, 0},
 		{"i64-sort-asc", `function main(): i32 { let a: i64[] = []; a = a.append(9 as i64); a = a.append(3 as i64); a = a.append(6 as i64); let k = 1; while (k < 3) { let key: i64 = a[k]; let j = k - 1; while (j >= 0 && a[j] > key) { a = a.with(j + 1, a[j]); j = j - 1; } a = a.with(j + 1, key); k = k + 1; } if (a[0] == 3 as i64 && a[2] == 9 as i64) { return 0; } return 1; }`, 0},
 		{"u64-append-with-big", `function main(): i32 { let xs: u64[] = []; xs = xs.append(9223372036854775809u64); xs = xs.append(3u64); xs = xs.with(1, 9223372036854775810u64); if (xs[0] != 9223372036854775809u64) { return 1; } if (xs[1] > xs[0]) { return 0; } return 2; }`, 0},
-		// Returning a u64[] (a pointer move) — a u64[]-returning sort shape.
-		// The width-64 return guard must NOT mistake the u64[] array for a scalar
-		// u64. Sorting elements spanning 2^63 proves the body's unsigned compares
-		// order them correctly.
 		{"u64-return-array", `function id(arr: u64[]): u64[] { return arr; } function main(): i32 { return id([7u64, 8u64])[1] as i32; }`, 8},
 		{"u64-sort-big", `function srt(arr: u64[]): u64[] { let n = arr.len(); let out: u64[] = []; let i = 0; while (i < n) { out = out.append(arr[i]); i = i + 1; } let k = 1; while (k < n) { let key: u64 = out[k]; let j = k - 1; while (j >= 0 && out[j] > key) { out = out.with(j + 1, out[j]); j = j - 1; } out = out.with(j + 1, key); k = k + 1; } return out; } function main(): i32 { let s = srt([9223372036854775810u64, 9223372036854775809u64, 3u64]); if (s[0] == 3u64 && s[1] == 9223372036854775809u64 && s[2] == 9223372036854775810u64) { return 0; } return 1; }`, 0},
-		// match on a STRING-receiver method's Option result (`match (s.m())`) — the
-		// std/string parse_int_or shape (match (s.parse_int()) { … }). Both Some
-		// and None arms exercised.
 		{"string-method-option-match", `function (s: string) firstlen(): Option[i32] { if (s.len() == 0) { return None; } return Some(s.len()); } function f(s: string): i32 { match (s.firstlen()) { Some(v) => { return v; }, None => { return 0 - 1; } } } function main(): i32 { return f("hello") * 10 + (f("") + 1); }`, 50},
-		// match Some(p) binding a TUPLE payload (`(string, string)`) from a
-		// method-call Option result — the std/string is_email_like shape
-		// (match (s.split_once(\"@\")) { Some(p) => … p.0 … p.1 … }). p.0/p.1 read
-		// as strings; both Some and None arms exercised.
 		{"option-tuple-payload-method-match", `import "std/string";
 function (s: string) halves(): Option[(string, string)] { if (s.len() < 2) { return None; } return Some((slice_unchecked(s, 0, 1).to_owned(), slice_unchecked(s, 1, s.len()).to_owned())); } function f(s: string): i32 { match (s.halves()) { Some(p) => { return p.0.len() * 100 + p.1.len(); }, None => { return 0 - 1; } } } function main(): i32 { if (f("hello") == 104 && f("x") == 0 - 1) { return 0; } return 1; }`, 0},
-		// RETURNING a tuple-element array — `(i32, i32)[]` — the std/array
-		// enumerate/zip shape. The bare-tuple-return guard wrongly caught the
-		// `(...)[]` ret type; excluding array types lets it take the array
-		// move-on-return path. Build via append, return, read .0/.1 at the caller.
 		{"tuple-array-build-return", `function enum2(xs: i32[]): (i32, i32)[] { let out: (i32, i32)[] = []; let i = 0; for x in xs { out = out.append((i, x * x)); i = i + 1; } return out; } function main(): i32 { let e = enum2([5, 6, 7]); if (e.len() == 3 && e[1].0 == 1 && e[1].1 == 36 && e[2].1 == 49) { return 0; } return 1; }`, 0},
-		// `defer` / `errdefer` — parser.lower_defers_module schedules the deferred
-		// action at every scope exit. Covers basic / early-return /
-		// two-defer-order / errdefer.
 		{"defer-basic", `function main(): i32 { let x = 0; defer { x = 99; } x = 1; return x; }`, 1},
 		{"defer-early-return", `function f(n: i32): i32 { let x = 5; defer { x = 0; } if (n > 0) { return n; } return x; } function main(): i32 { return f(7); }`, 7},
 		{"defer-order-two", `function main(): i32 { let a = [0, 0]; defer { a = a.with(0, 1); } defer { a = a.with(1, 2); } return a[0] + a[1]; }`, 0},
 		{"errdefer-ok-path", `function f(): Result[i32, string] { let x = 1; errdefer { x = 9; } return Ok(x); } function main(): i32 { match (f()) { Ok(v) => { return v; }, Err(_) => { return 0; } } }`, 1},
-		// A string-CONCAT branch in a value-position if-/match-expression: `.len()`
-		// on the result is the string length. A mis-typed result dispatches to the
-		// array path and returns 56, not 4.
-		// A map-RETURNING call as a TUPLE-LITERAL element (`(mk(), 3)`): a later
-		// `t.0.get_or(…)` / `t.0.len()` dispatches as a map op (#3317). A
-		// scalar-typed element mis-dispatches the map method (10 reads back as 2,
-		// 4 as 2).
-		// Digit counts for the wide stringifiers (#5826), at the values where a
-		// sign-handling slip shows up: INT64_MIN is 20 chars including the minus,
-		// u64 max is 20 digits unsigned (11 if misread as signed -1).
 		{"i64-to-string-min-len", `import "std/i64";
 function main(): i32 { let n: i64 = (0 as i64) - 9223372036854775807 - 1; return n.to_string().len(); }`, 20},
 		{"u64-to-string-max-len", `import "std/u64";
@@ -1400,61 +878,37 @@ function mk(): Map[i32, i32] { let m: Map[i32, i32] = map_new(4); m = m.insert(1
 function mk(): Map[i32, i32] { let m: Map[i32, i32] = map_new(4); m = m.insert(1, 7); return m; } function main(): i32 { let t: (Map[i32, i32], i32) = (mk(), 3); return t.1 + t.0.len(); }`, 4},
 		{"map-ret-tuple-elem-unannotated", `import "core/map";
 function mk(): Map[i32, i32] { let m: Map[i32, i32] = map_new(4); m = m.insert(1, 7); return m; } function main(): i32 { let t = (mk(), 3); return t.1 + t.0.get_or(1, 0); }`, 10},
-		// The METHOD-call sibling (`(f.mk(), 3)`).
 		{"map-ret-method-tuple-elem", `import "core/map";
 struct Fac { base: i32 } function (f: Fac) mk(): Map[i32, i32] { let m: Map[i32, i32] = map_new(4); m = m.insert(1, f.base); return m; } function main(): i32 { let f: Fac = Fac { base: 7 }; let t: (Map[i32, i32], i32) = (f.mk(), 3); return t.1 + t.0.get_or(1, 0); }`, 10},
-		// The string[]-returning METHOD sibling (`(f.mks(), 3)`): `t.0[0].len()`
-		// is a string length (a scalar-typed element dispatches a nonexistent
-		// `__fn_i32__len`, a link failure).
 		{"strarr-ret-method-tuple-elem", `struct Fac { base: i32 } function (f: Fac) mks(): string[] { let xs: string[] = []; xs = xs.append("ab"); return xs; } function main(): i32 { let f: Fac = Fac { base: 7 }; let t: (string[], i32) = (f.mks(), 3); return t.1 + t.0.len() + t.0[0].len(); }`, 6},
 		{"str-concat-if-expr-direct", `function main(): i32 { return (if (true) { "ab" + "cd" } else { "x" }).len(); }`, 4},
 		{"str-concat-if-expr-var", `function main(): i32 { let s = if (true) { "ab" + "cd" } else { "x" }; return s.len(); }`, 4},
 		{"str-concat-if-expr-else", `function main(): i32 { let s = if (false) { "x" } else { "ab" + "cdef" }; return s.len(); }`, 6},
 		{"str-concat-match-expr", `function main(): i32 { return (match (1) { 1 => "aa" + "bb", _ => "z" }).len(); }`, 4},
-		// Value-position match-EXPRESSION binding a NON-i32 Option/Result payload and
-		// BORROW-reading it to an i32 result (#2994 sibling): the payload is
-		// borrowed from the box.
 		{"matchexpr-opt-str-len", `function main(): i32 { let o: Option[string] = Some("hi"); let y = match (o) { Some(s) => s.len(), None => 0 }; return y; }`, 2},
 		{"matchexpr-opt-struct-field", `struct P { x: i32 } function main(): i32 { let o: Option[P] = Some(P { x: 9 }); let y = match (o) { Some(p) => p.x, None => 0 }; return y; }`, 9},
 		{"matchexpr-result-err-str-len", `function main(): i32 { let r: Result[i32, string] = Err("bad"); let y = match (r) { Ok(n) => n, Err(s) => s.len() }; return y; }`, 3},
 		{"matchexpr-opt-tuple-elem", `function main(): i32 { let o: Option[(i32, i32)] = Some((2, 3)); let y = match (o) { Some(t) => t.0 + t.1, None => 0 }; return y; }`, 5},
 		{"matchexpr-result-ok-struct", `struct P { x: i32 } function main(): i32 { let r: Result[P, i32] = Ok(P { x: 8 }); let y = match (r) { Ok(p) => p.x + 4, Err(e) => e }; return y; }`, 12},
-		// Value-position match-EXPRESSION binding a NON-i32 Option/Result payload and
-		// returning it WHOLE (bare `Some(v) => v`) or as a composite: the result has
-		// the Some/Ok/Err payload's string/struct/tuple type.
 		{"matchexpr-opt-str-bare", `function main(): i32 { let o: Option[string] = Some("hi"); let s = match (o) { Some(v) => v, None => "" }; return s.len(); }`, 2},
 		{"matchexpr-opt-struct-bare", `struct P { x: i32 } function main(): i32 { let o: Option[P] = Some(P { x: 7 }); let p = match (o) { Some(v) => v, None => P { x: 0 } }; return p.x; }`, 7},
 		{"matchexpr-result-ok-str-bare", `function main(): i32 { let r: Result[string, i32] = Ok("abcd"); let s = match (r) { Ok(v) => v, Err(e) => "" }; return s.len(); }`, 4},
 		{"matchexpr-result-ok-struct-bare", `struct P { x: i32 } function main(): i32 { let r: Result[P, i32] = Ok(P { x: 6 }); let p = match (r) { Ok(v) => v, Err(e) => P { x: 0 } }; return p.x; }`, 6},
-		// NESTED struct/tuple-field borrow read of a match-EXPRESSION payload
-		// (`Some(q) => q.p.x`): a multi-level i32 borrow read in value position.
 		{"matchexpr-opt-nested-field", `struct P { x: i32 } struct Q { p: P } function main(): i32 { let o: Option[Q] = Some(Q { p: P { x: 5 } }); let y = match (o) { Some(q) => q.p.x, None => 0 }; return y; }`, 5},
 		{"matchexpr-uenum-nested-field", `struct P { x: i32 } struct Q { p: P } enum E { Has(Q), Nil } function main(): i32 { let e: E = Has(Q { p: P { x: 6 } }); let y = match (e) { Has(q) => q.p.x, Nil => 0 }; return y; }`, 6},
 		{"matchexpr-opt-nested-3deep", `struct A { v: i32 } struct B { a: A } struct C { b: B } function main(): i32 { let o: Option[C] = Some(C { b: B { a: A { v: 8 } } }); let y = match (o) { Some(c) => c.b.a.v, None => 0 }; return y; }`, 8},
 		{"matchexpr-opt-nested-arith", `struct P { x: i32 } struct Q { p: P, k: i32 } function main(): i32 { let o: Option[Q] = Some(Q { p: P { x: 5 }, k: 6 }); let y = match (o) { Some(q) => q.p.x + q.k, None => 0 }; return y; }`, 11},
-		// NARROWING CAST of an i64/f64 match-EXPRESSION payload to an i32 result
-		// (`Some(n) => (n as i32)`, also `as u32` / `as u8`): the cast reads the
-		// wide payload and narrows; the result is i32.
 		{"matchexpr-opt-i64-cast", `function main(): i32 { let o: Option[i64] = Some(5 as i64); let y = match (o) { Some(n) => (n as i32), None => 0 }; return y; }`, 5},
 		{"matchexpr-opt-f64-cast", `function main(): i32 { let o: Option[f64] = Some(2.5); let y = match (o) { Some(n) => (n as i32), None => 0 }; return y; }`, 2},
 		{"matchexpr-result-i64-cast", `function main(): i32 { let r: Result[i64, i32] = Ok(7 as i64); let y = match (r) { Ok(n) => (n as i32), Err(e) => e }; return y; }`, 7},
 		{"matchexpr-uenum-i64-cast", `enum E { Big(i64), Nil } function main(): i32 { let e: E = Big(5 as i64); let y = match (e) { Big(n) => (n as i32), Nil => 0 }; return y; }`, 5},
-		// Value-position match-EXPRESSION reading a bound i64/f64 payload via
-		// ARITHMETIC (`Some(n) => n + 1`, `Some(p) => p.v + 1`, `Some(n) => n + 1.5`):
-		// the result has the payload's wide type.
 		{"matchexpr-opt-i64-arith", `function main(): i64 { let o: Option[i64] = Some(5 as i64); return match (o) { Some(n) => n + 1, None => 0 as i64 }; }`, 6},
 		{"matchexpr-result-i64-arith", `function main(): i64 { let r: Result[i64, i32] = Ok(5 as i64); return match (r) { Ok(n) => n + 1, Err(e) => 0 as i64 }; }`, 6},
 		{"matchexpr-uenum-i64-arith", `enum E { V(i64), W } function main(): i64 { let e: E = V(5 as i64); return match (e) { V(n) => n + 1, W => 0 as i64 }; }`, 6},
 		{"matchexpr-opt-f64-arith", `function main(): i32 { let o: Option[f64] = Some(4.5); return (match (o) { Some(n) => n + 1.5, None => 0.0 } as i32); }`, 6},
 		{"matchexpr-opt-struct-i64-arith", `struct P { v: i64 } function main(): i64 { let o: Option[P] = Some(P{v: 5 as i64}); return match (o) { Some(p) => p.v + 1, None => 0 as i64 }; }`, 6},
-		// METHOD CALL on a struct/enum match-EXPRESSION payload returning i64/f64
-		// (`Some(p) => p.get()`, get(): i64): the result is i64/f64 — the wide
-		// sibling of the i32-returning method case.
 		{"matchexpr-opt-method-i64", `struct P { v: i64 } function (p: P) get(): i64 { return p.v; } function main(): i64 { let o: Option[P] = Some(P { v: 7 as i64 }); return match (o) { Some(p) => p.get(), None => 0 as i64 }; }`, 7},
 		{"matchexpr-uenum-method-i64", `struct P { v: i64 } enum E { Has(P), Nil } function (p: P) g(): i64 { return p.v + 2 as i64; } function main(): i64 { let e: E = Has(P { v: 7 as i64 }); return match (e) { Has(p) => p.g(), Nil => 0 as i64 }; }`, 9},
-		// f-string interpolation: the returned byte proves the interpolant text
-		// actually landed: `f"n={7}!"` → "n=7!" (s[2]='7'=55); `f"v={10*2}"` →
-		// "v=20" (s[2]='2'=50); the `{{` escape → "a{b" (s[1]='{'=123).
 		{"fstring-i32-val", `import "std/i32";
 function main(): i32 { let n = 7; let s = f"n={n}!"; return s[2] as i32; }`, 55},
 		{"fstring-expr-val", `import "std/i32";
@@ -1462,112 +916,57 @@ function main(): i32 { let a = 10; let s = f"v={a * 2}"; return s[2] as i32; }`,
 		{"fstring-esc-brace-val", `function main(): i32 { let s = f"a{{b"; return s[1] as i32; }`, 123},
 		{"fstring-len-val", `import "std/i32";
 function main(): i32 { let n = 42; return f"{n} apples".len(); }`, 9},
-		// boolean-element tuple returns: the boolean element round-trips through
-		// the tuple box and drives the `if`.
 		{"tuple-bool-val", `function f(): (boolean, i32) { return (true, 7); } function main(): i32 { let t = f(); if (t.0) { return t.1; } return 0; }`, 7},
 		{"tuple-bool-both-val", `function f(): (boolean, boolean) { return (true, false); } function main(): i32 { let t = f(); let r = 0; if (t.0) { r = r + 1; } if (t.1) { r = r + 10; } return r; }`, 1},
-		// ≤32-bit non-i32 integer tuple elements: the u32 high bits must survive
-		// the round-trip.
 		{"tuple-u32-val", `function f(): (u32, i32) { return (4000000000 as u32, 7); } function main(): i32 { let t = f(); let hi: u32 = t.0 >> 30; return (hi as i32) + t.1; }`, 10},
-		// ≤32-bit non-i32 integer STRUCT fields: the u32 high bits survive the
-		// field round-trip.
 		{"struct-u32-field-val", `struct B { hi: u32, n: i32 } function main(): i32 { let b = B { hi: 4000000000 as u32, n: 7 }; let hi: u32 = b.hi >> 30; return (hi as i32) + b.n; }`, 10},
-		// A u64 struct field: 2^32 >> 32 == 1 proves the high 32 bits survive the
-		// field round-trip (a truncating read gives 5).
 		{"struct-u64-param-val", `struct B { hi: u64, n: i32 } function f(b: B): i32 { let q: u64 = b.hi >> 32; return (q as i32) + b.n; } function main(): i32 { return f(B { hi: 4294967296 as u64, n: 5 }); }`, 6},
-		// u64 tuple element. The unsigned case (18e18 has bit 63 set; `>> 60`
-		// unsigned == 15, a signed shift differs) proves both the 64-bit width and
-		// the unsigned type survive the slot.
 		{"tuple-u64-access-val", `function f(): (u64, i32) { return (4294967296 as u64, 5); } function main(): i32 { let t = f(); let q: u64 = t.0 >> 32; return (q as i32) + t.1; }`, 6},
 		{"tuple-u64-unsigned-val", `function f(): (u64, i32) { return (18000000000000000000 as u64, 1); } function main(): i32 { let t = f(); let q: u64 = t.0 >> 60; return (q as i32) + t.1; }`, 16},
-		// A string-ARRAY-valued if-/match-expression: the 8-byte string elements are
-		// read at full width, so `xs[i].len()` is the element length (an i32-width
-		// read returns 1).
 		{"strarr-if-expr-direct-elem", `function main(): i32 { return (if (true) { ["a", "bb"] } else { ["ccc"] })[1].len(); }`, 2},
 		{"strarr-if-expr-var-elems", `function main(): i32 { let xs = if (true) { ["a", "bb"] } else { ["ccc"] }; return xs[0].len() + xs[1].len(); }`, 3},
 		{"strarr-if-expr-forin", `function main(): i32 { let xs = if (true) { ["a", "bb", "ccc"] } else { ["z"] }; let t = 0; for s in xs { t = t + s.len(); } return t; }`, 6},
 		{"strarr-match-expr-elems", `function main(): i32 { let xs = match (1) { 1 => ["hi", "yo"], _ => ["x"] }; return xs[0].len() + xs[1].len() + xs.len(); }`, 6},
-		// f64-ARRAY-valued if-/match-expression: same lifted-__lam scalar miscompile
-		// as the string-array case (8-byte f64 elements read at i32 width). #3224.
 		{"f64arr-if-expr-elem", `function main(): i32 { let xs = if (true) { [1.5, 2.5] } else { [3.5] }; return xs.len() * 10 + (xs[1] as i32); }`, 22},
 		{"f64arr-if-expr-forin", `function main(): i32 { let xs = if (true) { [1.5, 2.5, 3.0] } else { [9.0] }; let t = 0.0; for x in xs { t = t + x; } return t as i32; }`, 7},
 		{"f64arr-match-expr-elem", `function main(): i32 { return (match (1) { 1 => [2.5, 4.5], _ => [0.0] })[1] as i32; }`, 4},
-		// A lifted if-/match-expression whose branch CALLS an opt-returning fn with
-		// a `None`/call other branch is lambda-lifted (None is a keyword) — its
-		// `__lam` opt return type is inferred from the body so a later `match (o)`
-		// recovers the payload (#3236 sibling for the lifted shape).
 		{"opt-fncall-if-none-else", `function mkO(v: i32): Option[i32] { return Some(v); } function main(): i32 { let o = if (true) { mkO(7) } else { None }; match (o) { Some(n) => { return n; }, None => { return 0; } } return 0; }`, 7},
 		{"opt-fncall-if-call-else", `function mkO(v: i32): Option[i32] { return Some(v); } function main(): i32 { let o = if (true) { mkO(7) } else { mkO(2) }; match (o) { Some(n) => { return n; }, None => { return 0; } } return 0; }`, 7},
 		{"result-fncall-if-err-else", `function div(a: i32, b: i32): Result[i32, i32] { if (b == 0) { return Err(1); } return Ok(a / b); } function main(): i32 { let r = if (true) { div(20, 4) } else { Err(9) }; match (r) { Ok(n) => { return n; }, Err(e) => { return e; } } return 0; }`, 5},
-		// A u32 Option/Result payload. The u32 case reads a high-bit value back
-		// through the box; the `>> 31` is LOGICAL (4294967294 >> 31 = 1), so a
-		// wrong i32-arithmetic shift (-> -1, exit 255) is caught — proof the bound
-		// payload is typed u32, not i32.
 		{"opt-u32-payload-shift-val", `function main(): i32 { let o: Option[u32] = Some(4294967294 as u32); match (o) { Some(n) => { return (n >> 31) as i32; }, None => { return 0; } } return 0; }`, 1},
 		{"result-u32-payload-val", `struct S { r: Result[u32, i32] } function main(): i32 { let s = S { r: Ok(42) }; match (s.r) { Ok(n) => { return n as i32; }, Err(e) => { return e; } } return 0; }`, 42},
-		// A u64 Option payload, pinned for 8-byte WIDTH: 5000000000 (> 2^32)
-		// `>> 32 == 1`, but a 32-bit-truncated payload read would give 0. Value
-		// < 2^63 so the shift is signedness-agnostic — the pin isolates the box
-		// width from the payload's signedness.
 		{"opt-u64-payload-wide-val", `function main(): i32 { let o: Option[u64] = Some(5000000000 as u64); match (o) { Some(n) => { return (n >> 32) as i32; }, None => { return 0; } } return 0; }`, 1},
 		{"result-u64-payload-val", `struct S { r: Result[u64, i32] } function main(): i32 { let s = S { r: Ok(42 as u64) }; match (s.r) { Ok(n) => { return n as i32; }, Err(e) => { return e; } } return 0; }`, 42},
-		// u32[] struct-field round-trip: the three elements read back through the
-		// field array and sum.
 		{"struct-u32arr-field-val", `struct Vec { vals: u32[], n: i32 } function main(): i32 { let v = Vec { vals: [10, 20, 30], n: 3 }; let s = 0; let i = 0; while (i < v.n) { s = s + (v.vals[i] as i32); i = i + 1; } return s; }`, 60},
-		// A scalar-array tuple element round-trips through the destructure: the
-		// array pointer is read back and its elements summed (5+10+7).
 		{"tuple-i32arr-destr-val", `function f(): (i32[], i32) { return ([5, 10], 7); } function main(): i32 { let (arr, n) = f(); return arr[0] + arr[1] + n; }`, 22},
-		// A struct-ARRAY-valued if-/match-expression (literal, or a P[]-returning
-		// call in the branch): the lifted __lam's element struct type is inferred
-		// so `ps[i].field` / `for p in ps { p.method() }` resolve. P[] sibling of
-		// the string[]/f64[] array fixes (#3224).
 		{"structarr-if-expr-elem", `struct P { x: i32, y: i32 } function main(): i32 { let ps = if (true) { [P{x:1,y:2}, P{x:3,y:4}] } else { [P{x:0,y:0}] }; return ps[1].x + ps[1].y; }`, 7},
 		{"structarr-if-expr-forin-method", `struct P { x: i32, y: i32 } function (p: P) s(): i32 { return p.x + p.y; } function main(): i32 { let ps = if (true) { [P{x:1,y:2}, P{x:3,y:4}] } else { [P{x:0,y:0}] }; let t = 0; for p in ps { t = t + p.s(); } return t; }`, 10},
 		{"structarr-match-expr-elem", `struct P { x: i32, y: i32 } function main(): i32 { let ps = match (1) { 1 => [P{x:5,y:6}], _ => [P{x:0,y:0}] }; return ps[0].x * 10 + ps[0].y; }`, 56},
 		{"structarr-fncall-if-expr", `struct P { x: i32, y: i32 } function mk(): P[] { return [P{x:5,y:6}]; } function main(): i32 { let ps = if (true) { mk() } else { mk() }; return ps[0].x + ps[0].y; }`, 11},
-		// A Map-typed STRUCT FIELD receiver (`c.m.get_or(k, d)`): map-method
-		// dispatch resolves the map type from the field declaration, not just a
-		// local slot, so reads through a struct field lower (the field read pushes
-		// the map pointer). #map-struct-field.
 		{"map-field-get_or", `import "core/map";
 struct Cache { m: Map[i32, i32], hits: i32 } function main(): i32 { let c = Cache{m: Map { 5: 50, 7: 70 }, hits: 1}; return c.m.get_or(5, 0) + c.m.get_or(7, 0) + c.hits; }`, 121},
 		{"map-field-method", `import "core/map";
 struct Cfg { table: Map[string, i32] } function (c: Cfg) lookup(k: string): i32 { return c.table.get_or(k, 0); } function main(): i32 { let c = Cfg{table: Map { "a": 3, "b": 4 }}; return c.lookup("a") + c.lookup("b"); }`, 7},
 		{"map-field-has-len", `import "core/map";
 struct Cache { m: Map[string, i32] } function main(): i32 { let c = Cache{m: Map { "a": 1, "b": 2 }}; let t = 0; if (c.m.contains("a")) { t = t + c.m.len(); } return t; }`, 2},
-		// A Map[K,V] PARAMETER recovers its map type, so map methods on the param
-		// (`m.get_or(k, d)`) dispatch as map ops (the local-annotation path already
-		// did this; params lacked it). #map-param.
 		{"map-param-get_or", `import "core/map";
 function total(m: Map[i32, i32]): i32 { return m.get_or(1, 0) + m.get_or(2, 0); } function main(): i32 { let m: Map[i32, i32] = Map { 1: 10, 2: 20 }; return total(m); }`, 30},
 		{"map-param-string-key", `import "core/map";
 function look(m: Map[string, i32], k: string): i32 { return m.get_or(k, 0); } function main(): i32 { let m: Map[string, i32] = Map { "x": 7 }; return look(m, "x"); }`, 7},
-		// Iterating a Map-typed struct FIELD's keys()/values() (`for k in
-		// c.m.keys()`): the foreach resolves the map type from the field decl,
-		// like the map-method dispatch. #map-struct-field-iter.
 		{"map-field-keys-forin", `import "core/map";
 struct Cfg { m: Map[i32, i32] } function main(): i32 { let c = Cfg{m: Map { 1: 10, 2: 20, 3: 30 }}; let t = 0; for k in c.m.keys() { t = t + c.m.get_or(k, 0); } return t; }`, 60},
 		{"map-field-values-forin", `import "core/map";
 struct Cfg { m: Map[string, i32] } function main(): i32 { let c = Cfg{m: Map { "a": 3, "b": 4 }}; let t = 0; for v in c.m.values() { t = t + v; } return t; }`, 7},
-		// An UNANNOTATED binding from a map-returning function (`let m = build()`):
-		// `m.get_or(...)` dispatches without a `: Map[K,V]` annotation. #3317.
 		{"map-ret-fn-binding", `import "core/map";
 function build(): Map[i32, i32] { return Map { 1: 5, 2: 6 }; } function main(): i32 { let m = build(); return m.get_or(1, 0) + m.get_or(2, 0); }`, 11},
 		{"map-ret-method-binding", `import "core/map";
 struct Reg { base: i32 } function (r: Reg) table(): Map[i32, i32] { return Map { 1: r.base, 2: r.base + 1 }; } function main(): i32 { let reg = Reg{base: 10}; let m = reg.table(); return m.get_or(1, 0) + m.get_or(2, 0); }`, 21},
-		// A Map TUPLE element (`(Map { … }, x)`): `t.0.get_or(…)` dispatches as a
-		// map op, a rebind `let m = t.0` keeps the map type, and a string-VALUE
-		// element's get_or is a string. #3317.
 		{"map-tuple-elem-get_or", `import "core/map";
 function main(): i32 { let t = (Map { 1: 10 }, 5); return t.0.get_or(1, 0) + t.1; }`, 15},
 		{"map-tuple-elem-rebind", `import "core/map";
 function main(): i32 { let t = (Map { 1: 10 }, 5); let m = t.0; return m.get_or(1, 0) + t.1; }`, 15},
 		{"map-tuple-elem-string-val", `import "core/map";
 function main(): i32 { let t = (Map { 1: "abcd" }, 5); return t.0.get_or(1, "z").len() + t.1; }`, 9},
-		// An ARRAY of maps (`let ms = [Map { … }, …]`): `ms[i].get_or(…)` dispatches
-		// as a map op, a rebind `let m = ms[i]` keeps the map type, an annotated
-		// `Map[K,V][]` binding works, and a string-VALUE element's get_or is a
-		// string. #3317.
 		{"map-array-elem-get_or", `import "core/map";
 function main(): i32 { let ms = [Map { 1: 10 }, Map { 1: 20 }]; return ms[0].get_or(1, 0) + ms[1].get_or(1, 0); }`, 30},
 		{"map-array-elem-rebind", `import "core/map";
@@ -1576,68 +975,26 @@ function main(): i32 { let ms = [Map { 1: 10 }, Map { 1: 20 }]; let m = ms[1]; r
 function main(): i32 { let ms: Map[i32, i32][] = [Map { 1: 10 }]; return ms[0].get_or(1, 0); }`, 10},
 		{"map-array-elem-string-val", `import "core/map";
 function main(): i32 { let ms = [Map { 1: "abcd" }]; return ms[0].get_or(1, "z").len(); }`, 4},
-		// A struct-ARRAY tuple element (`([P { .. }], x)`): `t.0[i].field` /
-		// `t.0[i].method()` resolve (the array sibling of the struct-field-array
-		// case). #3353.
 		{"tuple-structarr-elem-field", `struct P { x: i32 } function main(): i32 { let t = ([P{x:5}], 3); return t.0[0].x + t.1; }`, 8},
 		{"tuple-structarr-elem-multi", `struct P { x: i32, y: i32 } function main(): i32 { let t = ([P{x:5,y:6}, P{x:7,y:8}], 100); return t.0[0].x + t.0[1].y + t.1; }`, 113},
 		{"tuple-structarr-elem-method", `struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function main(): i32 { let t = ([P{x:5}], 3); return t.0[0].dbl() + t.1; }`, 13},
-		// A string[] tuple element (`(["a","b"], x)`): `t.0[i]` reads as a string
-		// (`.len()`) and a rebind `let xs = t.0` keeps the string[] type. #3353.
 		{"tuple-strarr-elem-len", `function main(): i32 { let t = (["ab","cd"], 3); return t.0[1].len() + t.1; }`, 5},
 		{"tuple-strarr-elem-two", `function main(): i32 { let t = (["ab","cd"], 3); return t.0[0].len() + t.0[1].len() + t.1; }`, 7},
 		{"tuple-strarr-elem-rebind", `function main(): i32 { let t = (["ab","cd"], 3); let xs = t.0; return xs[1].len() + t.1; }`, 5},
-		// An f64[] tuple element (`([1.5, 2.5], x)`): `t.0[i]` reads an 8-byte f64
-		// (arr_get width 64) and a rebind `let xs = t.0` keeps the f64[] type. #3353.
 		{"tuple-f64arr-elem-index", `function main(): i32 { let t = ([1.5, 2.5], 3); return (t.0[1] as i32) + t.1; }`, 5},
 		{"tuple-f64arr-elem-sum", `function main(): i32 { let t = ([1.5, 2.5, 4.0], 10); let s = 0.0; let i = 0; while (i < 3) { s = s + t.0[i]; i = i + 1; } return (s as i32) + t.1; }`, 18},
 		{"tuple-f64arr-elem-rebind", `function main(): i32 { let t = ([1.5, 2.5], 3); let xs = t.0; return (xs[1] as i32) + t.1; }`, 5},
-		// An i64[]/u64[] tuple element (`([x as i64], y)`): `t.0[i]` reads an 8-byte
-		// i64 and a rebind `let xs = t.0` keeps the i64[] type. The literal is
-		// i64[] by its 64-bit first element (a bare integer literal stays i32).
-		// #3353.
 		{"tuple-i64arr-elem-index", `function main(): i32 { let t = ([10 as i64, 20 as i64], 3); return (t.0[1] as i32) + t.1; }`, 23},
 		{"tuple-i64arr-elem-two", `function main(): i32 { let t = ([10 as i64, 20 as i64], 3); return (t.0[0] as i32) + (t.0[1] as i32) + t.1; }`, 33},
 		{"tuple-i64arr-elem-rebind", `function main(): i32 { let t = ([10 as i64, 20 as i64], 3); let xs = t.0; return (xs[1] as i32) + t.1; }`, 23},
 		{"tuple-i64arr-elem-while", `function main(): i32 { let t = ([10 as i64, 20 as i64], 3); let s: i64 = 0 as i64; let i = 0; while (i < 2) { s = s + t.0[i]; i = i + 1; } return (s as i32) + t.1; }`, 33},
 		{"tuple-u64arr-elem-index", `function main(): i32 { let t = ([10 as u64, 20 as u64], 3); return (t.0[1] as i32) + t.1; }`, 23},
-		// An UNANNOTATED i64 array literal binding (`let xs = [10 as i64, …]`) is
-		// an i64[], read with 8-byte elements like the annotated
-		// `let xs: i64[] = …`. #3353.
 		{"i64arr-unannot-index", `function main(): i32 { let xs = [10 as i64, 20 as i64]; let q: i64 = xs[0] + xs[1]; return q as i32; }`, 30},
 		{"i64arr-unannot-while", `function main(): i32 { let xs = [1 as i64, 2 as i64, 3 as i64]; let s: i64 = 0 as i64; let i = 0; while (i < 3) { s = s + xs[i]; i = i + 1; } return s as i32; }`, 6},
 		{"i64arr-unannot-forin", `function main(): i32 { let xs = [10 as i64, 20 as i64]; let s: i64 = 0 as i64; for x in xs { s = s + x; } return s as i32; }`, 30},
-		// Two random_i32 draws differ (a stuck/zero generator returns 0/1).
 		{"random-i32-varies", `function main(): i32 { let a: i32 = random_i32(); let b: i32 = random_i32(); if (a == 0) { return 0; } if (a == b) { return 1; } return 7; }`, 7},
-		// A draw is a SIGNED i32: about half of them are negative, so the load
-		// must sign-extend — a zero-extended slot never has its top bit set and
-		// `< 0` is dead code. Ranged, not exact, since the draws are real.
 		{"random-i32-signed", `function main(): i32 { let neg: i32 = 0; let i: i32 = 0; while (i < 200) { if (random_i32() < 0) { neg = neg + 1; } i = i + 1; } if (neg == 0) { return 1; } if (neg > 60) { if (neg < 140) { return 7; } } return 2; }`, 7},
-		// A random byte is in 0..255.
 		{"random-bytes-byte-range", `function main(): i32 { let s: u8[] = random_bytes(4); let x: i32 = s[0] as i32; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
-		// random_bytes over MORE than one chunk (#2649). The Fern helper fills
-		// the buffer in <= 256-byte pieces — getentropy's per-call ceiling on
-		// Darwin, and on Linux the fix for getrandom short-filling a big n. A
-		// wrong chunk address EFAULTs and leaves the tail zeroed -> 2.
-		// write -> read -> remove -> confirm-gone, through the Fern fs leaves
-		// (#2649). An absolute /tmp path works under qemu-user too, since the
-		// syscalls pass through to the host. The read and write are LOOPS over
-		// a moving chunk address, so a wrong one shows up as a length or content
-		// mismatch rather than a silent partial file.
-		// temp_dir + env, the last two leaves that needed only constants (#2649):
-		// mkdirat into a monotonic_ns-named /tmp dir, then a write/read/remove
-		// inside it, then a set and an unset environment variable. PATH is
-		// present under qemu-user too (it forwards the host environment).
-		// stat through the Fern helper on the 4-arg fstatat family (#2649):
-		// /tmp is a directory on every host and under qemu-user, and the
-		// missing sibling exercises the errno -> NotFound classification. A
-		// wrong st_mode offset reads st_nlink or st_dev and misclassifies.
-		// xs.reverse() / xs.concat(ys) through the Fern helpers (#2649). The
-		// string[] cases are the ones that matter: both copy raw 8-byte SLOTS,
-		// so an element that is a box POINTER has to survive untouched — the
-		// i32[] cases alone would pass even if the copy narrowed to 32 bits.
-		// The source array is re-read afterwards to catch a helper that
-		// consumed its borrowed parameter.
 		{"arr-slice-fern", `function main(): i32 { let a: i32[] = [10,20,30,40,50]; let b = a[1:4]; if (b.len() != 3) { return 1; } if (b[0] != 20) { return 2; } if (b[2] != 40) { return 3; } if (a[1] != 20) { return 4; } if (a.len() != 5) { return 5; } if (a[0:0].len() != 0) { return 6; } if (a[5:5].len() != 0) { return 7; } let f = a[0:5]; if (f.len() != 5) { return 8; } if (f[4] != 50) { return 9; } let s: string[] = ["aa","bbb","c"]; let t = s[1:3]; if (t.len() != 2) { return 10; } if (t[0] != "bbb") { return 11; } if (t[1] != "c") { return 12; } if (s[0] != "aa") { return 13; } return 33; }`, 33},
 		{"clocks-fern", `function main(): i32 { let t0: i64 = monotonic_ns(); let w: i64 = now_unix_ms(); let n: i64 = now_ns(); let t1: i64 = monotonic_ns(); if (t1 < t0) { return 1; } if (w < (1577836800000 as i64)) { return 2; } if (w > (4102444800000 as i64)) { return 3; } let nms: i64 = n / (1000000 as i64); let d: i64 = nms - w; if (d < (0 as i64)) { d = 0 - d; } if (d > (5000 as i64)) { return 4; } if (t0 > (4102444800000000000 as i64)) { return 5; } return 71; }`, 71},
 		{"clocks-no-heap", `function main(): i32 { let t: i64 = monotonic_ns(); if (t > (0 as i64)) { return 55; } return 1; }`, 55},
@@ -1651,11 +1008,7 @@ function main(): i32 { let ms = [Map { 1: "abcd" }]; return ms[0].get_or(1, "z")
 		{"read-file-bytes", `function main(): i32 { let p: string = "/tmp/fern_rfb_x86.bin"; match (write_file(p, "AZ")) { Ok(_) => {}, Err(_) => { return 1; } } match (read_file_bytes(p)) { Ok(b) => { if (b.len() != 2) { return 2; } if ((b[0] as i32) != 65) { return 3; } if ((b[1] as i32) != 90) { return 4; } }, Err(_) => { return 5; } } match (remove_file(p)) { Ok(_) => {}, Err(_) => { return 6; } } match (read_file_bytes(p)) { Ok(_) => { return 7; }, Err(e) => { match (e) { NotFound(_) => {}, _ => { return 8; } } } } return 45; }`, 45},
 		{"read-file-invalid-utf8", `function main(): i32 { let p: string = "/tmp/fern_rfu_x86.bin"; let raw: u8[] = [255 as u8, 254 as u8]; match (write_file(p, string_from_bytes_unchecked(raw))) { Ok(_) => {}, Err(_) => { return 1; } } match (read_file(p)) { Ok(_) => { return 2; }, Err(e) => { match (e) { InvalidUtf8(q) => { if (q != p) { return 3; } }, _ => { return 4; } } } } match (read_file_bytes(p)) { Ok(b) => { if (b.len() != 2) { return 5; } if ((b[0] as i32) != 255) { return 6; } }, Err(_) => { return 7; } } let _r: Result[void, IoError] = remove_file(p); return 46; }`, 46},
 		{"random-bytes-chunked", `function main(): i32 { let b: u8[] = random_bytes(600); if (b.len() != 600) { return 1; } let v: i32 = 0; let i: i32 = 256; while (i < 600) { v = v | (b[i] as i32); i = i + 1; } if (v == 0) { return 2; } let w: i32 = 0; let j: i32 = 0; while (j < 256) { w = w | (b[j] as i32); j = j + 1; } if (w == 0) { return 3; } return 42; }`, 42},
-		// uuid_v4: 36 chars, '4' at index 14, '-' at 8, distinct draws.
 		{"uuid-v4", uuidV4Program, 0},
-		// Range-for (#2699). Half-open `..` and inclusive `..=` (closed interval)
-		// — the latter visits HIGH, and ends even when HIGH is i32's maximum
-		// (#10359).
 		{"range-sum", `function main(): i32 { let s = 0; for i in 0..5 { s = s + i; } return s; }`, 10},
 		{"rangei-sum", `function main(): i32 { let s = 0; for i in 0..=5 { s = s + i; } return s; }`, 15},
 		{"rangei-single", `function main(): i32 { let c = 0; for i in 5..=5 { c = c + 1; } return c; }`, 1},
@@ -1665,145 +1018,48 @@ function main(): i32 { let ms = [Map { 1: "abcd" }]; return ms[0].get_or(1, "z")
 		{"rangei-i32-max-break", `function main(): i32 { let c = 0; for i in 2147483645..=2147483647 { c = c + 1; if (i == 2147483646) { break; } } return c; }`, 2},
 		{"rangei-i32-min", `function main(): i32 { let lo: i32 = -2147483647 - 1; let c = 0; for i in lo..=lo { c = c + 1; } return c; }`, 1},
 		{"range-i32-min", `function main(): i32 { let lo: i32 = -2147483647 - 1; let c = 0; for i in lo..(lo + 1) { c = c + 1; } return c; }`, 1},
-		// Multi-payload variant binds: a `Pt(x, y)` arm binds EVERY payload
-		// field (struct_get at successive indices), not just the first.
 		{"match-multi-bind", `enum P { Pt(i32, i32), Origin } function f(p: P): i32 { match (p) { Pt(x, y) => { return x * y; }, Origin => { return 0; } } return 0; } function main(): i32 { return f(Pt(6, 7)); }`, 42},
 		{"match-multi-bind-three", `enum T { Tri(i32, i32, i32), Empty } function f(t: T): i32 { match (t) { Tri(a, b, c) => { return a + b * c; }, Empty => { return 0; } } return 0; } function main(): i32 { return f(Tri(1, 2, 3)); }`, 7},
 		{"match-multi-bind-mixed", `enum M { Kv(string, i32), None2 } function f(m: M): i32 { match (m) { Kv(k, v) => { return k.len() + v; }, None2 => { return 0; } } return 0; } function main(): i32 { return f(Kv("hello", 5)); }`, 10},
 		{"match-multi-bind-skip", `enum P { Pt(i32, i32), Origin } function f(p: P): i32 { match (p) { Pt(_, y) => { return y; }, Origin => { return 0; } } return 0; } function main(): i32 { return f(Pt(6, 7)); }`, 7},
-		// Multi-payload variant arm in a value-position match-EXPRESSION
-		// (`return match (e) { Pair(a, b) => a + b }`) (#3193).
 		{"match-expr-multi-bind", `enum E { Pair(i32, i32) } function main(): i32 { let e = E.Pair(3, 4); return match (e) { Pair(a, b) => a + b }; }`, 7},
 		{"match-expr-multi-2var", `enum E { Pair(i32, i32), Single(i32) } function main(): i32 { let e = E.Single(9); return match (e) { Pair(a, b) => a + b, Single(x) => x }; }`, 9},
 		{"match-expr-multi-wildcard", `enum E { Pair(i32, i32) } function main(): i32 { let e = E.Pair(3, 4); return match (e) { Pair(_, b) => b }; }`, 4},
-		// CAPTURING inline lambdas in ARRAY-element position (#2994).
-		// lift_inline_closures hoists each to a unique `<fd>$cloN` and replaces the
-		// lambda with a `__mkclo$<fd>$cloN(caps…)` env-box marker; `fs[i](args)` is
-		// an env-first closure call (push box, args, box[0] funcval, call_indirect
-		// arity+1). Single capturing lambda; fs[0](7) = 7 + 10 = 17.
 		{"clo-cap-arr-elem", `function main(): i32 { let n = 10; let fs = [(x: i32): i32 => { return x + n; }]; return fs[0](7); }`, 17},
-		// Capture used twice in the body (x*n + n with n=3, x=5): 15 + 3 = 18.
 		{"clo-cap-arr-body-twice", `function main(): i32 { let n = 3; let fs = [(x: i32): i32 => { return x * n + n; }]; return fs[0](5); }`, 18},
-		// Two captures in one lambda (a + b with a=4, b=100, x=7): 7 + 4 + 100 = 111.
 		{"clo-cap-arr-two-caps", `function main(): i32 { let a = 4; let b = 100; let fs = [(x: i32): i32 => { return x + a + b; }]; return fs[0](7); }`, 111},
-		// Multiple distinct capturing lambdas in ONE array — each gets its own
-		// `$cloN`. fs[0](5)=5+1=6, fs[1](5)=5*10=50; 6 + 50 = 56.
 		{"clo-cap-arr-multi", `function main(): i32 { let a = 1; let b = 10; let fs = [(x: i32): i32 => { return x + a; }, (x: i32): i32 => { return x * b; }]; return fs[0](5) + fs[1](5); }`, 56},
-		// A capturing array element bound to a local first, then called (`let g =
-		// fs[0]; g(args)`) — the closure-array element binds a closure LOCAL whose
-		// call also unpacks the box. g(5) = 5 + n = 5 + 100 = 105.
 		{"clo-cap-arr-bind-call", `function main(): i32 { let n = 100; let fs = [(x: i32): i32 => { return x + n; }]; let g = fs[0]; return g(5); }`, 105},
-		// Two distinct capturing lambdas summed via a `for f in fs` loop — each
-		// gets its own `$cloN` and reads its own env box. With a=1, b=10:
-		// fs[0](10) = 10 + a = 11, fs[1](10) = 10 * b = 100; 11 + 100 = 111.
 		{"clo-cap-arr-multi-forin", `function main(): i32 { let a = 1; let b = 10; let fs = [(x: i32): i32 => { return x + a; }, (x: i32): i32 => { return x * b; }]; let s = 0; for f in fs { s = s + f(10); } return s; }`, 111},
-		// A CAPTURING inline lambda in a STRUCT FIELD value (#3445). The lift pass
-		// wraps EVERY fn-typed field into an env box: a capturing lambda →
-		// [funcval($cloN), caps…], a no-capture lambda / bare fn-name → a [$wrapN]
-		// env-taking trampoline (slot 0 only); `b.f(args)` dispatches uniformly
-		// env-first. Single capturing field: b.f(7) = 7 + n = 7 + 10 = 17.
 		{"clo-cap-struct-field", `struct Box { f: (i32) => i32 } function main(): i32 { let n = 10; let b = Box { f: (x: i32): i32 => { return x + n; } }; return b.f(7); }`, 17},
-		// Two distinct capturing fields, each its own `$cloN` env box. With n=5,
-		// m=3: o.add(10)=10+5=15, o.mul(10)=10*3=30; 15 + 30 = 45.
 		{"clo-cap-struct-field-2cap", `struct Ops { add: (i32) => i32, mul: (i32) => i32 } function main(): i32 { let n = 5; let m = 3; let o = Ops { add: (x: i32): i32 => { return x + n; }, mul: (x: i32): i32 => { return x * m; } }; return o.add(10) + o.mul(10); }`, 45},
-		// A capturing field PLUS a no-capture lambda field in the same struct: the
-		// capturing field is a [$cloN, caps…] box, the no-capture field a [$wrapN]
-		// trampoline box; both call env-first. n=100: cap(7)=107, plain(7)=14; 121.
 		{"clo-cap-struct-field-mixed-nocap", `struct Ops { cap: (i32) => i32, plain: (i32) => i32 } function main(): i32 { let n = 100; let o = Ops { cap: (x: i32): i32 => { return x + n; }, plain: (x: i32): i32 => { return x * 2; } }; return o.cap(7) + o.plain(7); }`, 121},
-		// A capturing field PLUS a bare fn-name field: the fn-name field is wrapped
-		// in a [$wrapN] trampoline that calls the named fn. n=1: cap(7)=8,
-		// named(7)=trip(7)=21; 8 + 21 = 29.
 		{"clo-cap-struct-field-mixed-named", `struct Ops { cap: (i32) => i32, named: (i32) => i32 } function trip(x: i32): i32 { return x * 3; } function main(): i32 { let n = 1; let o = Ops { cap: (x: i32): i32 => { return x + n; }, named: trip }; return o.cap(7) + o.named(7); }`, 29},
-		// A capturing field PLUS a separate non-fn (i32) field: the i32 field is
-		// stored normally, the fn field as the env box. n=10: f(7)=17, base=100; 117.
 		{"clo-cap-struct-field-with-nonfn", `struct Box { f: (i32) => i32, base: i32 } function main(): i32 { let n = 10; let b = Box { f: (x: i32): i32 => { return x + n; }, base: 100 }; return b.f(7) + b.base; }`, 117},
-		// CAPTURING inline lambda passed as a CALL ARGUMENT (slice #3445 follow-up).
-		// The lift pass wraps the fn-typed argument into an env box [funcval, caps…]
-		// and the callee's fn-typed param `f` is a closure local, so
-		// `f(x)` dispatches env-first. n=10: apply(λx.x+n, 5) = 5 + 10 = 15.
 		{"clo-cap-fn-arg", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { let n = 10; return apply((x: i32): i32 => { return x + n; }, 5); }`, 15},
-		// Capturing lambda argument with TWO captures: box [funcval, a, b]. a=8,
-		// b=100: apply(λx.x+a+b, 0) = 0 + 8 + 100 = 108.
 		{"clo-cap-fn-arg-two-caps", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { let a = 8; let b = 100; return apply((x: i32): i32 => { return x + a + b; }, 0); }`, 108},
-		// A capturing lambda arg AND a no-capture lambda arg into a TWO-fn-param
-		// call: the capturing one is a [funcval, caps…] box, the no-capture one a
-		// [$wrapN] trampoline box; both dispatch env-first. n=10:
-		// combine(λx.x+n, λx.x*2, 5) = (5+10) + (5*2) = 15 + 10 = 25.
 		{"clo-cap-fn-arg-plus-nocap", `function combine(f: (i32) => i32, g: (i32) => i32, x: i32): i32 { return f(x) + g(x); } function main(): i32 { let n = 10; return combine((x: i32): i32 => { return x + n; }, (x: i32): i32 => { return x * 2; }, 5); }`, 25},
-		// Capturing closures collected in an array, then each APPLIED through a
-		// fn-arg helper inside a `for f in fs` loop: the loop binds `f` a closure
-		// local and `apply(f, 10)` passes it unwrapped (already a box) to apply's
-		// fn-typed param. a=1, b=10: apply(fs[0],10)=10+a=11, apply(fs[1],10)=100;
-		// 11 + 100 = 111.
 		{"clo-cap-fn-arg-forin", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { let a = 1; let b = 10; let fs = [(x: i32): i32 => { return x + a; }, (x: i32): i32 => { return x * b; }]; let s = 0; for f in fs { s = s + apply(f, 10); } return s; }`, 111},
-		// NO-CAPTURE lambda argument (regression guard for the env-box arg path):
-		// wrapped in a [$wrapN] env-ignoring trampoline. apply(λx.x+1, 5) = 6.
 		{"clo-nocap-fn-arg", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { return apply((x: i32): i32 => { return x + 1; }, 5); }`, 6},
-		// BARE fn-name argument (regression guard): wrapped in a [$wrapN] trampoline
-		// that forwards to the named fn. apply(inc, 5) = inc(5) = 6.
 		{"clo-named-fn-arg", `function inc(x: i32): i32 { return x + 1; } function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { return apply(inc, 5); }`, 6},
-		// A CLOSURE returned from a call, passed as an argument (regression guard):
-		// `mk(10)` is already an env box, so it flows UNWRAPPED to apply's fn-typed
-		// param. apply(mk(10), 5) = 5 + 10 = 15.
 		{"clo-from-call-fn-arg", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function mk(n: i32): (i32) => i32 { return (x: i32): i32 => { return x + n; }; } function main(): i32 { return apply(mk(10), 5); }`, 15},
-		// A fn-VALUE LOCAL `let g = dbl` is env-boxed at its binding into a [$wrapN]
-		// trampoline box and marked a closure local, so passing it to apply's
-		// fn-typed param flows the box unwrapped (env-first). apply(g, 21) = 42.
 		{"clo-fnval-local-arg", `function dbl(n: i32): i32 { return n * 2; } function apply(f: (i32) => i32, n: i32): i32 { return f(n); } function main(): i32 { let g = dbl; return apply(g, 21); }`, 42},
 		{"method-fn-param-named", `struct Obj { k: i32 } function inc(x: i32): i32 { return x + 1; } function (o: Obj) ap(f: (i32) => i32, x: i32): i32 { return f(x) + o.k; } function main(): i32 { let o = Obj{k:100}; return o.ap(inc, 5); }`, 106},
-		// MATCH binds a fn-typed Option payload and CALLS it (slice #3445 match-fn).
-		// The constructor side wraps the no-capture lambda payload of `Some(...)`
-		// into a [$wrapN] env box; the match arm marks `f` a closure local so `f()`
-		// dispatches env-first. Option[() => i32], Some(λ.9) -> 9.
 		{"match-opt-fn-call", `function mk(): Option[() => i32] { return Some((): i32 => { return 9; }); } function main(): i32 { match (mk()) { Some(f) => { return f(); }, None => { return 0; } } }`, 9},
-		// MATCH binds a fn-typed Result Ok payload that CAPTURES and calls it. The
-		// constructor wraps the capturing lambda into a [funcval, n] box; the Ok arm
-		// marks `g` a closure local so `g(5)` dispatches env-first against the box.
-		// Result[(i32) => i32, i32], mk2(10) = Ok(λx.x+10); g(5) = 15.
 		{"match-result-fn-call-captured", `function mk2(n: i32): Result[(i32) => i32, i32] { return Ok((x: i32): i32 => { return x + n; }); } function main(): i32 { match (mk2(10)) { Ok(g) => { return g(5); }, Err(e) => { return e; } } }`, 15},
-		// MATCH binds a no-capture fn-typed Option payload and calls it, while the
-		// matching function ALSO has an outer capture-free local in scope (regression
-		// guard that the closure-local mark doesn't leak onto unrelated locals).
-		// Option[() => i32], Some(λ.7); f() + base = 7 + 100 = 107.
 		{"match-opt-fn-call-outer-local", `function mk(): Option[() => i32] { return Some((): i32 => { return 7; }); } function main(): i32 { let base = 100; match (mk()) { Some(f) => { return f() + base; }, None => { return 0; } } }`, 107},
-		// A closure stored as a MAP VALUE, retrieved and called (slice #3445
-		// map-values): `m = m.insert(1, <lambda>)` wraps the lambda into an env box (the
-		// lift method-callee arm — `.insert`'s value param is the generic `V`, the
-		// wrap trigger), the map stores the box
-		// pointer, `m.get(1)` returns it, and the `Some(f) => f()` match-binding
-		// (slice #3445 match-fn) dispatches it env-first. Was `route=ir` but
-		// SEGFAULTED when compiled (the closure was stored unboxed). The capturing
-		// variant carries an env `[funcval, n]`; the no-capture a `[$wrapN]` box.
-		// (Converting a USER method's declared fn-param to the env-box ABI is a
-		// separate deferred slice — it destabilises the byte-identical fixpoint.)
 		{"map-value-closure", `import "core/map"; function main(): i32 { let m: Map[i32, () => i32] = map_new(4); m = m.insert(1, (): i32 => { return 42; }); match (m.get(1)) { Some(f) => { return f(); }, None => { return 0; } } }`, 42},
 		{"map-value-closure-captured", `import "core/map"; function main(): i32 { let n = 10; let m: Map[i32, () => i32] = map_new(4); m = m.insert(1, (): i32 => { return n + 7; }); match (m.get(1)) { Some(f) => { return f(); }, None => { return 0; } } }`, 17},
-		// A match-EXPRESSION arm that binds a NON-SCALAR payload (struct / enum /
-		// string) and passes it as an ARGUMENT to an i32-returning free-function
-		// call (#3498): `V(p) => g(p)`. The recursive-list `sum` is the main shape
-		// (`Cons(h, t) => h + sum(t)` passes the enum payload `t` to the recursive
-		// call).
 		{"match-expr-struct-payload-call", `struct S { v: i32 } enum E { A(S), N } function g(s: S): i32 { return s.v; } function f(e: E): i32 { return match (e) { A(s) => g(s), N => 0 }; } function main(): i32 { return f(A(S { v: 5 })); }`, 5},
 		{"match-expr-string-payload-call", `enum E { A(string), N } function g(s: string): i32 { return s.len(); } function f(e: E): i32 { return match (e) { A(s) => g(s), N => 0 }; } function main(): i32 { return f(A("hi")); }`, 2},
 		{"match-expr-enum-payload-call", `enum L { C(i32, L), N } function hd(l: L): i32 { return match (l) { C(h, t) => h, N => 0 }; } function snd(l: L): i32 { return match (l) { C(h, t) => hd(t), N => 0 }; } function main(): i32 { return snd(C(7, C(9, N))); }`, 9},
 		{"match-expr-recursive-sum", `enum L { C(i32, L), N } function sum(l: L): i32 { return match (l) { C(h, t) => h + sum(t), N => 0 }; } function main(): i32 { return sum(C(1, C(2, C(3, N)))); }`, 6},
 		{"match-expr-payload-call-mixed-args", `struct S { v: i32 } enum E { A(S), N } function g(s: S, k: i32): i32 { return s.v + k; } function f(e: E): i32 { return match (e) { A(s) => g(s, 3), N => 0 }; } function main(): i32 { return f(A(S { v: 5 })); }`, 8},
-		// The METHOD sibling (#3498 follow-up): a match-EXPRESSION arm calling a
-		// METHOD on ANOTHER receiver (`w.take(p)`, not the payload) with the bound
-		// payload as a borrow argument, returning i32.
 		{"match-expr-method-other-recv-payload-arg", `struct S { v: i32 } struct W { } enum E { A(S), N } function (w: W) take(s: S): i32 { return s.v; } function f(e: E): i32 { let w = W {}; return match (e) { A(s) => w.take(s), N => 0 }; } function main(): i32 { return f(A(S { v: 5 })); }`, 5},
 		{"match-expr-method-other-recv-scalar-arg", `struct W { } enum E { A(i32), N } function (w: W) dbl(x: i32): i32 { return x * 2; } function f(e: E): i32 { let w = W {}; return match (e) { A(x) => w.dbl(x), N => 0 }; } function main(): i32 { return f(A(7)); }`, 14},
-		// A borrow-DERIVED value in a match-EXPRESSION arm (#3498 follow-up): a
-		// call that BORROWS the payload and returns a fresh value — `.len()` over a
-		// payload string-method result (`s.trim().len()`) and a NESTED-call
-		// argument (`sum(id(t))`, `id` returns the recursive enum).
 		{"match-expr-payload-strmethod-len", `import "std/string";
 function f(o: Option[string]): i32 { return match (o) { Some(s) => s.trim().len(), None => 0 }; } function main(): i32 { return f(Some("hi ")); }`, 2},
 		{"match-expr-nested-call-arg", `enum L { C(i32, L), N } function id(l: L): L { return l; } function sum(l: L): i32 { return match (l) { C(h, t) => h + sum(id(t)), N => 0 }; } function main(): i32 { return sum(C(1, C(2, C(3, N)))); }`, 6},
-		// Erased-generic 64-bit shapes (#4451 goal-1 widening): a 64-bit (i64/u64)
-		// argument at a bare-typevar param, and an erased return mirroring that
-		// argument, read back full-width. The exit codes pin the 8-byte round-trip
-		// (a truncation returns the 38 arm).
 		{"erased-i64-arg-only", `function first[T](x: T, n: i32): i32 { return n; } function main(): i32 { let r: i32 = first[i64](4200000000 as i64, 7); return r; }`, 7},
 		{"erased-i64-roundtrip", `function ident[T](x: T): T { return x; } function main(): i32 { let big: i64 = ident[i64](4200000000 as i64); if (big == 4200000000 as i64) { return 42; } return 38; }`, 42},
 		{"erased-i64-tuple-elem", `function pair[K, V](k: K, v: V): (K, V) { return (k, v); } function main(): i32 { let t: (i32, i64) = pair[i32, i64](38, 4200000000 as i64); let big: i64 = t.1; if (big == 4200000000 as i64) { return 42; } return 38; }`, 42},

@@ -7,15 +7,11 @@ import (
 	"testing"
 )
 
-// optAarrReclaimCases cover typed release of Option[i32[]][]: payload buffers,
-// option boxes and the outer buffer. Churn stays bounded; borrowed or escaped
-// elements and payloads remain live, with no reference-count underflow.
 var optAarrReclaimCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The core churn shape: rebuilt per iteration, len-read only.
 	{"optaarr-churn-flat", `function main(): i32 {
     let acc: i32 = 0;
     let w: i32 = 0;
@@ -29,8 +25,6 @@ var optAarrReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// Payload BORROW inside a match on an element — reads precede the rebind
-	// free, values exact, still bounded.
 	{"optaarr-payload-borrow-flat", `function main(): i32 {
     let acc: i32 = 0;
     let w: i32 = 0;
@@ -53,8 +47,6 @@ var optAarrReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// ELEMENT-ALIAS negative: `let o = xs[0]` binds an option box out of the
-	// array, which must stay live; values + detector hold.
 	{"optaarr-elem-alias-safe", `function main(): i32 {
     let xs: Option[i32[]][] = [Some([7, 8]), None];
     let o = xs[0];
@@ -63,8 +55,6 @@ var optAarrReclaimCases = []struct {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc;
 }`, 15},
-	// PAYLOAD-ESCAPE negative: a Some-arm binding returned out of the match —
-	// the escaped payload must stay live.
 	{"optaarr-payload-escape-safe", `function pick(xs: Option[i32[]][]): i32[] {
     match (xs[0]) { Some(p) => { return p; }, None => {} }
     return [0];
@@ -77,8 +67,6 @@ function main(): i32 {
 }`, 11},
 }
 
-// TestSelfHostOptAarrReclaimIRX86_64 drives the cases through the self-hosted
-// x86-64 compiler (asm_run), heap-bump + underflow guarded.
 func TestSelfHostOptAarrReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

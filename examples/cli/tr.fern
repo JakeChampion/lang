@@ -1,32 +1,9 @@
-// tr.fern — translate or delete bytes, like `tr(1)`.
-//
-//   tr SET1 SET2     map each byte in SET1 to the byte at the same
-//                    position in SET2 (SET2's last byte repeats if
-//                    SET1 is longer, like GNU tr)
-//   tr -d SET1       delete every byte that appears in SET1
-//   tr -s SET1       squeeze repeats of bytes in SET1 to one
-//
-//   $ printf 'hello\n' | ./tr a-z A-Z   ->  HELLO   (see note)
-//   $ printf 'hello\n' | ./tr l L       ->  heLLo
-//   $ printf 'heeello\n' | ./tr -s e    ->  hello
-//   $ printf 'h3ll0\n' | ./tr -d 0-9    ->  hll
-//
-// Range expansion (`a-z`) is supported for SET arguments. Reads
-// stdin only (the classic `tr` interface — it never takes file
-// operands).
-//
-// Showcases: building a translation table over bytes, range
-// expansion, the delete / squeeze variants.
-
-// Expand `a-z` style ranges in a SET argument into the full byte
-// sequence. A literal `-` at the start or end is kept as-is.
 function expand_set(s: string): u8[] {
   let n: i32 = s.len();
   let out: u8[] = [];
   let i: i32 = 0;
   while (i < n) {
     if (i + 2 < n && s[i + 1] == 45 && s[i] <= s[i + 2]) {
-      // range lo '-' hi
       let lo: i32 = s[i] as i32;
       let hi: i32 = s[i + 2] as i32;
       let c: i32 = lo;
@@ -43,8 +20,6 @@ function expand_set(s: string): u8[] {
   return out;
 }
 
-// Build the byte lookup once, then stream raw chunks through a reusable buffer.
-// The first occurrence in SET1 wins, matching the previous index_of lookup.
 function transform(set1: u8[], set2: u8[], del: boolean, squeeze: boolean): i32 {
   let member: u8[] = __alloc_u8(256);
   let mapped: u8[] = __alloc_u8(256);

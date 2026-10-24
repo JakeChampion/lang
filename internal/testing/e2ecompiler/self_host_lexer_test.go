@@ -6,21 +6,6 @@ import (
 	"testing"
 )
 
-// First step of the self-host port: `compiler/lexer.fern`
-// is the Go lexer (`internal/syntax/lexer/lexer.go`) re-written in lang.
-// Validates the language can express the lexer's logic end-to-end:
-// union types for Token kinds, generic-shaped helpers, struct
-// methods, mutual recursion (used in skip_trivia / advance via
-// self-referential method calls), match with literal patterns
-// over the Token union, byte-level string slicing for the
-// scan_* routines.
-//
-// The .fern file's `main()` runs the lexer on a mixed-token input
-// (keyword + ident + multi-char punct + integer suffix + string
-// + line comment + float suffix + position tracking across a `\n`)
-// and asserts the produced Token[] step-by-step. Exit code 0
-// means every assertion passed; non-zero codes identify which
-// arm failed.
 func TestSelfHostLexerX86_64(t *testing.T) {
 	runner := x86_64Runner(t)
 	dir := t.TempDir()

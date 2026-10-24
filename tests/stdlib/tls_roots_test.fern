@@ -5,11 +5,6 @@ import "std/tls/pem";
 import "std/tls/verify";
 import "std/tls/x509";
 
-// tests/stdlib/tls_roots_test.fern — std/tls/verify's root store: roots read
-// from a PEM bundle on disk, a path that does not read, and the machine's
-// own bundle. Kept apart from tls_verify_test because it needs a file system,
-// which the wasm suite does not grant.
-
 function ec_root(): u8[] {
   return hex.hex_decode("308201433081eaa003020102020101300a06082a8648ce3d04030230193117301506035504030c0e4665726e205465737420526f6f74301e170d3236303130313030303030305a170d3237303130313030303030305a30193117301506035504030c0e4665726e205465737420526f6f743059301306072a8648ce3d020106082a8648ce3d030107034200040dcc7648c78a3118f2612866fe83ef19f40304f623399e1211a10f2b3d1c05cf30e8027677bcb912943e99ff71140ea9bc24713be1b75c31ff4054724c4f9d00a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300a06082a8648ce3d0403020348003045022051b74a89e235c981464cae54764206d65f11184dc5e78a5298441305ef3e72db022100d538cc2287d10ead1e561d7ecc33bf752db02620f12924df9728d20b5b4bd863");
 }
@@ -90,7 +85,6 @@ function test_unreadable(dir: string): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// What the machine trusts depends on the machine; whatever it finds parsed.
 function test_system_roots(): test.TestOutcome {
   match (verify.system_roots()) {
     Some(r) => {

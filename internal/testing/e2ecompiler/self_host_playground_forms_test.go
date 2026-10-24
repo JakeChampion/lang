@@ -12,21 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The playground driver emits the bytes the CLI writes for the same program.
-//
-// Every output form the page asks for — a native target's assembly for the
-// assembly pane, the wasm core module as text or as the binary a preview-1
-// host runs, the wasi:cli/run component the download offers — comes out of
-// the CLI's own pipeline (semlower.target_substitution, the same gates and
-// the same emitter entry points), so what the page shows is what `fern`
-// would build. The driver takes the CLI's `-emit` vocabulary, and its default
-// is what the CLI writes for the target with `-o`.
-// This pins that byte for byte, per form, with the CLI resolving the stdlib
-// from its root argument and the driver from its embedded overlay.
-
-// playgroundFormsProgram reaches the stdlib (to_string is std/i32's) and
-// prints, so the component takes the stdout framing and the assembly carries
-// a string table.
 const playgroundFormsProgram = `import "std/i32";
 function fact(n: i32): i32 {
     if (n == 0) { return 1; }
@@ -57,9 +42,6 @@ func TestSelfHostPlaygroundEmitsWhatTheCLIEmits(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The wasi:http forms take a handler program: the CLI appends the
-	// incoming-handler export to it (emitforms.HTTP_ENTRY_STUB), and the
-	// driver has to append the same one.
 	cases := []struct {
 		name string
 		src  string
@@ -81,8 +63,6 @@ func TestSelfHostPlaygroundEmitsWhatTheCLIEmits(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Through -o: the CLI writes a wasm binary to a file and nowhere
-			// else, and every form, assembly included, lands in it.
 			outPath := filepath.Join(t.TempDir(), "out")
 			cmd := exec.Command(cli, append(tc.cli, "-o", outPath, tc.path, stdlib)...)
 			var cliErr bytes.Buffer
@@ -119,10 +99,6 @@ func firstDiff(a, b []byte) int {
 	return n
 }
 
-// A target or form the driver does not take is refused with the CLI's own
-// line, not an empty module: an unknown target, the old `wat` and `component`
-// spellings, a wasm form on a native target, and a freestanding target, which
-// type-checks and has no backend.
 func TestSelfHostPlaygroundRefusesUnknownForms(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -162,9 +138,6 @@ func TestSelfHostPlaygroundRefusesUnknownForms(t *testing.T) {
 	}
 }
 
-// The playground's targets are the platforms table's: an unknown one is
-// refused naming exactly that list, and every one in it, the freestanding
-// pair and arm64-android included, is taken for -check.
 func TestSelfHostPlaygroundTargetsAreThePlatformsTable(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -187,11 +160,6 @@ func TestSelfHostPlaygroundTargetsAreThePlatformsTable(t *testing.T) {
 	}
 }
 
-// The playground runs the CLI's target gate (E066), and its handler gate
-// (E080), where the CLI does, on both paths: a program `fern -target T`
-// refuses, the browser refuses with the same diagnostics. The CLI renders the
-// entry by its path where the playground names no file, so each CLI line
-// ends with the playground's.
 func TestSelfHostPlaygroundRefusesWhatTheTargetLacks(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

@@ -1,25 +1,3 @@
-// tests/proposals/colour_convert.fern — proposal turn, drawn line 107:
-// "A hex/RGB/HSL colour converter with a nearest-named-colour lookup."
-//
-// Everything here is integer arithmetic. HSL is carried in tenths — hue in
-// [0, 3600), saturation and lightness in [0, 1000] — because at whole
-// degrees and whole percent the round trip loses more than it keeps, and a
-// "within 8 of the original" test would be measuring the units rather than
-// the conversion.
-//
-// The essential test is that round trip: RGB -> HSL -> RGB must come back
-// within one unit per channel, for every colour in a swept corpus rather than
-// a chosen handful. Conversion formulas are exactly the kind of code that is
-// right on the primaries, right on grey, and wrong in the sixth of the hue
-// circle nobody checked.
-//
-// The hex half has a second, independent oracle: `std/math.parse_rgb_hex`
-// already exists, so every parse this file does is cross-checked against the
-// stdlib's rather than against itself.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from
-// std/test, so the file is its own test suite.
-
 import "std/test";
 import "std/math";
 import "std/i32";
@@ -28,8 +6,6 @@ import "std/string";
 struct Rgb { r: i32, g: i32, b: i32 }
 
 struct Hsl { h: i32, s: i32, l: i32 }
-
-// ------------------------------------------------------------------ hex
 
 function hex_digit_of(b: i32): i32 {
   if (b >= 48 && b <= 57) {
@@ -44,8 +20,6 @@ function hex_digit_of(b: i32): i32 {
   return -1;
 }
 
-// `#rrggbb` or `#rgb`, with the `#` optional and hex case-insensitive.
-// Anything else is None — a malformed colour is not a black one.
 function parse_hex(s: string): Option[Rgb] {
   let start: i32 = 0;
   if (s.len() > 0 && s[0] as i32 == 35) {
@@ -64,7 +38,6 @@ function parse_hex(s: string): Option[Rgb] {
     digits = digits.append(d);
   }
   if (n == 3) {
-    // Each nibble doubles: #f80 is #ff8800.
     return Some(Rgb { r: digits[0] * 17, g: digits[1] * 17, b: digits[2] * 17 });
   }
   return Some(Rgb {
@@ -79,22 +52,12 @@ function hex_char(v: i32): string {
   return "" + slice_unchecked(d, v, v + 1);
 }
 
-// Always the 6-digit lowercase form, so formatting is a function rather
-// than a choice — `#F80` and `#ff8800` format identically.
 function to_hex(c: Rgb): string {
   return "#" + hex_char(c.r / 16) + hex_char(c.r % 16)
     + hex_char(c.g / 16) + hex_char(c.g % 16)
     + hex_char(c.b / 16) + hex_char(c.b % 16);
 }
 
-// ------------------------------------------------------------------ HSL
-
-// Every conversion below quantises twice — 0..255 into thousandths and back —
-// and integer `/` truncates toward zero, so the two errors point the same way
-// and add. Four truncations on the path is enough to lose 2 units per channel;
-// rounding each division makes the errors cancel instead, which is the
-// difference between a round trip that holds to one unit and one that doesn't.
-// Numerators here are non-negative, which is what makes half-up this cheap.
 function rdiv(n: i32, d: i32): i32 {
   return (n + d / 2) / d;
 }
@@ -121,9 +84,6 @@ function min3(a: i32, b: i32, c: i32): i32 {
   return m;
 }
 
-// Hue is undefined for a grey — there is no direction on the colour wheel
-// when the wheel has no radius. This picks 0 and says so, because the
-// alternative is a formula that divides by zero somewhere far from here.
 function rgb_to_hsl(c: Rgb): Hsl {
   let mx: i32 = max3(c.r, c.g, c.b);
   let mn: i32 = min3(c.r, c.g, c.b);
@@ -155,7 +115,6 @@ function rgb_to_hsl(c: Rgb): Hsl {
   return Hsl { h: h, s: s, l: l };
 }
 
-// The standard helper, in tenths. `t` is a hue offset in [0, 3600).
 function hue_to_channel(p: i32, q: i32, t_in: i32): i32 {
   let t: i32 = t_in;
   if (t < 0) {
@@ -181,7 +140,6 @@ function hsl_to_rgb(c: Hsl): Rgb {
     let v: i32 = rdiv(c.l * 255, 1000);
     return Rgb { r: v, g: v, b: v };
   }
-  // Work in thousandths of full scale, converting to 0..255 at the end.
   let q: i32 = 0;
   if (c.l < 500) {
     q = rdiv(c.l * (1000 + c.s), 1000);
@@ -208,8 +166,6 @@ function clamp255(v: i32): i32 {
   return v;
 }
 
-// ------------------------------------------------------- named colours
-
 struct Named { name: string, c: Rgb }
 
 function palette(): Named[] {
@@ -234,8 +190,6 @@ function palette(): Named[] {
   ];
 }
 
-// Squared euclidean distance in RGB. Squared, so no square root and no
-// float — and the ordering it induces is identical to the unsquared one.
 function dist2(a: Rgb, b: Rgb): i32 {
   let dr: i32 = a.r - b.r;
   let dg: i32 = a.g - b.g;
@@ -243,8 +197,6 @@ function dist2(a: Rgb, b: Rgb): i32 {
   return dr * dr + dg * dg + db * db;
 }
 
-// First match wins on a tie, so the answer is a single well-defined name
-// rather than "some nearest one".
 function nearest_named(c: Rgb): Named {
   let ps: Named[] = palette();
   let best: i32 = 0;
@@ -268,9 +220,6 @@ function tenths(v: i32): string {
   return (v / 10).to_string() + "." + (v % 10).to_string();
 }
 
-// A swept corpus rather than a chosen handful: every combination of a few
-// levels per channel, which walks all six hue sectors and both sides of the
-// lightness split.
 function sweep(): Rgb[] {
   let levels: i32[] = [0, 1, 31, 64, 127, 128, 191, 224, 254, 255];
   let out: Rgb[] = [];
@@ -285,11 +234,6 @@ function sweep(): Rgb[] {
   return out;
 }
 
-// ---------------------------------------------------------------- tests
-
-// THE test. RGB -> HSL -> RGB over 100 swept colours, requiring every
-// channel back within one unit. A formula that is right on the primaries
-// and wrong in one hue sector fails here and nowhere else.
 function test_the_round_trip_is_lossless_to_one_unit(): test.TestOutcome {
   let cs: Rgb[] = sweep();
   let worst: i32 = 0;
@@ -322,9 +266,6 @@ function abs_i(v: i32): i32 {
   return v;
 }
 
-// The reference values every implementation is checked against, in the
-// units this one uses. Pure primaries, grey, and the two lightness
-// extremes — where saturation and hue are at their most degenerate.
 function test_the_reference_colours_are_exact(): test.TestOutcome {
   let names: string[] = ["red", "lime", "blue", "white", "black", "mid grey", "yellow"];
   let ins: Rgb[] = [
@@ -348,8 +289,6 @@ function test_the_reference_colours_are_exact(): test.TestOutcome {
   return test.pass();
 }
 
-// Greys have zero saturation and hue 0, whatever their lightness — the
-// convention this file picks, stated as a test so it cannot drift.
 function test_greys_have_no_hue(): test.TestOutcome {
   for v in 0..256 {
     let g: Hsl = rgb_to_hsl(Rgb { r: v, g: v, b: v });
@@ -368,9 +307,6 @@ function test_greys_have_no_hue(): test.TestOutcome {
   return test.pass();
 }
 
-// Hex parsing is cross-checked against `std/math.parse_rgb_hex`, which owes
-// nothing to this file. Both must accept the same strings and agree on the
-// value, and both must reject the same malformed ones.
 function test_hex_agrees_with_the_stdlib(): test.TestOutcome {
   let good: string[] = [
     "#ff8800", "ff8800", "#FF8800", "#f80", "f80",
@@ -416,8 +352,6 @@ function test_hex_agrees_with_the_stdlib(): test.TestOutcome {
   return test.pass();
 }
 
-// Formatting is a function: two spellings of one colour format identically,
-// and parse(format(c)) is c exactly — no tolerance, because hex is lossless.
 function test_hex_formatting_is_canonical(): test.TestOutcome {
   let cs: Rgb[] = sweep();
   for i in 0..cs.len() {
@@ -437,7 +371,6 @@ function test_hex_formatting_is_canonical(): test.TestOutcome {
       }
     }
   }
-  // Case and shorthand normalise to one spelling.
   let spellings: string[] = ["#FF8800", "#ff8800", "ff8800", "#F80", "#f80", "f80"];
   for i in 0..spellings.len() {
     match (parse_hex(spellings[i])) {
@@ -454,9 +387,6 @@ function test_hex_formatting_is_canonical(): test.TestOutcome {
   return test.pass();
 }
 
-// A named colour looks itself up — distance to itself is 0, and nothing can
-// beat that. This is the property that catches a lookup comparing the wrong
-// channels, which otherwise returns a plausible neighbour.
 function test_a_named_colour_finds_itself(): test.TestOutcome {
   let ps: Named[] = palette();
   for i in 0..ps.len() {
@@ -469,7 +399,6 @@ function test_a_named_colour_finds_itself(): test.TestOutcome {
       return test.fail("distance to self is not 0");
     }
   }
-  // And the answer really is nearest: nothing in the palette is closer.
   let probes: Rgb[] = sweep();
   for i in 0..probes.len() {
     let got: Named = nearest_named(probes[i]);
@@ -484,8 +413,6 @@ function test_a_named_colour_finds_itself(): test.TestOutcome {
   return test.pass();
 }
 
-// Lightness is monotone in the grey ramp, and the two extremes are exact.
-// A conversion that saturates early looks fine on the primaries.
 function test_lightness_is_monotone(): test.TestOutcome {
   let prev: i32 = -1;
   for v in 0..256 {
@@ -504,8 +431,6 @@ function test_lightness_is_monotone(): test.TestOutcome {
   }
   return test.pass();
 }
-
-// ------------------------------------------------------------------ app
 
 function main(): i32 {
   eprint("colour_convert — hex, HSL and the nearest name");

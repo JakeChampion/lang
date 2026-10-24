@@ -16,18 +16,8 @@ import (
 	"unicode/utf8"
 )
 
-// `fern -lsp` is the language server (#6641): compiler/lsp.fern is the wire,
-// fern.fern's check_source the diagnostics, and its format_source the
-// formatting. These tests drive it as an editor does — framed JSON-RPC on
-// stdin, everything read back from stdout once the input is closed — and hold
-// it to `-check`, whose findings it must publish exactly, and to the wire
-// answers written out below.
-
-// lspMsg is one message a test sends.
 type lspMsg = map[string]any
 
-// lspFrame is one message a server wrote. Result is nil when the member was
-// absent and `null` when it was sent as null.
 type lspFrame struct {
 	ID     json.RawMessage `json:"id"`
 	Method string          `json:"method"`
@@ -67,8 +57,6 @@ type lspEdit struct {
 	NewText string   `json:"newText"`
 }
 
-// lspServers holds the server under test: the self-host CLI, which selfHost
-// starts in server mode.
 type lspServers struct {
 	driver string
 	runner []string
@@ -102,8 +90,6 @@ func lspFrameBytes(t *testing.T, m lspMsg) []byte {
 	return append([]byte(fmt.Sprintf("Content-Length: %d\r\n\r\n", len(b))), b...)
 }
 
-// runLSPRaw writes input to a server, closes its stdin, and returns what it
-// wrote, its exit code and its stderr.
 func runLSPRaw(t *testing.T, cmd *exec.Cmd, input []byte) ([]lspFrame, int, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
@@ -185,7 +171,6 @@ func lspFormat(id int, uri string) lspMsg {
 
 func fileURI(path string) string { return "file://" + filepath.ToSlash(path) }
 
-// session wraps msgs in initialize … shutdown/exit.
 func session(msgs ...lspMsg) []lspMsg {
 	return append(append([]lspMsg{lspInitialize()}, msgs...), lspShutdownExit()...)
 }
@@ -220,8 +205,6 @@ func response(t *testing.T, frames []lspFrame, id string) lspFrame {
 	return lspFrame{}
 }
 
-// placed is a diagnostic as the wire places it: everything but the message,
-// whose wording is the checker's and is held by the checker's own tests.
 type placed struct {
 	Range    lspRange
 	Severity int
@@ -254,9 +237,6 @@ func writeTree(t *testing.T, dir string, files map[string]string) {
 	}
 }
 
-// TestSelfHostLSPLifecycleX86_64 pins the protocol around the documents: the
-// capabilities advertised, which messages are answered and how, the exit
-// codes the spec assigns, and what the framing tolerates.
 func TestSelfHostLSPLifecycleX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 
@@ -295,8 +275,6 @@ func TestSelfHostLSPLifecycleX86_64(t *testing.T) {
 		if c.TextDocumentSync != 1 || !c.DocumentFormattingProvider || !c.HoverProvider || !c.DefinitionProvider || !c.DocumentSymbolProvider || !c.InlayHintProvider || got.ServerInfo.Name != "fern" {
 			t.Errorf("initialize result = %+v, want full sync, formatting, hover, definition, document symbols, inlay hints, server fern", got)
 		}
-		// Plain booleans, and full semantic tokens (the legend is held in
-		// self_host_lsp_refs_test.go).
 		if !c.CodeActionProvider || !c.ReferencesProvider || !c.RenameProvider || c.SemanticTokensProvider == nil || !c.SemanticTokensProvider.Full {
 			t.Errorf("initialize result = %+v, want code actions, references, rename and full semantic tokens", got)
 		}
@@ -311,10 +289,6 @@ func TestSelfHostLSPLifecycleX86_64(t *testing.T) {
 		}
 	})
 
-	// Requests are answered, with the id echoed verbatim whatever its JSON
-	// type; notifications never are, a known one or not; a request for a
-	// method the server lacks is the spec's -32601; shutdown's result is an
-	// explicit null.
 	t.Run("answers", func(t *testing.T) {
 		frames, code := runLSP(t, s.selfHost(), []lspMsg{
 			lspInitialize(),
@@ -352,8 +326,6 @@ func TestSelfHostLSPLifecycleX86_64(t *testing.T) {
 		}
 	})
 
-	// Header names are case-insensitive and Content-Type is allowed; a body
-	// that is not JSON is dropped without ending the session.
 	t.Run("framing", func(t *testing.T) {
 		init := lspFrameBytes(t, lspInitialize())
 		body := init[bytes.Index(init, []byte("\r\n\r\n"))+4:]
@@ -382,15 +354,9 @@ func TestSelfHostLSPLifecycleX86_64(t *testing.T) {
 	}
 }
 
-// lspCases are programs placed through every shape the wire conversion has:
-// no diagnostic, one, several, a line with non-ASCII before the position (2-
-// and 4-byte UTF-8: one and two UTF-16 units), CRLF line endings, a parse
-// marker, a positionless refusal, a top-level const, imports from a sibling
-// and from the stdlib, a sibling's private function, and a warning. `want` is
-// what opening main.fern publishes.
 var lspCases = []struct {
 	name  string
-	files map[string]string // main.fern is the document opened
+	files map[string]string
 	want  []placed
 }{
 	{"clean", map[string]string{"main.fern": "function main(): i32 {\n  return 0;\n}\n"}, []placed{}},
@@ -420,8 +386,6 @@ var lspCases = []struct {
 	{"todo-stub", map[string]string{"main.fern": "function f(): i32 {\n  todo;\n}\nfunction main(): i32 {\n  return 0;\n}\n"}, []placed{{span(1, 2, 1, 3), 2, "fern", ""}}},
 }
 
-// TestSelfHostLSPDiagnosticPlacementX86_64 opens each case and wants its
-// diagnostics published once, placed as written.
 func TestSelfHostLSPDiagnosticPlacementX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	for _, c := range lspCases {
@@ -436,13 +400,8 @@ func TestSelfHostLSPDiagnosticPlacementX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostLSPDocumentSyncX86_64 drives one document through an editing
-// session: a publish when the diagnostics change, none when the text or the
-// diagnostics do not, an empty one on close, and a fresh one on reopening.
 func TestSelfHostLSPDocumentSyncX86_64(t *testing.T) {
 	s := buildLSPServers(t)
-	// A space in the directory is a %20 in the URI the server must decode to
-	// find the document's sibling import.
 	dir := filepath.Join(t.TempDir(), "a project")
 	writeTree(t, dir, map[string]string{
 		"lib.fern":  "pub function one(): i32 { return 1; }\n",
@@ -454,13 +413,13 @@ func TestSelfHostLSPDocumentSyncX86_64(t *testing.T) {
 	alsoFine := "import \"./lib\";\nfunction main(): i32 {\n  return lib.one() + 1;\n}\n"
 	untitled := "untitled:Untitled-1"
 	sf, code := runLSP(t, s.selfHost(), session(
-		lspOpen(uri, broken),     // publish: one E001
-		lspChange(uri, fixed),    // publish: none left — the buffer, not the disk
-		lspChange(uri, fixed),    // same text: nothing
-		lspChange(uri, alsoFine), // new text, same (empty) diagnostics: nothing
-		lspChange(uri, broken),   // publish: E001 again
-		lspClose(uri),            // publish: empty
-		lspOpen(uri, broken),     // publish: E001, the first since closing
+		lspOpen(uri, broken),
+		lspChange(uri, fixed),
+		lspChange(uri, fixed),
+		lspChange(uri, alsoFine),
+		lspChange(uri, broken),
+		lspClose(uri),
+		lspOpen(uri, broken),
 		lspOpen(untitled, "function main(): i32 {\n  return u;\n}\n"),
 	))
 	e001 := []placed{{span(2, 21, 2, 22), 1, "fern", "E001"}}
@@ -482,10 +441,6 @@ func TestSelfHostLSPDocumentSyncX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostLSPFormattingX86_64 wants each formatting request answered with
-// one edit replacing the document with what `-fmt` writes, its end in UTF-16
-// units, or none when the text is already formatted, does not parse, or is not
-// open.
 func TestSelfHostLSPFormattingX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	for _, c := range []struct {
@@ -527,9 +482,6 @@ func TestSelfHostLSPFormattingX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostLSPFormattingLiterateX86_64 wants a `.fern.md` document
-// formatted as `-fmt` formats it — its chunk bodies, not the whole Markdown
-// file read as Fern, which answered with an edit emptying the document (#12645).
 func TestSelfHostLSPFormattingLiterateX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	src := "# Doc\n\nfunction   prose( ){}\n\n```fern\n<<*>>=\nfunction   main( ):i32{return 0;}\n```\n"
@@ -546,25 +498,17 @@ func TestSelfHostLSPFormattingLiterateX86_64(t *testing.T) {
 	}
 }
 
-// checkLine matches one line of `-check` output that names a position in the
-// entry module; a position in another module carries its path first, as a
-// `todo` warning carries the entry's.
 var (
 	checkLine          = regexp.MustCompile(`^(\d+):(\d+): (.*)$`)
 	checkLineElsewhere = regexp.MustCompile(`^\S+:\d+:\d+: `)
 	diagnosticCode     = regexp.MustCompile(`^[EP]\d{3}$`)
 )
 
-// expectedFromCheck is what the server must publish for a document, derived
-// from what `-check` prints for the same file: one diagnostic per line, at the
-// line's position converted to LSP's, carrying its code, severity and
-// message. A line in an imported module is not the document's.
 func expectedFromCheck(t *testing.T, path, src, out string) []lspDiag {
 	t.Helper()
 	lines := strings.Split(strings.ReplaceAll(src, "\r\n", "\n"), "\n")
 	want := []lspDiag{}
 	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
-		// An indented line is the source line or caret under a diagnostic.
 		if line == "" || strings.HasPrefix(line, " ") {
 			continue
 		}
@@ -606,8 +550,6 @@ func expectedFromCheck(t *testing.T, path, src, out string) []lspDiag {
 	return want
 }
 
-// utf16Column is LSP's 0-based UTF-16 offset for Fern's 1-based byte column
-// on 1-based line ln.
 func utf16Column(lines []string, ln, col int) int {
 	if col < 1 {
 		col = 1
@@ -633,16 +575,6 @@ func utf16Column(lines []string, ln, col int) int {
 	return n
 }
 
-// TestSelfHostLSPPublishesCheckFindingsX86_64 holds the server to its
-// definition: what it publishes for a document is what `-check` reports for
-// that file — every finding in the document, at its position, with its code,
-// severity and message — and nothing else. It runs over every rejection case
-// in the conformance corpus, where `-check` has the most to say, plus a few
-// shapes the corpus does not have.
-//
-// This is what makes the server's diagnostics the self-host checker's, so the
-// checker differentials gate them too. Where those report a gap, the server
-// reports the same gap: it is not this test's business to judge the checker.
 func TestSelfHostLSPPublishesCheckFindingsX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	type doc struct{ name, path, src string }
@@ -682,8 +614,6 @@ func TestSelfHostLSPPublishesCheckFindingsX86_64(t *testing.T) {
 	}
 	sort.Slice(docs, func(i, j int) bool { return docs[i].name < docs[j].name })
 
-	// One server for the whole corpus: it is a long-running process, and each
-	// document is checked on its own.
 	var msgs []lspMsg
 	for _, d := range docs {
 		msgs = append(msgs, lspOpen(fileURI(d.path), d.src))

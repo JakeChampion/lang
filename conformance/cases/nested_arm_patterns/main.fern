@@ -1,16 +1,16 @@
-// Arm-position patterns nest freely, and arms stay FLAT (#7524).
-//
-// The parse-time merge this replaces collapsed a contiguous run of
-// same-variant arms into one arm plus an inner match on a temp. That shape
-// forced four P001s — one nested slot per arm, all arms of a variant nesting
-// at the SAME slot, those arms being contiguous, and no nesting inside an
-// or-pattern — and none of them could be lifted by widening the merge: the
-// inner match's wildcard was the OUTER `_`, so "the next arm of the outer
-// match" did not survive it.
-//
-// Arms are now flat and tried in source order, so a sub-pattern that fails
-// falls to the NEXT ARM. Every function below is a shape that did not parse
-// before; `fall_through` is the one that pins the semantics.
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import "std/i32";
 
@@ -20,9 +20,9 @@ enum Out { P(In, In), Q(i32) }
 
 enum One { W(In) }
 
-// THE main case. Both `P` arms match at slot 0 and differ at slot 1, so
-// `P(Ok2 _, Er2 _)` must run arm 2 — not the outer `_`. Under the merge arm 2
-// had been folded into arm 1's inner match, whose wildcard was that `_`.
+
+
+
 function fall_through(v: Out): i32 {
     match (v) {
         P(Ok2(a), Ok2(b)) => { return a + b; },
@@ -32,7 +32,7 @@ function fall_through(v: Out): i32 {
     }
 }
 
-// (a) more than one nested slot in one arm.
+
 function two_slots(v: Out): i32 {
     match (v) {
         P(Ok2(a), Er2(b)) => { return a * 10 + b; },
@@ -40,7 +40,7 @@ function two_slots(v: Out): i32 {
     }
 }
 
-// (b) arms of one variant nesting at DIFFERENT slots.
+
 function different_columns(v: Out): i32 {
     match (v) {
         P(Ok2(a), _) => { return 10 + a; },
@@ -49,7 +49,7 @@ function different_columns(v: Out): i32 {
     }
 }
 
-// (c) arms of a nesting variant separated by another variant's arm.
+
 function non_contiguous(v: Out): i32 {
     match (v) {
         P(Ok2(a), _) => { return a; },
@@ -59,7 +59,7 @@ function non_contiguous(v: Out): i32 {
     }
 }
 
-// (d) a nested pattern inside an or-pattern alternative.
+
 function nested_in_or(v: Out): i32 {
     match (v) {
         P(Ok2(a), _) | P(_, Ok2(a)) => { return a; },
@@ -67,8 +67,8 @@ function nested_in_or(v: Out): i32 {
     }
 }
 
-// A guard runs after every binding the sub-patterns introduced, and a
-// guard-false still falls to the next arm.
+
+
 function guarded(v: Out): i32 {
     match (v) {
         P(Ok2(a), Ok2(b)) when a > b => { return a; },
@@ -77,7 +77,7 @@ function guarded(v: Out): i32 {
     }
 }
 
-// A literal and a range in a payload slot, beside a binder.
+
 function scalar_slots(v: Out): i32 {
     match (v) {
         P(Ok2(0), Ok2(b)) => { return 900 + b; },
@@ -87,7 +87,7 @@ function scalar_slots(v: Out): i32 {
     }
 }
 
-// Depth two.
+
 function deep(w: One): i32 {
     match (w) {
         W(Ok2(n)) => { return n; },
@@ -95,7 +95,7 @@ function deep(w: One): i32 {
     }
 }
 
-// The expression form takes the same path, through a value local.
+
 function as_expression(v: Out): i32 {
     let r = match (v) {
         P(Ok2(a), Ok2(b)) => a + b,
@@ -105,7 +105,7 @@ function as_expression(v: Out): i32 {
     return r;
 }
 
-// The other binding sites reach the same lowering.
+
 function via_if_let(v: Out): i32 {
     if let P(Ok2(a), Ok2(b)) = v { return a + b; }
     return 0;

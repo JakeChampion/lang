@@ -2,14 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// TestSelfHostStructFieldDrop verifies the Perceus deep-drop of a reclaimable
-// struct's scalar-array (i32[]) field. use_bag builds a Bag{items: i32[], n}
-// (b is reclaimable — fresh and only field-read) and returns b.items[0] + b.n
-// = 1 + 3 = 4. At b's scope exit both the array it solely owns and the struct
-// box are freed. The leakcheck census pins that the field is dropped; the exit
-// code pins that it is not freed twice (a double free corrupts the field read).
-// The array goes through id so it is built on the heap rather than placed as a
-// constant.
 func TestSelfHostStructFieldDrop(t *testing.T) {
 	boxedProbes(t)
 	const prog = `struct Bag { items: i32[], n: i32 }

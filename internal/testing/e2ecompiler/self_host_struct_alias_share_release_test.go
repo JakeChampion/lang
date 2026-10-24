@@ -7,20 +7,6 @@ import (
 	"testing"
 )
 
-// Two struct-local shapes that need an exit release:
-//
-//   - #10171: an alias declared once and reassigned from its source in a loop
-//     (`let prev = s; while … { prev = s; s = S { ...s, … } }`). Each `prev = s`
-//     retains, so prev holds a counted share of s at every point, and both
-//     locals now keep their credit.
-//   - #10162: a local bound from a borrowed parameter and rebound to a box the
-//     frame builds (`let a = p; a = St { ...a, … }`). Its exit release is its
-//     rebind release with p's box as the new value, so it frees only a box that
-//     is not p's.
-//
-// Every program answers 99 if a release ran past zero; the `hostile` rows are
-// shapes the credit must not over-release. Every row balances; a zero `want`
-// takes the first run's answer and holds the others to it.
 var structAliasShareCases = []struct {
 	name string
 	src  string

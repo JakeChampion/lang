@@ -1,6 +1,6 @@
-// E084: every runner calls `main` with no arguments and makes its result the
-// exit status, so `main` takes no parameters and returns an integer, a
-// boolean or void. A program reads its command line with args().
+
+
+
 function main(argv: string[]): string {
   return argv[0];
 }

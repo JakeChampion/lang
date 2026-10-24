@@ -1,32 +1,7 @@
-// tests/proposals/unidiff.fern — proposal turn, drawn line 2:
-// "A diff tool that prints a unified diff of two text files."
-//
-// LCS by dynamic programming, backtracked into an edit script, grouped into
-// hunks with three lines of context, rendered as a unified diff.
-//
-// The essential test is a ROUND TRIP through the rendered text: the diff
-// is parsed back — hunk headers, context and change lines — and applied to
-// the original, and the result must equal the target exactly. That covers
-// the renderer and the parser together, and it is the property a diff is
-// actually for. An off-by-one in a hunk's start line or line count survives
-// every eyeball check and fails this immediately.
-//
-// Minimality gets an independent oracle rather than a second run of the
-// same DP: for small inputs, every subsequence of the first file is
-// enumerated by bit mask and tested against the second, so the longest
-// common subsequence is known by brute force. A DP with a wrong recurrence
-// still produces a valid, appliable diff — just a longer one — so only this
-// catches it.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from
-// std/test, so the file is its own test suite.
-
 import "std/test";
 import "std/string";
 import "std/i32";
 
-// One edit. `a` and `b` are 0-based line indices into the two files;
-// the unused one is -1.
 enum Edit {
   Keep(i32, i32),
   Del(i32),
@@ -72,11 +47,6 @@ function is_keep(e: Edit): boolean {
   }
 }
 
-// ------------------------------------------------------------------ LCS
-
-// lcs[i * (m+1) + j] = length of the LCS of a[i..] and b[j..], filled from
-// the bottom right so the backtrack below can walk forward and produce the
-// edit script in file order.
 function lcs_table(a: string[], b: string[]): i32[] {
   let n: i32 = a.len();
   let m: i32 = b.len();
@@ -107,9 +77,6 @@ function lcs_table(a: string[], b: string[]): i32[] {
   return t;
 }
 
-// Deletions before insertions at a tie, so a replaced line renders as
-// `-old` then `+new` rather than interleaved — the conventional shape, and
-// the one the round-trip parser is written against.
 function diff(a: string[], b: string[]): Edit[] {
   let m: i32 = b.len();
   let t: i32[] = lcs_table(a, b);
@@ -123,8 +90,6 @@ function diff(a: string[], b: string[]): Edit[] {
       j = j + 1;
     } else if (i < a.len() && (j == b.len()
       || t[(i + 1) * (m + 1) + j] >= t[i * (m + 1) + (j + 1)])) {
-      // Deleting loses nothing inserting would keep — and at a tie
-      // this branch wins, which is what puts `-old` before `+new`.
       edits = edits.append(Del(i));
       i = i + 1;
     } else {
@@ -145,23 +110,18 @@ function keep_count(edits: Edit[]): i32 {
   return n;
 }
 
-// ---------------------------------------------------------------- hunks
-
 function context(): i32 {
   return 3;
 }
 
 struct Hunk {
-  a_start: i32,  // 1-based start, as the header prints it
+  a_start: i32,
   a_count: i32,
   b_start: i32,
   b_count: i32,
-  lines: string[],  // each already prefixed with ' ', '-' or '+'
+  lines: string[],
 }
 
-// Group the edit script into hunks: every run of changes, padded with up to
-// `context()` unchanged lines on each side, with adjacent runs merged when
-// their context would overlap.
 function hunks_of(edits: Edit[], a: string[], b: string[]): Hunk[] {
   let out: Hunk[] = [];
   let k: i32 = 0;
@@ -170,15 +130,12 @@ function hunks_of(edits: Edit[], a: string[], b: string[]): Hunk[] {
       k = k + 1;
       continue;
     }
-    // Walk back over the leading context.
     let start: i32 = k;
     let back: i32 = 0;
     while (start > 0 && back < context() && is_keep(edits[start - 1])) {
       start = start - 1;
       back = back + 1;
     }
-    // Extend forward while a change is within 2*context of the last one,
-    // so two nearby runs share one hunk rather than repeating context.
     let end: i32 = k;
     let run: i32 = 0;
     let p: i32 = k;
@@ -237,8 +194,6 @@ function build_hunk(edits: Edit[], a: string[], b: string[], start: i32, stop: i
       }
     }
   }
-  // A hunk with no lines from one side starts at 0 by unified-diff
-  // convention (there is no line to point at), not at 1.
   let a_start: i32 = 0;
   if (a_count > 0) {
     a_start = a_first + 1;
@@ -273,19 +228,13 @@ function render(a: string[], b: string[], a_name: string, b_name: string): strin
   return out;
 }
 
-// ---------------------------------------------------------------- apply
-
-// Parse a rendered unified diff and apply it to `a`. Deliberately strict:
-// a context line that does not match, or a header whose counts disagree
-// with its body, is an error rather than a best-effort patch — the point is
-// to detect a renderer bug, not to survive one.
 function apply(a: string[], diff_text: string): Result[string[], string] {
   if (diff_text.len() == 0) {
     return Ok(a);
   }
   let lines: string[] = diff_text.split("\n");
   let out: string[] = [];
-  let cursor: i32 = 0;  // next unconsumed line of `a`, 0-based
+  let cursor: i32 = 0;
   let i: i32 = 0;
   if (lines.len() < 2 || !lines[0].starts_with("--- ")
     || !lines[1].starts_with("+++ ")) {
@@ -314,7 +263,6 @@ function apply(a: string[], diff_text: string): Result[string[], string] {
     let a_start: i32 = nums[0];
     let a_count: i32 = nums[1];
     let b_count: i32 = nums[3];
-    // Copy the untouched lines before this hunk.
     let upto: i32 = a_start - 1;
     if (a_count == 0) {
       upto = a_start;
@@ -378,7 +326,6 @@ function apply(a: string[], diff_text: string): Result[string[], string] {
   return Ok(out);
 }
 
-// "@@ -1,4 +1,5 @@" -> [1, 4, 1, 5]
 function parse_header(h: string): Result[i32[], string] {
   let parts: string[] = h.split(" ");
   if (parts.len() < 4) {
@@ -408,8 +355,6 @@ function parse_header(h: string): Result[i32[], string] {
   }
   return Ok(out);
 }
-
-// ------------------------------------------------------------- the corpus
 
 struct Pair { name: string, a: string[], b: string[] }
 
@@ -464,11 +409,6 @@ function corpus(): Pair[] {
   ];
 }
 
-// ---------------------------------------------------------------- tests
-
-// THE test. Render, parse the rendered text back, apply it to the original,
-// and require the target exactly. This is the property a diff exists to
-// have, and it covers the renderer and the parser at once.
 function test_the_diff_round_trips(): test.TestOutcome {
   let cs: Pair[] = corpus();
   for i in 0..cs.len() {
@@ -500,7 +440,6 @@ function same(x: string[], y: string[]): boolean {
   return true;
 }
 
-// A file against itself has no diff at all — not an empty hunk, no output.
 function test_no_difference_prints_nothing(): test.TestOutcome {
   let cs: Pair[] = corpus();
   for i in 0..cs.len() {
@@ -519,8 +458,6 @@ function test_no_difference_prints_nothing(): test.TestOutcome {
   return test.pass();
 }
 
-// Every hunk header's counts must equal what its body contains. A header
-// that lies is the failure the round trip catches too — this one names it.
 function test_hunk_headers_match_their_bodies(): test.TestOutcome {
   let cs: Pair[] = corpus();
   for i in 0..cs.len() {
@@ -546,7 +483,6 @@ function test_hunk_headers_match_their_bodies(): test.TestOutcome {
           + ": " + hunk_header(hs[k]) + " but the body has "
           + old_n.to_string() + "/" + new_n.to_string());
       }
-      // A hunk must contain at least one change, or it is pure noise.
       let changed: boolean = false;
       for l in 0..hs[k].lines.len() {
         let t2: str = hs[k].lines[l].take(1);
@@ -563,14 +499,10 @@ function test_hunk_headers_match_their_bodies(): test.TestOutcome {
   return test.pass();
 }
 
-// Minimality, against brute force rather than a second run of the DP. Every
-// subsequence of `a` is enumerated by bit mask and tested against `b`, so
-// the true LCS length is known independently. A wrong recurrence still
-// yields an appliable diff — just a longer one — so nothing else finds it.
 function test_the_edit_script_is_minimal(): test.TestOutcome {
   let cs: Pair[] = corpus();
   for i in 0..cs.len() {
-    if (cs[i].a.len() > 12) {  // 2^n enumeration below
+    if (cs[i].a.len() > 12) {
       continue;
     }
     let want: i32 = brute_force_lcs(cs[i].a, cs[i].b);
@@ -615,9 +547,6 @@ function is_subsequence(needle: string[], hay: string[]): boolean {
   return j == needle.len();
 }
 
-// Swapping the two files swaps the roles of `-` and `+`, line for line. A
-// diff that is asymmetric in its tie-breaking still passes the round trip,
-// so this checks something the round trip cannot.
 function test_reversing_the_files_swaps_the_signs(): test.TestOutcome {
   let cs: Pair[] = corpus();
   for i in 0..cs.len() {
@@ -633,7 +562,6 @@ function test_reversing_the_files_swaps_the_signs(): test.TestOutcome {
         + " but reverse is -" + rev_del.to_string() + "/+"
         + rev_ins.to_string());
     }
-    // And the accounting closes: kept + deleted = |a|, kept + inserted = |b|.
     let keeps: i32 = keep_count(fwd);
     if (keeps + fwd_del != cs[i].a.len()) {
       return test.fail("\"" + cs[i].name + "\": kept + deleted != |a|");
@@ -669,17 +597,14 @@ function count_kind(edits: Edit[], kind: i32): i32 {
   return n;
 }
 
-// The applier refuses a diff that does not describe this file, rather than
-// producing a plausible wrong result. A patch tool that guesses is worse
-// than one that stops.
 function test_a_mismatched_patch_is_refused(): test.TestOutcome {
   let a: string[] = ["one", "two", "three", "four"];
   let b: string[] = ["one", "TWO", "three", "four"];
   let good: string = render(a, b, "a", "b");
   let others: string[][] = [
-    ["one", "different", "three", "four"],  // the context does not match
-    ["totally", "unrelated"],  // too short
-    [],  // empty
+    ["one", "different", "three", "four"],
+    ["totally", "unrelated"],
+    [],
   ];
   for i in 0..others.len() {
     match (apply(others[i], good)) {
@@ -690,12 +615,11 @@ function test_a_mismatched_patch_is_refused(): test.TestOutcome {
       }
     }
   }
-  // Malformed diffs are refused too.
   let bad: string[] = [
-    "@@ -1,1 +1,1 @@\n one\n",  // no file headers
+    "@@ -1,1 +1,1 @@\n one\n",
     "--- a\n+++ b\nnot a hunk header\n",
-    "--- a\n+++ b\n@@ -1,9 +1,9 @@\n one\n",  // counts exceed the body
-    "--- a\n+++ b\n@@ -x,1 +1,1 @@\n one\n",  // non-numeric range
+    "--- a\n+++ b\n@@ -1,9 +1,9 @@\n one\n",
+    "--- a\n+++ b\n@@ -x,1 +1,1 @@\n one\n",
   ];
   for i in 0..bad.len() {
     match (apply(a, bad[i])) {
@@ -708,9 +632,6 @@ function test_a_mismatched_patch_is_refused(): test.TestOutcome {
   return test.pass();
 }
 
-// Context is bounded: no hunk carries more than `context()` unchanged lines
-// before its first change or after its last. An unbounded context is how a
-// diff quietly becomes the whole file.
 function test_context_is_bounded(): test.TestOutcome {
   let cs: Pair[] = corpus();
   for i in 0..cs.len() {
@@ -741,8 +662,6 @@ function test_context_is_bounded(): test.TestOutcome {
   }
   return test.pass();
 }
-
-// ------------------------------------------------------------------ app
 
 function main(): i32 {
   eprint("unidiff — a unified diff, checked by applying it back");

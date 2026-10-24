@@ -40,7 +40,6 @@ pub function run(): void {
   let current = memory.load(changed, -8, 4);
   require(count.is_decremented(current) && !count.is_original(current), 5);
   require(!count.valid(count.decrement(current)), 6);
-  // The count-two case now includes one, so CMP 1 has an unknown zero flag.
   require(count.compare(current, 1).zero == -1, 7);
   require(count.is_original(memory.load(shared, -8, 4)), 8);
   require(count.is_original(memory.load(kept, -8, 4)), 9);

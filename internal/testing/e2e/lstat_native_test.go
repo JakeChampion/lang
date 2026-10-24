@@ -7,19 +7,6 @@ import (
 	"testing"
 )
 
-// lstatProbeSource builds a program that classifies four paths through both
-// `stat` and `lstat` and reports the pair as one digit each.
-//
-// The pairs are the whole point. `stat` and `lstat` differ on exactly one input
-// — a symlink — and a test that only ran `lstat` would pass just as well
-// against an `lstat` that quietly followed links, since a link to a regular
-// file is a regular file. Asserting `stat` alongside it makes the difference
-// itself the assertion.
-//
-// 2 = regular file, 1 = directory, 0 = neither (a symlink under lstat), 9 = an
-// error. A symlink's S_IFMT is S_IFLNK, which is neither S_IFREG nor S_IFDIR,
-// so both FileStat flags come back false — the same three-way answer
-// fs.DirEntry.Type() gives a directory walk.
 func lstatProbeSource(file, linkToFile, linkToDir, dir string) string {
 	return fmt.Sprintf(`function kind(p: string): i32 {
     match (lstat(p)) {
@@ -56,7 +43,6 @@ function main(): i32 {
 `, file, linkToFile, linkToDir, dir)
 }
 
-// lstatProbeTree writes the four paths the probe classifies and returns them.
 func lstatProbeTree(t *testing.T) (file, linkToFile, linkToDir, dir string) {
 	t.Helper()
 	root := t.TempDir()
@@ -79,17 +65,6 @@ func lstatProbeTree(t *testing.T) (file, linkToFile, linkToDir, dir string) {
 	return file, linkToFile, linkToDir, dir
 }
 
-// lstat is the answer to "is this entry a symlink" that Fern had no way to ask
-// (#7982): `stat` follows links and FileStat carries no link bit, so
-// `internal/pkg/embed`'s `!d.Type().IsRegular()` skip — the thing that keeps an
-// asset tree from reaching outside its root or wedging a walk on a cycle — had
-// no spelling in the language and so none in the self-host compiler either.
-//
-// Every backend implements it as its existing stat helper with one constant
-// changed: newfstatat/fstatat's flags word gains AT_SYMLINK_NOFOLLOW, and
-// preview-1's path_filestat_get loses its symlink_follow lookupflag. That is
-// why these tests compare the two builtins rather than checking lstat alone —
-// the shared body means a copy-paste slip shows up as the two agreeing.
 func TestX86_64Lstat(t *testing.T) {
 	file, linkToFile, linkToDir, dir := lstatProbeTree(t)
 	code, _ := compileRunX86_64WithSetup(t, lstatProbeSource(file, linkToFile, linkToDir, dir), nil)
@@ -106,10 +81,6 @@ func TestArm64Lstat(t *testing.T) {
 	}
 }
 
-// The Darwin leg, where the flag word differs. XNU's AT_SYMLINK_NOFOLLOW
-// is 0x20 against Linux's 0x100 and an unknown bit is EINVAL rather than
-// ignored, so the Linux constant failed every lstat instead of quietly
-// following the link — which the two legs above cannot see.
 func TestArm64DarwinLstat(t *testing.T) {
 	file, linkToFile, linkToDir, dir := lstatProbeTree(t)
 	buildAndRunDarwin(t, t.TempDir(), lstatProbeSource(file, linkToFile, linkToDir, dir))

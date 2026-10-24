@@ -7,7 +7,6 @@ import (
 	"testing"
 )
 
-// Loop captures retain the iterator's checked element or key/value types.
 func TestSelfHostForinCaptureIRX86_64(t *testing.T) {
 	testForinCaptureIR(t, "x86-64-linux")
 }
@@ -26,10 +25,9 @@ func testForinCaptureIR(t *testing.T, target string) {
 	dir := t.TempDir()
 
 	cases := []struct {
-		name string
-		src  string
-		want int
-		// The x86 output carries the corresponding IR function label.
+		name      string
+		src       string
+		want      int
 		irWitness string
 	}{
 		{"forin-string-byte-capture",
@@ -52,7 +50,6 @@ struct H { f: (i32) => i32, id: i32 } function main(): i32 { let m: Map[i32, i32
 			`import "core/map";
 struct H { f: (i32) => i32, id: i32 } function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); let acc: i32 = 0; for v in m.values() { let h: H = H { f: (x: i32): i32 => { return x + v; }, id: v }; acc = acc + h.f(1) + h.id; } return acc; }`,
 			62, ".Lssa_main"},
-		// The iterator's type also resolves through field and slice expressions.
 		{"forin-struct-field-array-binder",
 			`struct S { items: i32[], n: i32 } struct H { f: (i32) => i32, id: i32 } function g(s: S): i32 { let acc: i32 = 0; for x in s.items { let h: H = H { f: (q: i32): i32 => { return q + x; }, id: x }; acc = acc + h.f(1) + h.id; } return acc; } function main(): i32 { return g(S { items: [1, 2, 3], n: 0 }); }`,
 			15, ".Lssa_g"},
@@ -62,14 +59,12 @@ struct H { f: (i32) => i32, id: i32 } function main(): i32 { let m: Map[i32, i32
 		{"forin-string-field-array-binder",
 			`struct S { tags: string[], n: i32 } struct H { f: (i32) => i32, id: i32 } function g(s: S): i32 { let acc: i32 = 0; for t in s.tags { let h: H = H { f: (q: i32): i32 => { return q + t.len(); }, id: 1 }; acc = acc + h.f(0); } return acc; } function main(): i32 { return g(S { tags: ["ab", "cde"], n: 0 }); }`,
 			5, ".Lssa_g"},
-		// Method and function iterators use their declared array return type.
 		{"forin-method-iter-binder",
 			`struct S { items: i32[], n: i32 } function (s: S) get(): i32[] { return s.items; } struct H { f: (i32) => i32, id: i32 } function g(s: S): i32 { let acc: i32 = 0; for x in s.get() { let h: H = H { f: (q: i32): i32 => { return q + x; }, id: x }; acc = acc + h.f(1) + h.id; } return acc; } function main(): i32 { return g(S { items: [1, 2, 3], n: 0 }); }`,
 			15, ".Lssa_g"},
 		{"forin-free-fn-iter-binder",
 			`function items(): i32[] { return [10, 20, 30]; } struct H { f: (i32) => i32, id: i32 } function g(): i32 { let acc: i32 = 0; for x in items() { let h: H = H { f: (q: i32): i32 => { return q + x; }, id: x }; acc = acc + h.f(1) + h.id; } return acc; } function main(): i32 { return g(); }`,
 			123, ".Lssa_g"},
-		// Map pair binders carry distinct types and declaration identities.
 		{"forin-kv-binder-fn-field",
 			`import "core/map";
 struct H { f: (i32) => i32, id: i32 } function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); let acc: i32 = 0; for (k, v) in m { let h: H = H { f: (q: i32): i32 => { return q + k + v; }, id: v }; acc = acc + h.f(1) + h.id; } return acc; }`,

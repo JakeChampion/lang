@@ -9,26 +9,6 @@ import (
 	"testing"
 )
 
-// `__scale_f64(xs, k)` on the self-host IR path — the eighth fused kernel of
-// docs/ATLAS-PLATFORM-PLAN.md §3, the first over an ARRAY and the first with a
-// buffer out.
-//
-// This is the leg the Go-side suite cannot stand in for. `internal/testing/e2e`'s
-// differential proves the NATIVE emitters; the self-host op, its two native
-// assembly bodies and its wat helper are a separate implementation over a
-// DIFFERENT array layout (len at [arr], elements from [arr+8]) that no Go
-// test reaches.
-//
-// What a port of a buffer-out kernel gets wrong is the HEADER, not the
-// arithmetic: the result's length, which every later read consults, and the
-// element base. The sweep therefore reads every element back through the
-// ordinary indexing path and checks `len()`, on lengths 0..40 and past the
-// two- and four-lane boundaries a vector body will have.
-
-// scaleF64IRProg is SELF-CHECKING: it carries its own reference in Fern and
-// compares `__scale_f64` against it. A failure returns a small distinct code,
-// so the exit status says WHICH shape disagreed. 42 means every comparison
-// matched.
 const scaleF64IRProg = `function build(n: i32, seed: f64): f64[] {
     let xs: f64[] = [];
     let i: i32 = 0;
@@ -83,8 +63,6 @@ function main(): i32 {
 }
 `
 
-// runScaleF64IR compiles scaleF64IRProg with the self-host modload driver for
-// the given register target and returns the exit code.
 func runScaleF64IR(t *testing.T, target string) int {
 	t.Helper()
 	var runner, runPrefix, extra []string
@@ -106,9 +84,6 @@ func runScaleF64IR(t *testing.T, target string) int {
 	if len(progAsm) == 0 {
 		t.Fatal("self-host emitter produced 0 bytes")
 	}
-	// A leg that fell back to one multiply per element still returns 42, so
-	// the exit code cannot see the difference (§3.4: a backend that HAS the
-	// op but lowers it scalar is silent). Name the lane-wise multiply.
 	if want := scaleF64VectorMnemonic(target); want != "" && !strings.Contains(string(progAsm), want) {
 		t.Errorf("emitted %s assembly does not contain %q: the kernel is lowering scalar again", target, want)
 	}
@@ -123,15 +98,6 @@ func runScaleF64IR(t *testing.T, target string) int {
 	return cmd.ProcessState.ExitCode()
 }
 
-// scaleF64VectorMnemonic names the lane-wise multiply a vectorised leg must
-// emit, or "" for one still lowering scalar by design.
-//
-// x86-64 is SSE2 over two doubles — this assembler has no VEX surface, so it
-// does not get the four lanes the native emitter uses. arm64 is NEON over a
-// .2d pair.
-//
-// Every other target answers "" so the contract holds by default rather than
-// by omission: a target named here is one whose leg is vectorised.
 func scaleF64VectorMnemonic(target string) string {
 	switch target {
 	case "x86-64-linux":
@@ -154,10 +120,6 @@ func TestSelfHostScaleF64IRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostScaleF64IRWasm runs the same program through the self-hosted
-// wasm IR driver. The helper's presence in the emitted text is asserted, so a
-// module that silently stopped needing it would fail rather than pass by
-// exercising nothing.
 func TestSelfHostScaleF64IRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host scale_f64 wasm IR e2e")

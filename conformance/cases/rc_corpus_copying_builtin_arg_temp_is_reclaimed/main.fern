@@ -1,16 +1,16 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// #7867 slice 2, the argument-temp half. A fresh concat handed
-// to a callee that only SCANS it — a copying builtin — is the
-// caller's to reclaim: the builtin memcpys or reads the bytes
-// and retains nothing, so with the parameter uncredited the
-// temp was stranded, one buffer per call (measured 202/102,
-// 3200 B live at 100 rounds; exactly 2x at 200). The callee
-// carries the state's string field into its result so the
-// call-level returnsNoParamEscape gate stays closed and the
-// per-argument credit is the only route — the EmitState.write
-// shape.
+
+
+
+
+
+
+
+
+
+
+
+
+
 struct St { tag: string, n: i32 }
 
 @noinline

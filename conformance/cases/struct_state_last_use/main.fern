@@ -1,12 +1,12 @@
-// A state local consumed into another at its last use — `let sl: Buf =
-// emit(s, a); let sr: Buf = emit(sl, b);` with sl never read again — is how
-// every binary-expression lowering in the compiler threads its state. Nothing
-// rebinds sl, so no rebind release ever runs on it, and the generation it
-// holds (its box, and the code buffer sr's append superseded) was leaked at
-// every statement of the kind. The consume site now releases sl the way a
-// rebind would, with sr standing in for the new value: a field sr carries on
-// is kept, the replaced ones and the box go, and sr's own reclaim compares
-// against the box sl was derived from rather than the freed one.
+
+
+
+
+
+
+
+
+
 struct Buf { code: i32[], names: string[], n: i32 }
 
 function emit(s: Buf, v: i32): Buf {
@@ -31,7 +31,7 @@ function lower_chain(s: Buf, k: i32): Buf {
     return s4;
 }
 
-// the consumed local is itself rebound first
+
 function lower_rebound(s: Buf, k: i32): Buf {
     let st: Buf = emit(s, k);
     st = emit(st, k + 1);

@@ -9,12 +9,6 @@ import (
 	"testing"
 )
 
-// iterPrelude is a self-contained i32-only Iterator trait + integer Range +
-// eager drivers (sum / count / to_array). The self-host IR tests inline it (the self-host core tests inline the stdlib
-// source rather than importing — see self_host_core_int_parse_ir_test.go); the
-// native side ALSO runs this inlined form so both backends exercise byte-for-
-// byte the same trait shape; separate native tests below exercise the real
-// `import "core/iter"` module.
 const iterPrelude = `pub trait Iterator { function next(self: Self): Option[(i32, Self)]; }
 pub struct Range { lo: i32, hi: i32 }
 pub function range(lo: i32, hi: i32): Range { return Range { lo: lo, hi: hi }; }
@@ -46,24 +40,15 @@ var iterTraitCases = []struct {
 	main string
 	want int
 }{
-	// sum over [0,5) = 0+1+2+3+4 = 10
 	{"sum-range", `function main(): i32 { return sum(range(0, 5)); }`, 10},
-	// count of [2,9) = 7
 	{"count-range", `function main(): i32 { return count(range(2, 9)); }`, 7},
-	// to_array([0,4)) = [0,1,2,3]; sum-via-for 6 + len 4 = 10
 	{"to-array", `function main(): i32 { let xs = to_array(range(0, 4)); let t = 0; for x in xs { t = t + x; } return t + xs.len(); }`, 10},
-	// empty ranges yield nothing: sum 0 + count 0 + 9 = 9
 	{"empty", `function main(): i32 { return sum(range(7, 7)) + count(range(3, 3)) + 9; }`, 9},
-	// two drivers over two fresh ranges in one program (two monomorphic call sites)
 	{"compose", `function main(): i32 { return sum(range(0, 5)) + count(range(0, 7)); }`, 17},
 }
 
 func iterProg(mainBody string) string { return iterPrelude + mainBody + "\n" }
 
-// writeIterProg writes a program to a temp .fern file and returns its path —
-// the fixture helpers (runFixture*) take a path and run the FULL pre-codegen
-// pipeline (modload + constfold + checker + monomorph), which the bounded-
-// generic drivers require (the lighter compileAndRunX86_64 skips monomorph).
 func writeIterProg(t *testing.T, src string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -74,8 +59,6 @@ func writeIterProg(t *testing.T, src string) string {
 	return p
 }
 
-// TestNativeIteratorTrait runs the inlined numeric-Iterator-trait programs
-// through the native interpreter + x86-64 + wasm backends, oracle-checked.
 func TestNativeIteratorTrait(t *testing.T) {
 	for _, tc := range iterTraitCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -93,7 +76,6 @@ func TestNativeIteratorTrait(t *testing.T) {
 	}
 }
 
-// TestNativeIteratorTraitArm64 is the arm64 leg (CI-gated; runs under qemu).
 func TestNativeIteratorTraitArm64(t *testing.T) {
 	for _, tc := range iterTraitCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -105,8 +87,6 @@ func TestNativeIteratorTraitArm64(t *testing.T) {
 	}
 }
 
-// TestNativeIteratorTraitModule exercises the REAL `import "core/iter"` module
-// (not the inlined form) so the shipped stdlib module is validated end-to-end.
 func TestNativeIteratorTraitModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
@@ -130,9 +110,6 @@ function main(): i32 {
 	}
 }
 
-// TestNativeIteratorTraitModuleAdapters exercises the shipped module's
-// closure-free adapters (nth / min / max / product / last / index_of /
-// contains / count) end-to-end.
 func TestNativeIteratorTraitModuleAdapters(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
@@ -165,12 +142,6 @@ function main(): i32 {
 	}
 }
 
-// TestNativeIteratorTraitModuleGeneric exercises the GENERIC face of the
-// shipped `core/iter` module: a user type that implements `iter.Iterator[T]`
-// for a non-i32 element type (`boolean`) and drives the trait's `len` /
-// `collect` methods over it. This proves the stdlib trait is genuinely
-// generic (#2691), not the old i32-only shape — the methods take their
-// element type from the impl.
 func TestNativeIteratorTraitModuleGeneric(t *testing.T) {
 	src := `import "core/iter" as iter;
 struct BoolSeq { n: i32 }
@@ -196,12 +167,6 @@ function main(): i32 {
 	}
 }
 
-// TestNativeIteratorTraitModulePredicates exercises the shipped module's
-// closure-taking predicate adapters (any / all / find) over the real
-// `import "core/iter"` module. These take a `(T) => boolean` through a
-// function-typed parameter; the self-host IR lowering of the inline forms is
-// pinned by generic_iterator_predicate_test.go (the #2686 condition-lift fix),
-// so this leg validates the shipped module on the native backends.
 func TestNativeIteratorTraitModulePredicates(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
@@ -232,9 +197,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostIteratorTraitIRX86_64 routes each inlined case through the
-// self-hosted x86-64 IR driver, pins routing to "ir", and oracle-checks the
-// exit code.
 func TestSelfHostIteratorTraitIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -268,8 +230,6 @@ func TestSelfHostIteratorTraitIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostIteratorTraitIRWasm runs the same inlined cases through the wasm
-// IR backend.
 func TestSelfHostIteratorTraitIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host iterator-trait wasm IR e2e")

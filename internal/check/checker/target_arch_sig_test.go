@@ -8,14 +8,11 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// `target_arch()` is a zero-argument string: the compile target's ISA,
-// declared here so a bare `-check` — which names no target and so folds
-// nothing — types it exactly as a compile does.
 func TestTargetArchIsTypedAsAString(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
-		want string // "" = must type-check
+		want string
 	}{
 		{"assigned to a string", `function main(): i32 { let a: string = target_arch(); if (a == "arm64") { return 1; } return 0; }`, ""},
 		{"compared to a literal", `function main(): i32 { if (target_arch() == "x86-64") { return 1; } return 0; }`, ""},

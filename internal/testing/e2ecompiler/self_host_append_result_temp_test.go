@@ -6,19 +6,11 @@ import (
 	"testing"
 )
 
-// appendResultTempCases pin #10560: an expression-position `.append` result
-// used as another append's receiver (`acc.append(a).append(b)`) or passed as a
-// call argument (`id(xs.append(1))`, `rec(n - 1, acc.append(x))`) must not
-// strand its buffer's count. Each row must balance under the leakcheck census
-// and run clean under FERN_SANITIZE=1 on x86-64, and balance on wasm.
 var appendResultTempCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The issue's receiver repro: a chain on a borrowed parameter, and a chain
-	// rebinding a local. The outer push copies or grows the inner result, whose
-	// count nothing else holds. 122 allocs / 67 frees before.
 	{"chain_receiver", `function step(n: i32, acc: i32[]): i32[] {
     return acc.append(n).append(n + 1);
 }
@@ -33,8 +25,6 @@ function main(): i32 {
     return (pending.len() + q.len()) % 100;
 }
 `, 40},
-	// The argument repro: a callee that hands its parameter back retained. 11
-	// allocs / 1 free before.
 	{"arg_identity_callee", `@noinline function id(acc: i32[]): i32[] { return acc; }
 function main(): i32 {
     let pending: i32[] = [];
@@ -46,8 +36,6 @@ function main(): i32 {
     return pending.len();
 }
 `, 10},
-	// A recursive accumulator: every frame's append result is an argument of
-	// the next. 6 allocs / 0 frees before.
 	{"arg_recursive_accumulator", `function rec(n: i32, acc: i32[]): i32[] {
     if (n == 0) { return acc; }
     return rec(n - 1, acc.append(n));
@@ -59,8 +47,6 @@ function main(): i32 {
     return r.len();
 }
 `, 10},
-	// The 8-byte pushes. `f(xs)` returning `p.append(v)` in place handed the
-	// caller's buffer back uncounted, which the rebind then freed under `xs`.
 	{"wide_elements", `function f(p: f64[]): f64[] { return p.append(1.5); }
 function stepf(n: i32, acc: f64[]): f64[] { return acc.append(n as f64).append(0.5); }
 function stepi(n: i32, acc: i64[]): i64[] { return acc.append(n as i64).append(7 as i64); }
@@ -123,11 +109,6 @@ function main(): i32 {
     return total % 100;
 }
 `, 0},
-	// The in-place guard. `grow` and `rec` push onto a buffer their caller no
-	// longer reads, and `roomy.append(20)` must copy because `roomy` is read
-	// again. The allocation count is the one main had, so a release that made a
-	// push see a shared buffer, or an in-place push that stopped being one,
-	// moves it.
 	{"inplace_guard", `function grow(acc: i32[], n: i32): i32[] { return acc.append(n); }
 function rec(n: i32, acc: i32[]): i32[] {
     if (n == 0) { return acc; }
@@ -149,11 +130,6 @@ function main(): i32 {
     return (xs.len() + r.len()) % 100;
 }
 `, 0},
-	// Callees that KEEP the argument: in a returned struct, in a returned
-	// array literal, and as an element appended to another array. The first
-	// retains it at the construction, so its temp is released; the other two
-	// are not proven counted and keep their temps. Nothing may be released
-	// under a holder, which the sanitizer and the values read back check.
 	{"callee_keeps_argument", `struct Holder { xs: i32[], n: i32 }
 function hold(xs: i32[]): Holder { return Holder { xs: xs, n: xs.len() }; }
 function wrap(xs: i32[]): i32[][] { return [xs]; }

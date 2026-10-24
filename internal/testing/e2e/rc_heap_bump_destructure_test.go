@@ -4,23 +4,6 @@ import (
 	"testing"
 )
 
-// Destructure-binding reclamation (RC-Perceus) — the follow-up to tuple
-// reclamation (rc_heap_bump_tuple_test.go). A `let (a, b) = p` inside a
-// loop reuses the synthetic destructure temp slot AND each binding slot
-// across iterations. Before this slice neither got a per-iteration
-// dec-on-reinit, so every iteration but the last leaked the tuple box
-// and each rc-tracked element (the exit sweep only reclaims the final
-// iteration). With the fix the destructure lowering routes the temp and
-// each binding through emitVarReinitDropOld before the re-store, so the
-// bump high-water stays FLAT regardless of iteration count.
-//
-// Two programs differing only in iteration count must report the SAME
-// bump growth; a regression would make the larger run grow with N.
-
-// destructureBumpGrowthSrc re-declares + destructures a (i32[], i32)
-// tuple each iteration — exercises both the temp's deep-drop (frees the
-// box + dec's the array element) and the array binding's per-iteration
-// __fern_arr_dec.
 func destructureBumpGrowthSrc(n string) string {
 	return `function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
@@ -36,9 +19,6 @@ func destructureBumpGrowthSrc(n string) string {
 }`
 }
 
-// destructureUnderflowSrc destructures across many iterations and
-// returns the over-release counter — must be 0 (no double-free of a
-// box/element shared between the temp's deep-drop and a binding).
 const destructureUnderflowSrc = `function main(): i32 {
     let i: i32 = 0;
     let sum: i32 = 0;
@@ -93,11 +73,6 @@ func TestWASMDestructureHeapBumpBounded(t *testing.T) {
 	}
 }
 
-// nestedDestructureBumpGrowthSrc is the same shape one level deeper: the INNER
-// tuple is its own box, so it needs its own temp, its own alias-inc and its own
-// per-iteration reinit drop. A lowering that flattened the levels into extra
-// offset hops off one temp would leak the inner box every iteration but the
-// last, and the growth would scale with N.
 func nestedDestructureBumpGrowthSrc(n string) string {
 	return `function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
@@ -113,9 +88,6 @@ func nestedDestructureBumpGrowthSrc(n string) string {
 }`
 }
 
-// nestedDestructureUnderflowSrc must report 0 over-releases: the inner box is
-// reachable from both the outer temp's deep-drop and the inner temp's, so a
-// missing alias-inc on the inner level would double-free it.
 const nestedDestructureUnderflowSrc = `function main(): i32 {
     let i: i32 = 0;
     let sum: i32 = 0;

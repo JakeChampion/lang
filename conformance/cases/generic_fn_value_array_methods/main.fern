@@ -1,10 +1,10 @@
-// A generic function passed to an array method takes its type arguments
-// from the method's parameter, with the receiver's element type bound and
-// the method's own type parameter left open (#12977). Its instance then
-// binds that parameter, so `xs.map(one_plus)` needs no destination. A
-// generic function called through a function value binds its type
-// parameters from the arguments, so `T.one()` in its body names the bound
-// type, an i64 included (#12979).
+
+
+
+
+
+
+
 import "std/f64";
 import "std/num" as num;
 

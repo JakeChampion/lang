@@ -1,22 +1,6 @@
-// compiler/elf_syms_run.fern — driver for the ELF section-header
-// and .symtab writer (elf.fern, #6637).
-//
-// It builds a REAL x86-64 static binary — `exit(7)`, twelve bytes of text —
-// once without symbols and once with, and prints the symbol-bearing image
-// as hex on stdout. The Go-side gate runs `nm` on it (the symbols must
-// resolve to the right addresses) and then EXECUTES it (exit 7), because
-// the risk in adding a section-header table is not that `nm` fails but
-// that the loader stops accepting the image.
-//
-// The in-Fern assertions below cover what is cheaper to check here than to
-// re-derive in Go: asking for no symbols returns the image untouched, and
-// the header fields describing the section table are right. Exit 0 means
-// every assertion held; a non-zero code names the failing one.
-
 import "../elf";
 import "../util";
 
-// x86_exit7 is `mov eax,60 / mov edi,7 / syscall` — SYS_exit(7).
 function x86_exit7(): i32[] {
   return [184, 60, 0, 0, 0, 191, 7, 0, 0, 0, 15, 5];
 }
@@ -80,8 +64,6 @@ function to_hex(b: i32[]): string {
   return out;
 }
 
-// le16_at / le32_at read back a little-endian field, so the assertions
-// test the emitted BYTES rather than the values that produced them.
 function le16_at(b: i32[], off: i32): i32 {
   return b[off] | b[off + 1] << 8;
 }
@@ -109,50 +91,37 @@ function main(): i32 {
   let no_names: string[] = [];
   let no_offs: i32[] = [];
 
-  // ---- 1. no symbols requested returns the image untouched -----------
-  // The early return makes this structurally true; the assertion pins the
-  // contract so a later rewrite that rebuilds rather than returns has to
-  // prove it still matches byte for byte.
   let plain: i32[] = elf.elf_cat_u8([], elf.elf_static_executable_bss_x86_wx_at(util.to_u8(text), [], 0, 0));
   let plain_syms: i32[] = elf.elf_append_debug(plain, elf.elf_text_vaddr_wx(false), elf.elf_wx_text_off(false), text.len(), no_names, no_offs, no_offs, "p.fern", "/work", no_names, no_offs, no_offs, no_offs, no_offs, no_offs, no_offs, elf.no_var_ranges());
   if (!bytes_equal(plain, plain_syms)) {
     return 1;
   }
 
-  // A plain image really does carry no section table.
-  if (le16_at(plain, 60) != 0) {  // e_shnum
+  if (le16_at(plain, 60) != 0) {
     return 2;
   }
-  if (le16_at(plain, 58) != 0) {  // e_shentsize
+  if (le16_at(plain, 58) != 0) {
     return 3;
   }
 
-  // ---- 2. the symbol-bearing image ----------------------------------
   let names: string[] = ["_start", "helper"];
   let offs: i32[] = [0, 5];
   let sizes: i32[] = [5, 7];
   let img: i32[] = elf.elf_append_debug(plain, elf.elf_text_vaddr_wx(false), elf.elf_wx_text_off(false), text.len(), names, offs, sizes, "p.fern", "/work", no_names, no_offs, no_offs, no_offs, no_offs, no_offs, no_offs, elf.no_var_ranges());
 
-  // e_shoff (8 bytes at 0x28) is non-zero, and the section-table
-  // description is the seven-section layout.
-  if (le32_at(img, 40) == 0) {  // e_shoff low word
+  if (le32_at(img, 40) == 0) {
     return 10;
   }
-  if (le16_at(img, 58) != elf.elf_sh_size()) {  // e_shentsize
+  if (le16_at(img, 58) != elf.elf_sh_size()) {
     return 11;
   }
-  if (le16_at(img, 60) != 7) {  // e_shnum
+  if (le16_at(img, 60) != 7) {
     return 12;
   }
-  if (le16_at(img, 62) != 4) {  // e_shstrndx
+  if (le16_at(img, 62) != 4) {
     return 13;
   }
 
-  // The program headers and their offset are untouched: adding sections
-  // must not disturb the loadable side. Read the count off `plain` rather
-  // than naming one — elf_image_wx reserves a third slot for unwind, and
-  // what this pins is that the appender preserves whatever the base image
-  // had, not how many segments that image happens to carry.
   if (le16_at(img, 56) != le16_at(plain, 56)) {
     return 14;
   }
@@ -160,46 +129,39 @@ function main(): i32 {
     return 15;
   }
 
-  // The image grew — section data and headers are appended past the body.
   if (img.len() <= plain.len()) {
     return 16;
   }
 
-  // ---- 3. the section header table ----------------------------------
   let sh_off: i32 = le32_at(img, 40);
-  // Section 1 is .text: SHT_PROGBITS(1), SHF_ALLOC|SHF_EXECINSTR(6).
   let s1: i32 = sh_off + elf.elf_sh_size();
-  if (le32_at(img, s1 + 4) != 1) {  // sh_type
+  if (le32_at(img, s1 + 4) != 1) {
     return 20;
   }
-  if (le32_at(img, s1 + 8) != 6) {  // sh_flags low word
+  if (le32_at(img, s1 + 8) != 6) {
     return 21;
   }
-  if (le32_at(img, s1 + 32) != text.len()) {  // sh_size
+  if (le32_at(img, s1 + 32) != text.len()) {
     return 22;
   }
 
-  // Section 2 is .symtab: SHT_SYMTAB(2), entsize 24, link -> section 3.
   let s2: i32 = sh_off + 2 * elf.elf_sh_size();
   if (le32_at(img, s2 + 4) != 2) {
     return 23;
   }
-  if (le32_at(img, s2 + 40) != 3) {  // sh_link
+  if (le32_at(img, s2 + 40) != 3) {
     return 24;
   }
-  if (le32_at(img, s2 + 44) != 1) {  // sh_info (first non-local)
+  if (le32_at(img, s2 + 44) != 1) {
     return 25;
   }
   if (le32_at(img, s2 + 56) != elf.elf_sym_size()) {
     return 26;
   }
-  // Three entries: the reserved null symbol plus the two requested.
   if (le32_at(img, s2 + 32) != 3 * elf.elf_sym_size()) {
     return 27;
   }
 
-  // Sections 5 and 6 are .debug_abbrev and .debug_info: SHT_PROGBITS(1),
-  // not allocated, and the unit's length word is its section less the word.
   let s5: i32 = sh_off + 5 * elf.elf_sh_size();
   if (le32_at(img, s5 + 4) != 1 || le32_at(img, s5 + 8) != 0) {
     return 50;
@@ -210,17 +172,14 @@ function main(): i32 {
   }
   let info_off: i32 = le32_at(img, s6 + 24);
   let info_size: i32 = le32_at(img, s6 + 32);
-  if (le32_at(img, info_off) != info_size - 4) {  // unit_length
+  if (le32_at(img, info_off) != info_size - 4) {
     return 52;
   }
-  // The unit header says DWARF 4 and 8-byte addresses.
   if (le16_at(img, info_off + 4) != 4 || img[info_off + 10] != 8) {
     return 53;
   }
 
-  // ---- 4. the symbols themselves ------------------------------------
   let symtab_off: i32 = le32_at(img, s2 + 24);
-  // Entry 0 is the reserved null symbol: st_name and st_value both zero.
   if (le32_at(img, symtab_off) != 0) {
     return 30;
   }
@@ -228,32 +187,25 @@ function main(): i32 {
     return 31;
   }
 
-  // Entry 1 is `_start` at text_vaddr + 0, STT_FUNC | STB_GLOBAL.
   let e1: i32 = symtab_off + elf.elf_sym_size();
-  if (img[e1 + 4] != 18) {  // st_info
+  if (img[e1 + 4] != 18) {
     return 32;
   }
-  if (le16_at(img, e1 + 6) != 1) {  // st_shndx = .text
+  if (le16_at(img, e1 + 6) != 1) {
     return 33;
   }
   if (le32_at(img, e1 + 8) != elf.elf_text_vaddr_wx(false)) {
     return 34;
   }
 
-  // Entry 2 is `helper` at text_vaddr + 5.
   let e2: i32 = symtab_off + 2 * elf.elf_sym_size();
   if (le32_at(img, e2 + 8) != elf.elf_text_vaddr_wx(false) + 5) {
     return 35;
   }
-  // Its name sits later in .strtab than `_start`'s, which is the check
-  // that the two symbols are not sharing one name offset.
   if (le32_at(img, e2) <= le32_at(img, e1)) {
     return 36;
   }
 
-  // st_size is emitted, not left at zero: a profiler needs the extent to
-  // attribute an address, and a table of zero-sized symbols resolves exact
-  // entry points and nothing else.
   if (le32_at(img, e1 + 16) != 5) {
     return 37;
   }
@@ -261,11 +213,6 @@ function main(): i32 {
     return 38;
   }
 
-  // ---- 5. the selection rule (native's FuncSyms) ---------------------
-  // A label with a dot anywhere (`.Lloop`, the register-ABI entry
-  // `helper.r`) is a branch target, not a function, and an empty name is
-  // not a symbol at all. Section 1 (.rodata) is filtered out when a
-  // section filter is given.
   let ln: string[] = ["main", ".Lloop", "", "helper", "msg", "helper.r"];
   let lo: i32[] = [16, 20, 24, 4, 0, 8];
   let ls: i32[] = [0, 0, 0, 0, 1, 0];
@@ -273,8 +220,6 @@ function main(): i32 {
   if (got.len() != 2) {
     return 40;
   }
-  // Sorted by OFFSET, so `helper` (4) precedes `main` (16) despite the
-  // order they were recorded in.
   if (got[0] != "helper") {
     return 41;
   }
@@ -287,17 +232,14 @@ function main(): i32 {
     return 43;
   }
 
-  // Sizes span to the next symbol, and the last runs to text_end.
   let gs: i32[] = elf.elf_func_sym_sizes(ln, lo, ls, 0, 32);
-  if (gs[0] != 12) {  // 16 - 4
+  if (gs[0] != 12) {
     return 44;
   }
-  if (gs[1] != 16) {  // 32 - 16
+  if (gs[1] != 16) {
     return 45;
   }
 
-  // Without a section filter (-1) the .rodata label is kept, which is how
-  // an assembler that records no sections is handled.
   if (elf.elf_func_sym_names(ln, lo, ls, 0 - 1, 32).len() != 3) {
     return 46;
   }

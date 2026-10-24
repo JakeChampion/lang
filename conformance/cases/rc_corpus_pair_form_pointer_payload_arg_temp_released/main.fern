@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A fresh struct temp handed to a PAIR-FORM callee whose result
-// carries a POINTER payload built inside (`bump(C { value: i })`,
-// `bump: C -> Result[C, string]` — closure_field_match's shape). The
-// scalar-payload admission above cannot see it; the no-parameter-
-// escape proof can, and it does not depend on the return ABI (#8869).
-// Before: 250 stranded temps on every backend. 200 + 50 + 7.
+
+
+
+
+
+
+
+
+
 struct C { value: i32 }
 function bump(c: C): Result[C, string] {
     if (c.value < 0) { return Err("negative"); }

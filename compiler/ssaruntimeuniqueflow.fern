@@ -1,5 +1,3 @@
-// Instruction semantics used by the scoped runtime uniqueness proof. No
-// emitter imports or expected-template comparison. All other effects refuse.
 import "./util";
 
 pub struct Op { kind: i32, target: i32 }
@@ -40,9 +38,6 @@ pub function decode(line: string, arm: boolean): Decoded {
 
 struct State { pointer: i32, result: i32, count: boolean, floor: boolean, flags: i32, ok: boolean }
 
-// pointer: unknown/original/normalized. flags: unknown/tag/floor/sign/one.
-// Register definitions and flag producers must dominate every use. x86 AND
-// destroys the previous flags; ARM AND (without S) preserves NZCV.
 function step(s: State, kind: i32, tagged: boolean, low: boolean, arm: boolean): State {
   if (kind == 1) {
     return State { ...s, pointer: 1 };
@@ -72,7 +67,6 @@ function flags(s: State, kind: i32, arm: boolean): State {
   return State { ...s, ok: kind == 30 };
 }
 
-// -1 refuses an undefined/unsupported condition, 0 falls through, 1 jumps.
 function branch(s: State, kind: i32, tagged: boolean, low: boolean, rc: i32): i32 {
   let expected = branch_flags(kind);
   if (expected > 0 && s.flags != expected) {
@@ -119,7 +113,6 @@ pub function path(ops: Op[], tagged: boolean, low: boolean, rc: i32, arm: boolea
   let pc = 0;
   let seen = path_marks(ops.len());
   while (pc >= 0 && pc < ops.len()) {
-    // Cycles are unadmitted, rather than stopped at an arbitrary path limit.
     if (seen[pc]) {
       return false;
     }

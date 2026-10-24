@@ -1,4 +1,4 @@
-// and_then / or_else flat-map family (unblocked by the #2753 fix).
+
 import "std/option";
 import "std/result";
 function half(x: i32): Option[i32] { if (x % 2 == 0) { return Some(x / 2); } return None; }
@@ -6,10 +6,10 @@ function checked(x: i32): Result[i32, i32] { if (x > 0) { return Ok(x); } return
 function main(): i32 {
     let r: i32 = 0;
     let a: Option[i32] = Some(20);
-    r = r + a.and_then(half).unwrap_or(0);       // Some(10) => 10
+    r = r + a.and_then(half).unwrap_or(0);
     let b: Option[i32] = Some(7);
-    r = r + b.and_then(half).unwrap_or(99);      // odd -> None => 99 -> 109
+    r = r + b.and_then(half).unwrap_or(99);
     let ok: Result[i32, i32] = Ok(5);
-    r = r + ok.and_then(checked).unwrap_or(0);   // Ok(5) => 114
-    return r;                                     // 114
+    r = r + ok.and_then(checked).unwrap_or(0);
+    return r;
 }

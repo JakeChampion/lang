@@ -8,16 +8,6 @@ import (
 	"testing"
 )
 
-// std/async port of the former std/reactor tests: gather / race /
-// with_deadline driving fd-tagged `Pending` futures through the real
-// `poll` builtin (docs/ASYNC-FUTURE-UNIFICATION.md PR5c). These cover
-// the real-fd / timerfd / deadline paths that the socket-fanout combinator
-// tests (async_combinators_test.go) don't — readiness transitions and
-// the deadline-timeout abandon. Native-only (poll is a native builtin).
-
-// gather over two regular-file fds (always poll-readable, so
-// deterministic — no socket timing): both Pending futures resolve and
-// gather returns results in order. Success → 42.
 func TestAsyncGatherFileFds(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -58,11 +48,6 @@ function main(): i32 {
 	runAsyncIOProgram(t, bin, dir, "gather_files", src, 42)
 }
 
-// gather over two timerfds proves the wait blocks on REAL readiness
-// transitions (not just always-ready files): each future waits on a
-// CLOCK_MONOTONIC timerfd, so `poll` actually blocks until the timer
-// fires, and the shorter is serviced first. Deterministic — a timerfd
-// always fires — with no network/socket timing. Success → 42.
 func TestAsyncGatherTimers(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -87,19 +72,6 @@ function main(): i32 {
 	runAsyncIOProgram(t, bin, dir, "gather_timers", src, 42)
 }
 
-// race drives the fd-tagged futures until the FIRST resolves and returns
-// (winnerIndex, value). Two timerfds, the slow one at index 0 and the fast
-// one at index 1: race returns the fast one, blocking in real poll only
-// until it fires. The slow timer is dropped, so the gap costs no wall clock.
-//
-// The gap has to be wide because `poll` returns the FIRST READY token, so
-// index order is the tiebreak when both have fired. The timers are armed
-// before the loop is entered, and if the process takes longer to reach poll
-// than the slow timer's delay then both are ready and index 0 -- the slow
-// one -- wins. At 50ms against 10ms that margin was 40ms, which a loaded
-// machine closes: the case failed about one run in four on idle main and
-// three in three under a full sweep, always exit 91 -- the check that the
-// value came from the fast timer, failing (#9796).
 func TestAsyncRaceTimers(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -123,16 +95,6 @@ function main(): i32 {
 	runAsyncIOProgram(t, bin, dir, "race_timers", src, 42)
 }
 
-// with_deadline bounds the whole fan-out by a wall-clock deadline,
-// returning Option[T] per future: Some(result) for one that resolves in
-// time, None for one whose timer outlives the deadline.
-//
-// Both gaps are wide for the reason race's is: a timer is armed by
-// start_timer BEFORE with_deadline is entered and its window opens, so a
-// process descheduled in between meets a timer that has already fired. At
-// 500ms against a 20ms deadline the timed-out case answered Some once in
-// sixty runs under contention, which is the right answer to the wrong
-// question -- the future really had resolved by the time the window opened.
 func TestAsyncWithDeadline(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -151,7 +113,6 @@ function start_timer(ms: i32): async.Future[i32] {
 		want       int
 	}{
 		{
-			// 5ms timer, 5s deadline → completes → Some(5).
 			name: "completes_in_time",
 			body: `function main(): i32 {
     let tasks: async.Future[i32][] = [start_timer(5)];
@@ -161,7 +122,6 @@ function start_timer(ms: i32): async.Future[i32] {
 			want: 5,
 		},
 		{
-			// 5s timer, 20ms deadline → times out → None → map to 42.
 			name: "times_out",
 			body: `function main(): i32 {
     let tasks: async.Future[i32][] = [start_timer(5000)];
@@ -177,8 +137,6 @@ function start_timer(ms: i32): async.Future[i32] {
 	}
 }
 
-// runAsyncIOProgram builds `src` for both native backends and asserts the
-// process exit code. Native-only (poll); arm64 runs under qemu.
 func runAsyncIOProgram(t *testing.T, bin, dir, name, src string, want int) {
 	t.Helper()
 	backends := []struct {
@@ -192,7 +150,7 @@ func runAsyncIOProgram(t *testing.T, bin, dir, name, src string, want int) {
 	for _, be := range backends {
 		be := be
 		t.Run(name+"/"+be.target, func(t *testing.T) {
-			qemu := be.qemu(t) // skips if no runner
+			qemu := be.qemu(t)
 			srcPath := filepath.Join(dir, name+"_"+be.target+".fern")
 			if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)

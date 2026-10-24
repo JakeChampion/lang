@@ -7,17 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64Gas exercises the self-hosted AArch64 GAS-text assembler
-// (compiler/arm64_gas.fern) — the text->bytes step of the
-// arm64-darwin native path, the counterpart of x86_native.fern PART 2. It parses
-// assembly-text statements into machine code via the arm64_encode.fern
-// encoders + Arm64Asm label machinery.
-//
-// arm64_gas.fern depends on arm64_encode.fern's names, so this test
-// concatenates the two with a self-test main() that assembles snippets and
-// asserts the emitted bytes, then runs the whole thing through the
-// self-host wasm pipeline. Exit 0 = all checks pass; a failing check
-// returns its 1-based id.
 func TestSelfHostArm64Gas(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64 gas e2e")
@@ -45,20 +34,10 @@ func TestSelfHostArm64Gas(t *testing.T) {
 	}
 }
 
-// TestSelfHostArm64DarwinMachOGasRuns is the end-to-end proof of the GAS
-// assembler: a Fern program feeds an AArch64 assembly-text program (a
-// subroutine call + a backward loop, by label) to arm64_gas_assemble,
-// wraps the resulting bytes with macho.fern into an ad-hoc-signed Mach-O,
-// and the binary exits 42 (= 6 × 7). This is the first time the
-// arm64-darwin path goes from *assembly text* to a runnable signed binary
-// with no external as/clang/ld64.
 func TestSelfHostArm64DarwinMachOGasRuns(t *testing.T) {
 	assertMachORuns(t, machoRun{name: "gas42", main: arm64MachOGasDriverMain, wantExit: 42})
 }
 
-// arm64GasSelfTestMain assembles individual GAS-text statements and asserts
-// the emitted little-endian bytes. Each `return N` is a distinct
-// failing-check id (0 = all pass).
 const arm64GasSelfTestMain = `
 function main(): i32 {
     // mov x0, #42 -> movz -> 0xD2800540 -> 40 05 80 D2
@@ -264,8 +243,6 @@ function main(): i32 {
 }
 `
 
-// arm64MachOGasDriverMain assembles a full AArch64 program from text — a
-// subroutine call and a backward loop, by label — computing 6 × 7 = 42.
 const arm64MachOGasDriverMain = "\n" +
 	"function main(): i32 {\n" +
 	"    let asm: string = \"\";\n" +

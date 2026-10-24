@@ -6,7 +6,6 @@ import (
 	"testing"
 )
 
-// WriteFnmatchBytesFixture exercises raw pattern bytes and borrowed subviews.
 func WriteFnmatchBytesFixture(t testing.TB) string {
 	t.Helper()
 	dir := t.TempDir()

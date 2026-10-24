@@ -53,7 +53,6 @@ function octets(): void {
     n = n + 1;
   }
   check(fixture(".S0: .ascii \"" + combined + "\""), ".S0", expected, "all octets");
-  // A fourth octal digit is a separate literal byte in this assembler grammar.
   check(fixture(".S0: .ascii \"\\0000\\3777\""), ".S0", [0 as u8, b'0', 255 as u8, b'7'], "bounded octal width");
 }
 
@@ -100,7 +99,6 @@ pub function run(output: ssaprepare.Output): void {
   let changed = output.text.split(".ascii \"Parent\"").join(".ascii \"Other\"");
   require(changed != output.text, "actual declaration mutation present");
   check(changed, ".S0", bytes("Other"), "changed bytes remain data");
-  // No selected ABI, constructor use or allocator dependency is proved here.
   require(!output.text.contains("\n__fern_arr_box:\n"), "fixture has no linked allocator");
   octets();
   spelling();

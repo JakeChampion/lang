@@ -10,10 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/tables/tzdata"
 )
 
-// ianaSpread is the zone set compared transition by transition: each
-// hemisphere, half- and quarter-hour offsets, negative DST, zones that
-// moved across the date line or abolished DST, rule times past 24:00 and
-// below zero, and an alias.
 var ianaSpread = []string{
 	"America/New_York", "America/Los_Angeles", "America/St_Johns", "America/Sao_Paulo",
 	"America/Santiago", "America/Nuuk", "America/Havana", "Europe/London", "Europe/Dublin",
@@ -23,8 +19,6 @@ var ianaSpread = []string{
 	"Pacific/Kiritimati", "Antarctica/Troll", "Etc/GMT+5", "UTC", "US/Pacific",
 }
 
-// ianaQuery renders the answer Go's time package gives for one instant,
-// in the form the Fern program below renders its own.
 func ianaQuery(loc *time.Location, sec int64) string {
 	at := time.Unix(sec, 0).In(loc)
 	abbr, off := at.Zone()
@@ -35,8 +29,6 @@ func ianaQuery(loc *time.Location, sec int64) string {
 	return fmt.Sprintf("%d=%d/%s/%d", sec, off, abbr, d)
 }
 
-// ianaInstants is every transition Go sees in [from, to) with the second
-// before it, plus the turn of each year in that span and the middle of it.
 func ianaInstants(loc *time.Location, from, to int) []int64 {
 	var out []int64
 	end := time.Date(to, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -46,8 +38,6 @@ func ianaInstants(loc *time.Location, from, to int) []int64 {
 		if next.IsZero() || !next.Before(end) {
 			break
 		}
-		// In the rule's span Go can report the turn of a local year as
-		// the bound, and from there the bound is the instant itself.
 		if !next.After(at) {
 			at = at.Add(time.Second)
 			continue
@@ -59,7 +49,6 @@ func ianaInstants(loc *time.Location, from, to int) []int64 {
 		jan := time.Date(y, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
 		out = append(out, jan-3*3600, jan, jan+3*3600, time.Date(y, 7, 1, 0, 0, 0, 0, time.UTC).Unix())
 	}
-	// The table starts at the epoch.
 	kept := out[:0]
 	for _, sec := range out {
 		if sec >= 0 {
@@ -69,8 +58,6 @@ func ianaInstants(loc *time.Location, from, to int) []int64 {
 	return kept
 }
 
-// ianaFarFuture is one zone per distinct POSIX rule, so every rule shape
-// in the release is evaluated past the end of every table.
 func ianaFarFuture(files map[string][]byte) []string {
 	seen := map[string]bool{}
 	var names []string
@@ -181,11 +168,6 @@ function main(): i32 {
 }
 `
 
-// TestIanaZonesMatchGoTime checks std/tz's embedded table against Go's
-// time package reading the same TZif files: every transition from 1970
-// to 2040 of a spread of zones, the second before each and the turn of
-// every year, then every distinct POSIX rule in 2100 and 2400, where only
-// the rule answers. The interpreter and each backend must agree with Go.
 func TestIanaZonesMatchGoTime(t *testing.T) {
 	data, n := ianaData(t)
 	src := fmt.Sprintf(ianaProgram, data)

@@ -2,11 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// dynImportedTraitSrc coerces into a dyn set over a trait another module
-// declares: core/cmp's Display, spelled `cmp.Display` and through an alias,
-// over core/cmp's impls for scalars and the program's own impl for Q. The
-// checker refused every such coercion, and an impl was matched to the trait by
-// its simple name alone (#10816).
 const dynImportedTraitSrc = `import "core/cmp";
 import "core/cmp" as c;
 import "std/i32";
@@ -59,10 +54,6 @@ func TestSelfHostDynImportedTraitWasmIR(t *testing.T) {
 	}
 }
 
-// dynF32ImplementorSrc dispatches over a trait f32 implements without ever
-// boxing an f32. The wasm dispatch still emits the f32 arm, and read its
-// receiver as an i32 where the method takes the f64 this backend holds an f32
-// in, so the module failed validation.
 const dynF32ImplementorSrc = `import "std/i32";
 import "std/f64";
 trait Show { function show(self: Self): string; }

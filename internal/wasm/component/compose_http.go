@@ -2,42 +2,16 @@ package component
 
 import "github.com/jakechampion/lang/internal/wasm/leb128"
 
-// compose_http.go composes the wasi:http/incoming-handler component
-// shape — the first export-of-interface in the codebase. Unlike
-// wasi:cli/run (export an instance whose `run` func takes no params),
-// the handler EXPORTS wasi:http/incoming-handler, whose `handle` func
-// takes two owned resource handles — own<incoming-request> and
-// own<response-outparam> — that live in the IMPORTED wasi:http/types.
-// So the exported func's type outer-aliases those imported resources.
-//
-// emitIncomingHandlerExport is the reusable export tail; the unified
-// composer (compose_unified.go) calls it via gComposer.finishHttp after
-// lowering a real handler core's http/types method surface.
-// BuildHttpIncomingHandlerComponent below wires it against an
-// import-free stub core (used in tests).
-
-// handleFunctypeBody returns a top-level type-section body (vec(1)) for
-// `handle: func(request: own<incoming-request>, response-out:
-// own<response-outparam>)` — no result. ownReqIdx / ownOutParamIdx are
-// the component type indices of the two own<…> wrappers.
 func handleFunctypeBody(ownReqIdx, ownOutParamIdx uint32) []byte {
-	body := []byte{0x01, 0x40, 0x02} // vec(1) types, functype, 2 params
+	body := []byte{0x01, 0x40, 0x02}
 	body = putName(body, "request")
 	body = leb128.UlebU64(body, uint64(ownReqIdx))
 	body = putName(body, "response-out")
 	body = leb128.UlebU64(body, uint64(ownOutParamIdx))
-	body = append(body, 0x01, 0x00) // resultlist: named, vec(0) — no result
+	body = append(body, 0x01, 0x00)
 	return body
 }
 
-// emitIncomingHandlerExport lifts the core `handle` func (core sig
-// (i32,i32)->(), the two owned-resource handles) into a component func
-// typed handle(own<incoming-request>, own<response-outparam>), packages
-// it into an instance exporting "handle", and exports that instance as
-// wasi:http/incoming-handler@0.2.0. reqResourceT / outparamResourceT are
-// the (already-surfaced) component type indices of the incoming-request
-// / response-outparam resources from the imported wasi:http/types;
-// handleCoreFunc is the aliased core handle func index.
 func (c *p2composer) emitIncomingHandlerExport(reqResourceT, outparamResourceT, handleCoreFunc uint32) {
 	ownReqT := c.typeRaw([]byte{0x01, 0x69, byte(reqResourceT)})
 	ownOutT := c.typeRaw([]byte{0x01, 0x69, byte(outparamResourceT)})
@@ -52,14 +26,6 @@ func (c *p2composer) emitIncomingHandlerExport(reqResourceT, outparamResourceT, 
 	c.buf = PutExportSectionOneInstance(c.buf, "wasi:http/incoming-handler@0.2.0", hInst)
 }
 
-// BuildHttpIncomingHandlerComponent composes a minimal
-// wasi:http/incoming-handler component from an import-free core module
-// that exports `handle` (core sig (i32,i32)->()). It imports the
-// dependency chain the handle type needs — wasi:io/error, wasi:io/streams
-// (for the input-stream / output-stream the body methods reference in
-// the http/types type), and wasi:http/types — then lifts + exports the
-// handler. A real handler core also imports the http/types methods;
-// the unified composer (compose_unified.go) lowers those.
 func BuildHttpIncomingHandlerComponent(coreBytes []byte, coreExportName string) []byte {
 	c := &p2composer{buf: PutComponentHeader(nil)}
 
@@ -84,15 +50,6 @@ func BuildHttpIncomingHandlerComponent(coreBytes []byte, coreExportName string) 
 	return c.buf
 }
 
-// httpSelfRetParams is the core import signature of the http/types
-// methods that take (self, ret_ptr) and write a result through the
-// caller's retptr: incoming-request.{method,path-with-query,consume},
-// incoming-body.stream, outgoing-response.body, outgoing-body.write,
-// fields.entries.
 var httpSelfRetParams = []byte{0x7f, 0x7f}
 
-// httpOutparamSetParams is response-outparam.set's flattened
-// result<outgoing-response, error-code> + the outparam handle — 9 core
-// params, slot 4 an i64 (the error-code arm carries option<u64>, which
-// the canonical-ABI variant-join widens the slot to).
 var httpOutparamSetParams = []byte{0x7f, 0x7f, 0x7f, 0x7f, 0x7e, 0x7f, 0x7f, 0x7f, 0x7f}

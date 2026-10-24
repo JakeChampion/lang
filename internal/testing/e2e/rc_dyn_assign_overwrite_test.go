@@ -1,26 +1,7 @@
-// Reassignment-overwrite of a `dyn Trait` local (docs/DYN-TRAITS.md §4.4).
-//
-// The assignment path releases the old value per rc-tracked SHAPE — array,
-// struct/enum, string, tuple, Map — and a `dyn` local matches none of them
-// (its cell carries no rc header, which is why the exit sweep and the
-// loop-body re-declaration both route it through `__drop_dyn_<set>` instead).
-// So `d = …` in a loop orphaned the previous cell AND the concrete behind it,
-// once per iteration, unbounded. The `let d = …` re-declaration form was
-// already reclaimed; only the reassignment was not.
 package e2e
 
 import "testing"
 
-// dynAssignOverwriteBumpSrc reassigns one `dyn` local, each RHS a fresh
-// concrete owning a heap String, and reports a VERDICT: 0 when a churn four
-// times as long adds no fresh high-water (the overwrite released the cell +
-// concrete + String it replaced), 1 when it grows.
-//
-// The verdict, rather than the byte count, because main()'s value becomes an
-// exit code and a byte count is read modulo 256. Measured on the leaking
-// build: x86-64 reported 64 at n=50 and 0 at n=5000 — so a two-process
-// comparison of raw counts was one unlucky residue away from passing
-// vacuously. Two churns inside ONE process keep the numbers whole.
 func dynAssignOverwriteBumpSrc(n, wider string) string {
 	churn := func(bound string) string {
 		return `    while (i < ` + bound + `) {
@@ -48,10 +29,6 @@ function main(): i32 {
 }`
 }
 
-// dynAssignOverwriteAliasSrc: the same reassignment where the RHS is another
-// `dyn` LOCAL. That makes the target a borrowed VIEW of a cell `src` still
-// owns, so the overwrite must NOT release it — the control that keeps the
-// reclaim above from becoming a double free. 4 × (9 + 9).
 const dynAssignOverwriteAliasSrc = `import "core/int";
 trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }

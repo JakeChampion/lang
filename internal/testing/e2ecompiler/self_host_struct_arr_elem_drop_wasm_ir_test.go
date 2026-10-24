@@ -8,17 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructArrElemDropWasm is the wasm mirror of the ARRAY-ELEMENT deep-drop
-// (the x86 sibling is TestSelfHostStructArrElemDropIRX86_64). A struct-array field
-// `S { elems: Inner[] }` releases each element's OWN rc fields: $__sem_drop_S walks
-// a uniquely-owned buffer and calls $__sem_release_Inner per element.
-//
-// Reclaim is proven by a memory-cap differential: a long alloc->drop churn over a fresh
-// `S{ elems: [Inner{items:[..]}, ..] }` stays bounded under a tight max-memory-size cap
-// with trap-on-grow-failure (each element's items buffer + boxes recycle onto the
-// freelist); a regression to the shallow element walk leaks the items past the cap and
-// traps. The WAT assertion pins the per-element $__sem_release_Inner. items goes
-// through id so it is built on the heap rather than placed as a constant.
 func TestSelfHostStructArrElemDropWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm array-element deep-drop e2e")
@@ -28,7 +17,7 @@ func TestSelfHostStructArrElemDropWasm(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	const cap = "16777216" // 16 MiB
+	const cap = "16777216"
 	prog := `struct Inner { items: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 struct S { elems: Inner[], tag: i32 }

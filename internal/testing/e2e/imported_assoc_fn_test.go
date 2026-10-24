@@ -8,22 +8,6 @@ import (
 	"testing"
 )
 
-// Cross-module associated-function conformance. A user program imports
-// std/num and seeds a generic reducer with the imported `T.zero()`
-// associated function (the additive identity from the `num.Zero` trait).
-//
-// This pins the modload fix that exempts associated-function impl members
-// from the `<mod>__` module prefix (and rewrites their AssocType). Before
-// the fix, `impl num.Zero for i32 { function zero(): Self { return 0; } }`
-// failed to register across the import boundary — the checker hoists it to
-// `__assoc_i32_zero` from AssocType + the BARE name, but modload had
-// prefixed the name to `num__zero`, producing `__assoc_i32_num__zero`,
-// which no conformance check or `T.zero()` call site resolved. The program
-// then errored with "i32 does not implement num.Zero: missing method zero".
-// Instance-method conformance (`Add.add`, which carries a `self` param)
-// already worked; only the no-`self` associated-function path was broken.
-//
-// 40 + 2 = 42.
 const importedAssocFnZeroSrc = `import "std/num" as num;
 function (a: T[]) total[T: num.Num + num.Zero](): T {
     let s: T = T.zero();

@@ -1,5 +1,5 @@
-// An impl's associated function is held to the trait's signature, every
-// parameter included.
+
+
 trait Mk {
   function mk(x: Option[i32]): Self;
 }

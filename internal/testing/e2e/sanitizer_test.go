@@ -9,44 +9,11 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// --- Sanitizer mode (#5545) ---------------------------------------
-//
-// ast.SanitizeEnabled (FERN_SANITIZE=1, or the CLI's -sanitize) is the
-// single opt-in surface over the heap memory-safety detectors that used
-// to be three separately-named env vars nobody could be expected to
-// know: the leak census, the rc over-release (double-free) detector,
-// and the use-after-free quarantine.
-//
-// What the mode promises, and what these tests pin:
-//
-//   - A clean program is SILENT of `fern-sanitizer:` lines, and its
-//     exit code and stdout are untouched. "Was this run clean" is
-//     answerable without reading a number.
-//   - A leak gets a verdict line after the leakcheck summary.
-//   - An rc over-release is REPORTED (named message + #5538 backtrace)
-//     and fatal with ExitSanitizer, not a silent counter bump.
-//   - A freed block is quarantined — never recycled — while STILL
-//     counting as a free for the census. That combination is the whole
-//     reason the two detectors can be on at once; account at the
-//     release and every correctly-freed array would otherwise read as
-//     a leak.
-//
-// Flag off, no sanitizer symbol is emitted at all and a defect runs
-// silently; internal/testing/e2ecompiler pins both (TestSelfHostSanitizeOff*,
-// the *AsmContract* and *SilentWithout* tests).
-
-// runSanitizeX86_64 compiles src with the sanitizer on and runs it,
-// returning stdout, stderr and the exit code separately (the report
-// contract is "stderr only, stdout untouched").
 func runSanitizeX86_64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
 	return runSanitizeX86_64With(t, src)
 }
 
-// uncertified compiles a program the emitted-RC certifier would refuse: one
-// that plants the over-release or double free the runtime detector under
-// test is meant to catch. The certifier runs in every compile, so a planted
-// bug has to opt out to reach the runtime.
 const uncertified = "FERN_RC_CERTIFY=0"
 
 func runSanitizeX86_64With(t *testing.T, src string, extra ...string) (string, string, int) {
@@ -56,8 +23,6 @@ func runSanitizeX86_64With(t *testing.T, src string, extra ...string) (string, s
 	return runSplit(t, runX86_64Bin(runner, bin))
 }
 
-// runSanitizeArm64 is the arm64 sibling (qemu; SKIPs without qemu-aarch64 —
-// runs in CI).
 func runSanitizeArm64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
 	return runSanitizeArm64With(t, src)
@@ -70,8 +35,6 @@ func runSanitizeArm64With(t *testing.T, src string, extra ...string) (string, st
 	return runSplit(t, runArm64Bin(qemu, bin))
 }
 
-// runPlain compiles src for target with no detector on and runs it on the
-// target's runner, splitting stdout, stderr and the exit code.
 func runPlain(t *testing.T, target, src string) (string, string, int) {
 	t.Helper()
 	return runPlainWith(t, target, src)
@@ -87,8 +50,6 @@ func runPlainWith(t *testing.T, target, src string, extra ...string) (string, st
 	return runSplit(t, runX86_64Bin(runner, e2eharness.CompileSelfHostSource(t, target, src, extra)))
 }
 
-// checkSanitizedBalanced runs src under the sanitizer and asserts the answer,
-// no finding, and a census that allocated and freed everything.
 func checkSanitizedBalanced(t *testing.T, src string, want int, run func(*testing.T, string) (string, string, int)) {
 	t.Helper()
 	stdout, stderr, code := run(t, src)
@@ -104,8 +65,6 @@ func checkSanitizedBalanced(t *testing.T, src string, want int, run func(*testin
 	}
 }
 
-// sanCleanSrc is the rc-driven drop-everything loop: every row is
-// precisely dropped, so a sanitizer run must be silent.
 const sanCleanSrc = `function main(): i32 {
     let i: i32 = 0;
     let sum: i32 = 0;
@@ -118,9 +77,6 @@ const sanCleanSrc = `function main(): i32 {
     return 1;
 }`
 
-// sanLeakSrc: three 60-byte allocations (rounded to 64), one freed,
-// exit code 42. The verdict must name 128 bytes in 2 blocks and must
-// not clobber main's exit code.
 const sanLeakSrc = `function main(): i32 {
     let a: usize = __alloc(60);
     let b: usize = __alloc(60);
@@ -130,9 +86,6 @@ const sanLeakSrc = `function main(): i32 {
     return 42;
 }`
 
-// sanDoubleFreeSrc releases a buffer twice. __rc_dec is the freeing dec, so
-// the first call reclaims the block and poisons its rc word and the second
-// touches the poison: a use-after-free report.
 const sanDoubleFreeSrc = `function main(): i32 {
     let a: u8[] = __alloc_u8(16);
     __rc_dec(a);
@@ -140,13 +93,6 @@ const sanDoubleFreeSrc = `function main(): i32 {
     return 0;
 }`
 
-// sanQuarantineSrc allocates and drops 200 same-sized rows, then
-// reports the bump allocator's high-water mark in KiB. With the
-// freelist live the rows all reuse one block and the mark stays near
-// zero; under the sanitizer nothing is ever recycled, so the mark grows
-// with the round count. That growth IS the quarantine — the property
-// the use-after-free detector rests on, since a recycled block would
-// overwrite its own poison.
 const sanQuarantineSrc = `function main(): i32 {
     let i: i32 = 0;
     while (i < 200) {
@@ -157,10 +103,6 @@ const sanQuarantineSrc = `function main(): i32 {
     return (b / 1024) as i32;
 }`
 
-// sanStaleTouchSrc builds a real dangling reference: __rc_dec frees the
-// buffer and poisons its rc word, and the retained raw address then reaches
-// __fern_rc_inc, which reads the poison. Perceus's own drop of `a` at scope
-// exit is never reached.
 const sanStaleTouchSrc = `function main(): i32 {
     let a: u8[] = __alloc_u8(16);
     let p: usize = a as usize;
@@ -183,9 +125,6 @@ func TestX86_64SanitizeCleanRunIsSilent(t *testing.T) {
 	if allocs == 0 {
 		t.Error("expected a non-zero alloc count (one row per iteration)")
 	}
-	// The census stays correct with the quarantine on: a quarantined
-	// block is accounted at its release, so precise drop still
-	// balances. Before that fix every freed array read as a leak.
 	if allocs != frees || live != 0 {
 		t.Errorf("got allocs=%d frees=%d live=%d, want balanced / 0", allocs, frees, live)
 	}
@@ -243,35 +182,17 @@ func TestX86_64SanitizeQuarantinesFreedBlocks(t *testing.T) {
 	_, sanErr, sanKiB := runSanitizeX86_64(t, sanQuarantineSrc)
 	_, _, plainKiB := runPlain(t, e2eharness.TargetX86_64Linux, sanQuarantineSrc)
 
-	// 200 rows × 32 B ≈ 6 KiB if nothing is recycled; near zero if the
-	// freelist hands the same block back every round.
 	if sanKiB < 4 {
 		t.Errorf("sanitized bump high-water = %d KiB, want >= 4 (freed blocks must not be recycled)", sanKiB)
 	}
 	if plainKiB >= sanKiB {
 		t.Errorf("unsanitized bump high-water = %d KiB, sanitized = %d KiB: the default build should still recycle", plainKiB, sanKiB)
 	}
-	// Quarantined, but still counted: the census must not read the
-	// un-recycled blocks as leaks.
 	allocs, frees, live := parseLeakCheckLine(t, sanErr)
 	if allocs != frees || live != 0 {
 		t.Errorf("got allocs=%d frees=%d live=%d, want balanced / 0", allocs, frees, live)
 	}
 }
-
-// --- arm64 legs (qemu; run in CI) ----------------------------------
-//
-// arm64 carries the whole mode: census, rc over-release report, and the
-// use-after-free quarantine. The two backends' diagnostics are the same
-// bytes and the same exit status, so a `fern-sanitizer:` line does not
-// tell you which native produced it — which is the point, since the
-// advice "build it with -sanitize" has to mean one thing.
-//
-// arm64's quarantine has one site x86-64 does not need: __fern_str_inc
-// INLINES its rc bump rather than tail-calling __fern_rc_inc (it has to
-// preserve the (data, len) pair in x0/x1), so it carries its own poison
-// check. A stale retain of a freed string would otherwise walk straight
-// past the detector.
 
 func TestArm64SanitizeCleanRunIsSilent(t *testing.T) {
 	stdout, stderr, code := runSanitizeArm64(t, sanCleanSrc)

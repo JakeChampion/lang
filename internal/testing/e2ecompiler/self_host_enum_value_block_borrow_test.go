@@ -8,23 +8,6 @@ import (
 	"testing"
 )
 
-// --- An enum read through a match EXPRESSION keeps its release ---------------
-//
-// `let v: E = E.A([i, i + 1]); consume(v);` must reclaim the box and its payload
-// every round when the enum is read through a match EXPRESSION, exactly as it
-// does when the match is written as a STATEMENT.
-//
-// A match/if/block expression desugars to a zero-arg IIFE that the lowering
-// INLINES, so a name read inside it is an ordinary in-scope read. That holds on
-// both sides of a call: a callee that reads its param through a match
-// expression still borrows it, so the caller keeps its own release; and the
-// caller's own `let t = match (v) { … }` read does not refuse it either. It
-// holds through the borrowing binary-operator operands too, so
-// `(match (e) { … }) + k` is the same read. self_host_match_expr_borrow_test.go
-// pins the struct family.
-//
-// Exit 99 is reserved for __rc_underflow_count().
-
 type enumValueBlockCase struct {
 	name   string
 	src    string
@@ -47,7 +30,6 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 `
 	return []enumValueBlockCase{
 		{
-			// THE REPRO, caller side. Base: 200 allocs / 0 frees.
 			name: "match_expr_read",
 			src: decls + `function round(i: i32): i32 {
     let v: E = E.A([i, i + 1]);
@@ -57,9 +39,6 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			want: 6, allocs: 200, frees: 200,
 		},
 		{
-			// The same read written as a STATEMENT, which was already flat. It
-			// is the control that says the difference was the value block and
-			// not the match.
 			name: "match_stmt_read",
 			src: decls + `function round(i: i32): i32 {
     let v: E = E.A([i, i + 1]);
@@ -71,9 +50,6 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			want: 6, allocs: 200, frees: 200,
 		},
 		{
-			// THE REPRO, callee side — and the expensive half. The helper reads
-			// its PARAM through a match expression, which marked the param
-			// non-borrowable and cost the caller its release. Base: 200 / 0.
 			name: "helper_reads_param_by_match_expr",
 			src: decls + `function consume(e: E): i32 { return match (e) { E.A(xs) => xs.len(), E.B => 0 }; }
 function round(i: i32): i32 {
@@ -84,8 +60,6 @@ function round(i: i32): i32 {
 			want: 6, allocs: 200, frees: 200,
 		},
 		{
-			// The same helper with a match STATEMENT — already flat, and the
-			// control for the callee half.
 			name: "helper_reads_param_by_match_stmt",
 			src: decls + `function consume(e: E): i32 { let n: i32 = 0; match (e) { E.A(xs) => { n = xs.len(); }, E.B => { n = 0; } } return n; }
 function round(i: i32): i32 {
@@ -96,10 +70,6 @@ function round(i: i32): i32 {
 			want: 6, allocs: 200, frees: 200,
 		},
 		{
-			// The value block nested inside a BINARY expression:
-			// `return (match (e) { … }) + k;` reads `e` as a borrowing operand,
-			// so the caller keeps its release. It is the shape the enum
-			// field-share suite's call-argument row uses.
 			name: "helper_wraps_match_expr_in_binary",
 			src: decls + `function consume(e: E, k: i32): i32 { return (match (e) { E.A(xs) => xs.len(), E.B => 0 }) + k; }
 function round(i: i32): i32 {
@@ -110,8 +80,6 @@ function round(i: i32): i32 {
 			want: 5, allocs: 200, frees: 200,
 		},
 		{
-			// An if-expression value block alongside the match one: the rule is
-			// about value blocks, not about `match` specifically.
 			name: "match_expr_then_if_expr",
 			src: decls + `function round(i: i32): i32 {
     let v: E = E.A([i, i + 1]);
@@ -123,9 +91,6 @@ function round(i: i32): i32 {
 			want: 6, allocs: 200, frees: 200,
 		},
 		{
-			// Here the block's VALUE is the enum itself, so the name really
-			// does leave the block. The typed lowering reclaims it; the
-			// exit code guards the value read through it.
 			name: "value_block_yields_the_enum_refused",
 			src: decls + `function round(i: i32): i32 {
     let v: E = E.A([i, i + 1]);
@@ -138,7 +103,6 @@ function round(i: i32): i32 {
 	}
 }
 
-// TestSelfHostEnumValueBlockBorrowX86_64 is the leak-accounting leg.
 func TestSelfHostEnumValueBlockBorrowX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -173,8 +137,6 @@ func TestSelfHostEnumValueBlockBorrowX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostEnumValueBlockBorrowWasmIR — exit codes only, so what this leg
-// catches is a release that frees a LIVE box on wasm, the 99 included.
 func TestSelfHostEnumValueBlockBorrowWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping enum value-block borrow wasm IR e2e")
@@ -213,7 +175,6 @@ func TestSelfHostEnumValueBlockBorrowWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostEnumValueBlockBorrowIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostEnumValueBlockBorrowIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

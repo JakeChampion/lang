@@ -1,6 +1,6 @@
-// Nothing here imports kinds, so its `Other` is not a name here: a bare
-// `Other` is IoError's, with IoError's three payloads, whatever else the
-// program loads.
+
+
+
 pub function describe(e: IoError): string {
     match (e) {
         NotFound(_) => { return "not found"; },

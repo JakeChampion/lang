@@ -10,20 +10,6 @@ import (
 	"testing"
 )
 
-// The self-host legs of the three machine-facing primitives group C's
-// system-information utilities are built on: `uname_field(i)`,
-// `getcwd()` and `cpu_count()`. Each asserts the VALUE, against the same
-// kernel fact read a second way — sysname is "Linux" on every box here,
-// so a body that read the neighbouring utsname field would pass a
-// non-empty check. The utsname probe reads uname(2) and is linux-only
-// (syscall.Utsname does not exist on darwin), so it lives in
-// self_host_sysinfo_linux_host_test.go and the other OSes skip in
-// self_host_sysinfo_other_test.go.
-
-// selfHostSysinfoSource exits 0 only when every field matches; each
-// other exit code names the one that did not. `machine` is passed in
-// because the arm64 leg runs under qemu, which answers "aarch64" for
-// exactly the field a wrong offset is most likely to land on.
 func selfHostSysinfoSource(t *testing.T, machine string) string {
 	t.Helper()
 	u := selfHostUtsname(t)
@@ -49,9 +35,6 @@ func selfHostSysinfoSource(t *testing.T, machine string) string {
 `, u[0], u[1], u[2], u[3], machine, wd, runtime.NumCPU())
 }
 
-// TestSelfHostSysinfoIR pins the x86-64 lowering: the three Fern-source
-// runtime helpers (asmcore.rt_src_uname_field / _getcwd / _cpu_count)
-// compiled through the self-host's own IR path.
 func TestSelfHostSysinfoIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -82,8 +65,6 @@ func TestSelfHostSysinfoIR(t *testing.T) {
 	}
 }
 
-// The arm64-linux leg: the same Fern bodies with the asm-generic
-// syscall numbers, run under qemu.
 func TestSelfHostSysinfoIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -125,16 +106,6 @@ func mustGetwd(t *testing.T) string {
 	return wd
 }
 
-// The arm64-darwin leg is an EMIT check, not a run: XNU has no uname
-// syscall and no affinity mask, so `uname_field` and `cpu_count` issue sysctl
-// there rather than the Linux calls. Nothing on this host executes a Mach-O.
-// What it pins is that the darwin fork is taken at all — the failure it
-// exists to catch is a helper added on the Linux side only, which emits
-// a `__syscall3` of the -1 `sysno` returns for a call XNU does not have.
-// `getcwd` forks for the same reason: XNU has no getcwd syscall, so the
-// darwin body opens "." and asks the descriptor its own path with
-// fcntl(F_GETPATH). Its Linux body reaching a darwin build is #9131,
-// where BSD 296 — `vm_pressure_monitor` — was mistaken for `__getcwd`.
 func TestSelfHostSysinfoIRArm64Darwin(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -174,29 +145,17 @@ func TestSelfHostSysinfoIRArm64Darwin(t *testing.T) {
 	if !strings.Contains(text, "__fern_scratch: .skip 400") {
 		t.Error("Darwin sysinfo needs space for its MIB, length and 384-byte value")
 	}
-	// All three Fern bodies pass BSD sysctl 202 through the intrinsic.
 	if n := strings.Count(text, "#202"); n != 3 {
 		t.Errorf("arm64-darwin emit issues sysctl %d times, want 3 (hostname, uname_field and cpu_count)", n)
 	}
-	// The one syscall number XNU does not have. `sysno` answers -1 for
-	// it, so its appearance is a Linux body reaching a darwin build.
 	if strings.Contains(text, "__syscall3(-1") || strings.Contains(text, "mov x8, #-1") {
 		t.Error("arm64-darwin emit issues syscall -1, so a Linux-only body reached this target")
 	}
-	// getcwd's darwin body, named by the numbers only it issues: openat
-	// (BSD 463) on ".", then fcntl (BSD 92) with F_GETPATH (50), then
-	// close (BSD 6). These land in x0 and reach x16 through the stack,
-	// because a Fern body passes its syscall number as a value. Their absence
-	// is the Linux body having reached this target.
 	for _, want := range []string{"463", "92", "50"} {
 		if !arm64Imm(text, want) {
 			t.Errorf("arm64-darwin emit does not materialise %s — getcwd's darwin body did not reach it", want)
 		}
 	}
-	// BSD 296 is `vm_pressure_monitor`, which the darwin getcwd row used
-	// to name (#9131). It fills nothing, and it copies an int OUT through
-	// its third argument, so it also writes four bytes wherever the
-	// caller last left one — the corruption in #9722.
 	if arm64Imm(text, "296") {
 		t.Error("arm64-darwin emit issues BSD 296 (vm_pressure_monitor), which is not getcwd")
 	}

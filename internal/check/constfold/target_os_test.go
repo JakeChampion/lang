@@ -7,7 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// targetOSCalls counts the `target_os(...)` calls left in prog.
 func targetOSCalls(prog *ast.Program) int {
 	n := 0
 	ast.WalkProgram(prog, func(node ast.Node) bool {
@@ -21,8 +20,6 @@ func targetOSCalls(prog *ast.Program) int {
 	return n
 }
 
-// `target_os()` becomes the environment the caller compiles for, wherever
-// the call sits — a return, a condition, a binding inside a loop body.
 func TestFoldWithResolvesTargetOS(t *testing.T) {
 	prog, err := parser.Parse(`function os(): string { return target_os(); }
 function main(): i32 {
@@ -48,8 +45,6 @@ function main(): i32 {
 	}
 }
 
-// With no target in hand — a bare `-check`, a report — the call is left for
-// the checker to type; nothing invents a host.
 func TestFoldWithoutTargetLeavesTargetOS(t *testing.T) {
 	prog, err := parser.Parse(`function os(): string { return target_os(); }`)
 	if err != nil {
@@ -63,8 +58,6 @@ func TestFoldWithoutTargetLeavesTargetOS(t *testing.T) {
 	}
 }
 
-// A call with arguments is not the builtin's shape, so it stays for the
-// checker's arity error rather than folding to a literal that hides it.
 func TestFoldWithLeavesTargetOSWithArguments(t *testing.T) {
 	prog, err := parser.Parse(`function os(): string { return target_os(1); }`)
 	if err != nil {
@@ -78,10 +71,6 @@ func TestFoldWithLeavesTargetOSWithArguments(t *testing.T) {
 	}
 }
 
-// A branch on `target_os()` keeps only the arm the target takes once the
-// fold has made the call a literal and PruneDeadArms has run: the dead arm's
-// call is gone from the tree, so the capability gates and the shake never see
-// it. The live arm stays under `if (true)`, which keeps its block's scope.
 func TestPruneDeadArmsDropsTargetBranches(t *testing.T) {
 	const src = `function main(): i32 {
     if (target_os() == "wasi-http") {
@@ -134,10 +123,6 @@ func TestPruneDeadArmsDropsTargetBranches(t *testing.T) {
 	}
 }
 
-// An if-expression is a value, read with both arms: a branch on the
-// target folds the call in its condition and keeps every arm, and only the
-// statements inside an arm are pruned. The self-host prune reads the same
-// rule off the closure the expression desugars to.
 func TestFoldWithKeepsIfExpressionArms(t *testing.T) {
 	prog, err := parser.Parse(`function main(): i32 {
     let n: i32 = if (target_os() == "linux") { 1 } else { 2 };

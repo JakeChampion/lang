@@ -10,22 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
-// An ordinary user type error used to be reported as
-//
-//	monomorph: re-check failed (compiler bug): …
-//
-// with no diagnostic code — a banner accusing the compiler for a mistake in
-// the author's own program, and nothing to look up (#8452). The live one is a
-// check that cannot run before instantiation: a trait bound violated through
-// a generic-into-generic call, which the call-site check skips because the
-// argument is still a type parameter and leaves "for the eventual monomorphic
-// call" — nothing was that call, because monomorph clears the clone's
-// TypeParams and the bound goes with them, so the body failed on whatever the
-// missing impl was needed for. (`Cell[T]` was the other until E057 began
-// refusing a type parameter as a cell's element before instantiation.)
-//
-// spec/diagnostics.md's premise is that every user-facing error has a stable
-// code, so each row asserts the code AND that the banner is gone.
 func TestUserErrorsFromMonomorphAreCodedDiagnostics(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -41,9 +25,7 @@ function inner[U: Named](x: U): string { return x.name(); }
 function outer[T](x: T): string { return inner(x); }
 function main(): i32 { print(outer(B { v: 2 })); return 0; }`,
 			wantCode: "E021",
-			// The bound, named as a bound. Reporting the missing FIELD the
-			// method lookup went looking for leaked how bounds are implemented.
-			wantMsg: "does not implement trait Named required by inner",
+			wantMsg:  "does not implement trait Named required by inner",
 		},
 	}
 	for _, c := range cases {
@@ -69,10 +51,6 @@ function main(): i32 { print(outer(B { v: 2 })); return 0; }`,
 	}
 }
 
-// The bound check monomorph now runs must not fire on a program that
-// satisfies its bounds, and must not disturb the call-site check that already
-// worked. The last row is the one that would regress if the deferred check
-// were made unconditional rather than skipping a still-parametric argument.
 func TestMonomorphBoundCheckAcceptsSatisfiedBounds(t *testing.T) {
 	sources := []struct{ name, src string }{
 		{"direct call with the impl present", `trait Named { function name(self: Self): string; }
@@ -99,9 +77,6 @@ function main(): i32 { let s = id(S { v: 3 }); return s.v; }`},
 	}
 }
 
-// One unsatisfied bound is one diagnostic, however many times the offending
-// call is instantiated: a generic calling a bounded generic reaches the
-// collection once per clone of the caller.
 func TestMonomorphBoundViolationReportedOnce(t *testing.T) {
 	src := `trait Named { function name(self: Self): string; }
 struct B { v: i32 }
@@ -117,18 +92,11 @@ function main(): i32 { print(outer(B { v: 1 })); print(outer(B { v: 2 })); print
 	if n := strings.Count(msg, "U = B does not implement"); n != 1 {
 		t.Errorf("the B violation is reported %d times, want 1:\n%s", n, msg)
 	}
-	// C is a different violation and keeps its own diagnostic — dedupe must
-	// not collapse distinct errors.
 	if !strings.Contains(msg, "U = C does not implement") {
 		t.Errorf("the C violation is missing:\n%s", msg)
 	}
 }
 
-// hasDiagnosticCode is what decides whether a re-check failure is the author's
-// problem or the compiler's, so its traversal is pinned directly: diag.Errors
-// is the shape the checker actually returns, and its own As delegates to
-// entries implementing As — which *checker.Error does not — so a traversal
-// resting on errors.As alone answers no for every real failure.
 func TestHasDiagnosticCodeSeesThroughTheCheckersErrorShape(t *testing.T) {
 	coded := &checker.Error{Msg: "bad", ErrCode: "E057"}
 	bare := &checker.Error{Msg: "internal"}
@@ -157,8 +125,6 @@ type errWrap struct{ inner error }
 func (e errWrap) Error() string { return "wrapped: " + e.inner.Error() }
 func (e errWrap) Unwrap() error { return e.inner }
 
-// runMonomorph loads, checks and monomorphises src, returning the first error
-// any of the three produced — which is what a user sees.
 func runMonomorph(t *testing.T, src string) error {
 	t.Helper()
 	prog, _, err := modload.LoadSource(src)
@@ -172,10 +138,6 @@ func runMonomorph(t *testing.T, src string) error {
 	return Run(prog, info)
 }
 
-// codesOf collects the diagnostic codes err carries. The code is a FIELD on
-// checker.Error, not part of its Error() text — the `error[E057]` header is
-// the diag formatter's doing — so a string search would pass for a message
-// that merely mentioned a code and fail for every real one.
 func codesOf(err error) []string {
 	switch e := err.(type) {
 	case nil:

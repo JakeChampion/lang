@@ -8,15 +8,6 @@ import (
 	"time"
 )
 
-// prFile writes `content` under `dir` as `name` with a PINNED
-// modification time and returns its path.
-//
-// The mtime is all that makes pr's default header
-// reproducible: with a named FILE operand the header's date is that
-// file's st_mtime, not the wall clock, so two runs seconds apart agree
-// byte for byte. Every fixture here gets one, and the few cases whose
-// header cannot come from a file — standard input and -m, which have no
-// one file to ask — carry `-D` with a format holding no time at all.
 func prFile(t *testing.T, dir, name, content string, mtime time.Time) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
@@ -33,23 +24,6 @@ func init() {
 	registerCorpus("pr", prCases)
 }
 
-// prCases is pr(1)'s corpus.
-//
-// Four behaviours carry most of it, and each is the reference binary's
-// rather than the obvious reading:
-//
-//   - The DIGITS of -COLUMN accumulate over the whole scan, so `-2 -3`
-//     is twenty-three columns.
-//   - Whitespace pr GENERATES is written with output tabs while input
-//     spaces are copied verbatim until -i; a TAB in the input is a
-//     third thing again, copied as the byte in one column and turned
-//     into generated whitespace in several — unless the separator is
-//     the TAB that -s or -J leaves by default.
-//   - Positions inside a column are LOCAL, so a tab stop, a -e
-//     expansion and the -n separator all count from the column's start.
-//   - A byte's display WIDTH is not one: a backspace is minus one
-//     column and every other non-printable is zero, until -c or -v
-//     replaces it with an escape whose printed length is the width.
 func prCases(t *testing.T) []invocation {
 	dir := t.TempDir()
 	mt := time.Date(2001, 2, 3, 4, 5, 6, 0, time.UTC)
@@ -83,8 +57,6 @@ func prCases(t *testing.T) []invocation {
 	nonl := prFile(t, dir, "nonl", "a\nb", mt)
 	nonl2 := prFile(t, dir, "nonl2", "1\n2\n3", mt)
 	blank := prFile(t, dir, "blank", "a\n\nb\n", mt)
-	// Created only where the filesystem holds the name; the case naming it
-	// carries rawByteName and skips there.
 	raw := filepath.Join(dir, rawByteNameFixture)
 	if rawByteNamesHeld(t) {
 		raw = prFile(t, dir, rawByteNameFixture, "x\n", mt)
@@ -103,8 +75,6 @@ func prCases(t *testing.T) []invocation {
 	tabs := "a\tb\nc\td\n"
 
 	cases := []invocation{
-		// The page: two blanks, the header, two blanks, 56 body lines,
-		// five blanks — and the LAST page padded to the same length.
 		{name: "one page", args: []string{f}},
 		{name: "four pages", args: []string{s200}},
 		{name: "exactly one page", args: []string{s56}},
@@ -119,7 +89,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "no final newline", args: []string{nonl}},
 		{name: "no final newline with -t", args: []string{"-t", nonl}},
 
-		// The header line: date, the name centred, `Page N`.
 		{name: "date format", args: []string{"-D", "XY", f}},
 		{name: "empty date format", args: []string{"-D", "", f}},
 		{name: "header text", args: []string{"-h", "HELLO", f}},
@@ -144,7 +113,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "-c never reaches the header", args: []string{"-c", "-h", "\x01", f}},
 		{name: "-v never reaches the header", args: []string{"-v", "-h", "\x01", f}},
 
-		// The offset.
 		{name: "offset", args: []string{"-o", "5", f}},
 		{name: "offset with -t", args: []string{"-o", "5", "-t", f}},
 		{name: "offset zero", args: []string{"-o", "0", "-t", f}},
@@ -155,7 +123,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "offset nine with output tabs", args: []string{"-t", "-o", "9", "-i.4", f}},
 		{name: "offset nine with two columns", args: []string{"-t", "-2", "-o", "9", f}},
 
-		// Page length.
 		{name: "length ten implies -t", args: []string{"-l", "10", s200}},
 		{name: "length eleven is one body line", args: []string{"-l", "11", s200}},
 		{name: "length twelve", args: []string{"-l", "12", ff}},
@@ -163,7 +130,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "length one", args: []string{"-l", "1", f}},
 		{name: "length five", args: []string{"-l", "5", f}},
 
-		// Form feeds: -f and -F are the same option.
 		{name: "form feed", args: []string{"-f", f}},
 		{name: "capital form feed", args: []string{"-F", f}},
 		{name: "form feed over four pages", args: []string{"-F", s200}},
@@ -173,7 +139,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "form feed with -T emits none", args: []string{"-F", "-T", f}},
 		{name: "lower form feed with a short length", args: []string{"-f", "-l", "20", s200}},
 
-		// Form feeds in the INPUT.
 		{name: "input form feeds break pages", args: []string{ff}},
 		{name: "input form feeds with -t are text", args: []string{"-t", ff}},
 		{name: "input form feeds with -T are dropped", args: []string{"-T", ff}},
@@ -186,7 +151,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "a trailing form feed with -t is a byte", args: []string{"-t", fftail}},
 		{name: "form feeds with -l 10", args: []string{"-l", "10", ff}},
 
-		// Columns down.
 		{name: "two columns", args: []string{"-t", "-2", s10}},
 		{name: "three columns", args: []string{"-t", "-3", s10}},
 		{name: "four columns", args: []string{"-t", "-4", s10}},
@@ -210,7 +174,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "digits before a flag in one cluster", args: []string{"-5t", f}},
 		{name: "digits around a bad byte", args: []string{"-1x2", f}},
 
-		// Columns across.
 		{name: "across two", args: []string{"-t", "-2", "-a", s10}},
 		{name: "across three", args: []string{"-t", "-3", "-a", s10}},
 		{name: "across four", args: []string{"-t", "-a", "-4", s10}},
@@ -219,7 +182,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "across with a separator", args: []string{"-t", "-a", "-3", "-s:", s10}},
 		{name: "across numbers every column", args: []string{"-t", "-a", "-3", "-n", s10}},
 
-		// Parallel.
 		{name: "merge two files", args: []string{"-t", "-m", s10, f}},
 		{name: "merge three files", args: []string{"-t", "-m", s10, f, s10}},
 		{name: "merge one file", args: []string{"-t", "-m", f}},
@@ -239,7 +201,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "merge doubles spaces", args: []string{"-t", "-d", "-m", f, other}},
 		{name: "merge with a directory is fatal first", args: []string{"-t", "-m", d, f}},
 
-		// Line numbering.
 		{name: "number lines", args: []string{"-t", "-n", s10}},
 		{name: "number with a separator", args: []string{"-t", "-n:3", s10}},
 		{name: "number with digits only", args: []string{"-t", "-n8", s10}},
@@ -274,7 +235,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "number with the tab width changed", args: []string{"-t", "-n", "-e4", "-W", "30", long}},
 		{name: "number with a narrow page and columns", args: []string{"-t", "-n", "-2", "-w", "8", s10}},
 
-		// Page ranges.
 		{name: "page one", args: []string{"+1", f}},
 		{name: "page two", args: []string{"+2", s200}},
 		{name: "pages two to three", args: []string{"+2:3", s200}},
@@ -301,9 +261,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "a plus with two pluses", args: []string{"++1", s200}},
 		{name: "a plus to a huge last page", args: []string{"+1:12345678901234567890", f}},
 
-		// Page-range faults. A range that PARSES but is empty falls
-		// through to being a file name for `+`, and is fatal for
-		// --pages.
 		{name: "page zero is a file", args: []string{"+0", f}},
 		{name: "page zero to zero is a file", args: []string{"+0:0", f}},
 		{name: "page zero to five is a file", args: []string{"+0:5", f}},
@@ -337,7 +294,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "long range takes its argument", args: []string{"--pages", "2", f}},
 		{name: "long range needs an argument", args: []string{"--pages", f}},
 
-		// Widths and truncation.
 		{name: "page width with columns", args: []string{"-t", "-2", "-w", "20", s10}},
 		{name: "page width always truncates", args: []string{"-t", "-2", "-W", "20", s10}},
 		{name: "page width alone does not truncate", args: []string{"-t", "-w", "5", long}},
@@ -362,7 +318,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "join with one column", args: []string{"-t", "-J", s10}},
 		{name: "join in parallel", args: []string{"-t", "-J", "-m", s10, f}},
 
-		// Separators.
 		{name: "separator with no argument", args: []string{"-t", "-2", "-s", s10}},
 		{name: "separator colon", args: []string{"-t", "-2", "-s:", s10}},
 		{name: "separator turns truncation off", args: []string{"-t", "-2", "-s", long}},
@@ -383,7 +338,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "join with a sep-string", args: []string{"-t", "-2", "-J", "-S:", tabbed}},
 		{name: "join keeps its tab", args: []string{"-t", "-2", "-J", tabbed}},
 
-		// Tabs in and out.
 		{name: "input tabs pass through", args: []string{"-t", tabbed}},
 		{name: "input tabs expand", args: []string{"-t", "-e", tabbed}},
 		{name: "input tabs expand at four", args: []string{"-t", "-e4", tabbed}},
@@ -420,7 +374,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "one column explicitly expands", args: []string{"-t", "-1", "-e", tabbed}},
 		{name: "output tabs with a narrow page", args: []string{"-t", "-2", "-i.4", "-W", "12", tabbed}},
 
-		// Double spacing.
 		{name: "double space", args: []string{"-d", "-l", "14", s10}},
 		{name: "double space with -t", args: []string{"-t", "-d", s10}},
 		{name: "double space with -t and a length", args: []string{"-t", "-d", "-l", "14", s10}},
@@ -432,7 +385,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "double space in columns with -t and -F", args: []string{"-F", "-d", "-t", "-2", s10}},
 		{name: "double space one line", args: []string{"-t", "-d", f}},
 
-		// Control characters, and the display width they carry.
 		{name: "control bytes pass through", args: []string{"-t", ctrl}},
 		{name: "hat notation", args: []string{"-t", "-c", ctrl}},
 		{name: "octal notation", args: []string{"-t", "-v", ctrl}},
@@ -455,13 +407,11 @@ func prCases(t *testing.T) []invocation {
 		{name: "escapes without -e", args: []string{"-t", "-c", del}},
 		{name: "octal escapes and expanded tabs", args: []string{"-t", "-v", "-e", ctrl}},
 
-		// The -b option is accepted, undocumented and does nothing.
 		{name: "balance is a no-op", args: []string{"-b", "-t", f}},
 		{name: "balance twice", args: []string{"-b", "-b", "-t", f}},
 		{name: "balance glued to digits", args: []string{"-2b", "-t", s10}},
 		{name: "balance with a short page", args: []string{"-b", "-3", "-l", "16", "-t", s10}},
 
-		// Operands.
 		{name: "missing file", args: []string{missing}},
 		{name: "missing file quietly", args: []string{"-r", missing}},
 		{name: "missing then good", args: []string{missing, f}},
@@ -482,7 +432,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "dashdash makes a plus a file", args: []string{"-t", "--", "+1", s10}},
 		{name: "dashdash twice", args: []string{"-t", "--", "--", s10}},
 
-		// getopt.
 		{name: "invalid short option", args: []string{"-x", f}},
 		{name: "unrecognized long option", args: []string{"--foo"}},
 		{name: "empty long name is ambiguous", args: []string{"--=x"}},
@@ -523,7 +472,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "_POSIX2_VERSION changes nothing", args: []string{"-t", s10, "-2"}, env: []string{"_POSIX2_VERSION=199209"}},
 		{name: "COLUMNS and LINES are not read", args: []string{f}, env: []string{"COLUMNS=40", "LINES=20"}},
 
-		// Numeric option faults: one line, no `Try …`.
 		{name: "width is not a number", args: []string{"-w", "f"}},
 		{name: "width zero", args: []string{"-w", "0", f}},
 		{name: "width negative", args: []string{"-w", "-1", f}},
@@ -560,7 +508,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "columns past uintmax", args: []string{"-99999999999999999999", f}},
 		{name: "columns past INT_MAX", args: []string{"-4294967296", f}},
 
-		// The CHAR / WIDTH grammar of -e, -i and -n.
 		{name: "expand width zero", args: []string{"-e0", f}},
 		{name: "expand width one", args: []string{"-e1", f}},
 		{name: "output tab width zero", args: []string{"-i0", f}},
@@ -578,7 +525,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "expand width with a suffix", args: []string{"-t", "-e4x", tabbed}},
 		{name: "output tab char and a word width", args: []string{"-t", "-i:x", s10}},
 
-		// The checks that follow the scan, in GNU's order.
 		{name: "columns in parallel", args: []string{"-m", "-2", f}},
 		{name: "columns in parallel the other way", args: []string{"-2", "-m", f}},
 		{name: "across in parallel", args: []string{"-m", "-a", f, other}},
@@ -589,7 +535,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "an option value is checked during the scan", args: []string{"-l", "0", "-x", f}},
 		{name: "a bad option beats an option value", args: []string{"-x", "-l", "0", f}},
 
-		// Write failures.
 		{name: "stdout closed", args: []string{"-t", f}, stdout: stdoutClosed},
 		{name: "stdout full", args: []string{"-t", f}, stdout: stdoutFull},
 		{name: "stdout closed with a page", args: []string{f}, stdout: stdoutClosed},
@@ -599,7 +544,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "stdout closed with nothing to write", args: []string{empty}, stdout: stdoutClosed},
 		{name: "stdout closed with a missing file", args: []string{missing}, stdout: stdoutClosed},
 
-		// Bulk.
 		{name: "a large file", args: []string{big}},
 		{name: "a large file in columns", args: []string{"-4", big}},
 		{name: "a large file numbered", args: []string{"-n", big}},
@@ -608,9 +552,6 @@ func prCases(t *testing.T) []invocation {
 		{name: "many lines from a pipe", args: []string{"-t", "-3"}, stdin: seqLines(20000)},
 	}
 
-	// Standard input and -m have no file to take a date from, so their
-	// header carries the WALL CLOCK: every case here pins it with a -D
-	// format that holds no time, or drops the header with -t.
 	cases = append(cases,
 		invocation{name: "stdin with -t", args: []string{"-t"}, stdin: tabs},
 		invocation{name: "stdin named", args: []string{"-t", "-"}, stdin: tabs},
@@ -655,10 +596,6 @@ func prCases(t *testing.T) []invocation {
 		invocation{name: "stdin form feeds with a short page", args: []string{"-D", "X", "-l", "12", "-"}, stdin: "one\ntwo\n\fthree\nfour\n\f\ffive\n"},
 	)
 
-	// A separator holding a TAB, which is where GNU's three kinds of
-	// separator byte separate: a space always joins the gap, a tab
-	// joins it only as the WHOLE separator of a padded layout, and
-	// everything else is written as it stands.
 	for _, sep := range []string{"-S\t", "-s\t", "-s\t\t", "-S\t\t", "-S ", "-S:", "-s:",
 		"-S", "-s", "-Sx\ty", "-S \t", "-S\t ", "-s \t", "-S\t\t\t", "-Sxy"} {
 		for _, extra := range [][]string{nil, {"-i.4"}, {"-J"}, {"-w", "20"}, {"-W", "20"}, {"-i,"}, {"-e"}} {
@@ -681,13 +618,6 @@ func prCases(t *testing.T) []invocation {
 		}
 	}
 
-	// -D is gnulib's nstrftime, and the header date is the FILE's
-	// mtime, so each of these is a fixed instant in a fixed zone.
-	//
-	// %D, %F, %R and %T are absent, and their expansions stand in for
-	// them: GNU 9.12 prints uninitialised memory for a format holding
-	// one (docs/COREUTILS.md), which differs between two runs of the
-	// same command and is nothing a corpus can be held to.
 	formats := []string{
 		"%a", "%A", "%b", "%B", "%c", "%C", "%d", "%m/%d/%y", "%e", "%Y-%m-%d", "%g", "%G", "%h",
 		"%H", "%I", "%j", "%k", "%l", "%m", "%M", "%n", "%N", "%p", "%P", "%q", "%r",
@@ -708,9 +638,6 @@ func prCases(t *testing.T) []invocation {
 	for _, format := range rawTimeFormats() {
 		cases = append(cases, invocation{name: "raw time format " + quote([]byte(format)), args: []string{"-D", format, f}})
 	}
-	// The conversions that read the INSTANT rather than the format get
-	// four more of them: the epoch itself, a date before it, one past
-	// every transition table, and one carrying nanoseconds.
 	for _, spec := range []string{
 		"%Y-%m-%d %H:%M:%S", "%s", "%j", "%N", "%s.%N", "%G-W%V-%u", "%U %W", "%C %y",
 		"%a %A %b %B", "%c", "%x %X", "%Z %z", "%q", "%m/%d/%y %e %k %l %p %r",
@@ -724,23 +651,6 @@ func prCases(t *testing.T) []invocation {
 		}
 	}
 
-	// The zone is $TZ, read by std/tz as the platform's tzset reads it
-	// (glibc's on Linux, tzcode's on Darwin): a TZif file under
-	// /usr/share/zoneinfo, a POSIX string when that is not one, and the
-	// footer of the file past its last
-	// transition — which is what decides a 2038 or 2100 date. `%Z` is
-	// the abbreviation that comes with the offset, so these cases are
-	// the zone's DESIGNATION table as much as its transitions.
-	//
-	// Two TZ shapes are deliberately absent. One is a string whose
-	// DAYLIGHT name is one or two characters ("ABC1x"): glibc leaves
-	// the rule it never parsed unset, and the answer that falls out is
-	// standard time at exactly the two instants 0 and 1 and daylight
-	// time with an empty abbreviation everywhere else — including
-	// 2020 — which no rule in the POSIX grammar can produce. The other
-	// is a daylight name with NO dates after it ("ABC1DEF"), which is
-	// the posixrules divergence docs/COREUTILS.md already records for
-	// who(1).
 	zones := []string{
 		"UTC", "America/New_York", "Asia/Tokyo", "Europe/London", "Australia/Lord_Howe",
 		"Asia/Kathmandu", "Pacific/Chatham", "America/Sao_Paulo", "Africa/Cairo",
@@ -752,10 +662,6 @@ func prCases(t *testing.T) []invocation {
 		":UTC", ":/etc/localtime", "/usr/share/zoneinfo/Asia/Tokyo",
 		"", "Nowhere/Nothing", "garbage", "X", "XY", "ABC", "A/B/C", "abc",
 		"garbage1", "ABC+", "<ABC>", "Etc/Nope",
-		// tzset tries a FILE before a rule, and the spellings that
-		// decide which: a lone colon is the default file, a colon
-		// before a name is that name, and a relative name hangs under
-		// the zoneinfo directory however it is written.
 		":", "::", ":Asia/Tokyo", "Asia//Tokyo", "./UTC", "../zoneinfo/UTC",
 		"Asia/Tokyo/", "/", "//", "/nonexistent", " UTC", "UTC ", "utc",
 		"<+07>-7<+08>,M3.2.0,M11.1.0", "AAA+25", "AAA+25:59:59",
@@ -783,16 +689,11 @@ func TestPrHelpVersion(t *testing.T) {
 	requireHelp(t, "pr", []string{"--hel"}, 0)
 	requireVersion(t, "pr", []string{"--version"}, 0)
 	requireVersion(t, "pr", []string{"--vers"}, 0)
-	// --help is honoured inside the scan, so an operand and a later
-	// option do not get in its way, and the column count is validated
-	// only after it.
 	requireHelp(t, "pr", []string{"--help", "-x"}, 0)
 	requireHelp(t, "pr", []string{"-0", "--help"}, 0)
 	requireVersion(t, "pr", []string{"--version", "-x"}, 0)
 }
 
-// prDarwinDefect is the reason a header format cannot be held to GNU on
-// Darwin, if there is one: there, GNU pr's `%r` expands to nothing.
 func prDarwinDefect(spec string) string {
 	if strings.Contains(spec, "%r") {
 		return "GNU pr's %r expands to nothing against Apple's libc"

@@ -9,20 +9,10 @@ import (
 	"testing"
 )
 
-// A struct field whose type is a tuple ARRAY (`pairs: (i32, string)[]`) lowers
-// on the IR path, whether or not anything reads it:
-//
-//   - `let p = r.pairs[0]` takes the element tuple type from the field's
-//     declared type; without it `p.1.len()` mis-reads a pointer element (a
-//     silent miscompile: 1, not 2).
-//   - `for p in r.pairs` binds the loop variable's tuple type the same way.
-//
-// Each case is oracle-checked against the interpreter and routing-pinned "ir".
 var structTupleArrayFieldIRCases = []struct {
 	name string
 	src  string
 }{
-	// FOR-LOOP over the field reading a pointer (string) element: 1+2+3 = 6.
 	{"foreach_field", `struct Row { pairs: (i32, string)[] }
 function main(): i32 {
     let r = Row { pairs: [(1, "a"), (2, "bb"), (3, "ccc")] };
@@ -30,8 +20,6 @@ function main(): i32 {
     for p in r.pairs { s = s + p.1.len(); }
     return s;
 }`},
-	// FOR-LOOP reading BOTH the i32 and the string element: 1*10+1 + 2*10+2 +
-	// 3*10+3 = 66.
 	{"foreach_both", `struct Row { pairs: (i32, string)[] }
 function main(): i32 {
     let r = Row { pairs: [(1, "a"), (2, "bb"), (3, "ccc")] };
@@ -39,21 +27,17 @@ function main(): i32 {
     for p in r.pairs { s = s + p.0 * 10 + p.1.len(); }
     return s;
 }`},
-	// INDEX-READ into a local: `let p = r.pairs[0]` then p.0 + p.1.len() = 1 + 1
-	// = 2 (the silent-miscompile case answers 1).
 	{"index_bind", `struct Row { pairs: (i32, string)[] }
 function main(): i32 {
     let r = Row { pairs: [(1, "a"), (2, "bb")] };
     let p = r.pairs[0];
     return p.0 + p.1.len();
 }`},
-	// DIRECT index without a binding: r.pairs[2].0 + r.pairs[2].1.len() = 3 + 3 = 6.
 	{"direct_index", `struct Row { pairs: (i32, string)[] }
 function main(): i32 {
     let r = Row { pairs: [(1, "a"), (2, "bb"), (3, "ccc")] };
     return r.pairs[2].0 + r.pairs[2].1.len();
 }`},
-	// A (string, string) element array — read the SECOND string element: 2 + 3 = 5.
 	{"string_string", `struct Row { pairs: (string, string)[] }
 function main(): i32 {
     let r = Row { pairs: [("a", "xx"), ("bb", "yyy")] };
@@ -61,9 +45,6 @@ function main(): i32 {
     for p in r.pairs { s = s + p.1.len(); }
     return s;
 }`},
-	// A scalar field alongside the tuple-array field + a NESTED tuple element
-	// `(i32, (i32, string))`: n + sum of p.0 + p.1.0 + p.1.1.len() = 5 + (1+2+2)
-	// + (3+4+3) = 20.
 	{"mixed_nested", `struct Row { n: i32, pairs: (i32, (i32, string))[] }
 function main(): i32 {
     let r = Row { n: 5, pairs: [(1, (2, "ab")), (3, (4, "cde"))] };
@@ -71,9 +52,6 @@ function main(): i32 {
     for p in r.pairs { s = s + p.0 + p.1.0 + p.1.1.len(); }
     return s;
 }`},
-	// RC stress: build 100 such structs in a loop, each passed by value to a
-	// function that iterates the field — the leak-only field must not over-release
-	// / underflow. total % 256 = (100 * (1+2)) % 256 = 300 % 256 = 44.
 	{"rc_loop", `struct Row { pairs: (i32, string)[] }
 function sumrow(r: Row): i32 { let s = 0; for p in r.pairs { s = s + p.1.len(); } return s; }
 function main(): i32 {
@@ -88,7 +66,6 @@ function main(): i32 {
 }`},
 }
 
-// The x86-64 leg: emit + assemble + run through the self-hosted loader driver.
 func TestSelfHostStructTupleArrayFieldIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
@@ -140,10 +117,6 @@ func TestSelfHostStructTupleArrayFieldIR(t *testing.T) {
 	}
 }
 
-// The wasm leg: the fixes live in the shared lowering, so the wasm IR backend
-// admits the same struct and reads the tuple-box pointer elements through the
-// 4-byte-slot arr_get walk. Drives wasm_ir_run (stdin → wat) and runs under
-// wasmtime. Case table shared with the x86-64 leg.
 func TestSelfHostStructTupleArrayFieldWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping struct-tuple-array-field wasm IR e2e")
@@ -156,7 +129,6 @@ func TestSelfHostStructTupleArrayFieldWasmIR(t *testing.T) {
 	for _, tc := range structTupleArrayFieldIRCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			// Oracle: the Go interpreter's exit code.
 			entry := filepath.Join(dir, "wstaf_"+tc.name+".fern")
 			if err := os.WriteFile(entry, []byte(tc.src+"\n"), 0o644); err != nil {
 				t.Fatalf("write entry: %v", err)

@@ -6,36 +6,18 @@ import (
 	"testing"
 )
 
-// tryOptionPayloadIRCases pin the self-host CHECKER's type for the `?` (try)
-// operator when the unwrapped payload is itself a generic (Option[T]).
-// infer_expr_type's ExprUnary arm types `try_` (the desugared `?`) as the
-// operand's Result/Option payload (result_inner / option_inner); typed i32
-// instead, `let o: Option[i32] = f()?` where f: Result[Option[i32], i32] is
-// rejected E003 ("initializer has type i32"). Only an Option (or struct)
-// payload exposes it — a string / array / scalar payload slips through the
-// lenient assignable check.
-//
-// Each case also asserts the emitter's per-function label marker (`.Lssa_`),
-// so a green run shows the IR path was taken, not only the right exit code.
 var tryOptionPayloadIRCases = []struct {
 	name string
 	src  string
 	exit int
 }{
-	// The canonical repro: `?` on a Result[Option[i32], i32].
 	{"result-option", "function f(n: i32): Result[Option[i32], i32] { return Ok(Some(n)); } function g(n: i32): Result[i32, i32] { let x: Option[i32] = f(n)?; match (x) { Some(v) => { return Ok(v); }, None => { return Ok(0); } } } function main(): i32 { match (g(5)) { Ok(v) => { return v; }, Err(_) => { return 9; } } }", 5},
-	// A nested `?` chain that binds the Option payload then re-wraps.
 	{"nested-chain", "function inner(n: i32): Result[Option[i32], i32] { if (n > 0) { return Ok(Some(n)); } return Ok(None); } function outer(n: i32): Result[i32, i32] { let o: Option[i32] = inner(n)?; match (o) { Some(v) => { return Ok(v); }, None => { return Ok(0); } } } function main(): i32 { match (outer(9)) { Ok(v) => { return v; }, Err(_) => { return 88; } } }", 9},
-	// Regression: scalar payload `?` still types correctly.
 	{"result-i32", "function f(n: i32): Result[i32, i32] { return Ok(n); } function g(n: i32): Result[i32, i32] { let x: i32 = f(n)?; return Ok(x); } function main(): i32 { match (g(5)) { Ok(v) => { return v; }, Err(_) => { return 9; } } }", 5},
-	// Regression: string payload `?`.
 	{"result-string", "function f(n: i32): Result[string, i32] { return Ok(\"hi\"); } function g(n: i32): Result[i32, i32] { let x: string = f(n)?; return Ok(x.len()); } function main(): i32 { match (g(5)) { Ok(v) => { return v; }, Err(_) => { return 9; } } }", 2},
-	// `?` on a bare Option[i32] (not wrapped in a Result).
 	{"option-payload", "function f(o: Option[i32]): Option[i32] { let x: i32 = o?; return Some(x + 1); } function main(): i32 { match (f(Some(6))) { Some(v) => { return v; }, None => { return 9; } } }", 7},
 }
 
-// TestSelfHostTryOptionPayloadIRX86_64 — the x86-64 asmcore checker fix, through
-// the production driver (asm_ir_run).
 func TestSelfHostTryOptionPayloadIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -66,8 +48,6 @@ func TestSelfHostTryOptionPayloadIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTryOptionPayloadIRArm64 — CI-gated arm64 counterpart. The fix is in
-// the shared asmcore.fern frontend, so the arm64 IR backend picks it up.
 func TestSelfHostTryOptionPayloadIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

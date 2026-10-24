@@ -2,12 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// An if-expression at a fn-typed argument whose arms mix a local fn value
-// with a lambda, or pass locals through a generic call (#10927, shape 3).
-// The lift admitted an identifier arm only when it named a module function,
-// so a local holding a fn value, already an env box, made the whole
-// if-expression decline, and the lambda arm kept the bare `__lam_N` address
-// the first pass gave it.
 const iifeLocalFnValueSrc = `import "std/i32";
 function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }
 function apply(f: (i32) => i32, v: i32): i32 { return f(v); }

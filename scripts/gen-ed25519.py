@@ -50,7 +50,7 @@ def table():
     lines = []
     for at in range(0, len(words), 4):
         lines.append("  " + ", ".join(lit(w) for w in words[at:at + 4]) + ",")
-    return "// BASE holds k * 256^j * B at ((j * 8 + k - 1) * 12): y + x, y - x and\n// 2d * x * y, four limbs each.\nconst BASE: u64[] = [\n" + "\n".join(lines) + "\n];\n"
+    return "// BASE stores `k * 256^j * B` at `((j * 8 + k - 1) * 12)`.\n// Each point stores `y + x`, `y - x`, and `2d * x * y`, with four limbs per value.\nconst BASE: u64[] = [\n" + "\n".join(lines) + "\n];\n"
 
 if __name__ == "__main__":
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "internal", "stdlib", "std", "crypto", "ed25519.fern")

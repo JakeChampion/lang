@@ -15,8 +15,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Exercise the actual stdlib with a host reader that fails after delivering
-// data. Neither a valid prefix nor an invalid prefix may hide the I/O error.
 func TestIOTextPartialReadError(t *testing.T) {
 	src := `import "std/io";
 function main(): i32 {

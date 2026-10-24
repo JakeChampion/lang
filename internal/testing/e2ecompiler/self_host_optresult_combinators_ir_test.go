@@ -2,16 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// Self-host IR coverage for the std/option + std/result combinators added
-// alongside this test (map_or / is_some_and / or / and on Option; map_or /
-// is_ok_and / is_err_and / or on Result). They're ordinary generic methods
-// (#2692) — a small `match` — so they lower through the self-hosted IR path
-// the same way the existing map / filter / and_then combinators do.
-//
-// Each case INLINES the combinator definition(s) under test (std/option
-// imports core/cmp only vestigially — the combinators reference nothing from
-// it). Every case is i32-only with scalar / non-callback combinators and
-// oracle-checked against the interpreter (result kept <= 120, cf. #2908).
 type optResultIRCase struct {
 	name string
 	src  string
@@ -89,8 +79,6 @@ function main(): i32 {
     if (er.is_err_and(pos)) { r = r + 5; }
     return r;                                  // 15
 }`},
-	// Option.is_none_or: the mirror of is_some_and — None short-circuits to
-	// true. Some(7) satisfies pos → +10; None → +32. 42.
 	{"opt-is_none_or", `
 pub function (o: Option[T]) is_none_or(pred: (T) => boolean): boolean {
     match (o) { Some(x) => { return pred(x); }, None => { return true; } }
@@ -104,10 +92,6 @@ function main(): i32 {
     if (n.is_none_or(pos)) { r = r + 32; }
     return r;
 }`},
-	// Option.transpose: Option[Result[T,E]] -> Result[Option[T],E].
-	// Nested-match, callback-free — routes IR like flatten. Some(Ok(5))
-	// -> Ok(Some(5)) (+5); Some(Err(9)) -> Err(9) (+9); None -> Ok(None)
-	// (+100). 5 + 9 + 100 = 114.
 	{"opt-transpose", `
 pub function (o: Option[Result[T, E]]) transpose[T, E](): Result[Option[T], E] {
     match (o) {
@@ -125,9 +109,6 @@ function main(): i32 {
     match (c.transpose()) { Ok(inner) => { match (inner) { Some(x) => { r = r + 80; }, None => { r = r + 100; } } }, Err(e) => { r = r + 90; } }
     return r;                                  // 114
 }`},
-	// Result.transpose: Result[Option[T],E] -> Option[Result[T,E]], the
-	// inverse. Ok(Some(3)) -> Some(Ok(3)) (+3); Err(7) -> Some(Err(7))
-	// (+7); Ok(None) -> None (+100). 3 + 7 + 100 = 110.
 	{"res-transpose", `
 pub function (r: Result[Option[T], E]) transpose[T, E](): Option[Result[T, E]] {
     match (r) {
@@ -147,8 +128,6 @@ function main(): i32 {
 }`},
 }
 
-// TestSelfHostOptResultCombinatorsIR compiles each case with the self-host CLI for
-// x86-64 and wasm and checks the exit code against the interpreter.
 func TestSelfHostOptResultCombinatorsIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)

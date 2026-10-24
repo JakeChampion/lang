@@ -1,4 +1,3 @@
-// Usage: storage depth waves plain|delayed|faulted unique|shared [samples]
 import "./storage_core";
 import "./storage_fip";
 import "core/cmp";
@@ -36,9 +35,6 @@ function data_checksum(s: storage_core.State): i64 {
   return sum;
 }
 
-// Private driver summary: result_slot=error count, result_ticket=sum of
-// logical completion latencies, result_value=weighted completion checksum.
-// Reusing scalar result fields keeps instrumentation out of allocation counts.
 function wave(own s: storage_core.State, round: i32, mode: string): storage_core.State {
   let depth: i32 = s.capacity;
   let kind: i32 = round % 4 + 1;

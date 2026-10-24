@@ -2,11 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/option.unzip across backends: Some of a
-// pair splits into a pair of Somes, None splits into a pair of Nones,
-// and the round-trip with zip. Uses a mixed (i32, string) pair to
-// exercise both a scalar and a heap payload. Returns 42 iff every check
-// holds. Each leg skips itself when its toolchain is absent.
 const optionUnzipProg = `
 import "std/option";
 function main(): i32 {

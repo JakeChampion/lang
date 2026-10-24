@@ -60,14 +60,11 @@ function instructions(text: string, arm: boolean): void {
     i = i + 1;
   }
   let read = from[6];
-  // A real header read before either pointer guard must refuse even if its
-  // value is overwritten by the later correct load.
   check(change(text, from[1], read + "\n" + from[1]), arm, false);
   let write = if (arm) { "stur w3, [x2, #-8]" } else { "movl %edx, -8(%rcx)" };
   check(change(text, read, read + "\n" + write), arm, false);
   check(change(text, read, read + "\n" + (if (arm) { "bl unexpected" } else { "call unexpected" })), arm, false);
   let sign = if (arm) { "tbnz w3, #31, .Lshuniq_ret\n" } else { "testl %edx, %edx\njs .Lshuniq_ret\n" };
-  // Equality with one already excludes every negative signed32 count.
   check(change(text, sign, ""), arm, true);
   guards(text, arm);
 }
@@ -86,8 +83,6 @@ function feasible_paths(text: string, arm: boolean): void {
   let jump = if (arm) { "b " } else { "jmp " };
   let entry = "__fn___fern_rc_is_unique:\n";
   let cycle = ".Lunreachable_a:\n" + jump + ".Lunreachable_b\n.Lunreachable_b:\n" + jump + ".Lunreachable_a\n";
-  // Only a cycle reached by a feasible execution refuses. Disconnected
-  // cycles before the body and after its return remain harmless.
   let before = change(text, entry, entry + jump + ".Lbody\n" + cycle + ".Lbody:\n");
   check(before, arm, true);
   check(change(before, jump + ".Lbody\n", jump + ".Lunreachable_a\n"), arm, false);
@@ -110,7 +105,6 @@ function indexed_paths(text: string, arm: boolean): void {
   check(good + "__next:\n.Lindexed64:\n", arm, false);
   check(change(good, jump + ".Lindexed_end\n", jump + ".Lindexed_missing\n"), arm, false);
   check(change(good, jump + ".Lindexed_end\n", jump + ".Lindexed0\n"), arm, false);
-  // Unrelated definitions retain the existing scoped admission policy.
   let unrelated = "__unrelated:\n.Lunrelated:\n.Lunrelated: ret\n__unrelated:\n";
   check(unrelated + good, arm, true);
   check(good + unrelated, arm, true);

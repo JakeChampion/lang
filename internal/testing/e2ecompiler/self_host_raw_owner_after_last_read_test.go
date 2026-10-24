@@ -8,26 +8,6 @@ import (
 	"testing"
 )
 
-// The runtime bodies in asmcore.fern give a __raw_alloc block back by binding
-// a string over it that nothing reads, and the semantic lowering releases
-// such an owner at its own step, not at scope exit. A body that bound the
-// owner before its last raw read of the block read memory the freelist had
-// already handed out (#10486). This program drives the bodies whose late
-// reads had an observable answer, with the sizes chosen so the block the
-// owner released is the one the next allocation pops:
-//
-//   - remove_dir_all: the child path it builds for the recursive call is
-//     `plen + 1 + namelen` bytes, the released path buffer `plen + 1`, so a
-//     short child name lands in the same class and the final rmdir named
-//     the child instead of the directory. The directory was left behind.
-//   - read_file_bytes: the element box for the result follows the release
-//     of the content buffer; every length from 1 to 80 is read back.
-//   - the error paths: the IoError's path is copied after the owner that
-//     covers it, for every length from 1 to 40 on three leaves.
-//   - cpu_count and getgroups read their mask and list after the release.
-//
-// Every answer is checked and the leak check must balance, so an owner that
-// moved off one path shows up as a stranded block.
 func rawOwnerProbeSrc(work string, groups int) string {
 	var sb strings.Builder
 	sb.WriteString("function main(): i32 {\n    let bad: i32 = 0;\n")

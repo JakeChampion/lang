@@ -1,16 +1,8 @@
 package component
 
-// compose_udp.go holds the core-import signature constants for the
-// datagram socket surface. The unified composer (compose_unified.go)
-// declares each udp method as a gImport lowering over these. Every udp
-// method but receive lowers as a memory trampoline (retptr result / a
-// list param the host reads) with no realloc; receive answers a list, so
-// it takes the realloc lowering. The datagram path is its own resources
-// (not wasi:io/streams).
-
 var (
-	udpCreateParams     = []byte{0x7f, 0x7f} // (family, retptr)
-	udpSelfRetParams    = []byte{0x7f, 0x7f} // (self, retptr)
-	udpBindStreamParams = repeatI32(15)      // self, (option<ip-socket-address> flat = 13), retptr
-	udpSendParams       = repeatI32(4)       // self, list_ptr, list_len, retptr
+	udpCreateParams     = []byte{0x7f, 0x7f}
+	udpSelfRetParams    = []byte{0x7f, 0x7f}
+	udpBindStreamParams = repeatI32(15)
+	udpSendParams       = repeatI32(4)
 )

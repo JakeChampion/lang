@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// scanSetBlocksSrc scans, for every byte value, a 72-byte string holding that
-// byte at one position, from offsets that leave several whole blocks, one, or
-// none ahead of the byte-at-a-time tail, against a constant set with
-// members in both halves of the byte range and at both ends of a nibble row.
-// The sum of the found indexes moves if any one answer is wrong, and the last
-// three scans cover an empty string, a start past the end and a negative one.
 const scanSetBlocksSrc = `import "std/i32";
 // Bytes 0..31, '"', '\\', 0x7f, 0x80, 0xc3 and 0xff are members.
 const S: u8[] = [
@@ -68,8 +62,6 @@ function main(): i32 {
 
 const scanSetBlocksWant = "620532873 0 3 2\n"
 
-// A scan over a constant set classifies a block at a time: 32 bytes with AVX2
-// on x86-64, sixteen with tbl on arm64. A set only known at run time keeps the table loop.
 func TestScanSetBlocksOnlyForAConstantSet(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, src string) string {
@@ -130,10 +122,6 @@ func TestWasmScanSetBlocks(t *testing.T) {
 	}
 }
 
-// scanSetShapesSrc probes one constant set of each shape asmcore.scan_set_shape
-// tells apart: a byte range, a range's complement, a short list, a short
-// list's complement, a list of high bytes, and a range with bytes beside it
-// and its complement.
 const scanSetShapesSrc = `import "std/i32";
 const RANGE: u8[] = [
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
@@ -472,7 +460,6 @@ function main(): i32 {
 
 const scanSetShapesWant = "RANGE 623423763\nNOT_RANGE 520717059\nLIST 624837861\nNOT_LIST 510947244\nLIST_HIGH 623695437\nRANGE_PLUS 623002320\nNOT_RANGE_PLUS 518881518\n"
 
-// Each shape takes its own block test; a bad one moves that line's sum.
 func TestScanSetShapes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "prog.fern")
 	if err := os.WriteFile(path, []byte(scanSetShapesSrc), 0o644); err != nil {

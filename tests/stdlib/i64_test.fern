@@ -1,15 +1,6 @@
 import "std/test";
 import "std/i64";
 
-// tests/stdlib/i64_test.fern — pure-Fern coverage of std/i64's
-// signed-64-bit receiver methods (the wider counterpart to std/i32):
-// abs / min / max / clamp / pow (exponentiation-by-squaring, incl. a
-// value past the i32 range) / gcd / lcm / to_string (incl. negative) /
-// is_even / is_odd. The Go-side suite unit-tests these; this is the
-// migration-shaped (pure-Fern, std/test-driven, self-host-gated)
-// companion. Receivers are written `… as i64` so dispatch lands on the
-// i64 methods rather than the i32 ones.
-
 function test_abs(): test.TestOutcome {
   return test.assert_eq((0 as i64 - 5).abs(), 5 as i64);
 }
@@ -39,7 +30,6 @@ function test_pow_zero(): test.TestOutcome {
 }
 
 function test_pow_wide(): test.TestOutcome {
-  // 2^40 = 1099511627776 — well past the i32 range.
   return test.assert_eq((2 as i64).pow(40), 1099511627776 as i64);
 }
 
@@ -90,7 +80,6 @@ function test_sign_predicates(): test.TestOutcome {
 function test_saturating(): test.TestOutcome {
   let MAX: i64 = 9223372036854775807 as i64;
   let MIN: i64 = 0 as i64 - 9223372036854775807 - 1;
-  // Overflow clamps to the bound rather than wrapping.
   if (MAX.saturating_add(1 as i64) != MAX) {
     return test.fail("add overflow");
   }
@@ -102,7 +91,6 @@ function test_saturating(): test.TestOutcome {
 
 function test_checked(): test.TestOutcome {
   let MAX: i64 = 9223372036854775807 as i64;
-  // Overflow → None; in-range → Some.
   match (MAX.checked_add(1 as i64)) {
     Some(v) => {
       return test.fail("expected None on overflow");

@@ -8,27 +8,8 @@ import (
 	"testing"
 )
 
-// The programs the playground ships run on the self-host compiler.
-//
-// web/index.html's built-in examples, and the <FernPlayground> snippets the
-// docs site embeds, are real Fern programs put in front of users: the page
-// checks, interprets and compiles them through web/playground.wasm, which
-// is compiler/playground_run.fern. Each is driven here through the
-// same driver, hosted natively, in every mode the page uses on its world: a
-// handler program's Run is locked out on the page, so it is built for the
-// http world's two forms instead.
-//
-// Both sets guard the flip-class regression where a program used a bare
-// prelude name and silently stopped compiling, which only a human loading
-// the page would otherwise notice — and, for the interpreter, a construct
-// the self-host evaluator does not implement, which exits 254 with the
-// evaluator's reason on stderr.
-
-// templateLiteral undoes the escapes a JS or MDX template literal carries,
-// so the extracted source is what the browser runs.
 var templateLiteral = strings.NewReplacer(`\\`, `\`, "\\`", "`", `\$`, `$`)
 
-// pageExamples returns web/index.html's `const examples = { … }` table.
 func pageExamples(t *testing.T) map[string]string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("..", "..", "..", "web", "index.html"))
@@ -49,12 +30,6 @@ func pageExamples(t *testing.T) map[string]string {
 	return out
 }
 
-// playgroundProgramRuns drives one program through the three modes the
-// page uses on the cli world: -check must accept it, -interp must answer
-// (254 is the driver's "the evaluator could not run this", with its reason
-// on stderr), and -emit core-module must produce a wasm binary. A program
-// may print nothing, as a filter given no input does; what it prints is its
-// own business, and the page shows its exit code either way.
 func playgroundProgramRuns(t *testing.T, bin, src string) {
 	t.Helper()
 	if _, stderr, code := runPlayground(t, bin, t.TempDir(), src, "-check"); code != 0 {
@@ -75,9 +50,6 @@ func playgroundProgramRuns(t *testing.T, bin, src string) {
 	}
 }
 
-// playgroundHandlerBuilds drives a wasi:http handler through the two forms
-// the page uses on that world: Run (wasm) instantiates the core module
-// against web/wasi-http-shim.js, Build component offers the component.
 func playgroundHandlerBuilds(t *testing.T, bin, src string) {
 	t.Helper()
 	for _, form := range [][]string{{"-emit", "core-module"}, nil} {
@@ -91,8 +63,6 @@ func playgroundHandlerBuilds(t *testing.T, bin, src string) {
 	}
 }
 
-// playgroundProgramWorks runs a page program the way the page would: a
-// handler on the http world, anything else on the cli world.
 func playgroundProgramWorks(t *testing.T, bin, src string) {
 	t.Helper()
 	if strings.Contains(src, "function handle") {
@@ -121,10 +91,6 @@ func TestSelfHostPlaygroundExamples(t *testing.T) {
 	}
 }
 
-// embedCodeRe pulls the `code={`…`}` template-literal payload out of a
-// <FernPlayground …/> usage in an MDX docs page. The snippets contain no
-// backticks or `${}` interpolations (they're plain Fern source), so
-// "everything up to the next backtick" is an exact match.
 var embedCodeRe = regexp.MustCompile("(?s)code=\\{`(.*?)`\\}")
 
 func TestSelfHostDocsPlaygroundEmbeds(t *testing.T) {
@@ -158,8 +124,6 @@ func TestSelfHostDocsPlaygroundEmbeds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The tutorial + landing pages ship several embeds each; if the
-	// extractor finds almost none the regex has drifted from the MDX.
 	if len(embeds) < 8 {
 		t.Fatalf("only extracted %d <FernPlayground> embeds; the regex likely drifted from the MDX", len(embeds))
 	}

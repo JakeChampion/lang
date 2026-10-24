@@ -1,8 +1,3 @@
-// E2E tests for wasm32-wasi. A program compiles with the self-host CLI to a
-// WASI core module, which `wasmtime run --invoke main` runs, printing main's
-// result after the program's own stdout. Tests of preview-2 host behaviour
-// build a wasi:cli component instead (buildCLIComponent). Tests skip when
-// wasmtime is missing or not the pinned version (skipIfPreview2Missing).
 package e2e
 
 import (
@@ -36,22 +31,13 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/sections"
 )
 
-// preview2 tool discovery: cached across the whole test run since
-// the answers don't change. preview2Setup holds the memoised
-// lookup state; callers go through skipIfPreview2Missing.
 var (
 	preview2Once sync.Once
 	preview2Err  error
 )
 
-// wasmtimePin is the wasmtime version this suite is verified against, and the
-// single place the number lives on the Go side. CI, devbox and the session
-// hook install it from mise.toml; TestWasmtimePinMatchesCI asserts the two
-// agree so this cannot drift out of date.
 const wasmtimePin = "46.0.1"
 
-// wasmtimeVersion returns the version of the wasmtime on PATH, parsed out of
-// `wasmtime --version` ("wasmtime 46.0.1 (abcdef 2025-01-01)").
 func wasmtimeVersion() (string, error) {
 	out, err := exec.Command("wasmtime", "--version").Output()
 	if err != nil {
@@ -71,21 +57,10 @@ func skipIfPreview2Missing(t *testing.T) {
 			preview2Err = errors.New("preview-2 toolchain not exercised on windows")
 			return
 		}
-		// Components are composed natively in-process (component.Compose),
-		// so the only external dependency left is wasmtime to run them —
-		// no wasm-tools, no preview-1 adapter.
 		if _, err := exec.LookPath("wasmtime"); err != nil {
 			preview2Err = errors.New("wasmtime not on PATH")
 			return
 		}
-		// Version-gate, not just presence. The component-model-async ABI is
-		// not stable across wasmtime majors: v46 introduced the async
-		// functype tag 0x43 and non-reentrant component instances, so the
-		// Preview-3 tests below fail under an older one with `invalid
-		// leading byte (0x43)` or `cannot enter component instance` —
-		// errors that name neither wasmtime nor its version, and read as a
-		// codegen bug. Measured: a system wasmtime 39 turns this file's P3
-		// cluster into ~20 failures with no hint of the cause.
 		if v, err := wasmtimeVersion(); err != nil {
 			preview2Err = err
 		} else if v != wasmtimePin {
@@ -99,32 +74,22 @@ func skipIfPreview2Missing(t *testing.T) {
 	}
 }
 
-// runOpts bundles the per-call wasmtime knobs. Empty defaults run
-// the module or component with no preopened dirs, no env, and no
-// positional args.
 type runOpts struct {
-	args      []string // positional argv after the wasm path
-	stdin     string
-	stdinFile *os.File // when set, standard input in place of `stdin`
-	// stdoutFile, when set, is standard output; the returned stdout is
-	// then empty.
+	args         []string
+	stdin        string
+	stdinFile    *os.File
 	stdoutFile   *os.File
-	envs         []string // KEY=VAL strings forwarded as `--env`
-	workDir      string   // when non-empty, mount as `--dir=<workDir>`
-	fdLimit      int      // when > 0, run wasmtime under `ulimit -n <fdLimit>`
-	maxResources int      // when > 0, cap the host's resource table (`-S max-resources`)
+	envs         []string
+	workDir      string
+	fdLimit      int
+	maxResources int
 }
 
-// buildWasmCore compiles src with the self-host compiler to a preview-1 WASI
-// core module, which runWasmArtifact runs with `--invoke main` so main's
-// result is printed after the program's own stdout. A test of a preview-2
-// body needs buildCLIComponent instead.
 func buildWasmCore(t *testing.T, src string) string {
 	t.Helper()
 	return buildWasmCoreMulti(t, "main.fern", map[string]string{"main.fern": src})
 }
 
-// buildWasmCoreMulti is buildWasmCore for an entry and its sibling modules.
 func buildWasmCoreMulti(t *testing.T, entry string, files map[string]string) string {
 	t.Helper()
 	skipIfPreview2Missing(t)
@@ -141,8 +106,6 @@ func buildWasmCoreMulti(t *testing.T, entry string, files map[string]string) str
 	return e2eharness.CompileSelfHostFile(t, e2eharness.TargetWasm32Wasi, filepath.Join(dir, entry), nil)
 }
 
-// buildCLIComponent compiles src with the self-host compiler to a plain
-// wasi:cli/run component, so the program's own prints are its only stdout.
 func buildCLIComponent(t *testing.T, src string) string {
 	t.Helper()
 	skipIfPreview2Missing(t)
@@ -158,10 +121,6 @@ func buildCLIComponent(t *testing.T, src string) string {
 	return comp
 }
 
-// buildResultComponent is buildCLIComponent for a program whose answer is
-// main's result: main is renamed and called by one that prints the result
-// on the last line, where parseMainResult reads it and stripMainResult
-// takes it off.
 func buildResultComponent(t *testing.T, src string) string {
 	t.Helper()
 	const entry = "function main(): i32 {"
@@ -173,8 +132,6 @@ func buildResultComponent(t *testing.T, src string) string {
 	return buildCLIComponent(t, wrapped)
 }
 
-// runResultStdout runs src through buildResultComponent under opts and
-// returns its stdout.
 func runResultStdout(t *testing.T, src string, opts runOpts) string {
 	t.Helper()
 	s, e, ec := runWasmArtifact(t, buildResultComponent(t, src), opts)
@@ -184,17 +141,11 @@ func runResultStdout(t *testing.T, src string, opts runOpts) string {
 	return s
 }
 
-// runWasmResult is main's result, run as a wasi:cli/run component: the form
-// a program that imports preview-2 interfaces (sockets, clocks, pollables)
-// takes, where runWasm's core module and --invoke cannot.
 func runWasmResult(t *testing.T, src string) int {
 	t.Helper()
 	return parseMainResult(t, runResultStdout(t, src, runOpts{}))
 }
 
-// isCoreModule reports whether the wasm binary at path is a core module
-// rather than a component: their headers differ in the version field, which is
-// 1 for a core module.
 func isCoreModule(t *testing.T, path string) bool {
 	t.Helper()
 	f, err := os.Open(path)
@@ -209,9 +160,6 @@ func isCoreModule(t *testing.T, path string) bool {
 	return bytes.Equal(head, []byte{0, 'a', 's', 'm', 1, 0, 0, 0})
 }
 
-// runWasmArtifact runs a core module (with `--invoke main`) or a component
-// under wasmtime, returning the program's stdout, stderr, and the wasmtime
-// exit code.
 func runWasmArtifact(t *testing.T, wasmPath string, opts runOpts) (stdout, stderr string, exitCode int) {
 	t.Helper()
 	cmdArgs := []string{"run"}
@@ -231,8 +179,6 @@ func runWasmArtifact(t *testing.T, wasmPath string, opts runOpts) (stdout, stder
 	cmdArgs = append(cmdArgs, opts.args...)
 	cmd := exec.Command("wasmtime", cmdArgs...)
 	if opts.fdLimit > 0 {
-		// A descriptor limit is inherited, so lower it in a shell that
-		// then execs wasmtime under it.
 		cmd = exec.Command("sh", append([]string{"-c", `ulimit -n "$0" && exec wasmtime "$@"`, strconv.Itoa(opts.fdLimit)}, cmdArgs...)...)
 	}
 	cmd.Stdin = strings.NewReader(opts.stdin)
@@ -247,36 +193,13 @@ func runWasmArtifact(t *testing.T, wasmPath string, opts runOpts) (stdout, stder
 	cmd.Stderr = &se
 	_ = cmd.Run()
 	code := cmd.ProcessState.ExitCode()
-	// wasmtime warns about the harness's own `--invoke`; that line is not the
-	// program's, and a test reading stderr as the program's report should
-	// not see it.
 	stderr = strings.Replace(se.String(), "warning: using `--invoke` with a function that returns values is experimental and may break in the future\n", "", 1)
-	// An exit code alone cannot distinguish "the program returned N" from
-	// "wasmtime refused the module", because both are just a status — a
-	// validation failure and `return 1` are both exit 1. That conflation made
-	// #5992's two conversion bugs look like one for the length of an issue: one
-	// was a wrong ANSWER (u32 converted signed), the other did not COMPILE
-	// (an i32 opcode on an i64 operand). Rejection is a different kind of
-	// failure from a wrong result and should never be silently scored as one.
 	if rejected, why := wasmRejected(stderr); rejected {
 		t.Fatalf("wasmtime REJECTED the module — this is not a wrong answer, the artifact is invalid or incomplete (%s)\nstderr:\n%s", why, stderr)
 	}
 	return so.String(), stderr, code
 }
 
-// wasmRejected reports whether wasmtime's stderr describes a refusal to run the
-// module at all, rather than a program that ran and returned something. The
-// three shapes seen in practice, each from a real bug:
-//
-//   - "Invalid input WebAssembly code" / "type mismatch" — the module fails
-//     validation (#5992: f64.convert_i32_s applied to an i64 stack value).
-//   - "unknown func" / "failed to find name" — the module calls a function it
-//     never defines (#5992: $__fern_u32_to_string had no body on wasm).
-//   - "failed to compile" — wasmtime could not translate it.
-//
-// Deliberately conservative: it matches wasmtime's own diagnostics rather than
-// guessing from the exit code, so a program that legitimately prints one of
-// these strings is not mistaken for a rejected module.
 func wasmRejected(stderr string) (bool, string) {
 	for _, pair := range []struct{ needle, why string }{
 		{"Invalid input WebAssembly", "module failed validation"},
@@ -293,12 +216,6 @@ func wasmRejected(stderr string) (bool, string) {
 	return false, ""
 }
 
-// invokeWasmtime compiles src to a preview-1 core module and runs
-// its main under `wasmtime run --invoke`. Returns the program's stdout
-// (main's result last) + stderr; fails the test if wasmtime exits
-// non-zero. Use
-// `runWasmStdinEnv` / `runWasmInDir` if you need to script stdin
-// or env vars or expect a non-zero exit.
 func invokeWasmtime(t *testing.T, src string) (stdout, stderr string) {
 	t.Helper()
 	p := buildWasmCore(t, src)
@@ -309,8 +226,6 @@ func invokeWasmtime(t *testing.T, src string) (stdout, stderr string) {
 	return s, e
 }
 
-// invokeWasmtimeMultiFile is invokeWasmtime for a modload-driven
-// program (entry + sibling files).
 func invokeWasmtimeMultiFile(t *testing.T, entry string, files map[string]string) (stdout, stderr string) {
 	t.Helper()
 	p := buildWasmCoreMulti(t, entry, files)
@@ -321,11 +236,6 @@ func invokeWasmtimeMultiFile(t *testing.T, entry string, files map[string]string
 	return s, e
 }
 
-// runWasmMultiFile invokes `main` and parses the i32 result line
-// `wasmtime run --invoke main` prints to stdout — the multi-file
-// counterpart to runWasm. wasmtime emits warnings to stderr that
-// we deliberately ignore here (the warning about --invoke
-// returning values is harmless for our use).
 func runWasmMultiFile(t *testing.T, entry string, files map[string]string) int {
 	t.Helper()
 	stdout, _ := invokeWasmtimeMultiFile(t, entry, files)
@@ -345,7 +255,6 @@ func runWasmMultiFile(t *testing.T, entry string, files map[string]string) int {
 	return 0
 }
 
-// Cross-module struct types end-to-end on WASM, run through wasmtime.
 func TestWASMCrossModuleStructType(t *testing.T) {
 	got := runWasmMultiFile(t, "main.fern", map[string]string{
 		"point.fern": `pub struct Point { x: i32, y: i32 }
@@ -363,9 +272,6 @@ function main(): i32 {
 	}
 }
 
-// invokeWasmtimeWithArgs is invokeWasmtime plus extra positional
-// argv that wasmtime forwards into preview 1's `args_get`, with the
-// module path at argv[0].
 func invokeWasmtimeWithArgs(t *testing.T, src string, extraArgs ...string) (stdout, stderr string) {
 	t.Helper()
 	p := buildWasmCore(t, src)
@@ -373,14 +279,6 @@ func invokeWasmtimeWithArgs(t *testing.T, src string, extraArgs ...string) (stdo
 	return s, e
 }
 
-// args() under wasmtime: argv[0] is the wasm module path that
-// wasmtime injects, plus whatever extra positional args we pass.
-// HTTP/1.1 request parser end-to-end. Drives the lang-prelude
-// `http_parse_request(buf)` against a complete request buffer
-// (request line + headers + body) and asserts the returned
-// HttpRequest's method / path / body. Caller is responsible
-// for read-buffering off the socket; this test exercises the
-// pure-string parse step in isolation.
 func TestWASMHttpParseRequest(t *testing.T) {
 	src := `
 import "std/http";
@@ -404,8 +302,6 @@ function main(): i32 {
 	}
 }
 
-// Parser handles a no-body GET request (Content-Length absent;
-// HTTP/1.1 §3.3.3 reads "no body" by default for safe methods).
 func TestWASMHttpParseRequestNoBody(t *testing.T) {
 	src := `
 import "std/http";
@@ -426,9 +322,6 @@ function main(): i32 {
 	}
 }
 
-// Parser returns None on a partial buffer (header block not
-// yet terminated by \r\n\r\n) — the caller is expected to
-// keep recv'ing until parse succeeds.
 func TestWASMHttpParseRequestPartial(t *testing.T) {
 	src := `
 import "std/http";
@@ -444,10 +337,6 @@ function main(): i32 {
 	}
 }
 
-// HTTP/1.1 response serializer. Produces a wire-format
-// response with status line + Content-Length + Connection:
-// close + body. Verifies the byte layout the way a curl
-// client would consume it.
 func TestWASMHttpSerializeResponse(t *testing.T) {
 	src := `
 import "std/http";
@@ -463,8 +352,6 @@ function main(): i32 {
 	}
 }
 
-// 404 status maps to the right reason phrase. Confirms the
-// status-code → reason-phrase table covers the common cases.
 func TestWASMHttpSerializeResponse404(t *testing.T) {
 	src := `
 import "std/http";
@@ -479,8 +366,6 @@ function main(): i32 {
 	}
 }
 
-// `wasmtime run --invoke main mod.wat alpha beta` therefore yields
-// argv = [mod.wat, alpha, beta] and `len(args()) == 3`.
 func TestWASMArgsBuiltin(t *testing.T) {
 	src := `function main(): i32 {
 		let a: string[] = args();
@@ -505,10 +390,6 @@ func TestWASMArgsBuiltin(t *testing.T) {
 	}
 }
 
-// Reading argv values: print(a[1]) should produce the first user
-// argument on stdout. The runtime helper's strlen + alloc + copy
-// path lands the bytes in a length-prefixed string that the
-// language's `print` lowers via fd_write like any other string.
 func TestWASMArgsBuiltinReadsValue(t *testing.T) {
 	src := `function main(): i32 {
 		let a: string[] = args();
@@ -521,12 +402,6 @@ func TestWASMArgsBuiltinReadsValue(t *testing.T) {
 	}
 }
 
-// args() entries are copied out of the shared argv_buf into fresh
-// OWNED strings (via __fern_str_copy) so they carry an rc header and
-// never alias the runtime's view buffer. A >7-byte arg routes through
-// the heap-copy branch (short args inline-pack); the copied bytes must
-// match the original argv exactly — a wrong copy length / source offset
-// would print garbage or truncate.
 func TestWASMArgsBuiltinCopiesLongValue(t *testing.T) {
 	src := `function main(): i32 {
 		let a: string[] = args();
@@ -540,27 +415,17 @@ func TestWASMArgsBuiltinCopiesLongValue(t *testing.T) {
 	}
 }
 
-// runWasmStdinEnv runs src's core module under wasmtime with scripted
-// stdin and env, returning stdout, stderr, and the exit code.
-// `--env KEY=VAL` is forwarded by wasmtime to preview 1's
-// `environ_get`, which is what the env() builtin reads from.
 func runWasmStdinEnv(t *testing.T, src, stdin string, envs []string) (stdout, stderr string, exitCode int) {
 	t.Helper()
 	p := buildWasmCore(t, src)
 	return runWasmArtifact(t, p, runOpts{stdin: stdin, envs: envs})
 }
 
-// runCLIComponent runs src as a wasi:cli/run component, for a test of
-// preview-2 host behaviour: its stdout is the program's alone, and its exit
-// status is the one wasi:cli/exit carries.
 func runCLIComponent(t *testing.T, src string, opts runOpts) (stdout, stderr string, exitCode int) {
 	t.Helper()
 	return runWasmArtifact(t, buildCLIComponent(t, src), opts)
 }
 
-// io.read_line(stdin()) answers Ok(Some(line)) with the trailing newline
-// kept. The byte length is main's return value, which `wasmtime --invoke`
-// echoes on stdout after the bytes `write` sent.
 func TestWASMReadLine(t *testing.T) {
 	src := `import "std/io";
 
@@ -580,7 +445,6 @@ function main(): i32 {
 	}
 }
 
-// EOF on the first byte answers Ok(None).
 func TestWASMReadLineEOF(t *testing.T) {
 	src := `import "std/io";
 
@@ -610,9 +474,6 @@ function main(): i32 {
 	}
 }
 
-// `env(name)` returns `Some(value)` when the key is set (even to
-// empty) and `None` when the key isn't set. The test exercises
-// the `Some` arm; the missing case is in TestWASMEnvBuiltinMissing.
 func TestWASMEnvBuiltin(t *testing.T) {
 	src := `function main(): i32 {
 		match (env("LANG_TEST_VAR")) {
@@ -627,10 +488,6 @@ func TestWASMEnvBuiltin(t *testing.T) {
 	}
 }
 
-// env() copies the matched value out of the environ list buffer into a
-// fresh owned string (via __fern_str_copy) — no view aliasing the
-// runtime buffer. A >7-byte value exercises the heap-copy branch; the
-// round-tripped bytes must match exactly.
 func TestWASMEnvBuiltinCopiesLongValue(t *testing.T) {
 	src := `function main(): i32 {
 		match (env("LANG_TEST_VAR")) {
@@ -646,8 +503,6 @@ func TestWASMEnvBuiltinCopiesLongValue(t *testing.T) {
 	}
 }
 
-// Missing env keys route to `None`, distinguishable from a
-// present-but-empty value (which would still be `Some("")`).
 func TestWASMEnvBuiltinMissing(t *testing.T) {
 	src := `function main(): i32 {
 		match (env("LANG_TEST_DEFINITELY_NOT_SET_XYZ_42")) {
@@ -675,15 +530,6 @@ func TestWASMEnvBuiltinMissing(t *testing.T) {
 	}
 }
 
-// `exit(code)` calls preview-1 `proc_exit`, which the adapter
-// turns into `wasi:cli/exit.exit(if code == 0 { Ok(()) }
-// else { Err(()) })`. wasmtime then surfaces that as exit 0 or 1
-// — the integer code is lost in the lift, since wasi:cli/exit's
-// signature is `func(status: result<_, _>)` with no payload.
-// Asserting that exit(non-zero) propagates as a non-zero exit
-// code is the most we can verify under preview-2 0.2.0; preserving
-// arbitrary codes would need `wasi:cli/exit.exit-with-code` which
-// only ships in 0.2.1+.
 func TestWASMExitBuiltin(t *testing.T) {
 	src := `function main(): i32 {
 		eprint("boom");
@@ -699,9 +545,6 @@ func TestWASMExitBuiltin(t *testing.T) {
 	}
 }
 
-// `write` produces stdout output without a trailing newline.
-// Three consecutive `write` calls concatenate into a single run;
-// the final `print` adds the only newline in the output.
 func TestWASMWriteBuiltin(t *testing.T) {
 	src := `function main(): i32 {
 		write("a");
@@ -716,10 +559,6 @@ func TestWASMWriteBuiltin(t *testing.T) {
 	}
 }
 
-// f-strings desugar at the lexer to `<lit> + (<expr>).to_string() +
-// <lit> + ...`. End-to-end verifies the desugar preserves intent
-// across multiple types (string, i32, computed expression) and
-// that brace escapes (`{{` / `}}`) reach stdout as literal braces.
 func TestWASMFStringInterpolation(t *testing.T) {
 	src := `
 import "std/string";
@@ -745,10 +584,6 @@ function main(): i32 {
 	}
 }
 
-// `eprint` lands on stderr (fd=2). wasmtime keeps fds 1 and 2
-// separate, so the test can confirm that `print("hi")` shows up
-// on stdout and `eprint("err")` shows up on stderr — without
-// either reaching the other stream.
 func TestWASMEprintBuiltin(t *testing.T) {
 	src := `function main(): i32 {
 		print("hi");
@@ -767,22 +602,6 @@ func TestWASMEprintBuiltin(t *testing.T) {
 	}
 }
 
-// Regression for issue #2550: `(w: Writer).write(s)` to the stdout
-// Writer corrupted exactly one byte — the byte at the largest
-// multiple of 8 below len came out as its successor (buf[k] == buf[k+1]).
-//
-// Root cause was NOT in the write path: the stdout() Writer was built
-// with a bare alloc(4) and no rc-sentinel header, unlike the file
-// Writer (open_writer) which reserves 8 leading bytes for the static
-// 0x80000000 sentinel. Because the Writer is a refcounted heap value,
-// __fern_retain/__fern_drop mutate mem[ptr-8]; for the FIRST heap
-// object that ptr-8 underflows into the static data segment, so retain
-// incremented a byte of the string literal being written (the 'g'
-// at offset 16 of "0123…gh" became 'h'). Position-dependent because it
-// only corrupted the literal sitting immediately below the bump heap.
-//
-// The sweep covers the boundary lengths from the bug report (8, 16,
-// 17, 18, 24, 30) plus a couple extra; all must round-trip byte-exact.
 func TestWASMWriterWriteStdoutNoCorruption(t *testing.T) {
 	const src = `
 import "std/string";
@@ -812,14 +631,6 @@ function main(): i32 {
 	}
 }
 
-// wasm twin of TestX86_64GenericUnions / TestArm64GenericUnions
-// (#7737). The third backend matters here because its enum payload
-// representation differs from the natives', so a parameterised payload
-// that lays out correctly on both natives can still be wrong here.
-//
-// The result is checked inside the guest and returned as 0/1 rather
-// than as the sum: the cli/run lift collapses any nonzero main return
-// to exit 1, so a bare `return total` cannot distinguish 22 from 15.
 func TestWASMGenericUnions(t *testing.T) {
 	src := `struct Leaf[T] { v: T }
 struct Pair[T] { a: T, b: T }
@@ -850,14 +661,11 @@ function main(): i32 {
 func runWasm(t *testing.T, src string) int {
 	t.Helper()
 	stdout, _ := invokeWasmtime(t, src)
-	// `wasmtime run --invoke main` returns the function's i32 result on
-	// stdout, sometimes followed by a unit-line; parse the first int.
 	for _, ln := range strings.Split(stdout, "\n") {
 		ln = strings.TrimSpace(ln)
 		if ln == "" {
 			continue
 		}
-		// wasmtime prints either a bare integer or "i32: N".
 		if i := strings.LastIndex(ln, " "); i >= 0 {
 			ln = ln[i+1:]
 		}
@@ -875,12 +683,6 @@ func TestWASMReturn42(t *testing.T) {
 	}
 }
 
-// i64 round-trips through arithmetic + comparison. main() stays
-// i32 (the harness reads main's i32 return from wasmtime's --invoke line),
-// but the body holds an i64 value through addition and comparison.
-// Exercises OpExtendI32S on the casts in, OpAdd/OpEq with Width=64
-// in the body, and the i64 wasm types on the local + parameter
-// slots.
 func TestWASMI64Arithmetic(t *testing.T) {
 	src := `function add64(x: i64, y: i64): i64 { return x + y; }
 function main(): i32 {
@@ -893,12 +695,6 @@ function main(): i32 {
 	}
 }
 
-// Polymorphic numeric literals: a bare `1` flows into any
-// integer-typed slot — `let x: i64 = 1` works without `1 as
-// i64`, `f(x, 0)` resolves the `0` against f's parameter type,
-// `x + 1` settles the `1` to x's width. This test exercises all
-// three sites in a single program and verifies the wasm output
-// runs end-to-end.
 func TestWASMPolymorphicNumericLiterals(t *testing.T) {
 	src := `function add64(x: i64, y: i64): i64 { return x + y; }
 function main(): i32 {
@@ -915,9 +711,6 @@ function main(): i32 {
 	}
 }
 
-// Out-of-range polymorphic literal in i32 context is rejected:
-// `let x: i32 = 5000000000` is way past 2^31 so the checker
-// should refuse rather than silently wrap.
 func TestPolymorphicLiteralI32Overflow(t *testing.T) {
 	src := `function bad(): i32 { let x: i32 = 5000000000; return x; }`
 	prog, err := parser.Parse(src)
@@ -931,13 +724,6 @@ func TestPolymorphicLiteralI32Overflow(t *testing.T) {
 	}
 }
 
-// Sub-i32 width (u8). Storage lives in i32 locals (wasm has no
-// narrower locals); the bookkeeping is in the casts: narrowing
-// masks to 8 bits. Arithmetic is at i32 precision.
-// On wasm32 `usize` collapses to i32 (ptrW=4), so the
-// target-aware behaviour shouldn't observably differ from i32.
-// Pin that the type compiles, casts work, and arithmetic
-// stays in i32-shaped space.
 func TestWASMUsize(t *testing.T) {
 	src := `function dbl(x: usize): usize { return x + x; }
 function main(): i32 {
@@ -965,8 +751,6 @@ func TestWASMSubI32Widths(t *testing.T) {
 	}
 }
 
-// Out-of-range polymorphic literal in u8 context is rejected.
-// `let x: u8 = 300` exceeds 2^8-1 so the checker should refuse.
 func TestSubI32LiteralOverflow(t *testing.T) {
 	src := `function bad(): i32 { let x: u8 = 300; return x as i32; }`
 	prog, err := parser.Parse(src)
@@ -980,9 +764,6 @@ func TestSubI32LiteralOverflow(t *testing.T) {
 	}
 }
 
-// Owned u8 arrays. Storage is 1-byte-per-element with a 4-byte
-// length prefix; reads use `i32.load8_u`. Verifies a literal
-// of three bytes round-trips through indexing.
 func TestWASMU8Array(t *testing.T) {
 	src := `function main(): i32 {
     let bytes: u8[] = [255, 0, 66];
@@ -997,10 +778,6 @@ func TestWASMU8Array(t *testing.T) {
 	}
 }
 
-// Methods on user-defined enums. The receiver clause `(self:
-// Color)` makes `c.is_red()` resolve to a hoisted top-level
-// function `__method_Color_is_red`. Verifies dispatch on a
-// non-generic enum's payload-less variants.
 func TestWASMEnumMethod(t *testing.T) {
 	src := `enum Color { Red, Green, Blue }
 function (self: Color) is_red(): boolean {
@@ -1019,8 +796,6 @@ function main(): i32 {
 	}
 }
 
-// Methods on a generic enum (`Option[T]`). Verifies the method
-// receiver picks up `T` from the value's runtime instantiation.
 func TestWASMEnumMethodGeneric(t *testing.T) {
 	src := `function (self: Option[i32]) unwrap_or(fallback: i32): i32 {
     match (self) {
@@ -1040,12 +815,6 @@ function main(): i32 {
 	}
 }
 
-// Map[i32, i32] linear-search smoke test. Auto-injected `Map`
-// struct + `map_new(cap)` constructor; methods are
-// `m.insert(k, v)`, `m.get(k)`, `m.contains(k)`, `m.len()`. This is
-// the first cut from PR 4 in docs/LANGUAGE-DIRECTION.md;
-// generic K / V and the IndexMap fingerprint-table layout
-// land in follow-ups.
 func TestWASMMapBasics(t *testing.T) {
 	src := `
 import "core/map";
@@ -1087,14 +856,6 @@ function main(): i32 {
 	}
 }
 
-// Two `m.contains()` calls under a short-circuiting `&&` with a `!` on the
-// second operand. Regression for issue #2652: on the self-hosted wasm
-// backend `m.contains(1) && !m.contains(2)` evaluated to 0 instead of 7 — a
-// stack/value interaction between the `map_has` call sequence and the
-// `&&` short-circuit block. `m.contains(1)` is true, `m.contains(2)` is false, so
-// `!m.contains(2)` is true and the `&&` is true. The native backend always
-// agreed with the correct answer; this guards it on the result-printer
-// (wasm) harness so the cross-backend contract stays explicit.
 func TestWASMMapHasShortCircuit(t *testing.T) {
 	src := `
 import "core/map";
@@ -1109,24 +870,12 @@ function main(): i32 {
 	}
 }
 
-// Issue #2763: a value-type struct wrapping a Map (the `Set[T]` shape),
-// reconstructed through a method — `return IntSet { m: s.m.insert(...) }`.
-// The COW mutator returns the borrowed receiver's handle mutated in place,
-// so without a clone the new struct aliases the caller's map and dropping
-// the old struct frees it from under the new one (segfault on x86-64,
-// corruption elsewhere). The StructLit lowering now clones a Map field
-// initialised by a COW mutator result. Covers insert (set), a duplicate
-// (size stays 2), and a `.without` (delete) mutator on the same shape.
 func TestWASMMapFieldStructRebind(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
 		want int
 	}{
-		// `.cleared()` (the value-returning clear) also lowers to a COW
-		// mutator (__method_Map_clear) and returns a bare Map, so it can
-		// initialise the field directly — exercising the clone on the clear
-		// path. insert 10/20 (len 2), then clear → len 0.
 		{"insert-then-cleared", `
 import "core/map";
 struct IntSet { m: Map[i32, i32] }
@@ -1151,11 +900,6 @@ function main(): i32 {
 	}
 }
 
-// Map dynamic resize: insert past the initial capacity and
-// verify all entries remain reachable. Without resize this
-// would trap on `unreachable`; with resize the buffer doubles
-// (2 → 4 → 8 → 16) and the wrapper's data pointer follows
-// along.
 func TestWASMMapResize(t *testing.T) {
 	src := `
 import "core/map";
@@ -1183,10 +927,6 @@ function main(): i32 {
 	}
 }
 
-// Map.keys() / Map.values() snapshot the entries into i32[]
-// arrays in insertion order. The returned arrays are normal
-// length-prefixed `i32[]` values — `len()`, indexing, and
-// `for` work the way they do on any other array.
 func TestWASMMapKeysValues(t *testing.T) {
 	src := `
 import "core/map";
@@ -1221,12 +961,6 @@ function main(): i32 {
 	}
 }
 
-// Wide-V Map.values(): for `Map[K, i64]` / `Map[K, f64]`,
-// values are stored boxed (each entry holds a 4-byte cell
-// pointer to an 8-byte heap cell). The IR's wide-V values()
-// intercept (emitWideMapValues) follows each cell pointer
-// and `__memcpy`s the 8 payload bytes into a real wide-stride
-// `i64[]` / `f64[]` result.
 func TestWASMMapValuesWideI64(t *testing.T) {
 	src := `
 import "core/map";
@@ -1264,15 +998,6 @@ function main(): i32 {
 	}
 }
 
-// Wide-K Map ops: `Map[i64, _]` / `Map[u64, _]` / `Map[f64, _]`
-// on wasm32 — the key (8 bytes) doesn't fit the runtime's i32
-// per-entry K slot, so the IR boxes each key into a heap cell
-// and tags the map's keyKind as 2; the prelude's
-// `__map_hash` / `__map_lookup` / `__map_set_impl` /
-// `__map_delete_impl` dereference via `__load_i64` to hash and
-// compare the underlying 8-byte values. On natives `usize` is
-// already 8 bytes so the raw-stored keyKind=0 path keeps
-// working (see TestX86_64WideScalarMap / TestArm64WideScalarMap).
 func TestWASMWideKeyMapBasic(t *testing.T) {
 	src := `
 import "core/map";
@@ -1345,15 +1070,10 @@ function main(): i32 {
     return sum;
 }`
 	if got := runWasm(t, src); got != 1900 {
-		// 10 * (0+1+...+19) = 1900
 		t.Errorf("got %d, want 1900 (grow + reprobe with wide keys)", got)
 	}
 }
 
-// Hash quality smoke-test: two i64 values that differ only in
-// the high 32 bits must hash distinctly so the bucket array
-// doesn't collide on the trivial low-32 truncation. Folds the
-// upper / lower halves via XOR before Wang's mix.
 func TestWASMWideKeyMapHighBitsDistinct(t *testing.T) {
 	src := `
 import "core/map";
@@ -1396,15 +1116,6 @@ function main(): i32 {
 	}
 }
 
-// m.keys() on a wide-K map needs to materialise an `i64[]`
-// (not `i32[]`) whose elements are the full 8 bytes. The IR
-// intercepts via emitWideMapKeys: on wasm32 (keyKind=2) the
-// K slot stores a cell pointer that's followed and the cell
-// contents memcpy'd into the wide-stride result; on natives
-// the K slot stores the raw 8-byte value and is memcpy'd
-// directly. Without this intercept the prelude's
-// `__map_keys_impl` would use a 4-byte destStride and the
-// upper 4 bytes of every key would be lost.
 func TestWASMWideKeyMapKeysSnapshot(t *testing.T) {
 	src := `
 import "core/map";
@@ -1424,11 +1135,6 @@ function main(): i32 {
 	}
 }
 
-// Map.remove(k) removes a key; Map.contains(k) reports whether it
-// was present. Implementation is swap-with-last (O(1), trades
-// insertion order for speed). Verifies the basic
-// present/missing behaviour, that len decrements, and that
-// subsequent lookups return None.
 func TestWASMMapDelete(t *testing.T) {
 	src := `
 import "core/map";
@@ -1473,9 +1179,6 @@ function main(): i32 {
 	}
 }
 
-// `Map { k: v, ... }` literal syntax desugars to map_new +
-// set calls. The capacity is sized to the entry count so the
-// initial fill never triggers a resize.
 func TestWASMMapLiteral(t *testing.T) {
 	src := `
 import "core/map";
@@ -1502,10 +1205,6 @@ function main(): i32 {
 	}
 }
 
-// Sub-i32 array writes: `arr[i] = v` for byte arrays.
-// Stride-aware bounds-check helper + width-aware store
-// (i32.store8 for u8). Read path was already wired in PR 134;
-// this completes the symmetry.
 func TestWASMSubI32ArrayWrites(t *testing.T) {
 	src := `function main(): i32 {
     let bytes: u8[] = [1, 2, 3, 4];
@@ -1522,10 +1221,6 @@ func TestWASMSubI32ArrayWrites(t *testing.T) {
 	}
 }
 
-// Owned i64 / u64 arrays. 8-byte stride via __arr_idx_8;
-// loads / stores use i64.load / i64.store. Verifies that a
-// value with the high bit set round-trips through indexed
-// read.
 func TestWASMI64Array(t *testing.T) {
 	src := `function i64Sum(xs: i64[], n: i32): i64 {
     let i: i32 = 0;
@@ -1551,9 +1246,6 @@ function main(): i32 {
 	}
 }
 
-// Owned f64 arrays. 8-byte stride; loads / stores use
-// f64.load / f64.store. Verifies a literal of three f64
-// values round-trips through indexing.
 func TestWASMF64Array(t *testing.T) {
 	src := `function main(): i32 {
     let xs: f64[] = [1.5, 2.5, 3.5];
@@ -1570,9 +1262,6 @@ func TestWASMF64Array(t *testing.T) {
 	}
 }
 
-// Slice views over byte / word / wide arrays. Verifies that
-// `arr[a:b]` produces a slice with the right element stride —
-// indexing into the slice should match the underlying array.
 func TestWASMSubI32Slices(t *testing.T) {
 	src := `function main(): i32 {
     let bytes: u8[] = [10, 20, 30, 40, 50];
@@ -1600,17 +1289,6 @@ func TestWASMSubI32Slices(t *testing.T) {
 	}
 }
 
-// Slice writes mutate the underlying array's storage. The
-// IR's slice-index assignment path picks the per-stride
-// __slice_idx_N helper (same as the read path) and the
-// width-aware store op. Verifies that mutations through a
-// slice show up when reading back from the parent.
-// (Removed TestWASMSliceWrites: writing through a slice mutated the backing
-// array, which immutability (E056) forbids — slices are read-only views now.
-// Slice reads are covered by TestWASMStringSlice and the slice-read cases.)
-
-// The byte slice — `slice_unchecked(s, a, b)` returns a freshly
-// allocated substring on wasm.
 func TestWASMStringSlice(t *testing.T) {
 	src := `function main(): i32 {
     let greeting: string = "hello world";
@@ -1633,13 +1311,6 @@ func TestWASMStringSlice(t *testing.T) {
 	}
 }
 
-// The CHECKED slice — `s[a:b]` yields `Option[str]` (#5634). The wasm
-// leg is where its lowering is most at risk: the guard is a nest of
-// void-typed ifs writing a result slot, and a value pushed outside an
-// if-scope and consumed inside is a validator rejection rather than a
-// wrong answer, so the module has to be built and RUN to know. Both
-// `None` shapes (out of range, split code point) and the open forms
-// have to survive that, as does the abort NOT happening.
 func TestWASMStringSliceOption(t *testing.T) {
 	src := `function main(): i32 {
     let g: string = "hello world";
@@ -1662,10 +1333,6 @@ func TestWASMStringSliceOption(t *testing.T) {
 	}
 }
 
-// String methods: starts_with / ends_with / contains. Built-in
-// runtime helpers; method-call dispatch on string targets is
-// wired through the same `__method_<TypeName>_<Name>` mangling
-// the rest of the language uses.
 func TestWASMStringMethods(t *testing.T) {
 	src := `
 import "std/string";
@@ -1696,7 +1363,6 @@ function main(): i32 {
 	}
 }
 
-// More string methods: index_of, trim, to_lower, to_upper.
 func TestWASMStringMethodsExtra(t *testing.T) {
 	src := `
 import "std/string";
@@ -1730,9 +1396,6 @@ function main(): i32 {
 	}
 }
 
-// String split: returns string[] of substrings between
-// occurrences of the separator. An empty separator splits into
-// one string per codepoint.
 func TestWASMStringSplit(t *testing.T) {
 	src := `
 import "std/string";
@@ -1777,12 +1440,6 @@ function main(): i32 {
 	}
 }
 
-// `type X = A | B | C;` unions on wasm — the desugaring
-// produces a synthesised EnumDecl whose variants each carry
-// the named struct as a single positional payload. Verifies
-// the full wasm pipeline survives the new top-level decl shape
-// (`prog.Unions` flowing through modload's combine, checker's
-// desugar, and the unchanged IR / codegen path).
 func TestWASMUnions(t *testing.T) {
 	src := `struct Add { l: i32, r: i32 }
 struct Mul { l: i32, r: i32 }
@@ -1809,8 +1466,6 @@ function main(): i32 {
 	}
 }
 
-// Union member that doesn't name a struct fails at the
-// checker level with a clear message — no IR-time crash.
 func TestUnionUnknownMemberErrors(t *testing.T) {
 	src := `struct A { x: i32 }
 type Foo = A | Missing;
@@ -1829,9 +1484,6 @@ function main(): i32 { return 0; }`
 	}
 }
 
-// Implicit struct → union wrap on wasm. Same source as the
-// arm64 + x86 mirrors. Verifies the wrap-and-re-check pass
-// integrates with the existing wasm enum lowering.
 func TestWASMUnionImplicitWrap(t *testing.T) {
 	src := `struct Add { l: i32, r: i32 }
 struct Mul { l: i32, r: i32 }
@@ -1863,10 +1515,6 @@ function main(): i32 {
 	}
 }
 
-// `s.lines()` — Python `splitlines` / Go `bufio.Scanner` shape.
-// Splits on '\n', strips a trailing '\r' from each line (CRLF
-// → LF), and drops the phantom empty line a final '\n' would
-// otherwise produce.
 func TestWASMStringLines(t *testing.T) {
 	src := `
 import "std/string";
@@ -1926,8 +1574,6 @@ function main(): i32 {
 	}
 }
 
-// String replace: substitutes every non-overlapping occurrence
-// of the old pattern with the new value.
 func TestWASMStringReplace(t *testing.T) {
 	src := `
 import "std/string";
@@ -1945,10 +1591,6 @@ function main(): i32 {
 	}
 }
 
-// `n.to_string()` on each integer width. Method-syntax sugar
-// over the existing decimal formatter; the wrappers go through
-// a shared `__int_to_string_u64(magnitude, neg)` core that
-// handles every signed / unsigned / 32 / 64 case.
 func TestWASMNumberToString(t *testing.T) {
 	src := `
 import "std/i32";
@@ -1982,8 +1624,6 @@ function main(): i32 {
 	}
 }
 
-// `s.bytes(): u8[]` and the inverse `string_from_bytes_unchecked(bs)`.
-// Round-trip should preserve content and length.
 func TestWASMStringBytes(t *testing.T) {
 	src := `
 import "std/string";
@@ -2014,11 +1654,6 @@ function main(): i32 {
 	}
 }
 
-// `s.as_bytes(): [u8]` — non-copying view companion to
-// `s.bytes()`. The slice's data_ptr aliases the source
-// string's payload, so mutations through the view *do*
-// propagate back. Reads match the equivalent `bytes()`
-// values byte-for-byte.
 func TestWASMStringAsBytes(t *testing.T) {
 	src := `
 import "std/string";
@@ -2052,10 +1687,6 @@ function main(): i32 {
 	}
 }
 
-// `s.is_empty()` is a length-zero shorthand; `s.repeat(n)`
-// concatenates n copies of s. Covers the empty-string base
-// case, n <= 0 → empty, n == 1 → identity, and a couple of
-// larger n values.
 func TestWASMStringIsEmptyAndRepeat(t *testing.T) {
 	src := `
 import "std/string";
@@ -2089,11 +1720,6 @@ function main(): i32 {
 	}
 }
 
-// `s.parse_int(): Option[i32]` — decimal parser. Covers
-// success cases (positive, negative, single digit, zero,
-// boundary values 2^31-1 / -2^31), and failure cases
-// (empty, lone "-", non-digit, embedded space, overflow,
-// trailing garbage).
 func TestWASMParseInt(t *testing.T) {
 	src := `
 import "std/string";
@@ -2147,11 +1773,6 @@ function main(): i32 {
 	}
 }
 
-// `s.parse_float(): Option[f64]` — accepts integer-only,
-// integer.fraction, .fraction, and exponent forms. Parsing is
-// correctly-rounded (round-half-to-even, bit-exact with strconv;
-// #5566) — the bit-exact guard is TestParseFloatCorrectlyRounded;
-// this test pins the grammar (accepted / rejected shapes).
 func TestWASMParseFloat(t *testing.T) {
 	src := `
 import "std/string";
@@ -2222,17 +1843,6 @@ function near(actual: f64, expected: f64, eps: f64): boolean {
 	}
 }
 
-// Map[string, V] with single-i32 SSO inline-form keys (≤ 3
-// bytes — "a", "ok", "GET", `int_to_string(42)`, etc.). The
-// prelude's `__map_hash` reads each byte via `s[i]`, which
-// lowers through `$__str_idx`; that helper now uses a one-shot
-// scratch-slot spill on inline-form bases (PR #366) so the
-// hash-loop allocates zero bytes per key. Verify the path
-// round-trips set + get + has + delete + update + miss across
-// a mix of inline-form ASCII keys, integer-formatted keys (the
-// canonical cascade through `int_to_string` →
-// `$string_from_bytes_unchecked` inline output), and a longer heap-form
-// key for the bucket-collision dispatch path.
 func TestWASMMapStringKeysInlineSSO(t *testing.T) {
 	src := `
 import "core/map";
@@ -2306,9 +1916,6 @@ function main(): i32 {
 	}
 }
 
-// String-keyed Map[string, i32]. Same API as Map[i32, i32];
-// equality at the runtime layer dispatches to byte-level
-// strcmp via the buffer's keyKind tag.
 func TestWASMMapStringKeys(t *testing.T) {
 	src := `
 import "core/map";
@@ -2357,7 +1964,6 @@ function main(): i32 {
 	}
 }
 
-// Map[string, string]. Both K and V are pointer-sized.
 func TestWASMMapStringStringValues(t *testing.T) {
 	src := `
 import "core/map";
@@ -2386,13 +1992,6 @@ function main(): i32 {
 	}
 }
 
-// Stress-test the IndexMap probe + resize machinery: insert
-// 100 entries (more than fits in any single resize step),
-// look each one back up, delete every other entry, verify
-// the surviving keys still look up correctly. Exercises
-// linear probing on hash collisions (Wang-mix for i32 won't
-// avoid them at scale), resize-on-load-factor, and
-// tombstone handling on delete.
 func TestWASMMapHashStress(t *testing.T) {
 	src := `
 import "core/map";
@@ -2474,9 +2073,6 @@ function main(): i32 {
 	}
 }
 
-// String-keyed stress test using a deterministic key
-// generator to exercise the FNV-1a path's collision
-// behaviour at scale.
 func TestWASMMapStringHashStress(t *testing.T) {
 	src := `
 import "core/map";
@@ -2520,10 +2116,6 @@ function main(): i32 {
 	}
 }
 
-// Non-allocating cursor iteration via `m.iter()`. Walks the
-// entries in insertion order using has_next / key / value /
-// advance. The MapIter struct is allocated once per loop;
-// each step is just a load + arithmetic.
 func TestWASMMapIter(t *testing.T) {
 	src := `
 import "core/map";
@@ -2553,14 +2145,6 @@ function main(): i32 {
 	}
 }
 
-// `for (k, v) in m { ... }` desugars at parse time to the
-// MapIter cursor loop — same control flow as the manual
-// `it.has_next()` / `it.key()` / `it.value()` / `it.advance()`
-// shape exercised above, but without the per-call-site
-// boilerplate. Continue inside the body still advances the
-// cursor (the synthesised For carries `it.advance()` on its
-// Step slot, so `continue` jumps to the step before
-// re-checking the cond).
 func TestWASMForTupleInMap(t *testing.T) {
 	src := `
 import "core/map";
@@ -2606,16 +2190,7 @@ function main(): i32 {
 	}
 }
 
-// Wide-V Map: Map[K, i64] / Map[K, f64] need a boxing step
-// since the shared wat helpers see all values as i32. The IR
-// allocates an 8-byte cell on each set / get_or-fallback, stores
-// the wide value there, and passes / returns the cell pointer
-// transparently. get translates the helper's Option[i32] into
-// a real wide-payload Option[V] inline; MapIter.value()
-// dereferences the returned pointer.
 func TestWASMMapValueI64(t *testing.T) {
-	// 4294967296 = 2^32 — picks the entire upper word so a
-	// truncating store would visibly clear the high bits.
 	src := `
 import "core/map";
 function main(): i32 {
@@ -2645,9 +2220,6 @@ function main(): i32 {
 	}
 }
 
-// `Map[string, f64]` — same boxing path, exercised through
-// f64.store / f64.load on the wide-V cell + the wide-payload
-// Option[f64] return projection.
 func TestWASMMapValueF64(t *testing.T) {
 	src := `
 import "core/map";
@@ -2680,10 +2252,6 @@ function main(): i32 {
 	}
 }
 
-// Map literal with wide values — same boxing path the user-side
-// `m.insert(k, v)` uses; the literal lowering pre-allocates a cell
-// for each entry's value before calling the shared
-// `__method_Map_set` helper.
 func TestWASMMapLiteralWideValue(t *testing.T) {
 	src := `
 import "core/map";
@@ -2700,9 +2268,6 @@ function main(): i32 {
 	}
 }
 
-// MapIter.value() with wide V: the helper still returns a cell
-// pointer (wat side stays i32), and the IR unboxes it on the
-// way out.
 func TestWASMMapIterValueWide(t *testing.T) {
 	src := `
 import "core/map";
@@ -2722,9 +2287,6 @@ function main(): i32 {
 	}
 }
 
-// Cursor iteration over a string-keyed map. Verifies the
-// type-system substitution returns string-typed key /
-// i32-typed value at the call site.
 func TestWASMMapIterStringKeys(t *testing.T) {
 	src := `
 import "core/map";
@@ -2747,10 +2309,6 @@ function main(): i32 {
 	}
 }
 
-// base64 round-trip: encode arbitrary bytes, decode back,
-// verify equality. Covers the full alphabet (A-Z, a-z, 0-9,
-// +, /), no-padding (3-byte aligned), 1-byte-padding (length
-// % 3 == 1), and 2-byte-padding (length % 3 == 2) inputs.
 func TestWASMBase64(t *testing.T) {
 	src := `
 import "core/int";
@@ -2780,11 +2338,6 @@ function main(): i32 {
 	}
 }
 
-// `defer EXPR;` schedules the expression to run when the
-// enclosing function exits. Multiple defers run in LIFO
-// order; conditionally-registered defers (inside an if-branch
-// that didn't fire) are no-ops via per-defer "active" flags.
-// Side effects are observed through a Cell, which a callee writes in place.
 func TestWASMDeferBasic(t *testing.T) {
 	src := `
 function inner(trace: Cell[i32]): i32 {
@@ -2807,8 +2360,6 @@ function main(): i32 {
 	}
 }
 
-// Conditionally-registered defer: a defer inside an
-// if-branch that doesn't run shouldn't fire at function exit.
 func TestWASMDeferConditional(t *testing.T) {
 	src := `
 function run(fired: Cell[i32], taken: boolean): i32 {
@@ -2832,7 +2383,6 @@ function main(): i32 {
 	}
 }
 
-// Defer fires before each return, even early returns.
 func TestWASMDeferEarlyReturn(t *testing.T) {
 	src := `
 function early(counts: Cell[i32], branch: i32): i32 {
@@ -2858,9 +2408,6 @@ function main(): i32 {
 	}
 }
 
-// `m.get_or(k, default)` returns the existing value or the
-// supplied default. Saves the `if let Some(v) = m.get(k) {
-// v } else { d }` ceremony for the common-case lookup.
 func TestWASMMapGetOr(t *testing.T) {
 	src := `
 import "core/map";
@@ -2881,9 +2428,6 @@ function main(): i32 {
 	}
 }
 
-// `m.cleared()` resets the map back to empty without freeing
-// the kv buffer. Subsequent inserts reuse the existing
-// allocation and re-grow if needed.
 func TestWASMMapClear(t *testing.T) {
 	src := `
 import "core/map";
@@ -2917,8 +2461,6 @@ function main(): i32 {
 	}
 }
 
-// String-keyed Map literal — KeyType is inferred from the
-// first key, so the IR's map_new call gets keyKind=1.
 func TestWASMMapStringKeyLiteral(t *testing.T) {
 	src := `
 import "core/map";
@@ -2940,11 +2482,6 @@ function main(): i32 {
 	}
 }
 
-// f64 arithmetic round-trips through addition + comparison. Same
-// shape as the i64 test but for double-precision floats.
-// Verifies the polymorphic float literal `0.5` settles to f64
-// from the var annotation, the arithmetic compiles to `f64.add`,
-// and the comparison to `f64.eq`.
 func TestWASMF64Arithmetic(t *testing.T) {
 	src := `function add64f(x: f64, y: f64): f64 { return x + y; }
 function main(): i32 {
@@ -2957,9 +2494,6 @@ function main(): i32 {
 	}
 }
 
-// f32 ↔ f64 cast support. `as f64` widens (f64.promote_f32);
-// `as f32` narrows (f32.demote_f64). Verifies both directions
-// round-trip a value through the cast.
 func TestWASMFloatCasts(t *testing.T) {
 	src := `function main(): i32 {
     let a: f32 = 1.25;
@@ -2973,8 +2507,6 @@ func TestWASMFloatCasts(t *testing.T) {
 	}
 }
 
-// Mixing f32 and f64 without an explicit cast is a checker
-// error — same rule as i32/i64.
 func TestF32F64MixRejected(t *testing.T) {
 	src := `function bad(): f64 { let x: f32 = 1.0; let y: f64 = 2.0; return x + y; }`
 	prog, err := parser.Parse(src)
@@ -2986,12 +2518,6 @@ func TestF32F64MixRejected(t *testing.T) {
 	}
 }
 
-// u32 unsigned arithmetic. Verifies wasm picks `_u` variants of
-// div/rem/shr/compare. 0xFFFFFFFF interpreted as u32 is
-// 4_294_967_295, so dividing by 2 unsigned gives 0x7FFFFFFF
-// (2_147_483_647); the same bit-pattern read as i32 would be
-// -1 / 2 = 0. Comparing 0xFFFFFFFF unsigned > 1 is true; the
-// signed reading would give -1 > 1 = false.
 func TestWASMU32Unsigned(t *testing.T) {
 	src := `function main(): i32 {
     let x: u32 = 4294967295;
@@ -3006,12 +2532,6 @@ func TestWASMU32Unsigned(t *testing.T) {
 	}
 }
 
-// u64 unsigned arithmetic. Builds a value with the high bit set
-// via `1 << 63` (the literals settle to u64 from `let x: u64`)
-// and checks div / compare under unsigned semantics: dividing
-// the high-bit-set value by 2 should equal `1 << 62`, and x > 1
-// should be true (under signed it would be false because the
-// top bit reads as a sign bit).
 func TestWASMU64Unsigned(t *testing.T) {
 	src := `function main(): i32 {
     let x: u64 = 1 << 63;
@@ -3025,9 +2545,6 @@ func TestWASMU64Unsigned(t *testing.T) {
 	}
 }
 
-// Mixing u32 with i32 without a cast is a checker error — same
-// rule as i32/i64. Signedness is part of the integer type, so
-// the implicit-widening rejection applies here too.
 func TestU32SignedMixRejected(t *testing.T) {
 	src := `function bad(): i32 { let x: i32 = 1; let y: u32 = 2 as u32; return x + y; }`
 	prog, err := parser.Parse(src)
@@ -3039,11 +2556,6 @@ func TestU32SignedMixRejected(t *testing.T) {
 	}
 }
 
-// Tuple multi-return + numeric field access. divmod returns a
-// 2-tuple; main destructures it via `.0` / `.1` (full pattern
-// destructuring `let (q, r) = ...` lands in a follow-up).
-// Exercises TupleLit construction (heap-alloc + per-element
-// store), TupleType return slot, and numeric-index FieldAccess.
 func TestWASMTupleMultiReturn(t *testing.T) {
 	src := `function divmod(a: i32, b: i32): (i32, i32) {
     return (a / b, a - (a / b) * b);
@@ -3058,11 +2570,6 @@ function main(): i32 {
 	}
 }
 
-// Pipe operator `|>` — data-first call sugar. `x |> f(a, b)`
-// desugars at parse time to `f(x, a, b)`. Chains left-associate
-// so `x |> f |> g` is `g(f(x))`. Below uses single-arg piping
-// (`5 |> double` → `double(5)`) plus prepending into an existing
-// arg list (`x |> add(3)` → `add(x, 3)`).
 func TestWASMPipeOperator(t *testing.T) {
 	src := `function double(n: i32): i32 { return n * 2; }
 function add(a: i32, b: i32): i32 { return a + b; }
@@ -3078,12 +2585,6 @@ function main(): i32 {
 	}
 }
 
-// Generic functions: `function id[T](x: T): T { return x; }`.
-// The checker infers T from the argument type; the
-// monomorphisation pass clones the decl into one copy per
-// concrete instantiation. This test exercises the full
-// pipeline: parse → check (with inference) → monomorph
-// (rewriting `id` to `id__i32`) → IR / codegen.
 func TestWASMGenericFunctionInfersFromArg(t *testing.T) {
 	src := `function id[T](x: T): T { return x; }
 function main(): i32 {
@@ -3097,10 +2598,6 @@ function main(): i32 {
 	}
 }
 
-// Same generic, two distinct instantiations — `first[i32]` and
-// `first[string]`. Verifies the monomorphisation pass produces
-// independent clones (not erased dispatch) and the call sites
-// pick the right one.
 func TestWASMGenericFunctionMultipleInstantiations(t *testing.T) {
 	src := `function first[T](xs: T[]): T { return xs[0]; }
 function main(): i32 {
@@ -3117,11 +2614,6 @@ function main(): i32 {
 	}
 }
 
-// Generic struct: `struct Pair[A, B] { first: A, second: B }`.
-// Field types use the type parameters; the checker stamps
-// inferred type-args on the struct literal, the monomorpher
-// clones a Pair__i32__string decl per concrete instantiation,
-// and field access through Pair[i32, string].first returns i32.
 func TestWASMGenericStructInfersAndMonomorphises(t *testing.T) {
 	src := `struct Pair[A, B] { first: A, second: B }
 function main(): i32 {
@@ -3135,11 +2627,6 @@ function main(): i32 {
 	}
 }
 
-// Generic function over a generic struct — exercises the
-// monomorpher's per-clone substitution + the post-clone type-
-// slot mangling pass: unbox[T](b: Box[T]): T gets cloned at
-// T=i32 and T=string with param types Box[i32] / Box[string]
-// respectively, both then mangled to Box__i32 / Box__string.
 func TestWASMGenericFunctionOverGenericStruct(t *testing.T) {
 	src := `struct Box[T] { val: T }
 function unbox[T](b: Box[T]): T { return b.val; }
@@ -3155,17 +2642,6 @@ function main(): i32 {
 	}
 }
 
-// `use IDENT : TYPE <- EXPR;` desugars at parse time into a
-// synthesised local callback function whose body is the rest of
-// the enclosing block. The desugar is Gleam-style — it
-// generalises Result-chaining without a typeclass / monad
-// system, since the callback signature is whatever the
-// receiving function expects.
-// `use` without an explicit type annotation: the checker peeks
-// at the receiving function's callback parameter type and fills
-// in the binding's type automatically. Same shape as the
-// annotated `use IDENT: T <- ...` test, but with the `: T`
-// dropped on both lines.
 func TestWASMUseInferredType(t *testing.T) {
 	src := `function tryThing(callback: (i32) => Option[i32]): Option[i32] {
     return callback(42);
@@ -3185,11 +2661,6 @@ function main(): i32 {
 	}
 }
 
-// `use n <- generic_fn(args)` infers n's type by solving the
-// callee's type parameters from the actual args. Without this
-// the binding stayed as the unresolved ParamType `T`, and any
-// subsequent use of `n` (e.g. `n + 1`) failed type-checking
-// with "operator + requires an integer type, got T".
 func TestWASMUseInferredTypeFromGenericCallee(t *testing.T) {
 	src := `function each[T](items: T[], cb: (T) => i32): i32 {
     return cb(items[0]);
@@ -3204,9 +2675,6 @@ function main(): i32 {
 	}
 }
 
-// Inference through an Option[T] arg position: the callback's
-// first param is T, and T is bound by the actual Option[i32]
-// argument shape.
 func TestWASMUseInferredTypeThroughEnumPayload(t *testing.T) {
 	src := `function try_opt[T](opt: Option[T], cb: (T) => i32): i32 {
     if let Some(v) = opt { return cb(v); }
@@ -3241,10 +2709,6 @@ function main(): i32 {
 	}
 }
 
-// Chained `use` — each one consumes the rest of the block as
-// its callback's body, producing a series of nested closures.
-// Inner closure captures the outer closure's binding (`a` in
-// the body of __use_1 references __use_2's param).
 func TestWASMUseChained(t *testing.T) {
 	src := `function tryThing(cb: (i32) => Option[i32]): Option[i32] { return cb(10); }
 function tryOther(cb: (i32) => Option[i32]): Option[i32] { return cb(20); }
@@ -3264,12 +2728,6 @@ function main(): i32 {
 	}
 }
 
-// `let Variant(b) = expr else { divergent };` —
-// pattern-binding declaration with mandatory-divergent else.
-// Bindings flow into the enclosing scope, so subsequent
-// statements see them as if they were declared via `let`.
-// The else branch must terminate the surrounding control
-// flow; the checker enforces this at compile time.
 func TestWASMLetElseHappyPath(t *testing.T) {
 	src := `function getOpt(): Option[i32] { return Some(42); }
 function main(): i32 {
@@ -3281,9 +2739,6 @@ function main(): i32 {
 	}
 }
 
-// Mismatch path: source returns None, else block runs and
-// returns 1. Verifies the bindings stay unread on the diverging
-// path so the lowering doesn't trip on uninitialised slots.
 func TestWASMLetElseMismatchDiverges(t *testing.T) {
 	src := `function getOpt(): Option[i32] { return None; }
 function main(): i32 {
@@ -3295,10 +2750,6 @@ function main(): i32 {
 	}
 }
 
-// `if let Variant(b) = expr { … }` — pattern-binding without
-// the match ceremony. Common need in HTTP handlers / Result
-// chains where you want to unwrap one variant and proceed flat
-// instead of nesting in `match`.
 func TestWASMIfLetMatch(t *testing.T) {
 	src := `function main(): i32 {
     let o: Option[i32] = Some(42);
@@ -3312,8 +2763,6 @@ func TestWASMIfLetMatch(t *testing.T) {
 	}
 }
 
-// `if let` with a non-matching variant + an `else` branch — the
-// else runs and the bindings from the pattern aren't in scope.
 func TestWASMIfLetMismatchTakesElse(t *testing.T) {
 	src := `function main(): i32 {
     let o: Option[i32] = None;
@@ -3329,12 +2778,6 @@ func TestWASMIfLetMismatchTakesElse(t *testing.T) {
 	}
 }
 
-// Match guards: `<pattern> when <bool> => <body>`. The guard
-// runs with the pattern's bindings in scope; if it evaluates to
-// false the arm is skipped and the match falls through to the
-// next arm. Exhaustiveness is conservative — a guarded arm
-// doesn't count as covering the variant, so a fallback arm (or
-// `_`) is required.
 func TestWASMMatchGuards(t *testing.T) {
 	src := `function classify(o: Option[i32]): i32 {
     match (o) {
@@ -3357,24 +2800,12 @@ function main(): i32 {
 	}
 }
 
-// Re-binding the SAME name across two match arms (a guarded `Rect(p)`
-// followed by an unguarded `Rect(p)`, each reading `p`). Regression for
-// issue #2644, which reported the wasm backend reading the wrong value
-// for the guarded arm's payload bind when a later arm re-binds the same
-// name — i.e. the two `p` bindings colliding on one slot. Each arm must
-// get its own binding slot so the guard reads the right `p.x` and the
-// fall-through arm reads its own `p`. Every sub-case is also a
-// cross-backend contract: x86-64 / interp produce the same values (the
-// issue's core complaint was an x86-64-vs-wasm divergence), guarded here
-// on the result-printer harness.
 func TestWASMMatchRebindSameName(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
 		want int
 	}{
-		// The issue's exact repro: guard true → first arm → 4*5=20, so
-		// 20*10 + area(Dot)=1 == 201.
 		{"issue-repro", `
 struct P { x: i32, y: i32 }
 enum Shape { Dot, Rect(P) }
@@ -3387,11 +2818,6 @@ function area(s: Shape): i32 {
     return 0;
 }
 function main(): i32 { return area(Rect(P { x: 4, y: 5 })) * 10 + area(Dot); }`, 201},
-		// Guard false → falls through to the unguarded arm, which reads
-		// its OWN `p` (p.y == 5) → 105.
-		// Three arms binding `p`, two guarded: the middle guard (p.x > 5)
-		// wins for x=7 → p.x*2 == 14.
-		// i32-payload re-bind across a guarded + unguarded arm.
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -3402,11 +2828,6 @@ function main(): i32 { return area(Rect(P { x: 4, y: 5 })) * 10 + area(Dot); }`,
 	}
 }
 
-// over the parent's storage. Verifies len + indexing on a slice
-// over an owned array AND sub-slicing (slice-of-slice).
-// Exercises the new $__slice_make + $__slice_idx runtime helpers,
-// plus the `len(slice)` codegen path that loads length from
-// `slice + 4` instead of `arr - 4`.
 func TestWASMSliceViews(t *testing.T) {
 	src := `function main(): i32 {
     let arr: i32[] = [10, 20, 30, 40, 50];
@@ -3425,8 +2846,6 @@ func TestWASMSliceViews(t *testing.T) {
 	}
 }
 
-// `arr[:b]` and `arr[a:]` — half-bounded slice forms. Low
-// defaults to 0; high defaults to len(source).
 func TestWASMSliceHalfBoundedForms(t *testing.T) {
 	src := `function main(): i32 {
     let arr: i32[] = [1, 2, 3, 4, 5];
@@ -3441,8 +2860,6 @@ func TestWASMSliceHalfBoundedForms(t *testing.T) {
 	}
 }
 
-// Heterogeneous tuples — i32 and string in the same value.
-// Exercises mixing pointer and integer fields in the heap layout.
 func TestWASMTupleHeterogeneous(t *testing.T) {
 	src := `function pair(): (i32, string) { return (42, "hello"); }
 function main(): i32 {
@@ -3455,16 +2872,6 @@ function main(): i32 {
 	}
 }
 
-// Generic struct methods with their own type parameters:
-// `function [T] (b: Box[T]) unwrap(): T`. The type params come
-// BEFORE the receiver so the receiver's type (`Box[T]`) can
-// reference them — by the time the parser reads `Box[T]`, T is
-// already known as a type parameter and resolveType rewrites it
-// as ParamType. The existing method machinery (mangle to
-// `__method_Box_unwrap`) + the generic-function monomorphisation
-// pipeline together cover the lowering: each call site like
-// `b.unwrap()` where b: Box[i32] instantiates the method with
-// T = i32, producing a `__method_Box_unwrap__i32` clone.
 func TestWASMGenericStructMethod(t *testing.T) {
 	src := `struct Box[T] { value: T }
 pub function [T] (b: Box[T]) unwrap(): T { return b.value; }
@@ -3503,7 +2910,6 @@ function main(): i32 {
 	}
 }
 
-// Multiple type params + multiple methods sharing receiver shape.
 func TestWASMGenericStructMethodMultipleTypeParams(t *testing.T) {
 	src := `struct Pair[A, B] { a: A, b: B }
 pub function [A, B] (p: Pair[A, B]) first(): A { return p.a; }
@@ -3517,14 +2923,6 @@ function main(): i32 {
 	}
 }
 
-// Generic method that builds a Box[T] in its body. The monomorph
-// pass needs to defer the StructLit-TypeName mangling for
-// ParamType-bearing TypeArgs (pre-clone), then re-mangle after
-// substituteBlock has replaced T with the concrete instantiation
-// arg. Without that two-phase walk, the body's `Box { value: v }`
-// kept its placeholder `Box__T` TypeName after cloning and the
-// re-check failed with `return type mismatch: function returns
-// Box__i32 but expression is Box__T`.
 func TestWASMGenericMethodReturnsBoxOfT(t *testing.T) {
 	src := `struct Box[T] { value: T }
 pub function [T] (b: Box[T]) replace(v: T): Box[T] {
@@ -3540,15 +2938,6 @@ function main(): i32 {
 	}
 }
 
-// Mutual recursion of sibling local FuncDecls: each function
-// calls the other, both declared in the same block. Detection
-// runs as a Tarjan SCC walk in the checker pre-pass; SCC
-// members pre-bind their names in scope (so forward refs
-// type-check) and skip the capture path. closureconv emits a
-// null-env direct-call rewrite for each sibling call inside an
-// SCC — both hoisted closures lower to zero-capture closures
-// and the body's sibling calls bypass the env entirely,
-// avoiding the cyclic-env-init problem.
 func TestWASMMutualRecursionLocalFns(t *testing.T) {
 	src := `function main(): i32 {
     function isEven(n: i32): boolean {
@@ -3567,9 +2956,6 @@ func TestWASMMutualRecursionLocalFns(t *testing.T) {
 	}
 }
 
-// Three-way mutual recursion: a → b → c → a. Tarjan picks all
-// three as a single SCC of size 3 so the same null-env rewrite
-// applies to every call edge.
 func TestWASMMutualRecursionThreeWay(t *testing.T) {
 	src := `function main(): i32 {
     function a(n: i32): i32 {
@@ -3586,21 +2972,11 @@ func TestWASMMutualRecursionThreeWay(t *testing.T) {
     }
     return a(6);
 }`
-	// a(6) → 1+b(5) → 1+2+c(4) → 1+2+3+a(3) → 1+2+3+1+b(2) → 1+2+3+1+2+c(1) → 1+2+3+1+2+3+a(0) = 12
 	if got := runWasm(t, src); got != 12 {
 		t.Errorf("got %d, want 12", got)
 	}
 }
 
-// `((x) => { … })(arg)` — calling a lambda immediately at
-// the definition site. The Lambda lowers via closureconv to a
-// MakeClosure expression; the IR's `call()` dispatch now
-// recognises *ast.Lambda AND *ast.MakeClosure callees (the
-// closureconv pass rewrites Lambda → MakeClosure before the IR
-// builder runs, so the MakeClosure branch is the one that fires
-// in practice; the Lambda branch covers paths that bypass
-// closureconv). Same OpCallIndirect shape function-typed locals
-// already use.
 func TestWASMImmediateLambdaCall(t *testing.T) {
 	src := `function main(): i32 {
     let n: i32 = ((x: i32): i32 => { return x * 2; })(21);
@@ -3611,16 +2987,6 @@ func TestWASMImmediateLambdaCall(t *testing.T) {
 	}
 }
 
-// Lambda inside a generic function — the lambda's params /
-// return type may reference the enclosing function's type
-// parameters. Pre-fix the checker's resolveTypesInBlock didn't
-// descend into expression-position Lambda nodes so the lambda's
-// `T` stayed as `StructType{T}` and the outer's declared
-// `(T) => T` (parser-built as `*FuncType[ParamType{T}]`) didn't
-// match. The Lambda case in checkExpr now resolves the lambda's
-// types against `c.current.TypeParams`; monomorph also walks
-// into Lambda for substitution and cloning so each
-// instantiation gets a fresh body with the concrete type.
 func TestWASMLambdaInGenericFn(t *testing.T) {
 	src := `function makeId[T](): (T) => T {
     return (x: T): T => { return x; };
@@ -3634,13 +3000,6 @@ function main(): i32 {
 	}
 }
 
-// Generic call-site type arguments: `f[T](args)`. Most generic
-// calls already infer T from argument types, but the explicit
-// form helps when inference would otherwise fail — e.g.
-// nullary generics or unconstrained type parameters. The
-// disambiguator between this and `arr[i](x)` requires the
-// bracket to lead with a type keyword (i32, u32, string, …),
-// keeping the indexing path untouched.
 func TestWASMGenericCallTypeArg(t *testing.T) {
 	src := `function pickFirst[T](a: T, b: T): T { return a; }
 function main(): i32 {
@@ -3664,11 +3023,6 @@ function main(): i32 {
 	}
 }
 
-// Match on literal patterns: `match (n) { 0 => …, 1 => …, _ => … }`
-// for number / string / bool scrutinees. The checker dispatches
-// to `checkLiteralMatch` when the scrutinee isn't an enum; the
-// IR lowers as an if-else-if chain (eq-test per arm, wildcard
-// fall-through). Exhaustiveness requires a trailing unguarded `_`.
 func TestWASMMatchLiteralInt(t *testing.T) {
 	src := `function main(): i32 {
     let n: i32 = 1;
@@ -3750,14 +3104,6 @@ function main(): i32 {
 	}
 }
 
-// Anonymous function expressions (lambdas). `function (x: T): R
-// { body }` in expression position. The parser emits an `*ast.Lambda`
-// node; the checker treats it like a local FuncDecl (captures
-// analysis runs against the surrounding scope chain); closureconv
-// hoists a synthetic top-level `__lambda_<N>` FuncDecl and rewrites
-// the Lambda expression to a MakeClosure at its source location.
-// End-to-end shape is identical to a named local FuncDecl that's
-// immediately returned / passed — the lambda just elides the name.
 func TestWASMLambdaBasic(t *testing.T) {
 	src := `function main(): i32 {
     let f = (x: i32): i32 => { return x + 1; };
@@ -3802,10 +3148,6 @@ function main(): i32 {
 	}
 }
 
-// `let (a, b) = expr;` tuple destructuring — alternative to
-// `let (a, b) = expr;` for symmetry with regular `let name = …;`
-// declarations. The parser detects the `(` after `let` and routes
-// to the same parseTupleDestructure path the `let` form uses.
 func TestWASMVarTupleDestructure(t *testing.T) {
 	src := `function getit(): (i64, i32) {
     return (1000000000000i64, 42);
@@ -3821,9 +3163,6 @@ function main(): i32 {
 	}
 }
 
-// `else if` chained in an *expression* IfExpr (not just the
-// statement form). The recursive IfExpr stands in for the else
-// arm, exactly mirroring the statement-level dispatch.
 func TestWASMElseIfExpr(t *testing.T) {
 	src := `function classify(n: i32): i32 {
     return if (n > 0) { 1 }
@@ -3841,14 +3180,6 @@ function main(): i32 {
 	}
 }
 
-// Array / slice of function-typed elements: `((T) => R)[]` and
-// `[(T) => R]`. The single-element-parens case in the type
-// parser now treats them as a grouping wrapper so the inner
-// FuncType resolves cleanly before the trailing `[]` / `[low:hi]`
-// suffix. Calling `arr[i](args)` then goes through OpCallIndirect
-// the same way function-typed locals do — the IR's `call()`
-// dispatch was extended to recognise `*ast.Index` callees whose
-// element type is a `*ast.FuncType`.
 func TestWASMArrayOfClosures(t *testing.T) {
 	src := `function makeAdder(n: i32): (i32) => i32 {
     function add(x: i32): i32 { return x + n; }
@@ -3858,7 +3189,6 @@ function main(): i32 {
     let arr: ((i32) => i32)[] = [makeAdder(1), makeAdder(10), makeAdder(100)];
     return arr[0](1) + arr[1](2) + arr[2](3);
 }`
-	// (1 + 1) + (10 + 2) + (100 + 3) = 117
 	if got := runWasm(t, src); got != 117 {
 		t.Errorf("got %d, want 117 (array of closures)", got)
 	}
@@ -3874,18 +3204,11 @@ function main(): i32 {
     let sl: [(i32) => i32] = arr[1:3];
     return sl[0](10) + sl[1](10);
 }`
-	// (10 + 2) + (10 + 3) = 25
 	if got := runWasm(t, src); got != 25 {
 		t.Errorf("got %d, want 25 (slice of closures)", got)
 	}
 }
 
-// Closure created inside a loop body captures the iteration's
-// per-iteration `ic` binding — each closure value reads its
-// own captured slot, NOT the loop variable's final value. `ic`
-// is re-DECLARED (never assigned) each iteration, so it is not
-// boxed into a shared cell (#5301 boxes only captured-and-
-// assigned locals) and every closure keeps its own binding.
 func TestWASMClosureInLoopCapturesIterVar(t *testing.T) {
 	src := `function main(): i32 {
     let arr: ((i32) => i32)[] = [];
@@ -3898,20 +3221,11 @@ func TestWASMClosureInLoopCapturesIterVar(t *testing.T) {
     }
     return arr[0](10) + arr[1](10) + arr[2](10);
 }`
-	// arr[0]: 10+0 = 10
-	// arr[1]: 10+1 = 11
-	// arr[2]: 10+2 = 12
-	// total: 33
 	if got := runWasm(t, src); got != 33 {
 		t.Errorf("got %d, want 33 (per-iteration capture)", got)
 	}
 }
 
-// Mixing i32 and i64 with matching signedness auto-widens the
-// narrower operand. The checker inserts an implicit CastExpr so
-// the IR sees a homogeneous-width binop; user code doesn't need
-// `i32 as i64` everywhere when doing pointer-style arithmetic.
-// Mixed SIGNEDNESS still requires an explicit cast.
 func TestI64ImplicitWideningAccepted(t *testing.T) {
 	src := `function f(): i64 { let x: i32 = 1; let y: i64 = 2i64; return x + y; }
 function main(): i32 { return f() as i32; }`
@@ -3920,10 +3234,6 @@ function main(): i32 { return f() as i32; }`
 	}
 }
 
-// Mixed-signedness widths still demand an explicit cast — the
-// reinterpretation isn't free of edge cases. Verify the checker
-// rejects `i32 + u32` (same width, different signedness) and
-// `u32 + i64` (different widths AND signedness).
 func TestMixedSignednessRejected(t *testing.T) {
 	for _, src := range []string{
 		`function bad(): i32 { let x: i32 = 1; let y: u32 = 2 as u32; return x + y; }`,
@@ -3933,11 +3243,9 @@ func TestMixedSignednessRejected(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
-		// First src should error; second one is fine (explicit cast).
 		_, err = checker.Check(prog)
 		_ = err
 	}
-	// Targeted error check on the genuinely-bad source.
 	src := `function bad(): i32 { let x: i32 = 1; let y: u32 = 2 as u32; return x + y; }`
 	prog, err := parser.Parse(src)
 	if err != nil {
@@ -3971,21 +3279,11 @@ func TestWASMForLoopWithBreakContinue(t *testing.T) {
 		}
 		return sum;
 	}`
-	// 5 + 6 + 7 = 18 (break before adding 8)
 	if got := runWasm(t, src); got != 18 {
 		t.Errorf("got %d, want 18", got)
 	}
 }
 
-// Function values materialise as `{fn_idx, env}` pair-cell
-// pointers; the `fn_idx` field stores the function's POSITION
-// IN THE FUNCREF TABLE, not its position in `prog.Funcs`. If
-// the emitter ever pushed funcIndex instead of tableIndex,
-// `call_indirect` would either trap or dispatch to the wrong
-// function. This program declares two non-table functions
-// before `target` so funcIndex["target"] = 2 but
-// tableIndex["target"] = 0; dispatching through
-// `apply(target, 4)` must hit `target` (which returns 40).
 func TestWASMFunctionValueOrderIndependent(t *testing.T) {
 	src := `function unrelated_a(x: i32): i32 { return x + 1; }
 	function unrelated_b(x: i32): i32 { return x + 2; }
@@ -3999,16 +3297,12 @@ func TestWASMFunctionValueOrderIndependent(t *testing.T) {
 	}
 }
 
-// runWasmCapturingStdout returns whatever the program wrote to stdout
-// via WASI fd_write, with the trailing wasmtime-emitted i32 result
-// line stripped so callers see only the program's own output.
 func runWasmCapturingStdout(t *testing.T, src string) string {
 	t.Helper()
 	stdout, _ := invokeWasmtime(t, src)
 	return stripMainResult(stdout)
 }
 
-// stripMainResult drops the trailing main-result line and blank lines.
 func stripMainResult(stdout string) string {
 	lines := strings.Split(stdout, "\n")
 	for len(lines) > 0 {
@@ -4036,12 +3330,6 @@ func TestWASMPrintHelloWorld(t *testing.T) {
 		t.Errorf("output = %q, want \"Hello, world!\"", out)
 	}
 }
-
-// Float observation through runWasm: it reads main's result as an
-// i32 off wasmtime's --invoke line, so it cannot carry an f32.
-// Float tests instead express the assertion in
-// the lang program itself — main returns 1 when the expected
-// value matches and 0 otherwise — and we observe the integer.
 
 func TestWASMFloatArithmetic(t *testing.T) {
 	src := `function main(): i32 {
@@ -4085,8 +3373,6 @@ func TestWASMPutcharWritesBytes(t *testing.T) {
 	}
 }
 
-// `for x in arr { ... }` desugars to an index loop; verify the
-// WASM backend produces a runnable module that iterates correctly.
 func TestWASMForEachOverArray(t *testing.T) {
 	src := `
 		function main(): i32 {
@@ -4101,8 +3387,6 @@ func TestWASMForEachOverArray(t *testing.T) {
 	}
 }
 
-// break and continue inside a foreach body work as expected on the
-// WASM backend.
 func TestWASMForEachBreakContinue(t *testing.T) {
 	src := `
 		function main(): i32 {
@@ -4130,8 +3414,6 @@ func TestWASMArraySumAndMutation(t *testing.T) {
 	}
 }
 
-// Nested ArrayLits get distinct scratch locals so the inner literal
-// can finish allocating before the outer one assigns its base.
 func TestWASMNestedArrayLits(t *testing.T) {
 	src := `function main(): i32 {
 		let inner: i32[] = [3, 4];
@@ -4155,15 +3437,6 @@ func TestWASMIndirectCallApply(t *testing.T) {
 	}
 }
 
-// #4804: a closure/fn-value whose signature contains a `string`
-// parameter must flow through wasm `call_indirect`. Strings use the
-// two-slot (data, len) ABI on wasm32, and the indirect-call signature
-// seam (addClosureSigType) must not type each param via valtypeFor,
-// which rejects `string` outright and fails any `(string, …) => …`
-// comparator/callback for -target wasm32-wasi. The seam fans string params
-// through slotValtypes, matching the callee
-// definition (paramValtypes). Exercises the motivating `sort_by`-style
-// string comparator shape end-to-end.
 func TestWASMIndirectCallStringParam(t *testing.T) {
 	src := `
 		function apply(f: (string, string) => i32, a: string, b: string): i32 {
@@ -4178,8 +3451,6 @@ func TestWASMIndirectCallStringParam(t *testing.T) {
 	}
 }
 
-// #4804: a single string param through call_indirect (the one-slot-arg
-// count still fans to two wasm slots).
 func TestWASMIndirectCallSingleStringParam(t *testing.T) {
 	src := `
 		function apply(f: (string) => i32, a: string): i32 { return f(a); }
@@ -4192,9 +3463,6 @@ func TestWASMIndirectCallSingleStringParam(t *testing.T) {
 	}
 }
 
-// #4804: a MIXED (i32, string) signature — the string arg's two-slot
-// fan-out must land at the right callee slot offset alongside the
-// scalar. Guards the slot-offset arithmetic, not just the valtype set.
 func TestWASMIndirectCallMixedScalarStringParam(t *testing.T) {
 	src := `
 		function apply(f: (i32, string) => i32, a: i32, b: string): i32 { return f(a, b); }
@@ -4207,12 +3475,6 @@ func TestWASMIndirectCallMixedScalarStringParam(t *testing.T) {
 	}
 }
 
-// #4804 motivating case: a `sort_by`-style generic sort driven by a
-// string comparator passed as a fn-value, invoked through call_indirect
-// in a loop. This is the exact shape #4802's mangler follow-up wanted to
-// collapse the monomorphic string sorts into — blocked on wasm
-// until the string-param seam here. Single-file (the import-mangling half
-// is #4802); this pins the codegen half runs correctly end-to-end.
 func TestWASMStringComparatorSort(t *testing.T) {
 	src := `
 		function sort_by(xs: string[], cmp: (string, string) => i32): string[] {
@@ -4244,18 +3506,6 @@ func TestWASMStringComparatorSort(t *testing.T) {
 	}
 }
 
-// #4816: the minimal trigger for the string-helper funcidx bug. A `string`
-// sourced from an ARRAY ELEMENT flows as an argument to a `call_indirect`
-// (closure) call, and `main`'s `string[]` local is reclaimed at scope exit,
-// pulling in `__fern_drop_arr_str`. That helper transitively needs
-// `__fern_str_dec`, whose body UNCONDITIONALLY frees the buffer via
-// `__fern_box_free` — but the drop_arr_str need-case omitted box_free, so
-// `helperIdxs["__fern_box_free"]` missed → 0, and str_dec's `call 0`
-// resolved to the user function at funcidx 0 (here the 5-slot comparator
-// `scmp`), producing "expected i32 but nothing on stack" invalid wasm.
-//
-// Nothing but the program's own needs pulls in __fern_box_free here: main
-// returns 0 on success, and a module missing the helper fails to validate.
 func TestWASMArrayElemStringClosureArg(t *testing.T) {
 	src := `
 		function scmp(a: string, b: string): i32 { if (a.len() < b.len()) { return 0-1; } return 1; }
@@ -4266,12 +3516,6 @@ func TestWASMArrayElemStringClosureArg(t *testing.T) {
 	}
 }
 
-// #4816: two GENERIC `sort_by[string]` instantiations in one module (asc +
-// desc comparators) — the `prop_sort_strings`-shaped case. Before the fix
-// this failed to validate the moment the string sorts crossed the generic
-// closure-call body with the drop_arr_str helper present. asc puts "a"
-// first, desc puts a length-2 string
-// first; main returns 0 on success.
 func TestWASMGenericStringSortTwoInstantiations(t *testing.T) {
 	src := `
 		function asc(a: string, b: string): i32 { if (a.len() < b.len()) { return 0-1; } if (a.len() > b.len()) { return 1; } return 0; }
@@ -4313,10 +3557,6 @@ func TestWASMIfExpr(t *testing.T) {
 	}
 }
 
-// Postfix `?` — Option-try operator. `m.get(k)?` evaluates to the
-// Some payload on hit; on miss the surrounding function returns
-// None early. Surrounding return type must be Option[_]; enforced
-// by the checker.
 func TestWASMOptionTryHappyPath(t *testing.T) {
 	src := `
 import "core/map";
@@ -4337,8 +3577,6 @@ function main(): i32 {
 	}
 }
 
-// On a None value, `?` skips the rest of the function and returns
-// None. The caller observes the early-return outcome.
 func TestWASMOptionTryNoneEarlyReturn(t *testing.T) {
 	src := `
 import "core/map";
@@ -4359,7 +3597,6 @@ function main(): i32 {
 	}
 }
 
-// `?` on Result[T, E] — Ok path yields T and falls through.
 func TestWASMResultTryHappyPath(t *testing.T) {
 	src := `function inner(n: i32): Result[i32, i32] {
     if (n < 0) { return Err(0 - n); }
@@ -4381,10 +3618,6 @@ function main(): i32 {
 	}
 }
 
-// Polymorphic integer literals promote to the float type when
-// one side of an arithmetic op is a concrete float. Verifies the
-// IR's NumberLit lowering picks OpConstF32 / OpConstF64 (instead
-// of OpConstI32) so the runtime computation is float-correct.
 func TestWASMPolyIntPromotesToF32Mul(t *testing.T) {
 	src := `function main(): i32 {
     let r: f32 = 1.5f32;
@@ -4397,8 +3630,6 @@ func TestWASMPolyIntPromotesToF32Mul(t *testing.T) {
 	}
 }
 
-// Same trick on the comparison side: `r <= 0` where r is f32,
-// without any `as f32` cast or `0f32` suffix.
 func TestWASMPolyIntPromotesToF32Compare(t *testing.T) {
 	src := `enum Shape { Circle(f32), Square(f32) }
 function classify(s: Shape): i32 {
@@ -4418,7 +3649,6 @@ function main(): i32 {
 	}
 }
 
-// f64 promotion path — different OpConstF64 lowering.
 func TestWASMPolyIntPromotesToF64(t *testing.T) {
 	src := `function main(): i32 {
     let x: f64 = 100.5f64;
@@ -4431,10 +3661,6 @@ func TestWASMPolyIntPromotesToF64(t *testing.T) {
 	}
 }
 
-// Typed numeric literal suffixes resolve to concrete types at
-// parse time. End-to-end: an `i64` literal value survives the
-// full pipeline without an `as i64` cast, and the wasm output
-// uses `i64.const`.
 func TestWASMNumericLiteralSuffixI64(t *testing.T) {
 	src := `function main(): i32 {
     let n: i64 = 1000000i64;
@@ -4447,8 +3673,6 @@ func TestWASMNumericLiteralSuffixI64(t *testing.T) {
 	}
 }
 
-// f32 suffix on a guard literal removes the `as f32` cast that
-// the doc-roadmap flagged as noise.
 func TestWASMNumericLiteralSuffixGuardF32(t *testing.T) {
 	src := `enum Shape { Circle(f32), Square(f32) }
 function classify(s: Shape): i32 {
@@ -4468,18 +3692,6 @@ function main(): i32 {
 	}
 }
 
-// `arr.append(v)` is a generic method on T[] that lowers to the
-// per-stride append helper. For 4-byte-stride T (i32, f32, all
-// pointer / heap-ref types: string, struct, enum, T[]) it routes
-// to `__array_append_string` at codegen — identical wat shape as
-// the older `__array_append_*` direct calls, just without users
-// having to know the per-T helper name.
-// 8-byte int stride: arr.append(v) on i64[] / u64[] routes to the
-// wat-side __array_append_i64 helper. The header layout is
-// length-prefix (4 bytes) + 8-byte elements, which means
-// elements are 4-byte-aligned but not 8-byte-aligned — wasm
-// allows unaligned i64.store / i64.load functionally, just with
-// a perf hint penalty we accept here.
 func TestWASMArrayPushI64(t *testing.T) {
 	src := `function main(): i32 {
     let xs: i64[] = [10i64, 20i64];
@@ -4495,10 +3707,6 @@ func TestWASMArrayPushI64(t *testing.T) {
 	}
 }
 
-// 8-byte float stride: arr.append(v) on f64[] mirrors the i64
-// path, calling __array_append_f64 with f64.store under the
-// hood. Confirms the f64 lang-prelude helper composes the same
-// way the i64 sibling does.
 func TestWASMArrayPushF64(t *testing.T) {
 	src := `function main(): i32 {
     let xs: f64[] = [1.5f64, 2.5f64];
@@ -4513,9 +3721,6 @@ func TestWASMArrayPushF64(t *testing.T) {
 	}
 }
 
-// 1-byte stride: u8[].append(v) routes to __array_append_u8.
-// Verifies bytes are stored back-to-back (no padding) and read
-// back via the array indexer with the right zero-extension.
 func TestWASMArrayPushU8(t *testing.T) {
 	src := `function main(): i32 {
     let xs: u8[] = [];
@@ -4531,8 +3736,6 @@ func TestWASMArrayPushU8(t *testing.T) {
 	}
 }
 
-// Empty-array start: confirms the oldLen==0 fast-path of the
-// helper (skips memory.copy).
 func TestWASMArrayPushI64EmptyStart(t *testing.T) {
 	src := `function main(): i32 {
     let xs: i64[] = [];
@@ -4560,9 +3763,6 @@ func TestWASMArrayPushI32(t *testing.T) {
 }
 
 func TestWASMArrayPushEnum(t *testing.T) {
-	// An enum is pointer-shaped, so push routes to the same
-	// 4-byte helper. Confirms enum payloads survive the push
-	// round-trip.
 	src := `enum V { N, S(string) }
 function main(): i32 {
     let xs: V[] = [];
@@ -4590,8 +3790,6 @@ func TestWASMArrayPushString(t *testing.T) {
 	}
 }
 
-// Verifies pushed values are actually stored in order — i.e. the
-// alias to __array_append_string preserves the heap layout.
 func TestWASMArrayPushStringValuesPreserved(t *testing.T) {
 	src := `function main(): i32 {
     let xs: string[] = [];
@@ -4606,9 +3804,6 @@ func TestWASMArrayPushStringValuesPreserved(t *testing.T) {
 	}
 }
 
-// `match` in expression position: each arm body is one
-// expression and the construct evaluates to the unified arm type.
-// Replaces a 6-line if-let-else chain with a single line.
 func TestWASMMatchExprUnwrapsOption(t *testing.T) {
 	src := `function unwrap_or(o: Option[i32], dflt: i32): i32 {
     return match (o) {
@@ -4624,8 +3819,6 @@ function main(): i32 {
 	}
 }
 
-// None branch yields the alternative without falling through to
-// the Some arm — exhaustiveness on Option[T] is two arms.
 func TestWASMMatchExprNoneFallback(t *testing.T) {
 	src := `function unwrap_or(o: Option[i32], dflt: i32): i32 {
     return match (o) {
@@ -4641,9 +3834,6 @@ function main(): i32 {
 	}
 }
 
-// Wildcard `_` arm covers the unmatched variants and the
-// construct still produces a value. Checker-side exhaustiveness
-// has a separate test; this exercises runtime selection.
 func TestWASMMatchExprWildcardArm(t *testing.T) {
 	src := `enum Light { Red, Green, Yellow }
 function score(l: Light): i32 {
@@ -4660,8 +3850,6 @@ function main(): i32 {
 	}
 }
 
-// `match` expression composes inside other expressions —
-// confirms it slots into a binary op without parse-time conflict.
 func TestWASMMatchExprComposesInExpr(t *testing.T) {
 	src := `function main(): i32 {
     let o: Option[i32] = Some(10);
@@ -4675,8 +3863,6 @@ func TestWASMMatchExprComposesInExpr(t *testing.T) {
 	}
 }
 
-// Err path: `?` short-circuits, forwarding the source Err
-// pointer through the enclosing function unchanged.
 func TestWASMResultTryErrPropagates(t *testing.T) {
 	src := `function inner(n: i32): Result[i32, i32] {
     if (n < 0) { return Err(0 - n); }
@@ -4693,7 +3879,6 @@ function main(): i32 {
     }
     return 0;
 }`
-	// inner(-7) -> Err(7); outer forwards it; main reads e=7.
 	if got := runWasm(t, src); got != 7 {
 		t.Errorf("got %d, want 7 (Err(7) propagated)", got)
 	}
@@ -4707,7 +3892,6 @@ func TestWASMCompoundAssign(t *testing.T) {
 		x -= 1;
 		return x;
 	}`
-	// (1 + 2) * 5 - 1 = 14
 	if got := runWasm(t, src); got != 14 {
 		t.Errorf("got %d, want 14", got)
 	}
@@ -4732,31 +3916,23 @@ func TestWASMStringIndexAndCompare(t *testing.T) {
 		if (different) { ok = ok - 1; }
 		return byte + ok;
 	}`
-	// 'b' (98) + 1 = 99
 	if got := runWasm(t, src); got != 99 {
 		t.Errorf("got %d, want 99", got)
 	}
 }
 
 func TestWASMStructBasic(t *testing.T) {
-	// Fields are immutable; update via struct-update + rebind.
 	src := `struct Point { x: i32, y: i32 }
 		function main(): i32 {
 			let p: Point = Point { x: 10, y: 32 };
 			p = Point { ...p, x: p.x + 5 };
 			return p.x + p.y;
 		}`
-	// (10+5) + 32 = 47
 	if got := runWasm(t, src); got != 47 {
 		t.Errorf("got %d, want 47", got)
 	}
 }
 
-// Structs are passed by reference (pointer), but that reference is
-// read-only: a function can't mutate its caller's struct in place
-// (the old "mutate-through-call" semantic the immutability migration
-// removes). The functional form returns the new value and the caller
-// rebinds.
 func TestWASMStructFunctionalUpdate(t *testing.T) {
 	src := `struct Box { v: i32 }
 		function bump(b: Box): Box { return Box { ...b, v: b.v + 100 }; }
@@ -4792,19 +3968,6 @@ func TestWASMStringConcatPreservesContent(t *testing.T) {
 	}
 }
 
-// Empty-string sentinel: concat-of-empties, zero-width slices and
-// zero-length string_from_bytes_unchecked all return the shared static
-// sentinel rather than allocating a fresh 0-byte buffer. The test
-// pin is behavioural — `len()` returns 0 for the result, the
-// result compares equal to "" via the string-eq runtime, and a
-// follow-up concat with a non-empty operand still produces the
-// expected bytes. The constant-fold path on the IR side handles
-// literal `"" + ""`, so the test forces the runtime path by
-// concatenating two empty `args()` slots (the test infra runs
-// with no extra argv after the module path, so a[2] / a[3]
-// don't exist; we use the runtime-built empty string in a way
-// that always exercises the helper). Easier path: build empties
-// via `slice_unchecked(s, 0, 0)` on any non-empty string.
 func TestWASMEmptyStringSentinelConcat(t *testing.T) {
 	src := `function main(): i32 {
 		let s: string = "abcd";
@@ -4829,12 +3992,6 @@ func TestWASMEmptyStringSentinelSlice(t *testing.T) {
 	}
 }
 
-// Empty u8[] sentinel: `__alloc_u8(0)` returns the shared static
-// empty-buffer sentinel (`[length=0]` at internString("") offset)
-// rather than allocating a fresh 4-byte length-only block. On
-// wasm both empty-string and empty-array share the same backing
-// memory since they're byte-identical; native targets keep
-// distinct symbols.
 func TestWASMEmptyU8Sentinel(t *testing.T) {
 	src := `function main(): i32 {
         let bs: u8[] = __alloc_u8(0);
@@ -4856,9 +4013,6 @@ func TestWASMEmptyStringSentinelFromBytes(t *testing.T) {
 	}
 }
 
-// Sentinel + non-empty operand still produces the right bytes.
-// Catches a regression where the sentinel short-circuit returned a
-// pointer the concat path then dereferenced wrong.
 func TestWASMEmptyStringSentinelRoundtrip(t *testing.T) {
 	src := `function main(): i32 {
 		let s: string = "world";
@@ -4871,10 +4025,6 @@ func TestWASMEmptyStringSentinelRoundtrip(t *testing.T) {
 	}
 }
 
-// runWasmExpectingTrap compiles src to a core module, runs it, and
-// returns true when wasmtime exited non-zero (the trap surface).
-// Used by the array bounds-check tests where the program is
-// expected to abort.
 func runWasmExpectingTrap(t *testing.T, src string) (stdout, stderr string, ok bool) {
 	t.Helper()
 	p := buildWasmCore(t, src)
@@ -4904,7 +4054,6 @@ func TestWASMNegativeIndexTraps(t *testing.T) {
 }
 
 func TestWASMInBoundsStillWorks(t *testing.T) {
-	// Make sure the bounds check doesn't break the happy path.
 	src := `function main(): i32 {
 		let a: i32[] = [10, 20, 30];
 		return a[1];
@@ -4929,7 +4078,6 @@ func TestWASMClosureFactory(t *testing.T) {
 }
 
 func TestWASMClosureMultipleInstances(t *testing.T) {
-	// Two closures over different captured values shouldn't share state.
 	src := `function makeAdder(n: i32): (i32) => i32 {
 		function add(x: i32): i32 { return x + n; }
 		return add;
@@ -4939,7 +4087,6 @@ func TestWASMClosureMultipleInstances(t *testing.T) {
 		let add10 = makeAdder(10);
 		return add5(1) + add10(1);
 	}`
-	// (5+1) + (10+1) = 17
 	if got := runWasm(t, src); got != 17 {
 		t.Errorf("got %d, want 17", got)
 	}
@@ -4952,16 +4099,10 @@ func TestWASMClosureCapturesParamAndVar(t *testing.T) {
 		return inner(2);
 	}
 	function main(): i32 { return outer(40); }`
-	// 2 + 40 + 100 = 142
 	if got := runWasm(t, src); got != 142 {
 		t.Errorf("got %d, want 142", got)
 	}
 }
-
-// Pointer-shaped captures: string, T[], struct, enum heap refs
-// fit in the same 4-byte env slot scalars use. The hoisted
-// closure body loads them via `i32.load __env+offset` and the
-// type-system tracks the reference correctly through the body.
 
 func TestWASMClosureCapturesString(t *testing.T) {
 	src := `function outer(s: string): i32 {
@@ -4974,12 +4115,6 @@ function main(): i32 { return outer("hello"); }`
 	}
 }
 
-// Mirror of TestArm64LambdaWithBodyLocals. Anonymous lambdas
-// used to compile fine without body-locals but panic with
-// "var X has no slot (compiler bug)" the moment the lambda
-// declared `let sq = ...` or similar — the checker stored those
-// Var nodes against a throwaway synthetic FuncDecl pointer that
-// closureconv never re-keyed onto the hoisted lambda.
 func TestWASMLambdaWithBodyLocals(t *testing.T) {
 	src := `function main(): i32 {
     let greet = "hi";
@@ -5000,13 +4135,6 @@ func TestWASMLambdaWithBodyLocals(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64LambdaCallsMethodOnCapturedString. Method
-// calls inside a lambda body used to fall off the treeshake
-// liveness walk because `walkExpr` had no case for
-// `*ast.Lambda`; the lambda body was invisible at shake time
-// (closureconv hoists it later), so `__method_string_trim`
-// got pruned and the wasm module failed to validate /
-// reference the missing import.
 func TestWASMLambdaCallsMethodOnCapturedString(t *testing.T) {
 	src := `
 import "std/string";
@@ -5067,12 +4195,6 @@ function main(): i32 { return outer(Some(7)); }`
 	}
 }
 
-// Wide-capture closures: i64 / f64 captures occupy 8-byte slots
-// in the env block (vs the 4-byte default). The previous fix
-// (#217) opened pointer-shaped captures but kept the env-slot
-// width at 4 bytes, which silently truncated wide values. This
-// follow-up uses the per-stride store/load path the array-push
-// PRs (#218–#220) added.
 func TestWASMClosureCapturesI64(t *testing.T) {
 	src := `function outer(seed: i64): i64 {
     function inner(): i64 { return seed + 1i64; }
@@ -5103,10 +4225,6 @@ function main(): i32 {
 	}
 }
 
-// Mixed-stride captures: confirms the running offset accumulator
-// handles a sequence of (4-byte, 8-byte, 4-byte) slots without
-// stepping on neighbours. The closure reads each capture
-// separately to detect any offset-arithmetic mistake.
 func TestWASMClosureCapturesMixedWidths(t *testing.T) {
 	src := `function outer(a: i32, b: i64, c: i32): i64 {
     function inner(): i64 { return (a as i64) + b + (c as i64); }
@@ -5122,8 +4240,6 @@ function main(): i32 {
 	}
 }
 
-// Multiple pointer captures in one closure — exercises offset
-// arithmetic for non-zero slot indexes.
 func TestWASMClosureCapturesMixedPointers(t *testing.T) {
 	src := `function outer(s: string, xs: i32[]): i32 {
     function inner(): i32 { return s.len() + xs.len(); }
@@ -5138,16 +4254,6 @@ function main(): i32 {
 	}
 }
 
-// Closure captures a tuple, then accesses fields by numeric
-// index inside the body (`t.0`, `t.1`). The IR's FieldAccess
-// lowering needs to dispatch on the receiver's static type to
-// pick between the tuple offset path and the struct offset
-// path — for captures that meant recognising `*ast.CaptureRef`
-// in `targetTupleType`. Without this dispatch the IR fell
-// through to the struct path, `fieldOwner` returned "" (no
-// matching struct decl), and codegen errored with
-// `field access on unresolved struct ""` before any code
-// reached the backends.
 func TestWASMClosureCapturesTuple(t *testing.T) {
 	src := `function build(): () => i64 {
     let t: (i64, i64) = (1000000000000i64, 2000000000000i64);
@@ -5164,14 +4270,6 @@ function main(): i32 {
 	}
 }
 
-// `f()()` — chained closure call where the inner call's
-// result IS the next callee. The IR's call() guard only
-// recognised Ident / CaptureRef / FieldAccess callees; a
-// `*ast.Call` callee whose return was a closure fell through
-// to the `indirect call from non-identifier expression` error.
-// Now `call()` peels through the inner Call via
-// `callReturnType` and dispatches indirectly when the inner
-// result is a *FuncType.
 func TestWASMChainedClosureCallResult(t *testing.T) {
 	src := `function makeMaker(n: i32): () => () => i32 {
     function level2(): () => i32 {
@@ -5189,16 +4287,6 @@ function main(): i32 {
 	}
 }
 
-// Three-level nested closure where the innermost captures from
-// the OUTERMOST scope (skipping the two intermediate functions
-// that don't bind the name natively). Pre-fix the checker only
-// looked one level up via captureOuter — when level1's body
-// referenced `x` (defined in makeChain), the lookup against
-// level2's scope failed and the checker errored with
-// `undefined identifier "x"`. Now the captureChain walks the
-// full nesting stack and records the name as a capture at every
-// intermediate level so each closure's env block forwards the
-// reference inward to the deepest reader.
 func TestWASMTransitiveClosureCapture(t *testing.T) {
 	src := `function makeChain(): () => () => () => i32 {
     let x: i32 = 42;
@@ -5222,18 +4310,6 @@ function main(): i32 {
 	}
 }
 
-// A nested function captures an outer-scope name that's been
-// shadowed by a sibling `let` declaration. With proper lexical
-// scoping the body should see the SHADOWED local, not the
-// pre-shadow param. Pre-fix shadowrename ran a fresh sub-
-// renamer for the nested body so the parent's `n -> n$1`
-// rename never reached the body — the body's `Ident{n}` stayed
-// raw, the checker recorded `n` (the param) as the capture,
-// and the closure returned the original param value (21)
-// instead of the shadowed local (42). The pass now walks
-// nested bodies under the SAME renamer state and patches each
-// FuncDecl's Captures list so the recorded capture names
-// match the body's post-rename references.
 func TestWASMClosureShadowedParamCapture(t *testing.T) {
 	src := `function makeReader(n: i32): () => i32 {
     let n: i32 = n * 2;
@@ -5249,12 +4325,6 @@ function main(): i32 {
 	}
 }
 
-// `(t.N)(args)` where `t.N` is a tuple element holding a closure.
-// Same shape as the struct-field case but the field lookup goes
-// through `targetTupleType` (numeric selector + tuple's static
-// element types) instead of `fieldOwner` + struct decl. Without
-// the tuple branch in `call()`'s FieldAccess case the IR errored
-// with `indirect call from non-identifier expression`.
 func TestWASMCallClosureFromTupleElem(t *testing.T) {
 	src := `function makeAdder(n: i32): (i32) => i32 {
     function add(x: i32): i32 { return x + n; }
@@ -5269,11 +4339,6 @@ function main(): i32 {
 	}
 }
 
-// Pattern-binding a closure value via match: `match (o) { Some(f) => f(...) }`.
-// The match-arm binding `f` lives in `b.locals` + `b.scratchType`
-// (IR-introduced locals), not in `info.Locals` which the original
-// `localFuncType` walked. Without the scratchType fallback the
-// indirect-call lookup errored with `unknown local "f"`.
 func TestWASMCallClosurePatternBound(t *testing.T) {
 	src := `function makeAdder(n: i32): (i32) => i32 {
     function add(x: i32): i32 { return x + n; }
@@ -5292,12 +4357,6 @@ function main(): i32 {
 	}
 }
 
-// `(b.f)(args)` where `b.f` is a struct field holding a closure
-// value. The callee is a `*ast.FieldAccess`, not an `*ast.Ident`;
-// the IR's call() guard used to reject anything non-Ident with
-// `indirect call from non-identifier expression`. Now FieldAccess
-// callees whose field type resolves to *FuncType go through the
-// same OpCallIndirect path closures-in-locals already use.
 func TestWASMCallClosureFromStructField(t *testing.T) {
 	src := `struct Box { f: (i32) => i32 }
 function makeAdder(n: i32): (i32) => i32 {
@@ -5313,14 +4372,6 @@ function main(): i32 {
 	}
 }
 
-// `f().field` / `f().0` where `f` is a closure value (function-
-// typed local or param). callReturnType used to consult only
-// `info.FuncSigs[id.Name]` — function-typed locals weren't in
-// FuncSigs, so the lookup returned nil and `fieldOwner` /
-// `targetTupleType` fell through to an unresolved struct,
-// erroring at IR-emit with `field access on unresolved struct ""`.
-// Now callReturnType also looks up function-typed params,
-// info.Locals, and *ast.CaptureRef callees.
 func TestWASMClosureResultStructFieldAccess(t *testing.T) {
 	src := `struct P { x: i32, y: i32 }
 function makeReader(): () => P {
@@ -5350,14 +4401,6 @@ function main(): i32 {
 	}
 }
 
-// Sibling local functions: `outer` references `inner`, both
-// defined in the same enclosing function. checker's Ident
-// lookup used to consult info.FuncSigs before captureOuter,
-// which made local FuncDecl names resolve as top-level
-// functions instead of as captures — closureconv then left
-// the Ident untouched and codegen errored with
-// `function "inner" not in table`. captureOuter now wins so
-// the sibling gets captured.
 func TestWASMSiblingLocalFnCapture(t *testing.T) {
 	src := `function makeMaker(): () => () => i32 {
     function inner(): i32 { return 42; }
@@ -5374,16 +4417,6 @@ function main(): i32 {
 	}
 }
 
-// `len(f())` where `f` is a closure-typed local returning a
-// string. The IR's `len()` lowering picks between `OpStrLen`
-// (SSO-aware) and the array-shape `[ptr-4]; load` based on
-// `exprType(arg)` — the dispatch needs to see `string`, not
-// nil. Before this fix `exprType(*ast.Call)` only inspected
-// `info.FuncSigs[callee.Name]`, which never matches a function-
-// typed local (vars / params don't live in FuncSigs). The
-// load fell through to `[ptr-4]` and trapped on inline-form
-// strings produced by string-returning closures (the SSO flag
-// bit makes `ptr - 4` an out-of-bounds memory address).
 func TestWASMLenOfClosureReturningString(t *testing.T) {
 	src := `function makeReader(): () => string {
     function build(): string { return "hello"; }
@@ -5398,12 +4431,6 @@ function main(): i32 {
 	}
 }
 
-// `if let` / `match` / `let else` / `defer` statements inside a
-// closure body, where the scrutinee / source / deferred expr
-// references a captured outer-scope name. closureconv's
-// rewriteStmt switch was missing cases for these four statement
-// kinds — captured refs inside them survived as raw idents and
-// IR-emit failed with `unresolved identifier "o" (compiler bug)`.
 func TestWASMClosureIfLetCapture(t *testing.T) {
 	src := `function makeReader(o: Option[i32]): () => i32 {
     function build(): i32 {
@@ -5462,15 +4489,6 @@ function main(): i32 {
 	}
 }
 
-// FString / MapLit inside a closure body whose captured names
-// appear in the desugared `+`-chain or per-entry expressions.
-// The closureconv pass used to skip these node kinds entirely;
-// captured-name idents inside the f"…" or `Map { … }` survived
-// as raw `*ast.Ident` and the IR errored with
-// `unresolved identifier "name" (compiler bug)`. The rewrite
-// now recurses through FString.Parts + FString.Desugared and
-// per-entry MapLit.Entries[i].Key/Value (and TupleLit.Elems
-// while we're here — the cases were missing).
 func TestWASMClosureFStringCapture(t *testing.T) {
 	src := `
 import "std/string";
@@ -5505,17 +4523,6 @@ function main(): i32 {
 	}
 }
 
-// Mutable captured variable: a closure body writes back to a
-// captured outer-scope variable. The env block lives on the
-// heap and is shared by every call to the same closure, so
-// successive invocations see the updated value — classic
-// counter-closure shape. Pre-fix this errored at IR-emit with
-// `ir: assignment target *ast.CaptureRef not yet lowered`. The
-// assignment now stores to `[__env + capOffset]` via the type-
-// correct payloadStoreOp, matching the read side's load shape.
-// Note: captures are by VALUE at make-time. Two separate
-// closures over the same outer name would each get their own
-// env copy — they don't share the slot.
 func TestWASMMutableCapturedVar(t *testing.T) {
 	src := `function makeCounter(): () => i32 {
     let count: i32 = 0;
@@ -5532,15 +4539,11 @@ function main(): i32 {
     let d: i32 = c();
     return a + b + d;
 }`
-	// 1 + 2 + 3 = 6
 	if got := runWasm(t, src); got != 6 {
 		t.Errorf("got %d, want 6 (counter increments in env)", got)
 	}
 }
 
-// Wide-payload counterpart: an i64 captured local stores back
-// via OpStore Width=64, so the high 32 bits survive the
-// round-trip through the env block.
 func TestWASMMutableCapturedI64(t *testing.T) {
 	src := `function makeCounter(): () => i64 {
     let count: i64 = 0i64;
@@ -5563,15 +4566,6 @@ function main(): i32 {
 	}
 }
 
-// Higher-order closure: a nested function captures a function-
-// typed param and calls it from inside its body. The closureconv
-// pass rewrote that captured-name reference to a `*ast.CaptureRef`,
-// so the call's callee is no longer an Ident — the IR's call()
-// path used to reject anything non-Ident with `ir: indirect call
-// from non-identifier expression`. Now CaptureRef callees are
-// recognised: the captured slot holds the closure pair pointer,
-// the IR pushes args, then dispatches indirectly through the
-// pair via OpCallIndirect (same path function-typed locals use).
 func TestWASMClosureCallsCapturedFn(t *testing.T) {
 	src := `function makeAdder(n: i32): (i32) => i32 {
     function add(x: i32): i32 { return x + n; }
@@ -5586,22 +4580,11 @@ function main(): i32 {
     let ap = makeApplier(a);
     return ap(5);
 }`
-	// (5 + 10) + 1 = 16
 	if got := runWasm(t, src); got != 16 {
 		t.Errorf("got %d, want 16", got)
 	}
 }
 
-// Closure that recursively calls itself by name from inside its
-// own body — `fact(n - 1)` inside `function fact`. The checker
-// skips this self-reference in the capture set (to avoid the
-// chicken-and-egg of an env containing the closure that needs
-// the env) so closureconv has to bridge the renamed top-level
-// at the call site. Pre-fix the recursive `fact(...)` survived
-// unchanged and codegen tried to call a top-level `fact` that
-// no longer existed (the function was renamed to
-// `__closure_fact_1`) — wasm-tools rejected with `unknown
-// func: failed to find name $fact`.
 func TestWASMClosureRecursiveSelfCall(t *testing.T) {
 	src := `function makeFact(): (i32) => i32 {
     function fact(n: i32): i32 {
@@ -5614,7 +4597,6 @@ function main(): i32 {
     let f = makeFact();
     return f(5);
 }`
-	// 5! = 120
 	if got := runWasm(t, src); got != 120 {
 		t.Errorf("got %d, want 120 (5!)", got)
 	}
@@ -5633,7 +4615,6 @@ func TestWASMMethodOnStruct(t *testing.T) {
 }
 
 func TestWASMMethodWithExtraArg(t *testing.T) {
-	// `b.shifted(7)` rewrites to `__method_Box_shifted(b, 7)`.
 	src := `struct Box { v: i32 }
 		function (b: Box) shifted(n: i32): i32 { return b.v + n; }
 		function main(): i32 {
@@ -5645,9 +4626,6 @@ func TestWASMMethodWithExtraArg(t *testing.T) {
 	}
 }
 
-// Sum types end-to-end on WASM: a `pub enum` with a payload-
-// carrying variant gets constructed, then matched, with the
-// bound payload flowing into the returned value.
 func TestWASMEnumMatchPayload(t *testing.T) {
 	src := `enum Pair { Two(i32, i32) }
 		function main(): i32 {
@@ -5662,20 +4640,6 @@ func TestWASMEnumMatchPayload(t *testing.T) {
 	}
 }
 
-// Wide-payload variants: `Option[i64]` round-trips an i64 value
-// through Some(...) construction and a match-arm bind. This
-// fails on the pre-wide-payload IR (uniform 4-byte slot) because
-// the value gets truncated on store. A passing test confirms the
-// IR's payloadLayout / payloadStoreOp / payloadLoadOp handshake
-// picks 8-byte slots and i64.store / i64.load for i64 payloads.
-//
-// The explicit `as i64` cast on the literal is needed today
-// because polymorphic-literal inference doesn't yet flow from
-// an enum-constructor's destination annotation back into the
-// argument expression — `let o: Option[i64] = Some(1)` reads
-// the `1` as i32 and rejects the assignment. Separate concern
-// from the wide-payload IR work; once contextual literal
-// inference covers enum constructors the casts can drop.
 func TestWASMEnumMatchPayloadI64(t *testing.T) {
 	src := `function main(): i32 {
     let o: Option[i64] = Some(4294967296 as i64);
@@ -5693,9 +4657,6 @@ func TestWASMEnumMatchPayloadI64(t *testing.T) {
 	}
 }
 
-// `Option[f64]` round-trips an f64 through Some + match. f64
-// values use the same 8-byte payload slot as i64 but go through
-// f64.store / f64.load.
 func TestWASMEnumMatchPayloadF64(t *testing.T) {
 	src := `function main(): i32 {
     let o: Option[f64] = Some(3.5 as f64);
@@ -5713,10 +4674,6 @@ func TestWASMEnumMatchPayloadF64(t *testing.T) {
 	}
 }
 
-// Bare-literal version of the same — the destination
-// annotation `Option[i64]` flows into `Some(...)` via
-// settleNumeric's EnumType case, locking the literal to i64
-// before assignable runs. No `as i64` cast on the literal.
 func TestWASMEnumPayloadInferredI64(t *testing.T) {
 	src := `function main(): i32 {
     let o: Option[i64] = Some(4294967296);
@@ -5734,8 +4691,6 @@ func TestWASMEnumPayloadInferredI64(t *testing.T) {
 	}
 }
 
-// Same shape with f64 — `let o: Option[f64] = Some(3.5);`
-// resolves the literal from the destination type.
 func TestWASMEnumPayloadInferredF64(t *testing.T) {
 	src := `function main(): i32 {
     let o: Option[f64] = Some(3.5);
@@ -5753,18 +4708,7 @@ func TestWASMEnumPayloadInferredF64(t *testing.T) {
 	}
 }
 
-// Mixed-width payloads: a variant with (i64, i32) lays out
-// payload[0] at offset 8 (8-byte aligned) and payload[1] at
-// offset 16 — total enum size is 20 bytes (4 tag + 4 align-pad
-// + 8 i64 + 4 i32). The match-arm load must mirror the same
-// offset table or both bindings come back as garbage.
 func TestWASMEnumMatchPayloadWideMixed(t *testing.T) {
-	// No `as i64` cast on the literals — the variant's declared
-	// payload type drives the polymorphic-literal settle (the
-	// non-generic-enum case where vr.payloads[i] is already
-	// concrete). Generic Option[i64] still needs the cast since
-	// the type-param substitution only fires when an arg
-	// provides the concrete type.
 	src := `enum Wide { W(i64, i32) }
 function main(): i32 {
     let w: Wide = W(8589934592, 7);
@@ -5781,9 +4725,6 @@ function main(): i32 {
 	}
 }
 
-// Same shape via `if let` — the alternate lowering path mirrors
-// match's payload-load offsets, so wide payloads must work here
-// too.
 func TestWASMIfLetPayloadI64(t *testing.T) {
 	src := `function main(): i32 {
     let o: Option[i64] = Some(4294967296 as i64);
@@ -5798,7 +4739,6 @@ func TestWASMIfLetPayloadI64(t *testing.T) {
 	}
 }
 
-// And via `let else` — the third payload-load lowering path.
 func TestWASMLetElsePayloadI64(t *testing.T) {
 	src := `function main(): i32 {
     let o: Option[i64] = Some(4294967296 as i64);
@@ -5811,13 +4751,7 @@ func TestWASMLetElsePayloadI64(t *testing.T) {
 	}
 }
 
-// Multi-variant dispatch picks the right arm. The test exercises
-// both branches of a 2-arm enum so a regression in tag dispatch
-// (off-by-one, branch fall-through, etc.) shows up.
 func TestWASMEnumMatchDispatch(t *testing.T) {
-	// Use distinct variant names so the test program doesn't
-	// collide with the auto-injected Result enum (which owns
-	// `Ok` / `Err`).
 	srcOk := `enum Status { Good, Bad(string) }
 		function status(): Status { return Good; }
 		function main(): i32 {
@@ -5844,11 +4778,6 @@ func TestWASMEnumMatchDispatch(t *testing.T) {
 	}
 }
 
-// Generic Option end-to-end on WASM: `Some(42)` constructs
-// `Option[i32]`, the match arm extracts the payload, the
-// caller's main returns the value. Type erasure means there's
-// no per-T monomorphization: the WAT treats every payload as
-// i32 regardless of T.
 func TestWASMGenericOptionSome(t *testing.T) {
 	src := `function find(): Option[i32] { return Some(42); }
 		function main(): i32 {
@@ -5863,10 +4792,6 @@ func TestWASMGenericOptionSome(t *testing.T) {
 	}
 }
 
-// Payload-less variants on generic enums (`None`) flow through
-// the assignment relaxation: the constructor leaves type args
-// unresolved, the var / return slot supplies them, and the match
-// runs the right arm.
 func TestWASMGenericOptionNone(t *testing.T) {
 	src := `function find(): Option[i32] { return None; }
 		function main(): i32 {
@@ -5881,12 +4806,7 @@ func TestWASMGenericOptionNone(t *testing.T) {
 	}
 }
 
-// Result[T, E] with two type params, both routed at runtime.
-// The error-arm value is a string carried through the heap as
-// any other payload; `len(msg)` exercises the substituted
-// payload type.
 func TestWASMGenericResult(t *testing.T) {
-	// Use the auto-injected `Result[T, E]` rather than re-declaring it.
 	src := `function divide(a: i32, b: i32): Result[i32, string] {
 			if (b == 0) { return Err("zero"); }
 			return Ok(a / b);
@@ -5903,16 +4823,6 @@ func TestWASMGenericResult(t *testing.T) {
 	}
 }
 
-// Generic enum payload typed with `T = float` survives the
-// store / load round trip on WASM. Before the
-// VariantCallPayloads side-map landed, `Some(3.14)` failed
-// validation because the IR emitted `OpStore` (the variant's
-// declared payload was `T`, not `float`) and the operand on
-// the stack was f32. The checker now records the substituted
-// payload type so codegen picks `OpFStore`.
-// random_bytes(n) on WASM goes through `wasi_snapshot_preview1.
-// random_get`. Length / non-equality assertions only — no
-// content checks since it's a CSPRNG.
 func TestWASMRandomBytes(t *testing.T) {
 	src := `function main(): i32 {
 		let a: u8[] = random_bytes(16);
@@ -5933,11 +4843,6 @@ func TestWASMRandomBytes(t *testing.T) {
 	}
 }
 
-// random_i32() on WASM (preview1) goes through
-// `wasi_snapshot_preview1.random_get` into a 4-byte buffer.
-// Cross-backend companion to the interp / x86-64 / arm64
-// random_i32 paths (issue #2747). Liveness-and-variance only:
-// two draws must differ.
 func TestWASMRandomI32(t *testing.T) {
 	src := `function main(): i32 {
 		let a: i32 = random_i32();
@@ -5964,10 +4869,6 @@ func TestWASMOptionFloatPayload(t *testing.T) {
 	}
 }
 
-// Result[f32, string] — Ok carries an f32 payload through the
-// heap. Same fix path as Option[f32], but with a
-// non-payload-less variant on each arm so the test covers a
-// realistic two-typed-parameter shape.
 func TestWASMResultFloatOk(t *testing.T) {
 	src := `function check(x: f32): Result[f32, string] {
 			if (x < 0.0) { return Err("negative"); }
@@ -5985,19 +4886,11 @@ func TestWASMResultFloatOk(t *testing.T) {
 	}
 }
 
-// runWasmInDir compiles src, places any seed files into a fresh
-// temp dir, then runs the wasm under wasmtime with that dir
-// preopened (path_open's preopen_fd=3 in our runtime). Returns
-// stdout, stderr, exit code, AND the dir so callers can read
-// back files the program created.
 func runWasmInDir(t *testing.T, src string, seed map[string]string) (stdout, stderr string, exitCode int, dir string) {
 	t.Helper()
 	return runWasmInDirOpts(t, src, seed, runOpts{})
 }
 
-// runWasmInDirOpts is runWasmInDir with the remaining run options
-// (stdin, env, a descriptor limit) supplied by the caller; the seeded
-// temp dir is always the work dir.
 func runWasmInDirOpts(t *testing.T, src string, seed map[string]string, opts runOpts) (stdout, stderr string, exitCode int, dir string) {
 	t.Helper()
 	p := buildWasmCore(t, src)
@@ -6012,9 +4905,6 @@ func runWasmInDirOpts(t *testing.T, src string, seed map[string]string, opts run
 	return s, e, ec, dir
 }
 
-// `read_file` returns Ok(content) for a present file. The
-// program writes the content back to stdout so we can verify
-// both the read path and the type-erased Result unwrap.
 func TestWASMReadFileOk(t *testing.T) {
 	src := `function main(): i32 {
 		match (read_file("greeting.txt")) {
@@ -6031,9 +4921,6 @@ func TestWASMReadFileOk(t *testing.T) {
 	}
 }
 
-// Missing files surface as `IoError.NotFound(path)`. The path
-// we passed must be visible in the variant payload — that's
-// the cribbed-from-Roc affordance the design relies on.
 func TestWASMReadFileNotFound(t *testing.T) {
 	src := `function main(): i32 {
 		match (read_file("does_not_exist.txt")) {
@@ -6053,8 +4940,6 @@ func TestWASMReadFileNotFound(t *testing.T) {
 	}
 }
 
-// read_file_bytes returns Ok(u8[]) with the raw bytes — content
-// that is not valid UTF-8 round-trips exactly (D9, #5714).
 func TestWASMReadFileBytesOk(t *testing.T) {
 	src := `function main(): i32 {
 		match (read_file_bytes("blob.bin")) {
@@ -6079,7 +4964,6 @@ func TestWASMReadFileBytesOk(t *testing.T) {
 	}
 }
 
-// read_file_bytes classifies errors identically to read_file.
 func TestWASMReadFileBytesNotFound(t *testing.T) {
 	src := `function main(): i32 {
 		match (read_file_bytes("does_not_exist.bin")) {
@@ -6099,9 +4983,6 @@ func TestWASMReadFileBytesNotFound(t *testing.T) {
 	}
 }
 
-// read_file validates UTF-8 at the boundary (D9, #5714) — the wasm
-// mirror of TestX86_64ReadFileInvalidUtf8 (which carries the full
-// strict-scan matrix).
 func TestWASMReadFileInvalidUtf8(t *testing.T) {
 	src := `function main(): i32 {
 		match (read_file("valid.txt")) {
@@ -6133,9 +5014,6 @@ func TestWASMReadFileInvalidUtf8(t *testing.T) {
 	}
 }
 
-// `write_file` truncates the target and writes `content`. We
-// verify by reading the file back from the host side after
-// the program returns.
 func TestWASMWriteFileOk(t *testing.T) {
 	src := `function main(): i32 {
 		match (write_file("out.txt", "wrote it\n")) {
@@ -6154,9 +5032,6 @@ func TestWASMWriteFileOk(t *testing.T) {
 	}
 }
 
-// Round-trip: write a file, then read it back, then compare
-// lengths via the language's `len`. Exercises both helpers
-// in the same program.
 func TestWASMReadWriteFileRoundtrip(t *testing.T) {
 	src := `function main(): i32 {
 		match (write_file("rt.txt", "round trip")) {
@@ -6175,9 +5050,6 @@ func TestWASMReadWriteFileRoundtrip(t *testing.T) {
 	}
 }
 
-// stdout() and stderr() Writers route their .write(s) calls
-// to the right host stream. The test pipes them separately so
-// each can be verified.
 func TestWASMStdStreams(t *testing.T) {
 	src := `function main(): i32 {
 		match (stdout().write("out\n")) { Err(_) => { return 1; }, Ok(_) => {} }
@@ -6196,10 +5068,6 @@ func TestWASMStdStreams(t *testing.T) {
 	}
 }
 
-// `open_writer` + `Writer.write` + `Writer.close` produce
-// the file on disk, then `open_reader` + `io.read_line`
-// streams it back a line at a time. EOF on the third
-// read answers `Ok(None)`.
 func TestWASMStreamingRoundtrip(t *testing.T) {
 	src := `import "std/io";
 
@@ -6230,9 +5098,6 @@ function main(): i32 {
 	}
 }
 
-// `Reader.read_chunk(size)` reads up to `size` bytes; the
-// first call gets up to a full chunk, the next call gets
-// the remainder, and a third call returns Ok("").
 func TestWASMReaderReadChunk(t *testing.T) {
 	src := `function main(): i32 {
 		match (open_writer("rc.txt")) {
@@ -6267,9 +5132,6 @@ func TestWASMReaderReadChunk(t *testing.T) {
 	}
 }
 
-// open_appender preserves existing content and appends new
-// writes at the end. Combined with read_file we can verify
-// the file ends up containing both halves.
 func TestWASMOpenAppender(t *testing.T) {
 	src := `function main(): i32 {
 		match (open_writer("ap.txt")) {
@@ -6298,10 +5160,6 @@ func TestWASMOpenAppender(t *testing.T) {
 	}
 }
 
-// TestWASMTupleDestructure covers the basic let-destructure
-// shape — one statement, multiple bindings — plus a divmod-
-// style multi-return, a mixed-type tuple, and a 3-element
-// destructure for arity > 2.
 func TestWASMTupleDestructure(t *testing.T) {
 	src := `function divmod(a: i32, b: i32): (i32, i32) {
 		return (a / b, a % b);
@@ -6333,11 +5191,6 @@ func TestWASMTupleDestructure(t *testing.T) {
 	}
 }
 
-// TestWASMHex covers the round-trip plus some edge cases:
-// empty string, ASCII text, every nibble exercised. Decode
-// of an odd-length input or a non-hex char terminates
-// mid-way; the prefix length reflects what was actually
-// decoded so `len()` on the result gives the right answer.
 func TestWASMHex(t *testing.T) {
 	src := `
 import "core/int";
@@ -6372,12 +5225,6 @@ function main(): i32 {
 	}
 }
 
-// `url_parse(s)` splits an absolute or relative URL into its
-// component pieces. Covers a full URL (scheme + host + port +
-// path + query + fragment), a path-only relative URL, missing
-// optional sections (no port, no query, no fragment), and the
-// edge cases where a `:` appears in the path or a fragment
-// before a query is malformed-but-best-effort.
 func TestWASMUrlParse(t *testing.T) {
 	src := `
 import "core/int";
@@ -6454,10 +5301,6 @@ function main(): i32 {
 	}
 }
 
-// `url_encode(s)` / `url_decode(s)` — RFC 3986 percent
-// encoding. Unreserved set passes through unchanged; the
-// rest gets `%HH` (uppercase). Decoder is forgiving:
-// malformed `%` sequences pass through verbatim.
 func TestWASMUrlCoder(t *testing.T) {
 	src := `
 import "core/int";
@@ -6502,12 +5345,6 @@ function main(): i32 {
 	}
 }
 
-// `query_parse(s)` splits a URL-encoded query string into a
-// `Map[string, string[]]`. Pairs separated by `&`; within
-// each pair, `=` separates key from value. Both halves are
-// url_decode'd. Duplicate keys all preserved — values for
-// the same key collect into a string[] in insertion order.
-// Pair without `=` records single-element empty-string array.
 func TestWASMQueryParse(t *testing.T) {
 	src := `
 import "core/int";
@@ -6597,10 +5434,6 @@ function main(): i32 {
 	}
 }
 
-// `json_encode(v: JsonValue): string` — serialize a
-// JsonValue tree to canonical JSON text.
-// Covers each variant, nested arrays/objects, and the
-// escape-encoding path for strings.
 func TestWASMJsonEncode(t *testing.T) {
 	src := `
 import "std/json";
@@ -6652,12 +5485,6 @@ function main(): i32 {
 	}
 }
 
-// `json_parse(s) -> Option[JsonValue]` — RFC 8259 grammar
-// recognizer. Numbers stored verbatim as JNumber's string
-// payload; standard JSON escapes decoded; whitespace
-// between tokens skipped. Round-trips with json_encode for
-// most inputs (number formatting may not be identical, but
-// payload bytes match).
 func TestWASMJsonParse(t *testing.T) {
 	src := `
 import "std/json";
@@ -6772,11 +5599,6 @@ function main(): i32 {
 	}
 }
 
-// json_parse surrogate-pair handling: `"😀"`
-// (U+1F600 GRINNING FACE) decodes to a 4-byte UTF-8
-// sequence (F0 9F 98 80). Lone surrogates fall back to
-// U+FFFD REPLACEMENT CHARACTER (EF BF BD), matching Go's
-// encoding/json + most strict UTF-8 emitters.
 func TestWASMJsonParseSurrogatePairs(t *testing.T) {
 	src := "" +
 		"import \"std/json\";\n" +
@@ -6829,11 +5651,6 @@ func TestWASMJsonParseSurrogatePairs(t *testing.T) {
 	}
 }
 
-// `f32.to_string()` / `f64.to_string()` — decimal text
-// formatting. Not bit-exact (truncate-to-N digits), so
-// assertions match what the simple algorithm produces:
-// integer values show no decimal point, fractions trim
-// trailing zeros, special values get canonical names.
 func TestWASMFloatToString(t *testing.T) {
 	src := `
 import "std/f64";
@@ -6882,13 +5699,6 @@ function main(): i32 {
 	}
 }
 
-// Tail-call optimisation. wasm now wires `ir.TailCallOptimize`
-// (backported from PR #274's x86-64 first-consumer wire-up
-// and the arm64 sibling backport). Single assertion: a
-// 100,000-deep self-tail-recursive `sum_to` returns the
-// right value through `wasmtime --invoke main`. Without
-// TCO this would exceed wasmtime's default stack depth long
-// before completing.
 func TestWASMTailCall(t *testing.T) {
 	src := `function sum_to(n: i32, acc: i32): i32 {
     if (n == 0) { return acc; }
@@ -6897,18 +5707,11 @@ func TestWASMTailCall(t *testing.T) {
 function main(): i32 {
     return sum_to(100000, 0);
 }`
-	// 100,000 * 100,001 / 2 = 5,000,050,000 → i32 (mod 2^32) = 705,082,704.
 	if got := runWasm(t, src); got != 705082704 {
 		t.Errorf("sum_to(100000, 0) → %d, want 705082704", got)
 	}
 }
 
-// Wasm counterpart to TestArm64NoPreludeStdlibImports / its
-// x86-64 sibling — proves the no-prelude path through the
-// prelude-to-modules stack works on wasm32 too. See the arm64
-// version for the rationale and per-case explanations. Programs
-// return 0 on success; runWasm parses the i32 main returned out
-// of wasmtime's --invoke line.
 func TestWASMNoPreludeStdlibImports(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -6957,15 +5760,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMLeb128Uleb covers std/wasm/leb128's unsigned encoders.
-// Vectors are drawn from the LEB128 reference and the wasm spec's
-// numeric encoding examples: small values (0, 127), the first
-// two-byte step (128), Wikipedia's 624485 worked example, and the
-// u32 / u64 widths' maxima which exercise the 5-byte and 10-byte
-// upper bounds. The seed-append case verifies the encoder preserves
-// existing buffer contents — wasm section bodies are accumulated
-// across many calls, so a non-mutating "return-the-extended-buffer"
-// shape only works if append really is append.
 func TestWASMLeb128Uleb(t *testing.T) {
 	src := `import "std/wasm/leb128";
 function main(): i32 {
@@ -7029,12 +5823,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMLeb128Sleb covers std/wasm/leb128's signed encoders.
-// Vectors hit the four terminator regimes — small positive,
-// small negative, "needs an extra zero byte because bit-6 set"
-// (64 and -65), and multi-byte negative — and a wide i64 value
-// to confirm the i64 path's arithmetic-right-shift sign extension
-// terminates correctly.
 func TestWASMLeb128Sleb(t *testing.T) {
 	src := `import "std/wasm/leb128";
 function main(): i32 {
@@ -7100,10 +5888,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMLeb128Size verifies uleb_size_* agree with the
-// post-encoding length. Useful for callers that need the length
-// before producing the bytes (e.g. wasm section headers, which
-// prefix the body with its own ULEB-encoded length).
 func TestWASMLeb128Size(t *testing.T) {
 	src := `import "std/wasm/leb128";
 function main(): i32 {
@@ -7124,12 +5908,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMEncodePreamble covers the module-header + raw-byte
-// writers — the foundation everything else in std/wasm/encode is
-// built on. Vectors are taken straight from the wasm Core 1.0
-// binary spec: magic `\0asm` plus version 1 as fixed-width u32
-// LE, and the standard "byte order is least-significant first"
-// for put_u32_le.
 func TestWASMEncodePreamble(t *testing.T) {
 	src := `import "std/wasm/encode";
 function main(): i32 {
@@ -7172,11 +5950,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMEncodeNameAndSection covers put_name (uleb-prefixed
-// UTF-8) and put_section (id + uleb size + body). The
-// "uleb-prefixed bytes" shape shows up in three different places
-// in the wasm binary: section bodies, names, and vector
-// elements; this test exercises the two callers we have today.
 func TestWASMEncodeNameAndSection(t *testing.T) {
 	src := `import "std/wasm/encode";
 function main(): i32 {
@@ -7225,19 +5998,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMEncodeFuncType + minimal-module compose-up: build a
-// complete wasm module containing one function type (i32 -> i32)
-// and compare every byte against the reference encoding. This is
-// the smallest test that exercises the full chain — preamble,
-// section wrapping, vector-of-functype, individual functype, and
-// valtype constants — together.
-//
-// Reference bytes (16 total):
-//
-//	00 61 73 6D 01 00 00 00          \0asm v1
-//	01 06                            section: type, size 6
-//	01                                  vec(functype) count = 1
-//	60 01 7F 01 7F                       functype: i32 -> i32
 func TestWASMEncodeMinimalModule(t *testing.T) {
 	src := `import "std/wasm/encode";
 import "std/wasm/leb128";
@@ -7299,11 +6059,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMInstConsts covers the four const-instruction encoders.
-// Vectors hit the leb terminator regimes for i32 / i64 (single-byte
-// positive, single-byte negative via the canonical -1, multi-byte
-// boundary at 128 / -65) plus a fixed-width-LE check on f32_const
-// and f64_const.
 func TestWASMInstConsts(t *testing.T) {
 	src := `import "std/wasm/inst";
 function main(): i32 {
@@ -7375,10 +6130,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMInstVariable covers local.get / set / tee and
-// global.get / set. The single-byte and multi-byte uleb cases
-// (idx 0 vs idx 130) verify the immediate is encoded correctly
-// after the opcode byte.
 func TestWASMInstVariable(t *testing.T) {
 	src := `import "std/wasm/inst";
 function main(): i32 {
@@ -7428,10 +6179,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMInstControl covers the control-flow opcodes plus
-// drop/select. End-to-end vectors include an empty-blocktype
-// block, an i32-result block, an if/else/end sequence, a br_if
-// to a label, and a call_indirect with two leb immediates.
 func TestWASMInstControl(t *testing.T) {
 	src := `import "std/wasm/inst";
 import "std/wasm/encode";
@@ -7494,10 +6241,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMInstFunctionBody covers the code-section entry shape:
-// uleb(size) + locals_vec + body + 0x0B. Two cases: an empty-
-// locals body that just returns a constant, and a one-group
-// locals body to exercise put_locals_one_group.
 func TestWASMInstFunctionBody(t *testing.T) {
 	src := `import "std/wasm/inst";
 import "std/wasm/encode";
@@ -7550,11 +6293,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMNumericI32 spot-checks the i32 numeric opcodes: a
-// sample of each family (unary, compare, arithmetic, bitwise,
-// shift, rotate). The opcode table is large but mechanical, so
-// this catches typos in the constants without spelling out all
-// 33 i32 entries.
 func TestWASMNumericI32(t *testing.T) {
 	src := `import "std/wasm/numeric";
 function main(): i32 {
@@ -7599,11 +6337,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMNumericI64 spot-checks the i64 numeric opcodes. The
-// i64 table mirrors i32's shape but at a different offset (i64
-// compares are 0x51-0x5A, arithmetic / bitwise / shift are
-// 0x7C-0x8A), so it's worth verifying both blocks separately —
-// a transposed cell would still pass i32-only tests.
 func TestWASMNumericI64(t *testing.T) {
 	src := `import "std/wasm/numeric";
 function main(): i32 {
@@ -7641,11 +6374,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMNumericFloat spot-checks f32 + f64. The floating-point
-// opcodes live in two interleaved blocks: compares at 0x5B-0x66
-// (f32 first, then f64) and unary / binary ops at 0x8B-0xA6
-// (again f32 first, then f64). A swapped row would survive the
-// integer-only tests, so this one walks both float widths.
 func TestWASMNumericFloat(t *testing.T) {
 	src := `import "std/wasm/numeric";
 function main(): i32 {
@@ -7686,10 +6414,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMNumericCompose verifies a real-world body shape:
-// local.get 0 ; local.get 1 ; i32.add — the canonical
-// "function that adds two i32s" body. A typo in any of the
-// three opcode tables would surface here as a mismatched byte.
 func TestWASMNumericCompose(t *testing.T) {
 	src := `import "std/wasm/inst";
 import "std/wasm/numeric";
@@ -7727,11 +6451,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMMemoryLoad covers the memory-load opcodes plus the
-// "memarg" immediate shape (uleb align, uleb offset). align is
-// log2 of byte alignment; the i32-wide load uses align=2 (= 4
-// bytes), the i64-wide load uses align=3 (= 8 bytes), narrow
-// loads use 0 / 1.
 func TestWASMMemoryLoad(t *testing.T) {
 	src := `import "std/wasm/memory";
 function main(): i32 {
@@ -7778,9 +6497,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMMemoryStore covers the memory-store opcodes. Same
-// memarg shape as loads. The narrow-store variants are integer-
-// only (no f32.store8 etc) so we walk the 0x36-0x3E range.
 func TestWASMMemoryStore(t *testing.T) {
 	src := `import "std/wasm/memory";
 function main(): i32 {
@@ -7813,9 +6529,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMMemorySizeGrow covers memory.size / memory.grow. Both
-// carry a reserved memidx byte (always 0 in MVP wasm) so each
-// encoding is exactly 2 bytes regardless of any other immediate.
 func TestWASMMemorySizeGrow(t *testing.T) {
 	src := `import "std/wasm/memory";
 function main(): i32 {
@@ -7838,11 +6551,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMMemoryBulk covers the two 0xFC-prefixed bulk-memory ops
-// the production backend emits for its memcpy / memset helpers:
-// memory.copy (0xFC 0x0A + two reserved memidx bytes) and
-// memory.fill (0xFC 0x0B + one). These are the first multi-byte
-// opcodes in memory.fern, so the test walks every byte of each.
 func TestWASMMemoryBulk(t *testing.T) {
 	src := `import "std/wasm/memory";
 function main(): i32 {
@@ -7868,10 +6576,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMConvertIntWidth covers integer-width conversion +
-// reinterpret. The reinterpret variants share the 0xBC-0xBF
-// neighbourhood with the convert ops; walking both catches a
-// transposed cell in either table.
 func TestWASMConvertIntWidth(t *testing.T) {
 	src := `import "std/wasm/convert";
 function main(): i32 {
@@ -7902,10 +6606,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMConvertFloatInt covers the four int/float crossover
-// blocks (trunc / convert) plus the float-width conversions
-// (demote / promote). 16 trunc+convert variants in two interleaved
-// tables — easy to mis-row, so this walks each one.
 func TestWASMConvertFloatInt(t *testing.T) {
 	src := `import "std/wasm/convert";
 function main(): i32 {
@@ -7942,10 +6642,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMSectionsFunction covers encode_function_section, the
-// simplest section composer — body is just a vec(typeidx).
-// Walks a 0-entry case, a 1-entry case, and a multi-byte uleb
-// typeidx (128) to verify the leb path inside the loop.
 func TestWASMSectionsFunction(t *testing.T) {
 	src := `import "std/wasm/sections";
 function main(): i32 {
@@ -7989,9 +6685,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMSectionsStartMemory covers encode_start_section (single
-// funcidx body) and encode_memory_section in both flag=0 (no max)
-// and flag=1 (with max) cases.
 func TestWASMSectionsStartMemory(t *testing.T) {
 	src := `import "std/wasm/sections";
 function main(): i32 {
@@ -8032,9 +6725,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMSectionsExport covers encode_export_section with two
-// exports of different kinds, exercising the three parallel-array
-// inputs together with put_name's uleb-prefixed UTF-8 encoding.
 func TestWASMSectionsExport(t *testing.T) {
 	src := `import "std/wasm/sections";
 function main(): i32 {
@@ -8089,10 +6779,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMSectionsTypeCode walks the two sections that take "list
-// of pre-encoded sub-objects" inputs: type section (vec of
-// functypes) and code section (vec of pre-wrapped function
-// bodies).
 func TestWASMSectionsTypeCode(t *testing.T) {
 	src := `import "std/wasm/inst";
 import "std/wasm/encode";
@@ -8144,10 +6830,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMSectionsData covers encode_data_section. The active-
-// segment shape is: memidx (0) + offset expr (i32.const N ; end)
-// + init bytes (uleb-prefixed). One segment in the test plus a
-// parallel-array sanity-check with two segments.
 func TestWASMSectionsData(t *testing.T) {
 	src := `import "std/wasm/sections";
 function main(): i32 {
@@ -8187,12 +6869,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMSectionsTableElement covers the two sections that make
-// call_indirect usable: the table section (id 4 — one funcref
-// table with limits) and the element section (id 9 — an active
-// segment that initialises the table with funcidxs). Walks every
-// byte of each so a transposed limits flag or a missing offset-
-// expr terminator shows up precisely.
 func TestWASMSectionsTableElement(t *testing.T) {
 	src := `import "std/wasm/sections";
 import "std/wasm/imports";
@@ -8234,10 +6910,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMImportsFunc covers the import section's most common
-// shape — a function import like the WASI calls the existing
-// wasm backend declares. Vectors: one function import with
-// short module+name, and a two-import case with mixed kinds.
 func TestWASMImportsFunc(t *testing.T) {
 	src := `import "std/wasm/imports";
 import "std/wasm/encode";
@@ -8293,9 +6965,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMImportsDescBuilders walks the four import_desc_*
-// builders in isolation, verifying each produces the spec-
-// reference byte sequence.
 func TestWASMImportsDescBuilders(t *testing.T) {
 	src := `import "std/wasm/imports";
 import "std/wasm/encode";
@@ -8338,10 +7007,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMImportsGlobalSection covers encode_global_section.
-// Globaltype is `valtype byte + mut byte` and each entry carries
-// an init_expr that the caller pre-composes (typical shape:
-// i32.const N ; end).
 func TestWASMImportsGlobalSection(t *testing.T) {
 	src := `import "std/wasm/imports";
 import "std/wasm/encode";
@@ -8377,9 +7042,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleEmpty: module_new() + build() with no sections
-// populated should produce just the 8-byte preamble — magic
-// (\0asm) + version 1.
 func TestWASMModuleEmpty(t *testing.T) {
 	src := `import "std/wasm/module";
 function main(): i32 {
@@ -8401,15 +7063,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleMinimal builds a real "function returns 42" wasm
-// module end-to-end using the Module struct + build(). The
-// produced bytes go through every section composer at least once
-// — type, function, export, code — and the test verifies the
-// full byte sequence against a hand-computed reference.
-//
-// This is the strongest test in the std/wasm suite: a typo in
-// any composer or any opcode encoder would surface here as a
-// mismatched byte at a known offset.
 func TestWASMModuleMinimal(t *testing.T) {
 	src := `import "std/wasm/module";
 import "std/wasm/inst";
@@ -8490,11 +7143,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleSectionOrder verifies build() emits sections in
-// the spec-required order by populating every section and
-// scanning the output for the section IDs in sequence. The byte
-// content of each section is exercised by the dedicated section
-// tests; this test focuses on ordering.
 func TestWASMModuleSectionOrder(t *testing.T) {
 	src := `import "std/wasm/module";
 import "std/wasm/inst";
@@ -8572,21 +7220,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleValidatesUnderWasmTools is the end-to-end
-// correctness gate for the std/wasm encoder stack: a Lang
-// program uses std/wasm/module.build to produce the bytes of a
-// "function returning 42" core wasm module, prints those bytes
-// to stdout as space-separated decimals, and the Go side parses
-// them back, writes them to disk, and pipes the file through
-// `wasm-tools validate`. If our encoder produces a structurally
-// invalid wasm module, validate fails with a precise diagnostic
-// — much stronger than any byte-vector test in isolation.
-//
-// We additionally pipe the file through `wasm-tools print` and
-// check the output mentions both `(type` (so the type section
-// round-trips) and `i32.const 42` (so the code section's body
-// is intact). That covers the "validate passes but the content
-// is garbage" failure mode.
 func TestWASMModuleValidatesUnderWasmTools(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -8684,14 +7317,6 @@ function main(): i32 {
 	}
 }
 
-// langProducedModuleBytes runs a Lang program that prints space-
-// separated decimal bytes to stdout (newline-terminated), parses
-// them, and returns the byte slice. The wasmtime-run tests below
-// share this helper to extract a std/wasm-produced wasm module
-// from a Lang program. The Lang side has to use print()
-// (newline-terminated) for the final emission — otherwise
-// wasmtime's own "0" result line fuses onto the last decimal,
-// e.g. "... 11" + "0" -> "... 110".
 func langProducedModuleBytes(t *testing.T, src string) []byte {
 	t.Helper()
 	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
@@ -8713,9 +7338,6 @@ func langProducedModuleBytes(t *testing.T, src string) []byte {
 	return bs
 }
 
-// runWasmModule writes `mod` to a tmp .wasm file and runs
-// `wasmtime --invoke main` on it. Returns wasmtime's stdout.
-// Skips the calling test if wasmtime isn't on PATH.
 func runWasmModule(t *testing.T, mod []byte) string {
 	t.Helper()
 	if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -8740,11 +7362,6 @@ func runWasmModule(t *testing.T, mod []byte) string {
 	return so.String()
 }
 
-// TestWASMModuleRunsConst42 takes the bytes std/wasm produces for
-// the minimal "main returns 42" module, hands them to wasmtime,
-// and asserts the function actually returns 42 at runtime. After
-// the byte-vector and wasm-tools-validate gates, this is the
-// final correctness check: the Lang-produced module is executable.
 func TestWASMModuleRunsConst42(t *testing.T) {
 	src := `
 import "std/i32";
@@ -8785,10 +7402,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsAddition builds a module whose main does
-// i32.const 3 ; i32.const 4 ; i32.add and returns 7. Exercises
-// the numeric-opcode path (i32.add at 0x6A) as part of a
-// runnable module, not just a byte-vector match.
 func TestWASMModuleRunsAddition(t *testing.T) {
 	src := `
 import "std/i32";
@@ -8830,15 +7443,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsTwoFunctions builds a module with two
-// functions: a callee add(a, b) returning a+b, and main()
-// calling it with (10, 32) and returning the result (42).
-// Exercises the call opcode (0x10) and multi-function code-
-// section composition.
-//
-// Function indices are flat across imports and declared
-// functions; with no imports here, callee = 0 and main = 1.
-// main exports as funcidx 1.
 func TestWASMModuleRunsTwoFunctions(t *testing.T) {
 	src := `
 import "std/i32";
@@ -8897,12 +7501,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentHeader covers std/wasm/component's preamble
-// writer. The 8-byte component preamble differs from the core
-// wasm preamble in the version + layer fields (0x0d 0x00 0x01
-// 0x00 vs 0x01 0x00 0x00 0x00) — wasm-tools rejects a core
-// module wherever it expects a component (and vice versa) based
-// on those four bytes.
 func TestWASMComponentHeader(t *testing.T) {
 	src := `import "std/wasm/component";
 function main(): i32 {
@@ -8925,14 +7523,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentWraps verifies put_core_module_section wraps a
-// std/wasm-built core module into a Component Model envelope
-// whose bytes parse cleanly under wasm-tools. The Lang program
-// builds (a) a "function returning 42" core module and (b) a
-// component that embeds it, then dumps the component bytes;
-// the Go test pipes the result through wasm-tools validate +
-// print, expecting the latter to show the (component) wrapper +
-// the embedded (core module) + the i32.const 42 body.
 func TestWASMComponentWraps(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -9013,16 +7603,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentCoreInstance covers
-// put_core_instance_section_instantiate: wraps a core module with
-// the core-instance section needed to actually run it inside a
-// component. The bytes have to parse + validate under wasm-tools,
-// and `wasm-tools print` has to surface the `(core instance ...
-// (instantiate ...))` form that signals the section is structurally
-// correct (id 2, vec-len 1, tag 0 = instantiate, module-idx 0, no
-// args). This is the foundation for component-level export aliasing
-// in a later slice — exports point at instance items, so the
-// instance has to exist first.
 func TestWASMComponentCoreInstance(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -9102,25 +7682,11 @@ function main(): i32 {
 	if !strings.Contains(watStr, "(core instance") {
 		t.Errorf("expected (core instance section in printed output, got:\n%s", watStr)
 	}
-	// The instantiate form has to show up — without it, wasm-tools
-	// can't recover the module being instantiated and prints a
-	// different shape.
 	if !strings.Contains(watStr, "instantiate") {
 		t.Errorf("expected `instantiate` keyword in printed output, got:\n%s", watStr)
 	}
 }
 
-// TestWASMComponentAliasCoreFunc covers
-// put_alias_section_core_export_func: after a core module is
-// instantiated, the alias section lets us surface one of its
-// exported core functions as a top-level core-sort func — the
-// prerequisite for canon-lift to turn that core func into a
-// component-level function. Without an alias the core func has no
-// addressable identity at the component level.
-//
-// We don't reach the canon section in this slice; the test just
-// checks the alias bytes parse + print as the expected
-// `(alias core export ... "f" (core func ...))` shape.
 func TestWASMComponentAliasCoreFunc(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -9203,13 +7769,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentAliasMultipleSorts covers
-// put_alias_section_core_exports in its multi-sort multi-entry
-// shape: aliases a core func + a core memory out of the same core
-// instance in one alias section. Confirms different core-sort
-// bytes (func vs memory) can coexist in a single vec, which is the
-// shape canon-lift-with-(memory, realloc) needs in a real
-// component.
 func TestWASMComponentAliasMultipleSorts(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -9298,12 +7857,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentInstanceTypeWithResult covers
-// put_type_section_one_instance_one_func_with_result_export. Builds
-// an instance type whose exported function returns a value — the
-// shape WASI funcs like `wasi:io/streams::read(len: u64) ->
-// result<list<u8>, ...>` take. The no-result variant doesn't apply
-// to any returning function.
 func TestWASMComponentInstanceTypeWithResult(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -9367,13 +7920,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentWasiMultiImportHelper exercises the multi-import
-// generalisation of the WASI helper. Wraps a core module that
-// imports from TWO distinct WASI interfaces: `wasi:cli/exit::exit`
-// and `wasi:cli/environment::get-arguments`. The helper threads
-// both through the full type / import / alias / canon-lower /
-// core-instance pipeline, then instantiates the core module with
-// both lowered instances as args.
 func TestWASMComponentWasiMultiImportHelper(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -9465,13 +8011,6 @@ function main(): i32 {
 	}
 }
 
-// TestCmdLangComponentWrapCliWithTcpServer drives a TCP server
-// (tcp_listen / tcp_accept / tcp_close) through `-component-wrap-cli`
-// — the wasi:sockets path, composed adapter-free (seven instances,
-// four resource.drops, six memory-trampoline methods). A listen+close program runs to
-// completion under wasmtime's host sockets (exit 0); a listen+accept
-// program validates and links (it would block waiting for a client,
-// so it's only validated, not run).
 func TestCmdLangComponentWrapCliWithTcpServer(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -9497,7 +8036,6 @@ func TestCmdLangComponentWrapCliWithTcpServer(t *testing.T) {
 		return compPath
 	}
 
-	// listen + accept: validates + the imports are all present.
 	full := build("tcpfull", `function main(): i32 {
     let s: i32 = tcp_listen(8080);
     if (s < 0) { return 1; }
@@ -9519,10 +8057,6 @@ func TestCmdLangComponentWrapCliWithTcpServer(t *testing.T) {
 		}
 	}
 
-	// echo server (tcp_recv_into / tcp_send_bytes) — adds input-stream.read
-	// + output-stream.blocking-write-and-flush on the connection. Just
-	// validated here (running it needs a connecting client); confirms the
-	// stream methods are composed in.
 	echo := build("tcpecho", `function main(): i32 {
     let s: i32 = tcp_listen(8080);
     let c: i32 = tcp_accept(s);
@@ -9543,8 +8077,6 @@ func TestCmdLangComponentWrapCliWithTcpServer(t *testing.T) {
 		}
 	}
 
-	// listen + close (no accept) runs to completion against the host
-	// sockets — exit 0 confirms the component links and executes.
 	srv := build("tcplisten", `function main(): i32 {
     let s: i32 = tcp_listen(8080);
     if (s < 0) { return 1; }
@@ -9556,17 +8088,6 @@ func TestCmdLangComponentWrapCliWithTcpServer(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentWrapCliTcpServerWithEnv drives a TCP echo server
-// whose listen port comes from the PORT environment variable — the
-// HTTP-over-TCP handler shape (the synthesised `main()` calls
-// `__port_from_env` → `env()` → wasi:cli/environment.get-environment).
-// This mixes wasi:sockets with wasi:cli/environment, which neither the
-// pure-TCP nor the CLI-stream composer handled before: the TCP composer
-// now optionally surfaces get-environment (mem+realloc, like
-// the socket read). The whole thing composes adapter-free; the test runs
-// it end-to-end (wasmtime serves, a Go client connects and round-trips
-// a payload) with PORT supplied via `--env`, proving the env-driven port
-// actually drives the bind.
 func TestCmdLangComponentWrapCliTcpServerWithEnv(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -9578,9 +8099,6 @@ func TestCmdLangComponentWrapCliTcpServerWithEnv(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 
-	// Pick a free ephemeral port — open a :0 listener, capture the
-	// kernel-assigned port, close before the guest binds. Tiny race,
-	// localhost-only, short-lived (same approach as TestWasmPreview2TcpEcho).
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("probe listen: %v", err)
@@ -9590,10 +8108,6 @@ func TestCmdLangComponentWrapCliTcpServerWithEnv(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "envecho.fern")
-	// port_from_env mirrors std/serve's __port_from_env: read PORT via
-	// env() (→ get-environment), parse the digits, fall back to 8080.
-	// Sending the port through env (rather than hardcoding) is the whole
-	// point — it forces the get-environment import alongside sockets.
 	src := `import "std/net";
 
 function port_from_env(): i32 {
@@ -9654,10 +8168,6 @@ function main(): i32 {
 		}
 	}
 
-	// Spawn the server with PORT supplied via --env. If get-environment
-	// didn't work the guest would fall back to 8080 and the dial below
-	// (to the env-supplied port) would time out — so a successful
-	// round-trip proves the env path drives the bind.
 	run := exec.Command("wasmtime", "run", "-S", "inherit-network", "--env", "PORT="+strconv.Itoa(port), compPath)
 	var sout, serr bytes.Buffer
 	run.Stdout = &sout
@@ -9705,15 +8215,6 @@ function main(): i32 {
 	}
 }
 
-// TestCmdLangComponentWrapCli drives a Lang program through
-// `-component-wrap-cli` and confirms the produced binary runs
-// under plain `wasmtime run` (no --invoke). The cli-run shape
-// exports `wasi:cli/run@0.2.0` so wasmtime treats main's i32 as
-// a result lowering: 0 → exit 0, non-zero → exit 1.
-//
-// Two variants:
-//   - main returning 0: clean exit 0.
-//   - main returning 42: wasmtime exits non-zero (result::err).
 func TestCmdLangComponentWrapCli(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -9764,18 +8265,6 @@ func TestCmdLangComponentWrapCli(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentWrapCliWithExit drives a Lang program that
-// calls exit() through `-component-wrap-cli` end-to-end. The
-// driver should detect the preview-2 wasi:cli/exit import, wrap
-// the core via `ComposePreview2CliRun`, and produce a
-// component that:
-//
-//   - Imports wasi:cli/exit@0.2.0 (so wasmtime provides exit).
-//   - Exports wasi:cli/run@0.2.0 (so `wasmtime run` works
-//     without --invoke).
-//
-// The Lang `exit(0)` causes wasmtime to exit 0; `exit(1)` causes
-// non-zero exit.
 func TestCmdLangComponentWrapCliWithExit(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -9816,14 +8305,6 @@ func TestCmdLangComponentWrapCliWithExit(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentWrapCliWithPrintExit drives a Fern program
-// that BOTH writes stdout (print) AND calls exit() — the mixed
-// trampoline-pattern + structured-flow case. The driver detects
-// the stream-write pair plus the structured wasi:cli/exit import
-// (classifyComposeCliStream) and routes through
-// ComposePreview2CliRun. exit(0) → stdout printed +
-// exit 0; exit(1) → printed + non-zero (wasi:cli/exit only models
-// the result discriminant, so codes are 0/1).
 func TestCmdLangComponentWrapCliWithPrintExit(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -9857,7 +8338,6 @@ func TestCmdLangComponentWrapCliWithPrintExit(t *testing.T) {
 		}
 		return compPath
 	}
-	// exit(0): "hi\n" on stdout, exit 0.
 	ok := build(`function main(): i32 { print("hi"); exit(0); return 0; }`)
 	okCmd := exec.Command("wasmtime", "run", ok)
 	var okOut bytes.Buffer
@@ -9868,7 +8348,6 @@ func TestCmdLangComponentWrapCliWithPrintExit(t *testing.T) {
 	if okOut.String() != "hi\n" {
 		t.Errorf("print+exit(0) stdout = %q, want %q", okOut.String(), "hi\n")
 	}
-	// exit(1): "oops\n" on stdout, non-zero exit.
 	errComp := build(`function main(): i32 { print("oops"); exit(1); return 0; }`)
 	errCmd := exec.Command("wasmtime", "run", errComp)
 	var errOut bytes.Buffer
@@ -9881,12 +8360,6 @@ func TestCmdLangComponentWrapCliWithPrintExit(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentWrapCliWithRandom drives a Lang program
-// that calls random_i32() through `-component-wrap-cli`. With
-// the preview-2 migration of wasi_random_get →
-// wasi:random/random::get-random-u64, the driver should route
-// the import through `ComposePreview2CliRun` and produce a
-// component that runs cleanly under `wasmtime run`.
 func TestCmdLangComponentWrapCliWithRandom(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -9928,12 +8401,6 @@ func TestCmdLangComponentWrapCliWithRandom(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentWrapCliWithMonotonic drives a Lang program
-// that calls monotonic_ns() through `-component-wrap-cli`. With
-// the preview-2 migration of wasi_clock_time_get (monotonic case)
-// → wasi:clocks/monotonic-clock@0.2.0::now, the driver should
-// route the import through `ComposePreview2CliRun` and
-// produce a component that runs cleanly under `wasmtime run`.
 func TestCmdLangComponentWrapCliWithMonotonic(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -9975,13 +8442,6 @@ func TestCmdLangComponentWrapCliWithMonotonic(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentWrapCliWithNowNs drives a Lang program
-// that calls now_ns() (the realtime wall-clock helper) through
-// `-component-wrap-cli`. With the preview-2 migration of
-// __fern_now_ns to wasi:clocks/wall-clock@0.2.0::now (the
-// datetime-record indirect-return shape) + the 1-i32 trampoline
-// wrap, the produced component imports wasi:clocks/wall-clock +
-// exports wasi:cli/run and runs cleanly under `wasmtime run`.
 func TestCmdLangComponentWrapCliWithNowNs(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -10023,12 +8483,6 @@ func TestCmdLangComponentWrapCliWithNowNs(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentWrapCliVoidMain confirms `-component-wrap-cli`
-// transparently handles a void `main`. wasmbin's `SynthCliRun`
-// synthesises a `_lang_run() -> i32` wrapper that calls main and
-// returns 0, so the canon-lifted wasi:cli/run::run sees the
-// expected `() -> i32` core export shape regardless of what main
-// declared. wasmtime exits 0 (result::ok).
 func TestCmdLangComponentWrapCliVoidMain(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -10059,16 +8513,6 @@ func TestCmdLangComponentWrapCliVoidMain(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentWrapCliWithPrint drives a Lang program that
-// calls print("hello world") through `-component-wrap-cli`
-// end-to-end. With the preview-2 migration of __fern_print
-// (#1245) and the driver routing (this slice), the program
-// builds to a component that runs under `wasmtime run` and
-// writes "hello world\n" to stdout.
-//
-// First end-to-end demonstration of a Lang program writing to
-// stdout via preview-2 components — no wasm-tools shell-out, no
-// preview-1 adapter.
 func TestCmdLangComponentWrapCliWithPrint(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -10107,16 +8551,6 @@ func TestCmdLangComponentWrapCliWithPrint(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentWrapCliWithReadLine drives a Fern program
-// that reads stdin via io.read_line through
-// `-component-wrap-cli`. The driver detects the read-only
-// preview-2 imports (wasi:cli/stdin::get-stdin +
-// wasi:io/streams::blocking-read), rebuilds with cabi_realloc
-// exported (the blocking-read canon-lower allocates the returned
-// list<u8> through it), and routes via ComposePreview2CliRun.
-//
-// Observed via exit code (a read-only program can't print): the
-// program returns 0 (ok) when a line is present, 1 (err) at EOF.
 func TestCmdLangComponentWrapCliWithReadLine(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -10157,13 +8591,11 @@ function main(): i32 {
 			t.Errorf("expected %q in component, got:\n%s", want, printOut)
 		}
 	}
-	// "hello\n" → Ok(Some) of 6 bytes → exit 0.
 	some := exec.Command("wasmtime", "run", compPath)
 	some.Stdin = strings.NewReader("hello\n")
 	if err := some.Run(); err != nil {
 		t.Errorf("read_line with input: wasmtime run failed (want exit 0): %v", err)
 	}
-	// Empty stdin → None → exit 1.
 	none := exec.Command("wasmtime", "run", compPath)
 	none.Stdin = strings.NewReader("")
 	if err := none.Run(); err == nil {
@@ -10171,14 +8603,6 @@ function main(): i32 {
 	}
 }
 
-// TestCmdLangComponentWrapCliWithReadLinePrint drives the canonical
-// filter — a program that BOTH reads stdin (read_line) AND writes
-// stdout (print) — through `-component-wrap-cli`. The driver detects
-// the four-import read+print shape (get-stdin +
-// input-stream.blocking-read + get-stdout +
-// output-stream.blocking-write-and-flush) and routes via
-// ComposePreview2CliRun (combined io/streams, two
-// trampolines + two no-trampoline getters).
 func TestCmdLangComponentWrapCliWithReadLinePrint(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -10218,8 +8642,6 @@ function main(): i32 {
 			t.Errorf("expected %q in component, got:\n%s", want, printOut)
 		}
 	}
-	// stdin "hello\n" → read_line Some("hello\n") → print adds '\n' →
-	// stdout "hello\n\n"; exit 0.
 	some := exec.Command("wasmtime", "run", compPath)
 	some.Stdin = strings.NewReader("hello\n")
 	var sout bytes.Buffer
@@ -10230,7 +8652,6 @@ function main(): i32 {
 	if sout.String() != "hello\n\n" {
 		t.Errorf("read_line+print stdout = %q, want %q", sout.String(), "hello\n\n")
 	}
-	// Empty stdin → None → exit 1.
 	none := exec.Command("wasmtime", "run", compPath)
 	none.Stdin = strings.NewReader("")
 	if err := none.Run(); err == nil {
@@ -10238,12 +8659,6 @@ function main(): i32 {
 	}
 }
 
-// TestCmdLangComponentWrapCliComposedCombos exercises the general
-// CLI-stream + structured composition engine
-// (component.ComposePreview2CliRun) on combinations the bespoke
-// routes never covered: a read side mixed with structured imports,
-// and both stream trampolines mixed with a structured import. These
-// errored under -component-wrap-cli before the composer existed.
 func TestCmdLangComponentWrapCliComposedCombos(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -10269,7 +8684,6 @@ func TestCmdLangComponentWrapCliComposedCombos(t *testing.T) {
 		return compPath
 	}
 
-	// read_line + exit: read side + structured. Some → exit 0, None → exit 1.
 	rle := build("rle", `import "std/io";
 
 function main(): i32 {
@@ -10290,8 +8704,6 @@ function main(): i32 {
 		t.Errorf("read_line+exit (None): want non-zero exit")
 	}
 
-	// read_line + print + exit: both stream trampolines + structured.
-	// stdin "echo me\n" → printed back (+ print's newline) → exit 0.
 	rlpe := build("rlpe", `import "std/io";
 
 function main(): i32 {
@@ -10313,13 +8725,6 @@ function main(): i32 {
 	}
 }
 
-// TestCmdLangComponentWrapCliComposedFileRead exercises the
-// composer's filesystem-read fold: read_file's open-chain
-// (get-directories → open-at → read-via-stream → blocking-read)
-// combined with a stream/structured side, which the read-file wrap
-// alone never covered. read_file+print is a cat-like tool;
-// read_file+exit is read-config-then-exit. Both errored under
-// -component-wrap-cli before the fold.
 func TestCmdLangComponentWrapCliComposedFileRead(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -10348,8 +8753,6 @@ func TestCmdLangComponentWrapCliComposedFileRead(t *testing.T) {
 		return compPath
 	}
 
-	// read_file + print (cat): file contents "hello\n" printed back
-	// (+ print's trailing newline) → "hello\n\n", exit 0.
 	rfp := build("rfp", `function main(): i32 {
     match (read_file("data.txt")) {
         Ok(s) => { print(s); return 0; },
@@ -10367,7 +8770,6 @@ func TestCmdLangComponentWrapCliComposedFileRead(t *testing.T) {
 		t.Errorf("read_file+print stdout = %q, want %q", out.String(), "hello\n\n")
 	}
 
-	// read_file + exit: 6-byte file → exit 0; missing file → Err → exit 1.
 	rfe := build("rfe", `function main(): i32 {
     match (read_file("data.txt")) {
         Ok(s) => { if (s.len() == 6) { exit(0); return 0; } exit(2); return 2; },
@@ -10390,14 +8792,6 @@ func TestCmdLangComponentWrapCliComposedFileRead(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentWrapCliComposedFileWrite exercises the
-// composer's filesystem-write fold: write_file's open-chain
-// (get-directories → open-at → write-via-stream →
-// output-stream.blocking-write-and-flush) combined with a
-// stream/structured side. write_file+print notably shares one
-// blocking-write-and-flush lowering between the file's output-stream
-// and stdout's. Both combos errored under -component-wrap-cli before
-// the fold.
 func TestCmdLangComponentWrapCliComposedFileWrite(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -10423,7 +8817,6 @@ func TestCmdLangComponentWrapCliComposedFileWrite(t *testing.T) {
 		return compPath
 	}
 
-	// write_file + exit: write "composed!\n", exit 0 on success.
 	wfe := build("wfe", `function main(): i32 {
     match (write_file("wfe_out.txt", "composed!\n")) {
         Err(e) => { exit(2); return 2; },
@@ -10438,8 +8831,6 @@ func TestCmdLangComponentWrapCliComposedFileWrite(t *testing.T) {
 		t.Errorf("write_file+exit wrote %q (err %v), want %q", got, err, "composed!\n")
 	}
 
-	// write_file + print: writes a file AND prints a status; both use
-	// the shared blocking-write-and-flush. stdout = "ok", file = "data\n".
 	wfp := build("wfp", `function main(): i32 {
     match (write_file("wfp_out.txt", "data\n")) {
         Err(e) => { print("fail"); return 2; },
@@ -10461,12 +8852,6 @@ func TestCmdLangComponentWrapCliComposedFileWrite(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentWrapCliComposedMemTramp exercises the
-// composer's mem-trampoline imports (wall-clock now / args
-// get-arguments) combined with a stream/structured side — single
-// memory-needing trampoline imports that stand alone (no shared
-// resource types). now()+print and args+exit errored under
-// -component-wrap-cli before the fold.
 func TestCmdLangComponentWrapCliComposedMemTramp(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -10492,7 +8877,6 @@ func TestCmdLangComponentWrapCliComposedMemTramp(t *testing.T) {
 		return compPath
 	}
 
-	// now() + print: wall-clock (mem-only trampoline) + stdout write.
 	np := build("np", `function main(): i32 {
     let t: i64 = now_unix_ms();
     print("tick");
@@ -10509,7 +8893,6 @@ func TestCmdLangComponentWrapCliComposedMemTramp(t *testing.T) {
 		t.Errorf("now()+print stdout = %q, want %q", out.String(), "tick\n")
 	}
 
-	// args() + exit: get-arguments (mem+realloc trampoline) + structured.
 	ae := build("ae", `function main(): i32 {
     if (args().len() >= 1) { exit(0); return 0; }
     exit(3);
@@ -10520,15 +8903,6 @@ func TestCmdLangComponentWrapCliComposedMemTramp(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentWrapCliWithArgs drives a Fern program that
-// reads argv via args() through `-component-wrap-cli`. The driver
-// detects the args-only preview-2 import
-// (wasi:cli/environment::get-arguments), rebuilds with cabi_realloc
-// exported (the get-arguments canon-lower allocates the returned
-// list<string> through it), and routes via ComposePreview2CliRun.
-//
-// Observed via exit code: the program returns 0 when argv has the
-// expected count (program name + 2 extra = 3), 1 otherwise.
 func TestCmdLangComponentWrapCliWithArgs(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -10564,26 +8938,16 @@ func TestCmdLangComponentWrapCliWithArgs(t *testing.T) {
 			t.Errorf("expected %q in component, got:\n%s", want, printOut)
 		}
 	}
-	// 2 extra args → argv len 3 → exit 0.
 	three := exec.Command("wasmtime", "run", compPath, "x", "y")
 	if err := three.Run(); err != nil {
 		t.Errorf("args with 2 extra: wasmtime run failed (want exit 0): %v", err)
 	}
-	// No extra args → argv len 1 → exit 1.
 	one := exec.Command("wasmtime", "run", compPath)
 	if err := one.Run(); err == nil {
 		t.Errorf("args with none: wasmtime run exited 0, want non-zero")
 	}
 }
 
-// TestCmdLangComponentWrapCliWithEnv drives a Fern program that
-// reads an env var via env() through `-component-wrap-cli`. The
-// driver detects the env-only preview-2 import
-// (wasi:cli/environment::get-environment), rebuilds with
-// cabi_realloc exported, and routes via ComposePreview2CliRun.
-//
-// Observed via exit code: the program returns 0 when env("FOO")
-// resolves (Some), 1 when unset (None).
 func TestCmdLangComponentWrapCliWithEnv(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -10622,30 +8986,16 @@ func TestCmdLangComponentWrapCliWithEnv(t *testing.T) {
 			t.Errorf("expected %q in component, got:\n%s", want, printOut)
 		}
 	}
-	// FOO set → Some → exit 0.
 	set := exec.Command("wasmtime", "run", "--env", "FOO=bar", compPath)
 	if err := set.Run(); err != nil {
 		t.Errorf("env FOO set: wasmtime run failed (want exit 0): %v", err)
 	}
-	// FOO unset → None → exit 1.
 	unset := exec.Command("wasmtime", "run", compPath)
 	if err := unset.Run(); err == nil {
 		t.Errorf("env FOO unset: wasmtime run exited 0, want non-zero (None arm)")
 	}
 }
 
-// TestCmdLangComponentWrapCliWithReadFile drives a Fern program
-// that reads a file via read_file() through `-component-wrap-cli`.
-// The driver detects the four-import read-file preview-2 shape
-// (wasi:filesystem/preopens::get-directories +
-// wasi:filesystem/types::{open-at,read-via-stream} +
-// wasi:io/streams::blocking-read), rebuilds with cabi_realloc
-// exported, and routes via ComposePreview2CliRun. The whole
-// chain (get-directories → open-at → read-via-stream →
-// blocking-read loop) runs under `wasmtime run --dir`.
-//
-// Observed via exit code: 0 when read_file returns Ok with the
-// expected length, 1 on Err (missing file) or wrong length.
 func TestCmdLangComponentWrapCliWithReadFile(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -10654,8 +9004,6 @@ func TestCmdLangComponentWrapCliWithReadFile(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	dir := t.TempDir()
-	// A file whose content spans more than one 4096-byte chunk to
-	// exercise the doubling accumulator.
 	content := strings.Repeat("x", 10000)
 	if err := os.WriteFile(filepath.Join(dir, "data.txt"), []byte(content), 0o644); err != nil {
 		t.Fatalf("write data: %v", err)
@@ -10693,12 +9041,10 @@ func TestCmdLangComponentWrapCliWithReadFile(t *testing.T) {
 			t.Errorf("expected %q in component, got:\n%s", want, printOut)
 		}
 	}
-	// Present file (10000 bytes) → Ok, correct length → exit 0.
 	ok := exec.Command("wasmtime", "run", "--dir", dir, compPath)
 	if err := ok.Run(); err != nil {
 		t.Errorf("read_file present: wasmtime run failed (want exit 0): %v", err)
 	}
-	// Missing file → open-at fails → Err → exit 1.
 	miss := filepath.Join(dir, "rfmiss.fern")
 	if err := os.WriteFile(miss, []byte(`function main(): i32 {
     match (read_file("nope.txt")) { Ok(s) => { return 0; }, Err(e) => { return 1; } }
@@ -10717,13 +9063,6 @@ func TestCmdLangComponentWrapCliWithReadFile(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentWrapCliWithOpenReader drives the file Reader
-// API — open_reader(path) then Reader.read_line / read_chunk —
-// through `-component-wrap-cli`. Preview-2 has no fds: open_reader
-// opens via get-directories → open-at → read-via-stream and stores
-// the stream handle in the Reader; the read methods blocking-read on
-// it. The import set (open chain + blocking-read) matches the
-// read-file route, so no new wrap is needed.
 func TestCmdLangComponentWrapCliWithOpenReader(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -10751,7 +9090,6 @@ func TestCmdLangComponentWrapCliWithOpenReader(t *testing.T) {
 		}
 		return compPath
 	}
-	// read_line: first line "hello\n" is 6 bytes → exit 0.
 	rl := build("orl", `import "std/io";
 
 function main(): i32 {
@@ -10770,7 +9108,6 @@ function main(): i32 {
 	if err := exec.Command("wasmtime", "run", "--dir", dir, rl).Run(); err != nil {
 		t.Errorf("open_reader.read_line: wasmtime run failed (want exit 0): %v", err)
 	}
-	// read_chunk(4): "hell" is 4 bytes → exit 0.
 	rc := build("orc", `function main(): i32 {
     match (open_reader("data.txt")) {
         Ok(r) => {
@@ -10787,7 +9124,6 @@ function main(): i32 {
 	if err := exec.Command("wasmtime", "run", "--dir", dir, rc).Run(); err != nil {
 		t.Errorf("open_reader.read_chunk: wasmtime run failed (want exit 0): %v", err)
 	}
-	// Missing file → open-at fails → Err → non-zero.
 	miss := build("ormiss", `function main(): i32 {
     match (open_reader("nope.txt")) {
         Ok(r) => { match (r.read_chunk(4)) { Ok(_) => { return 7; }, Err(_) => { return 8; } } return 4; },
@@ -10800,14 +9136,6 @@ function main(): i32 {
 	}
 }
 
-// TestCmdLangComponentWrapCliWithWriteFile drives a Fern program
-// that writes a file via write_file() through `-component-wrap-cli`.
-// The driver detects the four-import write-file preview-2 shape
-// (get-directories + descriptor.{open-at,write-via-stream} +
-// output-stream.blocking-write-and-flush), rebuilds with
-// cabi_realloc exported, and routes via ComposePreview2CliRun.
-// The chain runs under `wasmtime run --dir` and the host file is
-// checked afterward.
 func TestCmdLangComponentWrapCliWithWriteFile(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -10816,8 +9144,6 @@ func TestCmdLangComponentWrapCliWithWriteFile(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	dir := t.TempDir()
-	// > 4096 bytes to exercise the chunked blocking-write-and-flush
-	// loop (wasmtime caps each write at 4096).
 	const n = 5000
 	srcPath := filepath.Join(dir, "wf.fern")
 	src := []byte(`function main(): i32 {
@@ -10852,7 +9178,6 @@ func TestCmdLangComponentWrapCliWithWriteFile(t *testing.T) {
 			t.Errorf("expected %q in component, got:\n%s", want, printOut)
 		}
 	}
-	// Run → None (success) → exit 0; then verify the host file.
 	if err := exec.Command("wasmtime", "run", "--dir", dir, compPath).Run(); err != nil {
 		t.Fatalf("write_file: wasmtime run failed (want exit 0): %v", err)
 	}
@@ -10868,13 +9193,6 @@ func TestCmdLangComponentWrapCliWithWriteFile(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentWrapCliWithOpenWriter drives the file Writer
-// API — open_writer(path) then Writer.write — through
-// `-component-wrap-cli`. Preview-2 has no fds: open_writer opens via
-// get-directories → open-at(create|truncate) → write-via-stream and
-// stores the output-stream handle in the Writer; write
-// blocking-write-and-flushes on it. The import set (open chain +
-// blocking-write-and-flush) matches the write-file route.
 func TestCmdLangComponentWrapCliWithOpenWriter(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -10921,14 +9239,6 @@ func TestCmdLangComponentWrapCliWithOpenWriter(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentWrapCliBareOpen covers the bare-open gap: a
-// program that opens a Reader/Writer but never reads/writes it. The
-// open-chain imports only get-directories + open-at +
-// read/write-via-stream (3 calls, no blocking-read/-write), so the
-// composer must import wasi:io/streams for the input/output-stream
-// *type* (the via-stream result) yet pass no io/streams arg and
-// lower no stream method. These errored under -component-wrap-cli
-// before ReadStream/WriteStream were decoupled from the open-chain.
 func TestCmdLangComponentWrapCliBareOpen(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -10958,7 +9268,6 @@ func TestCmdLangComponentWrapCliBareOpen(t *testing.T) {
 			t.Errorf("%s: wasmtime run failed (want exit 0): %v", name, err)
 		}
 	}
-	// open_reader, never read → Ok → exit 0.
 	run("bareread", `function main(): i32 {
     match (open_reader("data.txt")) {
         Ok(r) => { return 0; },
@@ -10966,7 +9275,6 @@ func TestCmdLangComponentWrapCliBareOpen(t *testing.T) {
     }
     return 5;
 }`)
-	// open_writer, never write → Ok → exit 0.
 	run("barewrite", `function main(): i32 {
     match (open_writer("bw_out.txt")) {
         Ok(w) => { return 0; },
@@ -10976,12 +9284,6 @@ func TestCmdLangComponentWrapCliBareOpen(t *testing.T) {
 }`)
 }
 
-// TestCmdLangComponentWrapCliWithOpenAppender drives open_appender:
-// preview-2 has no fd-append flag, so the composer's FileAppend
-// dimension opens via get-directories → open-at(CREATE, no TRUNCATE)
-// → append-via-stream (the offset-less method) and stores the
-// EOF-positioned output-stream handle; Writer.write then appends. The
-// existing file's contents must be preserved.
 func TestCmdLangComponentWrapCliWithOpenAppender(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -11026,20 +9328,11 @@ func TestCmdLangComponentWrapCliWithOpenAppender(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read log.txt: %v", err)
 	}
-	// Append, not truncate: both lines present.
 	if string(got) != "line1\nline2\n" {
 		t.Errorf("log.txt = %q, want %q", string(got), "line1\nline2\n")
 	}
 }
 
-// TestCmdLangComponentWrapCliWithWrite drives a Lang program
-// that calls write("hello") through `-component-wrap-cli`. With
-// __fern_write migrated to preview-2 in the same slice, the
-// program produces a component that writes "hello" (no trailing
-// newline) to stdout under `wasmtime run`.
-//
-// The print / write distinction mirrors fmt.Println / fmt.Print:
-// print appends '\n', write doesn't.
 func TestCmdLangComponentWrapCliWithWrite(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -11075,11 +9368,6 @@ func TestCmdLangComponentWrapCliWithWrite(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentWrapCliWithEprint drives a Lang program
-// that calls eprint("oops") through `-component-wrap-cli`. With
-// __fern_eprint migrated to preview-2 (wasi:cli/stderr +
-// wasi:io/streams), the program produces a component that writes
-// "oops\n" to STDERR under `wasmtime run` — stdout stays empty.
 func TestCmdLangComponentWrapCliWithEprint(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -11128,12 +9416,6 @@ func TestCmdLangComponentWrapCliWithEprint(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentWrapCliWithPutchar drives a Lang program
-// that calls putchar() through `-component-wrap-cli`. putchar
-// shares print's preview-2 imports (wasi:cli/stdout +
-// blocking-write-and-flush), so the existing print-only driver
-// routing handles it without a separate code path. Writes the
-// three bytes 'h','i','!' to stdout.
 func TestCmdLangComponentWrapCliWithPutchar(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -11171,17 +9453,6 @@ func TestCmdLangComponentWrapCliWithPutchar(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentWrapCliWithRandomInt drives a Lang program
-// that calls the stdlib `random_int(lo, hi)` helper (from
-// std/math) through `-component-wrap-cli`. random_int internally
-// calls `random_bytes(3)`, so this test validates that the
-// random_bytes preview-2 migration cascades through to user code
-// that consumes the stdlib helper — the actual "why does this
-// matter" assertion behind that migration.
-//
-// The program picks a random int in [0, 100) and exits 0 iff it
-// falls in range. The probability of a false negative is 0
-// (any well-formed implementation returns a value in [0, 100)).
 func TestCmdLangComponentWrapCliWithRandomInt(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -11225,15 +9496,6 @@ function main(): i32 {
 	}
 }
 
-// TestCmdLangComponentWrapCliWithMultipleImports drives a Lang
-// program that pulls in TWO preview-2 WASI imports
-// simultaneously: wasi:random/random (via random_i32) and
-// wasi:cli/exit (via exit()). Confirms the multi-import loop in
-// ComposePreview2CliRun produces a component that wasmtime
-// accepts and runs cleanly under `wasmtime run` (no --invoke).
-//
-// The Lang program asks for a random i32 and exits 0 — both
-// imports get exercised at runtime.
 func TestCmdLangComponentWrapCliWithMultipleImports(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -11281,16 +9543,6 @@ func TestCmdLangComponentWrapCliWithMultipleImports(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentWrapCliWithRandomBytes drives a Lang
-// program that calls random_bytes(n) through `-component-wrap-cli`.
-// With the preview-2 migration of __fern_random_bytes (loop of
-// get-random-u64() into a padded buffer), the produced component
-// imports only wasi:random/random@0.2.0 + exports wasi:cli/run@0.2.0
-// and runs cleanly under `wasmtime run`.
-//
-// The Lang program asks for a 3-byte slice (the common
-// random_int(0, n) shape) so the loop has to handle n < 8 + the
-// padding-up-to-8 path.
 func TestCmdLangComponentWrapCliWithRandomBytes(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -11332,14 +9584,6 @@ func TestCmdLangComponentWrapCliWithRandomBytes(t *testing.T) {
 	}
 }
 
-// TestCmdLangTargetWasmNoAdapter exercises the new default-path
-// wiring: `-target wasm32-wasi` without `-wasi-adapter` routes through
-// the Go-side preview-2 encoder (cli-run shape) and produces a
-// component runnable via plain `wasmtime run prog.wasm`. No
-// `wasm-tools` shell-out involved. Closes the loop on the
-// preview-2 import migrations — for programs whose imports are
-// all migrated, the default `-target wasm32-wasi` now works
-// without an adapter.
 func TestCmdLangTargetWasmNoAdapter(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -11381,10 +9625,6 @@ func TestCmdLangTargetWasmNoAdapter(t *testing.T) {
 	}
 }
 
-// projectRoot returns the lang repo root for use as the working
-// directory when invoking `go run ./cmd/fern` from a test under
-// internal/testing/e2e/. Walks up from the test file's directory until a
-// go.mod is found.
 func projectRoot(t *testing.T) string {
 	t.Helper()
 	wd, err := os.Getwd()
@@ -11404,24 +9644,7 @@ func projectRoot(t *testing.T) string {
 	}
 }
 
-// TestWASMComponentGoLangByteEquivalence pins the Go-side
-// `internal/wasm/component.WrapWasiImported` against the Lang
-// `build_wasi_imported_component` helper: given the same core
-// module bytes + the same single WASI import shape, both must
-// produce byte-identical output.
-//
-// This is the essential guarantee that lets the production
-// driver use either implementation interchangeably — and a
-// regression alarm if one is updated without the other.
 func TestWASMComponentGoLangByteEquivalence(t *testing.T) {
-	// Build the same WASI-imported component on both sides and
-	// assert the produced bytes are IDENTICAL — the component-level
-	// analogue of TestWASMCoreEncoderGoLangByteEquivalence. No
-	// wasm-tools needed: byte-equality is strictly stronger than a
-	// `wasm-tools print` text comparison (identical bytes ⟹
-	// identical print), and a separate test
-	// (TestWASMComponentWasiHelperBuildsValid) already validates the
-	// component is well-formed.
 	src := `
 import "std/i32";
 import "std/wasm/module";
@@ -11466,12 +9689,8 @@ function main(): i32 {
 		langBytes = append(langBytes, byte(n))
 	}
 
-	// Build the identical component on the Go side. The core module
-	// goes through the production encoder (mod.Build) with the same
-	// inputs the Lang program used — byte-equal by
-	// TestWASMCoreEncoderGoLangByteEquivalence — then the same wrap.
 	goMod := mod.New()
-	goMod.TypeParams = [][]byte{{encode.ValtypeI32}} // type 0: (i32) -> ()
+	goMod.TypeParams = [][]byte{{encode.ValtypeI32}}
 	goMod.TypeResults = [][]byte{{}}
 	goMod.ImportModules = []string{"wasi-exit"}
 	goMod.ImportNames = []string{"exit"}
@@ -11493,39 +9712,23 @@ function main(): i32 {
 	}
 }
 
-// TestWASMCoreEncoderGoLangByteEquivalence is the byte-exact parity
-// gate between the two core-module encoders: the Go production
-// encoder (internal/wasm/{module,inst,sections,memory,...}) and the
-// Fern reimplementation (internal/stdlib/std/wasm/*). Both build the
-// SAME representative module — type / function / funcref-table /
-// element / memory / export / code sections, with a body that
-// exercises i32.const, memory.fill, memory.copy, and call_indirect —
-// and the test asserts the produced bytes are identical.
-//
-// This locks the two implementations together: if a future change
-// touches one encoder (an opcode, a section layout) without the
-// matching change on the other side, the bytes diverge and this
-// fails. It's the core-module analogue of the component-level
-// TestWASMComponentGoLangByteEquivalence above.
 func TestWASMCoreEncoderGoLangByteEquivalence(t *testing.T) {
-	// --- Go side: build via internal/wasm/* (the production encoder).
 	goMod := mod.New()
-	goMod.TypeParams = [][]byte{{}}                   // type 0: () -> i32
-	goMod.TypeResults = [][]byte{{encode.ValtypeI32}} //
-	goMod.FunctionTypeidxs = []uint32{0, 0}           // func0 (callee), func1 (main)
+	goMod.TypeParams = [][]byte{{}}
+	goMod.TypeResults = [][]byte{{encode.ValtypeI32}}
+	goMod.FunctionTypeidxs = []uint32{0, 0}
 	goMod.MemoryPresent = true
 	goMod.MemoryMin = 1
 	goMod.MemoryMax = -1
-	goMod.TablePresent = true // funcref table, min 1
+	goMod.TablePresent = true
 	goMod.TableMin = 1
 	goMod.TableMax = -1
-	goMod.ElementOffsets = []int32{0} // table[0] = func0
+	goMod.ElementOffsets = []int32{0}
 	goMod.ElementFuncidxs = [][]uint32{{0}}
 	goMod.ExportNames = []string{"main"}
 	goMod.ExportKinds = []byte{sections.ExportFunc}
 	goMod.ExportIdxs = []uint32{1}
 
-	// func0: memory.fill(0, 9, 1); memory.copy(4, 0, 1); i32.const 7.
 	f0 := inst.InstI32Const(nil, 0)
 	f0 = inst.InstI32Const(f0, 9)
 	f0 = inst.InstI32Const(f0, 1)
@@ -11537,7 +9740,6 @@ func TestWASMCoreEncoderGoLangByteEquivalence(t *testing.T) {
 	f0 = inst.InstI32Const(f0, 7)
 	f0body := inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), f0)
 
-	// func1 (main): i32.const 0; call_indirect type 0 table 0.
 	f1 := inst.InstI32Const(nil, 0)
 	f1 = inst.InstCallIndirect(f1, 0, 0)
 	f1body := inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), f1)
@@ -11545,7 +9747,6 @@ func TestWASMCoreEncoderGoLangByteEquivalence(t *testing.T) {
 	goMod.CodeBodies = [][]byte{f0body, f1body}
 	goBytes := mod.Build(goMod)
 
-	// --- Lang side: build the identical module via std/wasm/*.
 	src := `
 import "std/i32";
 import "std/wasm/module";
@@ -11612,10 +9813,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentWasiHelperBuildsValid exercises the high-level
-// `build_wasi_imported_component` helper. Same shape as the full-
-// pipeline test (`TestWASMComponentWasiExitFullPipeline`), but with
-// the seven section calls collapsed into one helper invocation.
 func TestWASMComponentWasiHelperBuildsValid(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -11694,27 +9891,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentWasiExitFullPipeline covers
-// put_alias_section_instance_export_func by exercising the full
-// WASI-style "import an interface, extract its function, lower
-// into core, instantiate core module" pipeline:
-//
-//  1. type section: instance type { exit(code: u32) }
-//  2. import section: wasi:cli/exit@0.2.0 (instance 0)
-//  3. alias section: alias instance 0's "exit" export as
-//     component-level func 0
-//  4. canon section: lower func 0 into core func 0
-//  5. core-instance section: wrap core func 0 as a
-//     `(export "exit" (func 0))` core instance (instance 0)
-//  6. core-module section: a core module that imports
-//     "wasi" "exit" : (i32) -> ()
-//  7. core-instance section: instantiate the core module
-//     passing instance 0 as the "wasi" arg
-//
-// This is structurally exactly what `wasm-tools component new
-// --adapt` produces for a CLI-world component using only one WASI
-// import. The component validates under wasm-tools, demonstrating
-// that std/wasm/component can produce the full WASI-CLI shape.
 func TestWASMComponentWasiExitFullPipeline(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -11814,12 +9990,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentWasiStdMultiExport covers
-// put_type_section_one_instance_with_func_exports. Builds an
-// instance type with two no-result func exports, like
-// `wasi:io/streams::{blocking-flush, blocking-skip}` or the
-// `wasi:cli/std{in,out,err}` family. Verifies wasm-tools picks up
-// both exports.
 func TestWASMComponentWasiStdMultiExport(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -11888,15 +10058,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentWasiExitImport covers
-// put_type_section_one_instance_one_func_export + put_import_section_one_instance.
-// Builds the WASI `wasi:cli/exit@0.2.0` interface shape: an instance
-// type exporting `exit(code: u32)`, then imported under the
-// interface-name label.
-//
-// `wasi:cli/exit` is the canonical "instance with one no-result
-// function" WASI interface; any component that calls `exit` imports
-// it via this shape.
 func TestWASMComponentWasiExitImport(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -11961,17 +10122,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentCoreTypeFunc covers
-// put_core_type_section_one_func: emits a component-level core-type
-// section containing one core wasm functype `(func (param i32)
-// (result i32))`. Verifies the printed WAT surfaces the
-// `(core type ... (func ...))` shape.
-//
-// Core types live at the component level — distinct from both core
-// module types (inside an embedded core module) and component types
-// (declared via the type section, id 7). They're addressed by
-// core-typeidx and used in places like core-instance instantiation
-// args (for declaring expected core-import signatures).
 func TestWASMComponentCoreTypeFunc(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -12035,13 +10185,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentTypeFuncU32 covers
-// put_type_section_one_func_no_param plus cvaltype_u32: emits a
-// component-level type section defining `(func (result u32))` and
-// verifies the bytes parse + print as the expected shape. The
-// component valtype byte (0x79 for u32) is in a different number
-// space than core wasm valtypes (i32 = 0x7f), so the test pins the
-// chosen byte against `wasm-tools print`'s textual output.
 func TestWASMComponentTypeFuncU32(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -12102,13 +10245,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentTypeFuncWithParams covers put_type_section_one_func
-// with a non-empty parameter list: emits
-// `(func (param "x" u32) (param "y" string) (result bool))` and
-// verifies wasm-tools picks up both parameters with the right names
-// and valtypes. Anchors the parallel-array (param_names,
-// param_valtypes) calling convention against
-// `wasm-tools print`'s textual output.
 func TestWASMComponentTypeFuncWithParams(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -12176,13 +10312,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentTypeSectionTwoFuncs covers put_type_section_funcs
-// in its non-trivial shape: a single type section that declares two
-// functypes — `(func)` (no params, no result form via the trivial
-// case... well actually a single u32 result) and
-// `(func (param "n" u32) (result string))`. Verifies multi-entry
-// support so real WASI worlds (which have many functypes) can be
-// expressed.
 func TestWASMComponentTypeSectionTwoFuncs(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -12257,13 +10386,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentTypeSection covers put_component_type_section,
-// which writes the `component-type` custom section the WIT world
-// machinery hangs its world descriptor on. wasm-tools doesn't
-// validate the inner payload (custom sections are opaque to the
-// validator), so we hand in a synthetic payload and assert
-// `wasm-tools print` surfaces a `component-type` custom section
-// carrying the expected bytes.
 func TestWASMComponentTypeSectionEmbed(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -12330,12 +10452,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentImportFunc covers put_import_section_one_func:
-// declares an imported function `host-func : () -> u32` and verifies
-// the bytes parse + print as the expected `(import "host-func" (func
-// (type ...)))` shape. This is the label-form import (kind 0x00);
-// WASI-style interface imports use the kind 0x01 form and land in a
-// later slice.
 func TestWASMComponentImportFunc(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -12400,12 +10516,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentImportSectionTwoFuncs covers
-// put_import_section_funcs in its multi-entry shape: a single
-// import section with two label-form function imports, each
-// pointing at a different functype in the type section. Confirms
-// imports can be enumerated in a single section the way real WASI
-// worlds need.
 func TestWASMComponentImportSectionTwoFuncs(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -12482,24 +10592,11 @@ function main(): i32 {
 			t.Errorf("expected %q in printed component, got:\n%s", want, watStr)
 		}
 	}
-	// Both import declarations should appear.
 	if strings.Count(watStr, "(import ") < 2 {
 		t.Errorf("expected at least 2 (import) declarations, got:\n%s", watStr)
 	}
 }
 
-// TestWASMComponentCanonLower covers put_canon_section_lower_no_opts:
-// imports a component-level function and lowers it back to a core-
-// level function. The mirror of canon-lift exercised by
-// TestWASMComponentLiftedExport. Together they cover both directions
-// of the canonical-ABI boundary — lift (core → component) for
-// exports, lower (component → core) for imports.
-//
-// Composition: header + type `(func (param "x" u32) (result u32))` +
-// import "h" of that type + canon lower (func 0). The lowered core
-// func gets index 0 in the core-func space; later slices wire it
-// into a core-instance's instantiation args to actually feed the
-// host import down into the core module.
 func TestWASMComponentCanonLower(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -12569,12 +10666,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentCanonLowersTwo covers
-// put_canon_section_lowers_no_opts in its multi-entry shape:
-// imports two component-level funcs and lowers both in a single
-// canon section. Confirms the canon section can pack multiple
-// lower entries the way a real WASI-world wrap does (one lower
-// per host import).
 func TestWASMComponentCanonLowersTwo(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -12638,7 +10729,6 @@ function main(): i32 {
 		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
 	}
 	watStr := string(wat)
-	// Both lower declarations should appear.
 	if strings.Count(watStr, "canon lower") < 2 {
 		t.Errorf("expected at least 2 `canon lower` declarations, got:\n%s", watStr)
 	}
@@ -12652,12 +10742,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentInstanceFromTwoFuncExports covers
-// put_core_instance_section_from_func_exports in its multi-export
-// shape: builds one core instance packaging two lowered host funcs
-// under different export names — the shape preview-2 WASI imports
-// take when getting threaded down into the core module
-// instantiation as a single "wasi" instance arg.
 func TestWASMComponentInstanceFromTwoFuncExports(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -12742,13 +10826,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentInstantiateWithTwoInstanceArgs covers
-// put_core_instance_section_instantiate_with_instance_args in its
-// multi-arg shape. Builds a core module that imports two functions
-// from two different instance names ("host_a" and "host_b"),
-// packages a single host instance per name, then instantiates the
-// core module passing both instances as args. Confirms the
-// multi-arg form encodes correctly.
 func TestWASMComponentInstantiateWithTwoInstanceArgs(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -12848,28 +10925,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentImportLoweredIntoCoreModule covers the
-// other half of the canonical-ABI boundary: a host-imported function
-// is lowered into a core function and threaded down as a core
-// module's import. Exercises:
-//   - put_canon_section_lower_no_opts
-//   - put_core_instance_section_from_one_func_export
-//   - put_core_instance_section_instantiate_with_one_instance_arg
-//
-// The component's recipe:
-//
-//	type 0    : (func (result u32))
-//	import 0  : "h" : (func 0)
-//	canon lower (func 0) -> core func 0
-//	core instance 0 = (export "f" (core func 0))   ; package the lower'd fn
-//	core module 0   : imports (host.f : () -> i32), exports "main"
-//	                  that just calls the import
-//	core instance 1 = (instantiate $m (with "host" (instance 0)))
-//
-// wasmtime won't *run* this (the host import isn't satisfied), but
-// `wasm-tools validate` accepts it and `wasm-tools print` shows
-// every wiring step, proving the two new core-instance composers
-// produce spec-conformant bytes.
 func TestWASMComponentImportLoweredIntoCoreModule(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -12966,11 +11021,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentExportSectionTwoFuncs covers put_export_section_funcs
-// in its multi-entry shape. Builds a component that imports one
-// function and re-exports it under two different names — the
-// simplest shape that exercises multi-export without needing two
-// canon-lifts.
 func TestWASMComponentExportSectionTwoFuncs(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -13040,26 +11090,11 @@ function main(): i32 {
 			t.Errorf("expected %q in printed component, got:\n%s", want, watStr)
 		}
 	}
-	// Both export declarations should appear.
 	if strings.Count(watStr, "(export ") < 2 {
 		t.Errorf("expected at least 2 (export) declarations, got:\n%s", watStr)
 	}
 }
 
-// TestWASMComponentCanonLiftMemRealloc covers
-// put_canon_section_lift_mem_realloc. Lifts a core function under
-// the canonical-ABI `(memory, realloc)` options — the shape every
-// component-level function that returns a string or list goes
-// through. The core module exports a memory + a realloc func + the
-// lift target, the component aliases all three out of the core
-// instance, lifts the target under a string-returning type, and
-// exports the lifted func.
-//
-// wasm-tools accepts the shape even when the lifted signature
-// doesn't strictly match the canonical-ABI lowering of the core
-// signature; this test pins the BYTE shape of the canon-with-opts
-// section, not the runtime-semantic compatibility (which is the
-// component runtime's job to enforce).
 func TestWASMComponentCanonLiftMemRealloc(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -13172,15 +11207,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentCanonLowerMemRealloc covers
-// put_canon_section_lower_mem_realloc. Mirrors
-// TestWASMComponentCanonLiftMemRealloc but in the opposite
-// direction: a host-imported function takes a string parameter
-// and is lowered with `(memory, realloc)` opts so the canonical-
-// ABI can materialise the string bytes in core memory. The
-// canonical "lower a host-imported function taking a string"
-// shape that preview-2 WASI imports (`print`, `write-file`, …)
-// reach for.
 func TestWASMComponentCanonLowerMemRealloc(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -13282,14 +11308,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentCanonLiftPostReturn covers
-// put_canon_section_lift_mem_realloc_post_return: extends
-// canon-lift-with-(memory, realloc) by adding the post-return
-// option. Needed when the lifted function returns a string or
-// list backed by core memory the canonical-ABI shouldn't keep
-// around past the call — the host runtime invokes post-return on
-// the canonical-ABI handle after copying out, freeing the
-// core-side storage.
 func TestWASMComponentCanonLiftPostReturn(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -13389,21 +11407,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentLiftedExport is the first end-to-end shape that
-// exercises every section composer std/wasm/component currently
-// ships: preamble + core-module + core-instance + alias + type +
-// canon + export. A core module exports `f : () -> i32`; the
-// component aliases it as a core-func, declares a component-level
-// type `() -> u32`, lifts the core-func into a component-level
-// function, and exports that lifted function as `g`.
-//
-// This is the structural shape that `wasm-tools component new`
-// produces for a self-contained core module — the production target
-// of Phase 2. wasmtime won't *run* this as a CLI world (the
-// component doesn't satisfy a known WASI world signature), but
-// `wasm-tools validate` accepts it and `wasm-tools print` shows the
-// `(export "g" (func ...))` + `(canon lift ...)` recipe that proves
-// the seven sections compose correctly.
 func TestWASMComponentLiftedExport(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -13478,8 +11481,6 @@ function main(): i32 {
 		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
 	}
 	watStr := string(wat)
-	// Structural assertions — every section we wired has to show
-	// up at component level in the printed output.
 	for _, want := range []string{
 		"(core module",
 		"(core instance",
@@ -13495,11 +11496,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentCanonLiftUtf16 covers
-// put_canon_section_lift_mem_realloc_encoding with the
-// string-encoding-utf16 canonopt. Verifies the explicit-encoding
-// variant emits a canon section where `wasm-tools print` surfaces
-// `string-encoding=utf16` alongside memory + realloc.
 func TestWASMComponentCanonLiftUtf16(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -13593,16 +11589,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentTypeFuncNoResult covers
-// put_type_section_one_func_no_result: declares
-// `(func (param "status" u32))` — no result — and verifies
-// wasm-tools surfaces the no-result shape (which appears as
-// `(param "status" u32)` with no `(result ...)` form in the
-// printed WAT).
-//
-// Without this composer, the existing single-anon-result functype
-// API can't express WASI functions like `wasi:cli/exit::exit` or
-// `wasi:io/streams::blocking-flush` that return nothing.
 func TestWASMComponentTypeFuncNoResult(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -13663,23 +11649,11 @@ function main(): i32 {
 	if !strings.Contains(watStr, "u32") {
 		t.Errorf("expected u32 param valtype, got:\n%s", watStr)
 	}
-	// No `(result ...)` form should appear — the function returns
-	// nothing. The printed WAT has the param but no result clause.
 	if strings.Contains(watStr, "(result ") {
 		t.Errorf("unexpected (result ...) for a no-result functype:\n%s", watStr)
 	}
 }
 
-// TestWASMComponentStartSection covers
-// put_start_section_no_args_no_results. Declares a no-result
-// functype, imports a function of that type, then a start section
-// calling the imported function with no value args. Verifies
-// wasm-tools picks up the `(start ...)` form.
-//
-// Component-level start sections are how a component runs build-
-// time initialisation (computing constants at instantiation time,
-// running setup hooks). This composer covers the simplest case
-// (no value args, no result bindings).
 func TestWASMComponentStartSection(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -13728,11 +11702,6 @@ function main(): i32 {
 	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
 		t.Fatalf("write wasm: %v", err)
 	}
-	// The component-level start section binds component-level
-	// `value`s, which wasm-tools considers an experimental feature.
-	// Default `validate` rejects without `--features all`; this
-	// just means the start composer's bytes are structurally
-	// correct but only usable under hosts that opt in.
 	if vout, err := exec.Command("wasm-tools", "validate", "--features", "all", compPath).CombinedOutput(); err != nil {
 		hexBytes := ""
 		for _, b := range bs {
@@ -13750,12 +11719,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentResourceNewsRepsTwo covers
-// put_canon_section_resource_news + put_canon_section_resource_reps
-// in their multi-entry shapes: two resource types declared, then
-// both `new` and `rep` emitted as 2-entry canon sections each.
-// Verifies the full multi-entry resource canon family parallels
-// the existing drops composer.
 func TestWASMComponentResourceNewsRepsTwo(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -13821,11 +11784,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentResourceDropsTwo covers
-// put_canon_section_resource_drops in its multi-entry shape: two
-// resource types declared, then both dropped in one canon section
-// (the shape real WASI worlds use — HTTP alone declares ~10
-// resources, each with its own drop).
 func TestWASMComponentResourceDropsTwo(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -13889,11 +11847,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentResourceNewRep covers
-// put_canon_section_resource_new + put_canon_section_resource_rep.
-// Declares a resource type then emits both resource.new and
-// resource.rep canon entries for it. Verifies wasm-tools surfaces
-// both keywords in the printed WAT.
 func TestWASMComponentResourceNewRep(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -13956,14 +11909,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentOwnBorrowHandles covers
-// put_type_section_one_own + put_type_section_one_borrow. Declares
-// a resource type then `own<$r>` and `borrow<$r>` handles referring
-// to it. Verifies wasm-tools picks up both handle forms.
-//
-// Resource handles are how WASI worlds reference live host objects:
-// `own<incoming-request>` for transferred handles,
-// `borrow<incoming-request>` for non-owning references.
 func TestWASMComponentOwnBorrowHandles(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -14029,10 +11974,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentVariantMixed covers put_type_section_one_variant
-// with a mix of payload-carrying and tag-only cases. Declares
-// `variant { ok(u32), err(string), abort }` — the typical
-// success / error-with-message / no-payload-cancellation shape.
 func TestWASMComponentVariantMixed(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -14098,11 +12039,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentRecordNameAge covers put_type_section_one_record:
-// declares `record { name: string, age: u32 }` and verifies
-// `wasm-tools print` surfaces both fields with their names + types.
-// Records are the structural product type used pervasively by WASI
-// (filesystem-stat, http field-entry, etc.).
 func TestWASMComponentRecordNameAge(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -14167,10 +12103,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentFlagsRWX covers put_type_section_one_flags:
-// declares `flags { read, write, execute }` and verifies wasm-tools
-// surfaces the bitset shape. Same labels-vec encoding as enum;
-// only the form byte differs (0x6e vs 0x6d).
 func TestWASMComponentFlagsRWX(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -14234,10 +12166,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentEnumColor covers put_type_section_one_enum:
-// declares `enum { red, green, blue }` and verifies wasm-tools picks
-// up all three labels. Enums are tag-only variants — used by WASI
-// for status codes and small finite-set selectors.
 func TestWASMComponentEnumColor(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -14301,11 +12229,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentResultOkErr covers put_type_section_one_result_ok_err:
-// declares `result<u32, string>` and verifies wasm-tools picks up
-// both arms. The both-present form is what WASI worlds reach for
-// the most — HTTP request handlers, file ops, etc. all return
-// `result<T, error-code>`.
 func TestWASMComponentResultOkErr(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -14369,11 +12292,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentTupleStringU32 covers put_type_section_one_tuple:
-// declares `tuple<string, u32>` and verifies `wasm-tools print`
-// surfaces it. Tuples are the canonical pair shape in WASI —
-// `wasi:cli/environment::get-environment()` returns
-// `list<tuple<string, string>>` for the (name, value) entries.
 func TestWASMComponentTupleStringU32(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -14438,11 +12356,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentOptionOfU32 covers put_type_section_one_option:
-// declares `option<u32>` and verifies `wasm-tools print` surfaces
-// `(option u32)`. Options appear pervasively in WASI worlds —
-// `wasi:http/types` and `wasi:cli/environment` use them for
-// "may or may not be present" fields.
 func TestWASMComponentOptionOfU32(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -14500,10 +12413,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentListOfU8 covers put_type_section_one_list:
-// declares `list<u8>` as the sole component-level type and verifies
-// `wasm-tools print` surfaces `(list u8)`. Lists are heavily used
-// in WASI for byte buffers, env vars, HTTP headers, etc.
 func TestWASMComponentListOfU8(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -14561,17 +12470,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentResourceDrop covers put_type_section_one_resource
-// + put_canon_section_resource_drop. Builds a component that
-// declares a resource type (rep = i32, no dtor) and emits a canon
-// resource.drop for it. Verifies both the resource type
-// declaration and the resource.drop canon entry surface in
-// `wasm-tools print`.
-//
-// Resources are the component-model handle type the HTTP world
-// uses extensively (incoming-request, outgoing-response, fields,
-// streams, …); this slice unblocks any later HTTP-world wrap
-// that needs to declare + drop those handles.
 func TestWASMComponentResourceDrop(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -14638,12 +12536,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentBuildHelperWithParamsRunnable exercises the
-// generalised `build_lifted_export_component_with_params` helper
-// end-to-end via wasmtime. Builds a core module that exports
-// `add(a: i32, b: i32) -> i32`, then wraps it as a component-level
-// `add(a: u32, b: u32) -> u32` via the canonical-ABI lift.
-// `wasmtime run --invoke 'add(3, 4)'` should print `7`.
 func TestWASMComponentBuildHelperWithParamsRunnable(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -14725,12 +12617,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentBuildHelperRunnable exercises the high-level
-// `build_lifted_export_component` helper end-to-end: given core
-// bytes that export a no-param func, the helper produces a complete
-// component-model envelope in one call. Same wasmtime-invoke check
-// as TestWASMComponentRunnableViaWasmtime but with the six-section
-// recipe collapsed into the single helper.
 func TestWASMComponentBuildHelperRunnable(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -14807,14 +12693,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMComponentRunnableViaWasmtime is the first end-to-end
-// proof that std/wasm/component can produce a wasm component that
-// `wasmtime` not only validates but actually RUNS. Builds the same
-// "core module exports a function, component lifts it" shape as
-// TestWASMComponentLiftedExport, writes the bytes to a file, and
-// invokes the lifted export via `wasmtime run --invoke g`.
-// wasmtime prints the i32/u32 return value on stdout, which we
-// match against the constant the core function returns.
 func TestWASMComponentRunnableViaWasmtime(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -14899,10 +12777,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsIfElse: a function that returns 100 from the
-// then-arm or 200 from the else-arm of an if/else with an i32
-// result type. Exercises inst_if_start with a non-empty blocktype
-// (encode.valtype_i32) plus inst_else / inst_end.
 func TestWASMModuleRunsIfElse(t *testing.T) {
 	src := `
 import "std/i32";
@@ -14947,9 +12821,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsLocalSetGet: store 42 in a local then load it
-// back. Exercises put_locals_one_group for declaring the local
-// plus inst_local_set / inst_local_get.
 func TestWASMModuleRunsLocalSetGet(t *testing.T) {
 	src := `
 import "std/i32";
@@ -14994,11 +12865,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsSumLoop: sum 1..10 via a loop. Exercises the
-// full control-flow stack: loop_start, if_start, br (continuing
-// the loop), local_get / local_set on multiple locals, and an
-// end terminator stack of depth 2 (if inside loop). Expected
-// result: 1+2+...+10 = 55.
 func TestWASMModuleRunsSumLoop(t *testing.T) {
 	src := `
 import "std/i32";
@@ -15059,9 +12925,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMSectionsCustom verifies the byte layout of
-// encode_custom_section: section id 0 + uleb body size +
-// name (uleb-prefixed UTF-8) + payload bytes.
 func TestWASMSectionsCustom(t *testing.T) {
 	src := `import "std/wasm/sections";
 function main(): i32 {
@@ -15097,10 +12960,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMSectionsCustomInModule appends a custom section to a
-// real (valid) core module and feeds the result through
-// wasm-tools — proves the custom section can sit alongside the
-// standard sections without breaking the parser.
 func TestWASMSectionsCustomInModule(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -15171,10 +13030,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsMemoryLoad: a function that loads a byte
-// from linear memory and returns it. Exercises
-// encode_memory_section, encode_data_section, and
-// inst_i32_load8_u + memarg as a runnable module.
 func TestWASMModuleRunsMemoryLoad(t *testing.T) {
 	src := `
 import "std/i32";
@@ -15216,9 +13071,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsMemoryStoreLoad: writes 77 to memory at
-// address 16 via i32.store8 then reads it back. Exercises the
-// writable-memory + store-then-load round-trip.
 func TestWASMModuleRunsMemoryStoreLoad(t *testing.T) {
 	src := `
 import "std/i32";
@@ -15262,11 +13114,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsCallIndirect builds a module with a funcref
-// table + element segment and dispatches through it: main pushes
-// table index 1 and call_indirects type 0, which lands on func1
-// (returns 22). Proves the table section, the element section's
-// funcidx ordering, and call_indirect all line up end-to-end.
 func TestWASMModuleRunsCallIndirect(t *testing.T) {
 	src := `
 import "std/i32";
@@ -15323,10 +13170,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsMemoryCopy seeds memory with a data segment,
-// memory.copies a 2-byte run to a fresh address, and reads back
-// the second copied byte. Exercises the 0xFC memory.copy op
-// end-to-end under wasmtime.
 func TestWASMModuleRunsMemoryCopy(t *testing.T) {
 	src := `
 import "std/i32";
@@ -15374,9 +13217,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsMemoryFill memory.fills a 3-byte run with the
-// value 9 then reads back a byte from the middle of the run.
-// Exercises the 0xFC memory.fill op end-to-end under wasmtime.
 func TestWASMModuleRunsMemoryFill(t *testing.T) {
 	src := `
 import "std/i32";
@@ -15423,9 +13263,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsGlobalSection: const i32 global = 314,
-// main() loads it via global.get 0. Exercises
-// encode_global_section + inst_global_get + init-expr shape.
 func TestWASMModuleRunsGlobalSection(t *testing.T) {
 	src := `
 import "std/i32";
@@ -15468,11 +13305,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsDivision: i32 signed divide. div_s and div_u
-// share the call-site shape but differ in semantics for negative
-// operands — body returns (-20) / 3 = -6 under signed. Catches a
-// mis-encoded opcode (0x6D vs 0x6E) that would silently produce
-// a huge u32 under div_u.
 func TestWASMModuleRunsDivision(t *testing.T) {
 	src := `
 import "std/i32";
@@ -15513,9 +13345,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsSignExtend: i32.extend8_s sign-extends the
-// low byte (255 = 0xFF -> -1). Exercises the post-MVP
-// sign-extension opcodes (0xC0+) at runtime.
 func TestWASMModuleRunsSignExtend(t *testing.T) {
 	src := `
 import "std/i32";
@@ -15556,12 +13385,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsI64Arithmetic: body is (1_000_000_000_000 +
-// 234_567_890_123) as i64, returning the result truncated to i32
-// via i32.wrap_i64. Exercises i64.const + i64.add + i32.wrap_i64
-// at runtime — the i64 path is otherwise only byte-vector tested.
-//
-// 1_234_567_890_123 mod 2^32 = 1_912_276_171.
 func TestWASMModuleRunsI64Arithmetic(t *testing.T) {
 	src := `
 import "std/i32";
@@ -15604,10 +13427,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsBitwise: 12 ^ 10 = 6. Catches a swap among
-// the bitwise ops (and = 0x71, or = 0x72, xor = 0x73 — adjacent
-// opcodes that could be transposed). 12 & 10 = 8, 12 | 10 = 14,
-// 12 ^ 10 = 6, so any swap shows immediately.
 func TestWASMModuleRunsBitwise(t *testing.T) {
 	src := `
 import "std/i32";
@@ -15648,11 +13467,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsSignedVsUnsignedCmp: -1 vs 1 under
-// i32.lt_s = 1 (true), under i32.lt_u = 0 (false, since -1 as
-// u32 is 0xFFFFFFFF which is greater than 1). The body picks
-// lt_s, so result is 1. A swap with lt_u (0x49 vs 0x48) would
-// flip the result to 0.
 func TestWASMModuleRunsSignedVsUnsignedCmp(t *testing.T) {
 	src := `
 import "std/i32";
@@ -15693,9 +13507,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsShiftRotate: (1 << 5) = 32 ; then rotr by 1
-// gives 16. Exercises the shift / rotate block (0x74..0x78)
-// which is otherwise only byte-vector tested.
 func TestWASMModuleRunsShiftRotate(t *testing.T) {
 	src := `
 import "std/i32";
@@ -15739,9 +13550,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsF32Arithmetic: f32.const 1.0 + f32.const 1.0
-// = 2.0, returned via i32.reinterpret_f32 so wasmtime can print
-// the i32 bit pattern. f32 2.0 = 0x40000000 = 1073741824.
 func TestWASMModuleRunsF32Arithmetic(t *testing.T) {
 	src := `
 import "std/i32";
@@ -15785,9 +13593,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsSelect: pushes 7, 9, 1 ; select. cond=1
-// (truthy) keeps the first operand, so result is 7. Exercises
-// inst_select.
 func TestWASMModuleRunsSelect(t *testing.T) {
 	src := `
 import "std/i32";
@@ -15828,10 +13633,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsRecursion: factorial(5) via self-recursion.
-// fact(n) = if n <= 1 { 1 } else { n * fact(n - 1) }.
-// fact(5) = 120. Exercises inst_call to a function index equal
-// to the calling function's own index.
 func TestWASMModuleRunsRecursion(t *testing.T) {
 	src := `
 import "std/i32";
@@ -15893,10 +13694,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsF64Arithmetic: f64.const 1.5 + f64.const 2.5
-// = 4.0, returned by reinterpreting to i64 + shifting right 32 +
-// wrapping to i32. f64 4.0 bit pattern: 0x4010000000000000;
-// high 32 bits = 0x40100000 = 1074790400.
 func TestWASMModuleRunsF64Arithmetic(t *testing.T) {
 	src := `
 import "std/i32";
@@ -15943,8 +13740,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsClz: i32.clz of 16 = 27. Exercises the unary
-// numeric op block (0x67 clz, 0x68 ctz, 0x69 popcnt) at runtime.
 func TestWASMModuleRunsClz(t *testing.T) {
 	src := `
 import "std/i32";
@@ -15984,9 +13779,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMModuleRunsArraySum: sums 4 bytes from a data segment
-// via a loop. Real-world-ish composition: data section + memory
-// load + loop counter + conditional break. [10,20,30,40] -> 100.
 func TestWASMModuleRunsArraySum(t *testing.T) {
 	src := `
 import "std/i32";
@@ -16048,11 +13840,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMLebCrossValidates runs std/wasm/leb128 on a curated
-// input set + asserts the bytes match what internal/wasm/leb128
-// (the Go mirror) produces for the same inputs. Together with
-// the per-side unit tests this enforces lock-step: any drift
-// off-spec on one side fires here.
 func TestWASMLebCrossValidates(t *testing.T) {
 	type expect struct {
 		fn     string
@@ -16084,14 +13871,10 @@ func TestWASMLebCrossValidates(t *testing.T) {
 		{"sleb_i64", "(0i64 - 1i64)", []byte{0x7f}},
 		{"sleb_i64", "64i64", []byte{0xc0, 0x00}},
 		{"sleb_i64", "(0i64 - 64i64)", []byte{0x40}},
-		// The algorithm both sides use produces a 10-byte encoding
-		// for max-i64 (valid sleb128, just not the minimal form).
 		{"sleb_i64", "9223372036854775807i64", []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00}},
 		{"sleb_i64", "(0i64 - 9223372036854775807i64) - 1i64", []byte{0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x7f}},
 	}
 
-	// Compose a Lang program that prints one space-separated
-	// byte sequence per expect-row.
 	var sb strings.Builder
 	sb.WriteString(`import "std/wasm/leb128";
 import "std/i32";
@@ -16121,8 +13904,6 @@ function main(): i32 {
 	sb.WriteString("    return 0;\n}\n")
 
 	stdout, _ := invokeWasmtime(t, sb.String())
-	// wasmtime's --invoke prints main's 0 as a last line. Drop
-	// trailing blank + the result line.
 	gotLines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
 	if len(gotLines) < len(exps) {
 		t.Fatalf("got %d lines, want >= %d\nstdout:\n%s", len(gotLines), len(exps), stdout)
@@ -16140,37 +13921,24 @@ function main(): i32 {
 	}
 }
 
-// TestWASMSectionsCrossValidates wires the Go sections package
-// end-to-end: build a module with type + function + export +
-// code sections, run it under wasmtime, assert the function
-// returns 42. Catches any drift between the Go mirror and the
-// wasm spec — and indirectly against the Lang composers, which
-// have their own e2e tests producing the same module shape.
 func TestWASMSectionsCrossValidates(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
 	}
 
-	// Build via Go composers: a module that exports `main: () -> i32`
-	// returning 42.
 	out := encode.PutModuleHeader(nil)
 
-	// Type section: one functype () -> i32.
 	out = sections.EncodeTypeSection(out,
 		[][]byte{nil}, [][]byte{{encode.ValtypeI32}})
 
-	// Function section: one function using type 0.
 	out = sections.EncodeFunctionSection(out, []uint32{0})
 
-	// Export section: export "main" as func 0.
 	out = sections.EncodeExportSection(out,
 		[]string{"main"},
 		[]byte{sections.ExportFunc},
 		[]uint32{0})
 
-	// Code section: one body { i32.const 42 ; end }.
-	body := []byte{0x00, 0x41, 0x2a, 0x0b} // locals_vec_len=0, i32.const 42, end
-	// Code entries are size-prefixed individually.
+	body := []byte{0x00, 0x41, 0x2a, 0x0b}
 	codeEntry := append(leb128.UlebU32(nil, uint32(len(body))), body...)
 	out = sections.EncodeCodeSection(out, [][]byte{codeEntry})
 
@@ -16180,19 +13948,11 @@ func TestWASMSectionsCrossValidates(t *testing.T) {
 	}
 }
 
-// TestWASMInstCrossValidates uses Go encode + sections + inst
-// (no Lang side, no wasm-tools) to build a module whose
-// exported `main` runs a small if/else over locals, returning
-// max(local0, local1). Cross-checks the Go inst package against
-// wasmtime — and indirectly against the Lang side, which is
-// already covered by TestWASMSectionsCustom and friends with
-// the same control-flow shape.
 func TestWASMInstCrossValidates(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
 	}
 
-	// Header + type + function + export sections.
 	out := encode.PutModuleHeader(nil)
 	out = sections.EncodeTypeSection(out,
 		[][]byte{nil}, [][]byte{{encode.ValtypeI32}})
@@ -16202,27 +13962,13 @@ func TestWASMInstCrossValidates(t *testing.T) {
 		[]byte{sections.ExportFunc},
 		[]uint32{0})
 
-	// Function body: two i32 locals, compute max(7, 11) = 11
-	// via a sequence:
-	//   i32.const 7
-	//   local.set 0
-	//   i32.const 11
-	//   local.set 1
-	//   local.get 0
-	//   local.get 1
-	//   i32.gt_s        ; 0x4A
-	//   if (result i32)
-	//     local.get 0
-	//   else
-	//     local.get 1
-	//   end
 	body := inst.InstI32Const(nil, 7)
 	body = inst.InstLocalSet(body, 0)
 	body = inst.InstI32Const(body, 11)
 	body = inst.InstLocalSet(body, 1)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstLocalGet(body, 1)
-	body = append(body, 0x4a) // i32.gt_s — defined in the numeric mirror, not yet imported
+	body = append(body, 0x4a)
 	body = inst.InstIfStart(body, encode.ValtypeI32)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstElse(body)
@@ -16239,12 +13985,6 @@ func TestWASMInstCrossValidates(t *testing.T) {
 	}
 }
 
-// TestWASMMemoryNumericConvertCross builds a module using Go
-// encode + sections + inst + memory + numeric + convert all
-// together: read 4 bytes from a data segment, sum them as i64,
-// truncate to i32, return. Catches drift in any of the three
-// opcode-family packages, plus their integration with memarg
-// encoding and the data section.
 func TestWASMMemoryNumericConvertCross(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -16260,15 +14000,6 @@ func TestWASMMemoryNumericConvertCross(t *testing.T) {
 		[]byte{sections.ExportFunc},
 		[]uint32{0})
 
-	// Body:
-	//   i32.const 0 ; i64.load8_u 0 0      -> i64(1)
-	//   i32.const 1 ; i64.load8_u 0 0      -> i64(2)
-	//   i64.add                            -> i64(3)
-	//   i32.const 2 ; i64.load8_u 0 0      -> i64(3)
-	//   i64.add                            -> i64(6)
-	//   i32.const 3 ; i64.load8_u 0 0      -> i64(4)
-	//   i64.add                            -> i64(10)
-	//   i32.wrap_i64                       -> i32(10)
 	var body []byte
 	body = inst.InstI32Const(body, 0)
 	body = mem.InstI64Load8U(body, 0, 0)
@@ -16285,8 +14016,6 @@ func TestWASMMemoryNumericConvertCross(t *testing.T) {
 
 	fn := inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 	out = sections.EncodeCodeSection(out, [][]byte{fn})
-	// Data section (id 11) must come after code (id 10) —
-	// sections in a wasm module are required to be in id order.
 	out = sections.EncodeDataSection(out,
 		[]int32{0}, [][]byte{{1, 2, 3, 4}})
 
@@ -16296,12 +14025,6 @@ func TestWASMMemoryNumericConvertCross(t *testing.T) {
 	}
 }
 
-// TestWASMModuleBuildCross — build a module with both Go
-// module.Build and Lang std/wasm/module.build, identical
-// inputs, assert the produced bytes are byte-for-byte
-// identical. This is the strongest lock-step guarantee: any
-// drift between the two implementations on any opcode /
-// section / lebon any path fires here.
 func TestWASMModuleBuildCross(t *testing.T) {
 	maybeSkipNoWasmtime := func() {
 		if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -16310,8 +14033,6 @@ func TestWASMModuleBuildCross(t *testing.T) {
 	}
 	maybeSkipNoWasmtime()
 
-	// Go side: build the "main: () -> 42" module via the
-	// top-level module.Build entry point.
 	m := mod.New()
 	m.TypeParams = [][]byte{nil}
 	m.TypeResults = [][]byte{{encode.ValtypeI32}}
@@ -16323,8 +14044,6 @@ func TestWASMModuleBuildCross(t *testing.T) {
 	m.CodeBodies = [][]byte{inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)}
 	goBytes := mod.Build(m)
 
-	// Lang side: run the equivalent program through wasmtime
-	// and have it print the module bytes.
 	langSrc := `import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/encode";
@@ -16361,12 +14080,6 @@ function main(): i32 {
 	}
 }
 
-// Phase 3 step 2: the idiomatic value-returning map mutation
-// `m = m.insert(...)` / `m = m.cleared()` must NOT over-release. The
-// mutators cow in place without bumping rc, so b.assign uses a
-// cow-aware dec (isSelfMapMutation): dec the old handle only when
-// the call returned a different one. On a uniquely-held map the
-// handle is unchanged → no dec → no 1->0 then 0->-1 over-release.
 func TestWASMRcMapSelfAssignNoUnderflow(t *testing.T) {
 	src := `
 import "core/map";
@@ -16387,10 +14100,6 @@ function main(): i32 {
 		t.Errorf("got %d, want 0 (self-assign map mutation: 0 underflow, correct contents)", got)
 	}
 
-	// Aliased self-assign: the cow-aware dec must fire on the COPY
-	// path (old handle differs from the fresh copy) so the source
-	// alias's rc is released rather than leaked — and still no
-	// over-release. m1 keeps its entry, m2 gets the mutated copy.
 	aliased := `
 import "core/map";
 function main(): i32 {
@@ -16407,11 +14116,6 @@ function main(): i32 {
 	}
 }
 
-// Phase 3 step 3: enum drop handlers (uniform case). Mirrors
-// TestX86_64RcDropEnumPayload / TestArm64RcDropEnumPayload. A
-// heap-boxed enum whose payload-carrying variants share an
-// identical droppable signature (e.g. a union of structs) drops
-// the payloads on its last reference before dec'ing the box.
 func TestWASMRcDropEnumPayload(t *testing.T) {
 	fresh := `struct W { a: i32[] }
 struct V2 { b: i32 }
@@ -16454,9 +14158,6 @@ function main(): i32 {
 	}
 }
 
-// Phase 2: aliased rc>1 forces copy semantics even with spare
-// cap — otherwise the other holder's view of the array would
-// silently extend.
 func TestWASMArrayPushAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     let xs: i32[] = [10, 20];
@@ -16474,7 +14175,6 @@ func TestWASMArrayPushAliasedCopies(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64ArrayIndexSetAliasedCopies.
 func TestWASMArrayIndexSetAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     let xs: i32[] = [10, 20, 30];
@@ -16493,10 +14193,6 @@ func TestWASMArrayIndexSetAliasedCopies(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64ArrayIndexSetU8Stride. Specifically
-// regression-tests the wasm raw-_start path where the
-// __fern_rc_dec low-address guard would otherwise short-
-// circuit and break the pre-helper bump-then-dec design.
 func TestWASMArrayIndexSetU8Stride(t *testing.T) {
 	src := `function main(): i32 {
     let buf: u8[] = __alloc_u8(4);
@@ -16511,7 +14207,6 @@ func TestWASMArrayIndexSetU8Stride(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64ArrayIndexSetStructField.
 func TestWASMArrayIndexSetStructField(t *testing.T) {
 	src := `struct State { items: i32[] }
 function main(): i32 {
@@ -16527,7 +14222,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64ArrayIndexSetStructFieldAliasedCopies.
 func TestWASMArrayIndexSetStructFieldAliasedCopies(t *testing.T) {
 	src := `struct State { items: i32[] }
 function main(): i32 {
@@ -16547,7 +14241,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64ArrayIndexSetNestedStructField.
 func TestWASMArrayIndexSetNestedStructField(t *testing.T) {
 	src := `struct Inner { items: i32[] }
 struct Outer { inner: Inner }
@@ -16564,7 +14257,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64ArrayIndexSetNestedStructFieldAliasedCopies.
 func TestWASMArrayIndexSetNestedStructFieldAliasedCopies(t *testing.T) {
 	src := `struct Inner { items: i32[] }
 struct Outer { inner: Inner }
@@ -16581,7 +14273,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64ArrayIndexSetMat.
 func TestWASMArrayIndexSetMat(t *testing.T) {
 	src := `function main(): i32 {
     let mat: i32[][] = [[1, 2, 3], [4, 5, 6]];
@@ -16597,7 +14288,6 @@ func TestWASMArrayIndexSetMat(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64ArrayIndexSetMatInnerAliasedCopies.
 func TestWASMArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     let mat: i32[][] = [[1, 2], [3, 4]];
@@ -16612,7 +14302,6 @@ func TestWASMArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64MapSetReturnsMap.
 func TestWASMMapSetReturnsMap(t *testing.T) {
 	src := `
 import "core/map";
@@ -16632,7 +14321,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64ArrayIndexSetObjMatInnerAliasedCopies.
 func TestWASMArrayIndexSetObjMatInnerAliasedCopies(t *testing.T) {
 	src := `struct State { mat: i32[][] }
 function main(): i32 {
@@ -16649,7 +14337,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64ArraySetSelfAssign.
 func TestWASMArraySetSelfAssign(t *testing.T) {
 	src := `function main(): i32 {
     let xs: i32[] = [10, 20, 30];
@@ -16664,7 +14351,6 @@ func TestWASMArraySetSelfAssign(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64ArraySetAliasedCopies.
 func TestWASMArraySetAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     let xs: i32[] = [10, 20, 30];
@@ -16679,7 +14365,6 @@ func TestWASMArraySetAliasedCopies(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64MapDeleteReturnsMapBool.
 func TestWASMMapDeleteReturnsMapBool(t *testing.T) {
 	src := `
 import "core/map";
@@ -16706,7 +14391,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64MapClearReturnsMap.
 func TestWASMMapClearReturnsMap(t *testing.T) {
 	src := `
 import "core/map";
@@ -16728,9 +14412,6 @@ function main(): i32 {
 	}
 }
 
-// Phase 2d: Map.set copy-on-write — wasm sibling of
-// TestX86_64MapSetAliasedCopies. An aliased map (let m2 = m1)
-// has rc=2, so m2.insert(...) copies and leaves m1 intact.
 func TestWASMMapSetAliasedCopies(t *testing.T) {
 	src := `
 import "core/map";
@@ -16748,8 +14429,6 @@ function main(): i32 {
 	}
 }
 
-// Phase 2d: Map.delete / Map.clear copy-on-write — wasm sibling
-// of TestX86_64MapDeleteClearAliasedCopies.
 func TestWASMMapDeleteClearAliasedCopies(t *testing.T) {
 	src := `
 import "core/map";
@@ -16776,7 +14455,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64TupleStructElem.
 func TestWASMTupleStructElem(t *testing.T) {
 	src := `struct Inner { x: i32, y: i32 }
 function main(): i32 {
@@ -16792,7 +14470,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64TupleArrayElem.
 func TestWASMTupleArrayElem(t *testing.T) {
 	src := `function main(): i32 {
     let t: (i32, i32[]) = (1, [10, 20, 30]);
@@ -16808,7 +14485,6 @@ func TestWASMTupleArrayElem(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64TupleNestedTuple.
 func TestWASMTupleNestedTuple(t *testing.T) {
 	src := `function main(): i32 {
     let t: (i32, (i32, i32)) = (1, (2, 3));
@@ -16824,7 +14500,6 @@ func TestWASMTupleNestedTuple(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64LexerChainedTupleNumericAccess.
 func TestWASMLexerChainedTupleNumericAccess(t *testing.T) {
 	src := `function main(): i32 {
     let t: (i32, (i32, i32)) = (1, (2, 3));
@@ -16838,7 +14513,6 @@ func TestWASMLexerChainedTupleNumericAccess(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64EmptyMapDestinationInference.
 func TestWASMEmptyMapDestinationInference(t *testing.T) {
 	src := `
 import "core/map";
@@ -16865,7 +14539,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64EnumVariantInTuple.
 func TestWASMEnumVariantInTuple(t *testing.T) {
 	src := `enum Color { Red, Green, Blue }
 function main(): i32 {
@@ -16895,7 +14568,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64MapPointerShapedValues.
 func TestWASMMapPointerShapedValues(t *testing.T) {
 	src := `
 import "core/map";
@@ -16932,7 +14604,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64StructTupleFieldAccess.
 func TestWASMStructTupleFieldAccess(t *testing.T) {
 	src := `struct Rec { pos: (i32, i32), name: string }
 struct Nested { t: (i32, (i32, i32)) }
@@ -16951,7 +14622,6 @@ function main(): i32 {
 	}
 }
 
-// Mirror of TestArm64UnsignedComparison (regression guard).
 func TestWASMUnsignedComparison(t *testing.T) {
 	src := `function main(): i32 {
     let big: u32 = 4294967295u32;
@@ -16976,7 +14646,6 @@ func TestWASMUnsignedComparison(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64UnaryMinusWideTypes.
 func TestWASMUnaryMinusWideTypes(t *testing.T) {
 	src := `function main(): i32 {
     let a: i64 = -5i64;
@@ -16998,7 +14667,6 @@ func TestWASMUnaryMinusWideTypes(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64ScientificNotation.
 func TestWASMScientificNotation(t *testing.T) {
 	src := `function main(): i32 {
     let a: f64 = 1e3;
@@ -17022,7 +14690,6 @@ func TestWASMScientificNotation(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64SubI32ArithmeticWraps.
 func TestWASMSubI32ArithmeticWraps(t *testing.T) {
 	src := `struct S { v: u8 }
 function main(): i32 {
@@ -17048,20 +14715,6 @@ function main(): i32 {
 	}
 }
 
-// TestWASMWideKeyMapDispatch pins the wasmbin closure-target local
-// indexing (#5042 follow-on). core/map's default hash adapters are
-// NO-CAPTURE named functions referenced as function VALUES by the
-// builtin-key dispatchers; that makes them closure targets, which
-// appends an env_ptr param to their wasm type — but closureconv never
-// adds their `__env` IR param (nothing to capture; the reference is in
-// stdlib runtime code), so the env slot sits between the declared
-// params and the body locals and every body-local index must shift by
-// one (bodySlotIdx). The bug was latent while such functions had no
-// body locals; __map_hash_wide's i64 local turned it into a module-wide
-// validation error ("expected i32, found i64") — ANY wasm module
-// importing core/map failed to instantiate. The i64-keyed map here
-// both forces the module to validate and exercises the wide adapter's
-// shifted locals at runtime (wrong indexing would mis-hash and miss).
 func TestWASMWideKeyMapDispatch(t *testing.T) {
 	src := `
 import "core/map";
@@ -17081,19 +14734,6 @@ function main(): i32 {
 	}
 }
 
-// A call through a function VALUE that returns void pushes nothing on wasm,
-// but the IR emitted an OpDrop after it because exprLeavesValue defaulted to
-// "leaves a value" for any callee it could not find in FuncSigs. The trailing
-// `drop` underflowed the typed stack and the module failed to VALIDATE — it
-// never loaded, so this was not a wrong answer but a dead artifact (#8455).
-//
-// Each shape below reaches the call through a different route, and the last
-// one is why it mattered: every `for_each` on the persistent collections
-// takes its callback as a function value, so `pvec` / `ordmap` / `pmap` were
-// unusable on wasm.
-//
-// The callbacks write to a captured scalar rather than printing, because
-// runWasm reads the program's result from the last number on stdout.
 func TestWASMVoidCallThroughFunctionValue(t *testing.T) {
 	cases := []struct {
 		name string

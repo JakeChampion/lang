@@ -10,13 +10,7 @@ import (
 	"github.com/jakechampion/lang/internal/tables/symname"
 )
 
-// TestX86_64DebugSymtab checks the `-g` flag: the native x86-64 binary gains a
-// parseable .symtab naming each function (so debuggers / nm / backtraces /
-// profilers can resolve a code address), and it still runs correctly — the
-// symbol table is inert, non-alloc metadata.
 func TestX86_64DebugSymtab(t *testing.T) {
-	// @noinline keeps helper a real function: the subject is which names .symtab
-	// resolves, and ir.Inline would otherwise fold it into its sole call site.
 	src := `@noinline function helper(n: i32): i32 { return n * 3; }
 function main(): i32 { return helper(14); }
 `
@@ -32,7 +26,6 @@ function main(): i32 { return helper(14); }
 		t.Fatalf("x86-64 -g build: %v\n%s", err, o)
 	}
 
-	// The symbol table names both functions with sane addresses/sizes.
 	f, err := goelf.Open(out)
 	if err != nil {
 		t.Fatalf("open ELF: %v", err)
@@ -46,9 +39,6 @@ function main(): i32 { return helper(14); }
 	for _, s := range syms {
 		found[s.Name] = s
 	}
-	// The symbol table names the EMITTED symbols, which are mangled — that
-	// is what a disassembler, a profiler and `nm` see at those addresses.
-	// The source names live in DWARF's DW_AT_name (TestDWARFDebugInfo).
 	for _, fn := range []string{"main", "helper"} {
 		name := symname.Fn(fn)
 		s, ok := found[name]
@@ -64,14 +54,12 @@ function main(): i32 { return helper(14); }
 		}
 	}
 
-	// The symbolized binary still runs and returns the right value.
 	cmd := runX86Bin(qemu, out)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 42 {
 		t.Errorf("exit = %d, want 42 (helper(14)=42) — the symtab must not perturb execution", code)
 	}
 
-	// Without -g there is no static symbol table (default binaries stay lean).
 	outNoG := filepath.Join(dir, "sym_nog.bin")
 	if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", outNoG, p).CombinedOutput(); err != nil {
 		t.Fatalf("x86-64 build: %v\n%s", err, o)

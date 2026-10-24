@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostCheckWarnsOfTodoStubsX86_64 is the differential for #11351:
-// `-check` warns of every `todo` stub left in the entry module in native's
-// words, the entry named, and only once the program has passed the gates
-// native passes first. A stub in an imported module is not reported, and
-// `todo` as an ordinary name is not a stub.
 func TestSelfHostCheckWarnsOfTodoStubsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -22,7 +17,7 @@ func TestSelfHostCheckWarnsOfTodoStubsX86_64(t *testing.T) {
 	cases := []struct {
 		name  string
 		files map[string]string
-		want  int // warnings native reports, so the case cannot pass vacuously
+		want  int
 	}{
 		{"one", map[string]string{"main.fern": "function f(): i32 {\n  todo;\n}\nfunction main(): i32 {\n  return 0;\n}\n"}, 1},
 		{"two-with-message", map[string]string{"main.fern": "function f(): i32 {\n  todo(\"later\");\n}\nfunction g(): void {\n    todo;\n}\nfunction main(): i32 {\n  return 0;\n}\n"}, 2},
@@ -58,7 +53,6 @@ func TestSelfHostCheckWarnsOfTodoStubsX86_64(t *testing.T) {
 	}
 }
 
-// warnings is each warning line in out.
 func warnings(out []byte) []string {
 	ws := []string{}
 	for _, line := range bytes.Split(out, []byte("\n")) {

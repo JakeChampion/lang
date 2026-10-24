@@ -4,23 +4,6 @@ import (
 	"testing"
 )
 
-// --- A struct LITERAL whose field is read in place ---------------------------
-//
-// `(S { … }).a` — the third position an unbound struct literal can appear in,
-// beside a discarded statement and a call argument (#7576). All three reclaim
-// the temporary per EVALUATION; missed here, 100 allocs / 0 frees for a
-// scalar-only struct, 200/0 with an rc-array field.
-//
-// The hazard is that the read RESULT may alias a field the release frees, so
-// the gate is on the FIELD BEING READ: a scalar result cannot alias anything,
-// which makes the deep drop unconditionally safe. An rc-field read
-// (`(A { … }).xs`) hands out the field itself, so the box's release must not
-// free it: `rc_field_read_uaf` holds that array across churn, and a premature
-// free shows as more frees than allocs.
-//
-// Every want was confirmed against bin/fern -interp, never read off the
-// self-host run.
-
 const structLitFieldReadDecl = `struct S { a: i32, b: i32 }
 struct A { xs: i32[], k: i32 }
 `
@@ -38,32 +21,24 @@ function main(): i32 {
 func structLitFieldReadCases() []arrenumShareCase {
 	return []arrenumShareCase{
 		{
-			// The repro, simplest struct: 100/0 before.
 			name: "scalar_struct_field_read",
 			src: structLitFieldReadDecl +
 				structLitFieldReadMain(`t = t + (S { a: r, b: r }).a; r = r + 1;`),
 			want: 3,
 		},
 		{
-			// A scalar read off a struct that also owns an rc-ARRAY field: the
-			// deep drop frees `xs` while the box still owns it, then the box
-			// decs. The result is a scalar, so it cannot alias what was freed.
-			// 200/0 before.
 			name: "array_field_struct_scalar_read",
 			src: structLitFieldReadDecl +
 				structLitFieldReadMain(`t = t + (A { xs: [r, r + 1], k: r }).k; r = r + 1;`),
 			want: 3,
 		},
 		{
-			// The read hands out the rc field itself, which the deep drop
-			// must not free.
 			name: "rc_field_read",
 			src: structLitFieldReadDecl +
 				structLitFieldReadMain(`t = t + (A { xs: [r, r + 1], k: r }).xs.len(); r = r + 1;`),
 			want: 6,
 		},
 		{
-			// Hold the handed-out array across allocation churn and read it.
 			name: "rc_field_read_uaf",
 			src: `struct A { xs: i32[], k: i32 }
 function churn(i: i32): i32 {
@@ -89,9 +64,6 @@ function main(): i32 {
 			want: 25,
 		},
 		{
-			// The wrong-ANSWER probe for the ADMITTED shape: the scalar must
-			// still read correctly after the box it came from was released and
-			// churn had the chance to reuse that memory.
 			name: "scalar_read_uaf",
 			src: `struct A { xs: i32[], k: i32 }
 function churn(i: i32): i32 {
@@ -115,7 +87,6 @@ function main(): i32 {
 			want: 28,
 		},
 		{
-			// A scalar read off a struct carrying a heap string field.
 			name: "string_field_struct",
 			src: `function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 struct P { f: string, n: i32 }` +
@@ -125,8 +96,6 @@ struct P { f: string, n: i32 }` +
 	}
 }
 
-// TestSelfHostStructLitFieldReadX86_64 — a field read off a struct literal
-// releases the temporary box without freeing the value it hands out.
 func TestSelfHostStructLitFieldReadX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)

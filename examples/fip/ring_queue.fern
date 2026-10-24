@@ -1,5 +1,3 @@
-// Usage: ring_queue capacity turns flow|full unique|shared [samples]
-// The comparison harness substitutes only module and scalar type names.
 import "./bounded_ring";
 import "core/cmp";
 import "std/bench";

@@ -1,11 +1,7 @@
-// Supplied-text large-array count-one effects under explicit memory permissions.
-// No public decoded/arithmetic record is accepted as an effect certificate.
 import "./ssacapacityisa" as isa;
 import "./ssalargearrayvalue" as value;
 import "./ssalargepushmachine" as large;
 
-// Half kinds: invalid, numeric, original GPR, S+offset, outer return,
-// arbitrary original cell, P+offset, freelist base, old head, inner return.
 struct Half { kind: i32, identity: i32, part: i32, number: value.Value }
 
 struct Word { low: Half, high: Half }
@@ -79,7 +75,6 @@ function initial(r: value.Interval, register_entry: boolean): State {
   if (register_entry) {
     regs = regs.with(0, identity(6, 0));
   }
-  // Prefix, inner return, outer return, argument and derived freelist slot.
   let cells: Half[] = [numeric_half(value.capacity(r)), token(5, 1, 0), numeric_half(value.number(r, 1 as i64)), token(5, 3, 0), token(5, 4, 0), token(5, 5, 0), token(4, 0, 0), token(4, 0, 1)];
   let argument = if (register_entry) { identity(5, 8) } else { identity(6, 0) };
   cells = cells.append(argument.low).append(argument.high).append(token(8, 0, 0)).append(token(8, 0, 1));
@@ -147,8 +142,6 @@ function put(s: State, at: i32, width: i32, w: Word): State {
 }
 
 function store(s: State, r: value.Interval, at: i32, width: i32, w: Word): State {
-  // Caller writes are restricted to the single RC clear. CALL's stack and
-  // heap changes are instantiated separately from the proved dependency.
   if (at == 2 && width == 32 && s.zeros == 0 && same_half(w.low, zero(r))) {
     return put(State { ...s, zeros: 1 }, at, width, w);
   }
@@ -229,7 +222,6 @@ function test(s: State, r: value.Interval, op: isa.Op): State {
     return State { ...s, flags: unknown_flags() };
   }
   let cmp = value.compare(r, v, 0 as i64);
-  // TEST clears CF/OF. On this bounded nonnegative domain SF is zero.
   return State { ...s, flags: Flags { order: value.Comparison { less: 0, equal: cmp.equal, less_equal: cmp.equal }, signed: cmp, sign: 0 } };
 }
 
@@ -246,9 +238,6 @@ function call_arguments(s: State, r: value.Interval, op: isa.Op): boolean {
 }
 
 function dependency_call(s: State, r: value.Interval, pc: i32, op: isa.Op): State {
-  // check() derives and proves the dependency from this same complete output.
-  // Its universal GPR, byte-argument, block, slot and return preconditions are
-  // instantiated only after proving the actual paired argument and block.
   if (!call_arguments(s, r, op)) {
     return State { ...s, ok: false };
   }
@@ -265,8 +254,6 @@ function dependency_call(s: State, r: value.Interval, pc: i32, op: isa.Op): Stat
     called = write(write(called, 1, old), 2, identity(7, 0));
     called = State { ...called, links: 1, slots: 1 };
   }
-  // The dependency returns through this exact successor with caller SP=S.
-  // Its oversized path leaves heap and GPRs untouched; that is not a free.
   return State { ...called, call_return: pc + 1, flags: unknown_flags() };
 }
 
@@ -377,8 +364,6 @@ function expected_register(r: value.Interval, reg: i32): Word {
     return if (class >= 0) { identity(8, 0) } else { numeric(r, words(r)) };
   }
   if (reg == 2) {
-    // The block base the small path also leaves there; the recycling push
-    // overwrites it with the large freelist's.
     return if (class >= 0) { identity(7, 0) } else { identity(6, -16) };
   }
   if (reg == 4) {
@@ -423,7 +408,6 @@ function finished(s: State, r: value.Interval, register_entry: boolean): boolean
     }
     i = i + 1;
   }
-  // Plain RET consumes the preserved original word at proven S, ending S+8.
   return true;
 }
 
@@ -431,12 +415,6 @@ function in_program(p: isa.ArrayProgram, pc: i32): boolean {
   return pc >= 0 && pc < p.ops.len();
 }
 
-// The `.u` entry is reached on the register path with the entry state, apart
-// from the flags of the floor test it skips and the scratch registers the
-// body may clobber, the argument excepted. Those go back to their entry
-// values and the flags are forgotten, so the rest of the walk is the walk
-// from `.u`, which the caller enters having tested the floor, and proves the
-// body for every value a prefix could leave in a scratch register.
 function unguarded(s: State, original: State, r: value.Interval): State {
   let regs = s.regs;
   let i = 0;
@@ -496,12 +474,6 @@ function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolean): 
   return false;
 }
 
-// Preconditions: canonical aligned disjoint P-16..P-1, S-8..S+15 and the
-// large freelist; P>=65536, RC=1, unsigned low32 capacity C>=65533. Prefix,
-// inner-return word and selected recycling slot are writable; outer return
-// and ordinary argument are readable. The .r argument is unconstrained.
-// Linked permissions, allocation/metadata validity, caller credits and
-// freelist integrity remain unproved. Oversized no-recycle is not a free.
 pub function check(output: string): boolean {
   let p = isa.array_program(output);
   if (p.error != "" || p.register_entry < 0 || p.unguarded_entry < 0 || !large.check(output)) {

@@ -13,8 +13,6 @@ import (
 	"time"
 )
 
-// The self-host used to return -1 for every Darwin poll, even a ready fd.
-// Inherited pipes avoid port races and let the test control readiness exactly.
 func TestSelfHostArm64DarwinPoll(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("requires the Apple Silicon execution lane")

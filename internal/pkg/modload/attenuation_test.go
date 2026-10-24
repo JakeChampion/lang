@@ -7,14 +7,6 @@ import (
 	"testing"
 )
 
-// Attenuation (docs/PACKAGE-CAPABILITIES-BRIEF.md phase 3): a governed
-// dependency may grant its own dependencies at most the capabilities it
-// holds itself. Checked in capGrants at load time — the one place every
-// dependency form's manifests are read transitively — so path, url,
-// workspace, versioned and vendored deps are all covered by one check.
-
-// (a) An attenuated chain is clean: root grants a [fs, net], a grants
-// b the subset [fs].
 func TestLoadAttenuationChainOK(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\na = { path = \"../a\", capabilities = [\"fs\", \"net\"] }\n",
@@ -35,8 +27,6 @@ pub function one(): i32 { return b.one(); }`,
 	}
 }
 
-// (b) Amplification is a load error naming the granting manifest: a
-// holds only [fs] but grants b 'net'.
 func TestLoadAttenuationAmplificationErrors(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\na = { path = \"../a\", capabilities = [\"fs\"] }\n",
@@ -61,10 +51,6 @@ pub function one(): i32 { return b.one(); }`,
 	}
 }
 
-// (c) An ungoverned middle imposes no ceiling: a has no capabilities
-// key in the root's manifest, so its grant of b stands (the phase-2
-// warn-and-allow rule for a itself is unchanged and lives at the
-// enforcement layer, not here).
 func TestLoadAttenuationUngovernedMiddle(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\na = { path = \"../a\" }\n",
@@ -85,8 +71,6 @@ pub function one(): i32 { return b.one(); }`,
 	}
 }
 
-// (d) The root's own grants are unrestricted — nothing declares the
-// root, so it is ungoverned and holds everything.
 func TestLoadAttenuationRootUnrestricted(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\na = { path = \"../a\", capabilities = [\"env\", \"fs\", \"net\", \"random\", \"subprocess\", \"time\"] }\n",
@@ -100,9 +84,6 @@ function main(): i32 { return a.one(); }`,
 	}
 }
 
-// (e) Diamond: b reachable via a1 and a2 gets the UNION of grants, but
-// each granting edge is checked against ITS grantor's holdings
-// independently.
 func TestLoadAttenuationDiamond(t *testing.T) {
 	base := map[string]string{
 		"app/main.fern": `import "a1";
@@ -136,9 +117,6 @@ pub function two(): i32 { return b.one() + 1; }`
 	})
 
 	t.Run("sibling grant does not excuse an amplifying edge", func(t *testing.T) {
-		// a1 legitimately grants b 'fs'; a2 (holding only [net]) granting
-		// b 'fs' is still an error — edges are checked independently, not
-		// against the union of all grantors.
 		files := map[string]string{}
 		for k, v := range base {
 			files[k] = v
@@ -159,8 +137,6 @@ pub function two(): i32 { return b.one() + 1; }`
 	})
 }
 
-// Multiple violations report all at once, sorted by granting manifest
-// dir, then dependency name, then capability.
 func TestLoadAttenuationMultipleViolationsDeterministic(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\na = { path = \"../a\", capabilities = [] }\n",

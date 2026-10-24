@@ -2,21 +2,6 @@ package e2e
 
 import "testing"
 
-// strArrayProgram pins the `str` erasure reaching the type slots the
-// checker stamps onto EXPRESSIONS, not just declarations (#5695).
-//
-// `ArrayLit.ElemType` / `Index.ElemType` / `SliceExpr.ElemType` are set by
-// the checker and read by the array lowering. eraseSurfaceTypes walked
-// declarations and casts but not these, so the elements of a `str[]`
-// literal missed the refcount increment an owned `string` element gets —
-// a view is borrowed, so the lowering skips it — and the array then held
-// pointers whose storage was freed underneath it.
-//
-// That was a SILENT WRONG ANSWER on x86-64, where it happened to agree
-// with itself, and a segfault on arm64. Hence a test on every backend
-// rather than only the one that crashed.
-//
-// Exits 0 on success, a distinct code per failed step.
 const strArrayProgram = `
 function main(): i32 {
     // A str[] literal: construction alone used to crash.

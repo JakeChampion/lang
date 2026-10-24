@@ -6,8 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The self-host twin of TestFetchClient: std/fetch's client against the
-// scripted loopback origin, compiled by the self-host compiler.
 func TestSelfHostFetchClient(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 	up := e2eharness.StartFetchUpstream(t)

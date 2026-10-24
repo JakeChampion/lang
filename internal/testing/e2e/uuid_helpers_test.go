@@ -2,11 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the std/uuid helpers across backends:
-// uuid_nil / uuid_is_nil and uuid_version (the version nibble at index
-// 14), including uppercase hex, malformed rejections, and round-trips
-// through the uuid_v4 / uuid_v7 generators. Returns 42 iff every check
-// holds. Each leg skips itself when its toolchain is absent.
 const uuidHelpersProg = `
 import "std/uuid" as uuid;
 function is(o: Option[i32], want: i32): boolean {

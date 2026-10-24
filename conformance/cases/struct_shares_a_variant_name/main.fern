@@ -1,18 +1,18 @@
-// A plain struct and an enum variant may share a bare name, and nothing
-// diagnoses it: E016 covers `type` aliases and E036 two enums claiming a name,
-// neither covers this. Native reads the variant in receiver position whichever
-// order the two are declared in; the self-host read whichever registered FIRST,
-// because its struct table is keyed by the bare name and both land in one
-// bucket. Declared struct-first, as here, that answered with the struct at
-// three separate layers: the checker refused the program (`variant Empty
-// expects a payload` — describing the struct's field), the method dispatch
-// named a nonexistent `Empty.to_string`, and the bare variant value lowered to
-// a function pointer. Enum-first the same program compiled and ran. #9900.
-//
-// Both collision shapes are here: `Empty` is a payloadless variant beside a
-// struct WITH a field, and `Square` is a payload variant beside a struct of the
-// same name, so a construction has to pick the right one from its form
-// (`Square(7)` the variant, `Square { side: 4 }` the struct).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/cmp";
 import "core/int";
 
@@ -34,9 +34,9 @@ function main(): i32 {
     let q: Square = Square { side: 4 };
     let v: Shape = Empty;
     let w: Shape = Square(7);
-    let t: i32 = e.n + q.side;                 // 7
-    t = t + name_of(v).len();                  // + "empty"  = 12
-    t = t + name_of(w).len();                  // + "sq7"    = 15
-    t = t + Empty.to_string().len();           // + "Empty"  = 20
+    let t: i32 = e.n + q.side;
+    t = t + name_of(v).len();
+    t = t + name_of(w).len();
+    t = t + Empty.to_string().len();
     return t;
 }

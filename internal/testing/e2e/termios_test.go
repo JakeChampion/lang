@@ -1,29 +1,3 @@
-// `termios_get(fd)` / `termios_set(fd, when, words)` end to end on every
-// backend that provides them: one TCGETS into the kernel's own words, and the
-// TCSETS family back out of them.
-//
-// The words are NOT normalised, which is the whole design (#9356): `stty -g`
-// prints them in hex and its restore form reads them back, so a Fern bit
-// numbering could not reproduce the output. That makes the layout part of the
-// contract, and these cases pin it — the length, which slot each field is in,
-// and that a value written comes back.
-//
-// Every call needs a real terminal: on a pipe they all answer ENOTTY, so the
-// probe runs with a pseudo-terminal on fd 0 and a pipe would make it vacuous.
-// The cases are chosen so a wrong request number or a mispacked struct cannot
-// pass:
-//
-//   - the length is the target's 24 (four flag words, the line discipline,
-//     and NCCS = 19 control characters);
-//   - VINTR on a fresh pseudo-terminal is ^C, which says the control
-//     characters start where the layout claims and not one slot out;
-//   - clearing ECHO moves lflag by exactly that bit and the new value is what
-//     the next read reports, so the write reached the kernel;
-//   - restoring the original returns it, so nothing else moved;
-//   - a short array and an out-of-range action are both refused, so neither
-//     is read past nor silently applied.
-//
-// Both native emitters get a leg.
 package e2e
 
 import (
@@ -77,10 +51,6 @@ const termiosSource = `function main(): i32 {
 }
 `
 
-// termiosOnPty runs the compiled probe with a fresh pseudo-terminal as fd 0,
-// which is the only descriptor shape any of its calls can answer. The master
-// is drained so a child that wrote more than a terminal holds could not
-// deadlock; this one writes nothing.
 func termiosOnPty(t *testing.T, cmd *exec.Cmd) int {
 	t.Helper()
 	master, slave, err := tty.OpenPTY()
@@ -93,8 +63,6 @@ func termiosOnPty(t *testing.T, cmd *exec.Cmd) int {
 		slave.Close()
 		t.Fatalf("start: %v", err)
 	}
-	// The parent's copy goes as soon as the child holds it, or the drain
-	// never sees the end of the output.
 	slave.Close()
 	done := make(chan struct{})
 	go func() {
@@ -115,10 +83,6 @@ func termiosOnPty(t *testing.T, cmd *exec.Cmd) int {
 	return cmd.ProcessState.ExitCode()
 }
 
-// termiosCompile builds the probe for `target` through the fern CLI and
-// returns the binary's path. The in-process helpers beside it all RUN what
-// they build, and this test has to hand the child a terminal instead of a
-// pipe, so it needs the path.
 func termiosCompile(t *testing.T, target string) (dir, bin string) {
 	t.Helper()
 	fern := buildLangBinForInterp(t)
@@ -150,9 +114,6 @@ func TestArm64Termios(t *testing.T) {
 	}
 }
 
-// The interpreter's descriptors are the program's, so this reads the same
-// terminal a compiled binary would — through Go's syscall package behind
-// internal/tools/tty's per-OS split rather than through emitted assembly.
 func TestInterpTermios(t *testing.T) {
 	fern := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -165,12 +126,6 @@ func TestInterpTermios(t *testing.T) {
 	}
 }
 
-// Both wasm worlds refuse it at check time. Neither preview has a terminal to
-// configure — preview 1's fd_fdstat_get reports a filetype and nothing about
-// line discipline, and the component model has no terminal interface at all —
-// so there is no truthful answer to what the settings of a terminal that
-// cannot exist are. That is `window_size`'s case rather than `syncfs`'s,
-// which is why it is E066 and not an Unsupported at the call.
 func TestWASMTermiosRefused(t *testing.T) {
 	prog, err := parser.Parse(termiosSource)
 	if err != nil {

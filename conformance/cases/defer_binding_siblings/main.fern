@@ -1,7 +1,7 @@
 import "core/int";
 
-// The two spellings name distinct lexical bindings. LIFO replay reads their
-// final arrays: first 5, then 3, giving 5 * 10 + 3.
+
+
 function observe(enabled: boolean): i32 {
     let seen: i32 = 0;
     loop {

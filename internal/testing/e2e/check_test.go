@@ -9,11 +9,6 @@ import (
 	"testing"
 )
 
-// buildLangBinForCheck compiles cmd/fern to a temp binary the
-// `-check` tests below invoke. Mirrors buildLangBinForInterp;
-// duplicated rather than shared because each top-level test file
-// in this package owns its harness, and Go's build cache makes
-// the repeated `go build` essentially free.
 func buildLangBinForCheck(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -25,9 +20,6 @@ func buildLangBinForCheck(t *testing.T) string {
 	return bin
 }
 
-// `fern -check FILE.fern` — happy path. A well-typed program
-// produces no output and exits 0. Mirrors `tsc --noEmit` /
-// `go vet` semantics: silent success is the success signal.
 func TestCheckCleanProgram(t *testing.T) {
 	bin := buildLangBinForCheck(t)
 	dir := t.TempDir()
@@ -57,9 +49,6 @@ function main(): i32 {
 	}
 }
 
-// `fern -check FILE.fern` against a program with a type error.
-// Exit code is 1, stderr carries a formatted diagnostic that
-// mentions the source file and the offending construct.
 func TestCheckTypeError(t *testing.T) {
 	bin := buildLangBinForCheck(t)
 	dir := t.TempDir()
@@ -87,10 +76,6 @@ func TestCheckTypeError(t *testing.T) {
 	}
 }
 
-// `fern -check` succeeds on a library file with no `main`.
-// `-interp` requires a `main` (there's nothing to run), but
-// type-checking should work on library packages — that's the
-// whole point of having a check-only mode.
 func TestCheckLibraryNoMain(t *testing.T) {
 	bin := buildLangBinForCheck(t)
 	dir := t.TempDir()
@@ -111,9 +96,6 @@ func TestCheckLibraryNoMain(t *testing.T) {
 	}
 }
 
-// `fern -check -` — read a program from stdin, type-check it.
-// Same shape as `fern -interp -`. No import resolution (modload
-// reads from disk), but single-file programs check cleanly.
 func TestCheckStdin(t *testing.T) {
 	bin := buildLangBinForCheck(t)
 	cmd := exec.Command(bin, "-check", "-")
@@ -127,8 +109,6 @@ func TestCheckStdin(t *testing.T) {
 	}
 }
 
-// `fern -check -` with a broken program: exit 1 + diagnostic
-// labelled `<stdin>` (no filesystem path to point at).
 func TestCheckStdinTypeError(t *testing.T) {
 	bin := buildLangBinForCheck(t)
 	cmd := exec.Command(bin, "-check", "-")
@@ -145,11 +125,6 @@ func TestCheckStdinTypeError(t *testing.T) {
 	}
 }
 
-// `fern -check ENTRY.fern` follows imports — a type error in a
-// transitive dep is surfaced with the dep's own filename, not
-// the entry file's. This is the benefit of the check command:
-// running it on a project root finds errors everywhere modload
-// can reach.
 func TestCheckFollowsImports(t *testing.T) {
 	bin := buildLangBinForCheck(t)
 	dir := t.TempDir()
@@ -181,21 +156,6 @@ function main(): i32 {
 	}
 }
 
-// End-to-end for the whole chain the two halves above only cover in pieces:
-// `fern -check` on a program whose IMPORT has a syntax error must name that
-// import's path and quote that import's line.
-//
-// The diagnostic used to come out as
-//
-//	main.fern:2:15: error[P001]: expected an expression, got ";"
-//	function main(): i32 { return util.thing(); }
-//	              ^
-//
-// — the position measured in util.fern, printed over main.fern's path and
-// text, with the caret landing on whatever character shared that column. Both
-// pieces were in place (modload stamps the module path, the CLI formatter
-// routes by it and holds every module's source) and the join between them was
-// a type assertion that could never succeed.
 func TestCheckAttributesAnImportsSyntaxError(t *testing.T) {
 	bin := buildLangBinForCheck(t)
 	dir := t.TempDir()

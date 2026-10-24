@@ -8,20 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostGenericEnumUnitArgIRX86_64 pins the generic-enum unit-variant
-// call-argument family (#5247). A generic enum's unit (payload-less) variant
-// has no payload to infer its type arg from, so it must pin its instantiation
-// from an `expected` type; monomorphize_enums otherwise drops the generic
-// variant struct and the dangling bare reference emits "unresolved ident" + a
-// null arg → SIGSEGV at the callee's match.
-//
-// The BARE form `get(Non)` pins from the callee's parameter type flowed into
-// the argument (me_expr's ExprCall arm + func_param_type_at). The QUALIFIED
-// form `get(Opt.Non)` pins the same `expected` in me_expr's ExprFieldAccess
-// arm — the delta this test's `qualified-unit-variant-arg` case guards. All
-// cases lower via the IR path (.Lssa_ witness) and compute the native value;
-// non-generic enums, annotated-var binds, and payload-bearing variant args are
-// kept as regressions.
 func TestSelfHostGenericEnumUnitArgIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -39,32 +25,24 @@ func TestSelfHostGenericEnumUnitArgIRX86_64(t *testing.T) {
 		src  string
 		want int
 	}{
-		// Qualified `Opt.Non` as a direct call argument — this PR's delta.
 		{"qualified-unit-variant-arg",
 			`enum Opt[T] { Non, Has(T) } function get(o: Opt[i32]): i32 { match (o) { Has(v) => { return v; }, Non => { return 42; } } } function main(): i32 { return get(Opt.Non); }`,
 			42},
-		// Bare unit variant `Non` as a direct call argument.
 		{"bare-unit-variant-arg",
 			`enum Opt[T] { Non, Has(T) } function get(o: Opt[i32]): i32 { match (o) { Has(v) => { return v; }, Non => { return 42; } } } function main(): i32 { return get(Non); }`,
 			42},
-		// String-payload generic enum — the bare unit variant still pins from
-		// the string-typed parameter.
 		{"string-payload-enum-bare-arg",
 			`enum Opt[T] { Non, Has(T) } function first(o: Opt[string]): i32 { match (o) { Has(s) => { return s.len(); }, Non => { return 9; } } } function main(): i32 { return first(Non) + 33; }`,
 			42},
-		// Two generic-enum parameters, both bare `Non` args.
 		{"two-unit-variant-args",
 			`enum Opt[T] { Non, Has(T) } function pick(a: Opt[i32], b: Opt[i32]): i32 { match (a) { Has(v) => { return v; }, Non => { match (b) { Has(w) => { return w; }, Non => { return 42; } } } } } function main(): i32 { return pick(Non, Non); }`,
 			42},
-		// Mixed: one Full-payload call + one bare-Non call, summed.
 		{"mixed-payload-and-unit-args",
 			`enum Opt[T] { Non, Has(T) } function get(o: Opt[i32], d: i32): i32 { match (o) { Has(v) => { return v; }, Non => { return d; } } } function main(): i32 { return get(Has(30), 0) + get(Non, 12); }`,
 			42},
-		// Regression: non-generic enum, bare unit variant as arg.
 		{"non-generic-unit-variant-arg",
 			`enum Opt { Has(i32), Non } function get(o: Opt): i32 { match (o) { Has(v) => { return v; }, Non => { return 42; } } } function main(): i32 { return get(Non); }`,
 			42},
-		// Regression: generic enum via annotated var bind.
 		{"var-annotated-unit-variant",
 			`enum Opt[T] { Non, Has(T) } function get(o: Opt[i32]): i32 { match (o) { Has(v) => { return v; }, Non => { return 42; } } } function main(): i32 { let e: Opt[i32] = Non; return get(e); }`,
 			42},

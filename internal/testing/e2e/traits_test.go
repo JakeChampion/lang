@@ -9,12 +9,6 @@ import (
 	"testing"
 )
 
-// End-to-end: a `trait` + `impl Trait for Type` makes the impl methods
-// callable through the ordinary method-dispatch path on the
-// interpreter. This is the Phase 1 contract from docs/TRAITS.md —
-// impl methods are desugared to receiver-methods, so no codegen / IR /
-// interp change is needed; `p.to_string()` just resolves to
-// `__method_Point_to_string`.
 func TestInterpTraitImplDispatch(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -55,10 +49,6 @@ function main(): i32 {
 	}
 }
 
-// A type may implement more than one trait, and a trait may be
-// implemented for several types; each impl's methods dispatch
-// independently. Exercises a built-in-type impl (i32) alongside a
-// struct impl.
 func TestInterpTraitMultipleImpls(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -103,12 +93,6 @@ function main(): i32 {
 	}
 }
 
-// End-to-end: a trait-bounded generic function `show[T: Display](v: T)`
-// dispatches `v.to_string()` to the right impl per instantiation. The
-// monomorphiser clones `show` per concrete type and the re-check
-// resolves each call to the impl's mangled method. An empty
-// `impl Display for i32 {}` adopts i32's pre-existing std/i32
-// to_string. See docs/TRAITS.md (Phase 2).
 func TestInterpBoundedGenericDispatch(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -157,11 +141,6 @@ function main(): i32 {
 	}
 }
 
-// Cross-module trait coherence (Phase 3): a trait + impl declared in a
-// sibling module are usable from the entry module — both for a direct
-// method call and through a trait-bounded generic whose bound names the
-// trait with a `mod.Trait` qualifier. modload mangles the trait name,
-// the impl's `for` type, and the bound to line up. See docs/TRAITS.md.
 func writeTraitProject(t *testing.T, main string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -220,9 +199,6 @@ function main(): i32 {
 	}
 }
 
-// The orphan rule is enforced across modules: an impl in a module that
-// owns neither the trait nor the type is rejected, with the diagnostic
-// reading the user's `mod.Name` spelling (not the internal mangling).
 func TestInterpCrossModuleOrphanRejected(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "tr.fern"), []byte(`pub trait Show { function show(self: Self): i32; }
@@ -249,10 +225,6 @@ function main(): i32 { return 0; }
 	}
 }
 
-// @derive(Eq, Display, Ord) synthesises field-wise impls: the generated
-// methods call the trait method on each field, so derivation composes
-// (a nested struct field only needs to itself derive/impl the trait).
-// See docs/TRAITS.md.
 func TestInterpDeriveStructTraits(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -304,10 +276,6 @@ function main(): i32 {
 	}
 }
 
-// @derive(Eq, Display) on an ENUM synthesises variant-wise match-based
-// methods: Eq compares the same variant's payloads field-wise (any
-// other variant is unequal); Display renders `Variant(payload, …)`.
-// See docs/TRAITS.md (Phase 4, enums).
 func TestInterpDeriveEnumTraits(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -352,9 +320,6 @@ function main(): i32 {
 	}
 }
 
-// The collapsed generic array assertions (assert_eq_array / assert_at /
-// assert_array_contains / assert_array_not_contains) work over any
-// Eq+Display element type. See docs/TRAITS.md.
 func TestInterpGenericArrayAsserts(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -385,12 +350,6 @@ function main(): i32 {
 	}
 }
 
-// The collapsed generic `Map[K, V]` assertions (assert_map_len /
-// assert_map_has / assert_map_lacks / assert_eq_map) work over any
-// K/V whose types implement Eq + Display. Exercises both an i32-keyed
-// and a string-keyed map from the SAME generic helpers — the multi-
-// parameter monomorphiser clones one concrete helper per K/V pair. See
-// docs/TRAITS.md §7a.
 func TestInterpGenericMapAsserts(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -428,10 +387,6 @@ function main(): i32 {
 	}
 }
 
-// @derive(Ord) on an enum: a variant declared earlier sorts before a
-// later one; within a variant, payloads compare lexicographically. Also
-// exercises `impl Ord for string` (via a string payload). See
-// docs/TRAITS.md.
 func TestInterpDeriveEnumOrd(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -464,10 +419,6 @@ function main(): i32 {
 	}
 }
 
-// Opaque types: a `pub opaque struct` exports its name + methods but
-// keeps fields private outside the declaring module — field reads and
-// struct-literal construction from another module are rejected; a
-// factory function + methods work. See docs/TRAITS.md.
 func TestOpaqueTypeEncapsulation(t *testing.T) {
 	dir := t.TempDir()
 	lib := `pub opaque struct Email { addr: string }
@@ -484,31 +435,24 @@ pub function (e: Email) domain(): string { return e.addr; }
 		}
 		return p
 	}
-	// Legal: construct via factory, call method.
 	okMain := write("ok_main.fern", `import "./email";
 function main(): i32 { let e: email.Email = email.make("a@b.com"); print(e.domain()); return 0; }
 `)
 	if code, out := runFernInterp(t, okMain); code != 0 || !strings.Contains(out, "a@b.com") {
 		t.Errorf("legal opaque use failed: exit=%d out=%q", code, out)
 	}
-	// Illegal: field read from another module.
 	badField := write("bad_field.fern", `import "./email";
 function main(): i32 { let e: email.Email = email.make("x"); print(e.addr); return 0; }
 `)
 	if code, out := runFernInterp(t, badField); code == 0 || !strings.Contains(out, "opaque type email.Email") {
 		t.Errorf("field read of opaque type should be rejected: exit=%d out=%q", code, out)
 	}
-	// Illegal: construction from another module.
 	badCtor := write("bad_ctor.fern", `import "./email";
 function main(): i32 { let e: email.Email = email.Email { addr: "x" }; return 0; }
 `)
 	if code, out := runFernInterp(t, badCtor); code == 0 || !strings.Contains(out, "construct opaque type") {
 		t.Errorf("construction of opaque type should be rejected: exit=%d out=%q", code, out)
 	}
-	// Illegal: a struct PATTERN reads the fields by name, which is the same
-	// access as `e.addr` — the rule was enforced on field access,
-	// construction and var-destructure, but neither match path consulted it,
-	// so these three spellings walked straight through (#8451).
 	patterns := []struct{ name, body string }{
 		{"bad_match.fern", `import "./email";
 function main(): i32 {
@@ -538,8 +482,6 @@ function main(): i32 {
 			t.Errorf("%s: destructuring an opaque type should be rejected: exit=%d out=%q", p.name, code, out)
 		}
 	}
-	// Legal: a pattern that binds NO field is an existence test, not an
-	// access, and the defining module may of course destructure its own type.
 	okRest := write("ok_rest.fern", `import "./email";
 function main(): i32 {
     let e: email.Email = email.make("x");
@@ -561,11 +503,6 @@ function main(): i32 {
 	}
 }
 
-// `dyn Trait` (runtime trait objects): a heterogeneous `dyn Shape[]`
-// holding two different concrete types dispatches each element's method
-// by runtime type on the interpreter. Compiled backends reject `dyn`
-// with a clean unsupported-feature message (interpreter-only in slice
-// 1). See docs/DYN-TRAITS.md.
 func TestInterpDynTraitDispatch(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -602,7 +539,6 @@ function main(): i32 {
 	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	// Interpreter: heterogeneous dynamic dispatch works.
 	cmd := exec.Command(bin, "-interp", src)
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
@@ -616,13 +552,6 @@ function main(): i32 {
 			t.Errorf("interp output missing %q; got:\n%s", want, out.String())
 		}
 	}
-	// All three compiled backends now LOWER `dyn` via the boxed
-	// one-word representation (wasm: inline two-word, slice 2b; x86-64:
-	// slice 2c; arm64: slice 2d — docs/DYN-TRAITS.md §4.2/§7). No
-	// compiled backend rejects `dyn` anymore. Assert arm64 compiles
-	// CLEANLY (no unsupported-feature diagnostic, no crash); the
-	// differential run-vs-interp coverage lives in TestArm64DynTrait* /
-	// TestX86_64DynTrait* / TestWASMDynTrait* in dyn_trait_compiled_test.go.
 	gen := exec.Command(bin, "-target", "arm64-linux", "-o", filepath.Join(dir, "out"), src)
 	var gerr bytes.Buffer
 	gen.Stderr = &gerr
@@ -634,14 +563,6 @@ function main(): i32 {
 	}
 }
 
-// TestInterpDynMultiTrait exercises a MULTI-trait trait object
-// (`dyn Show + Eq`, slice 1 of multi-trait `dyn` — docs/DYN-TRAITS.md):
-// a struct implementing BOTH traits coerces to `dyn Show + Eq` and can
-// call a method from EACH trait, dispatched by the value's runtime
-// concrete type. A heterogeneous `dyn Show + Eq[]` iterates + dispatches.
-// The compiled backends REJECT multi-trait `dyn` cleanly (merged-vtable
-// codegen is a later slice) — assert each target rejects with the clean
-// message, no panic.
 func TestInterpDynMultiTrait(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -676,7 +597,6 @@ function main(): i32 {
 	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	// Interpreter: multi-trait dispatch from both traits works.
 	cmd := exec.Command(bin, "-interp", src)
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
@@ -690,10 +610,6 @@ function main(): i32 {
 			t.Errorf("interp output missing %q; got:\n%s", want, out.String())
 		}
 	}
-	// Compiled backends now LOWER multi-trait `dyn A + B` dispatch through
-	// the merged vtable (docs/DYN-TRAITS.md §10) — codegen must succeed (no
-	// reject, no panic). The differential correctness tests against the
-	// interpreter live in dyn_trait_compiled_test.go (backendsAgree).
 	for _, target := range []string{"arm64-linux", "x86-64-linux", "wasm32-wasi"} {
 		gen := exec.Command(bin, "-target", target, "-o", filepath.Join(dir, "out_"+target), src)
 		var gerr bytes.Buffer
@@ -708,14 +624,6 @@ function main(): i32 {
 	}
 }
 
-// TestInterpDowncast exercises the `e as? T` fallible downcast
-// (docs/DYN-TRAITS.md §9) on the interpreter: a `dyn Shape` holding a
-// Circle downcasts to Some(circle) (and the bound value is usable as the
-// concrete Circle), and to None for Rect. A heterogeneous `dyn Shape[]`
-// downcasts each element. The compiled backends now LOWER the downcast
-// (vtable-pointer compare); this test asserts each target compiles
-// without error — the per-backend differential-vs-interp behaviour lives
-// in TestDowncast* (dyn_trait_compiled_test.go).
 func TestInterpDowncast(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -759,10 +667,6 @@ function main(): i32 {
 		}
 	}
 
-	// Compiled backends now LOWER the downcast (vtable-pointer compare) —
-	// compiling to each target must succeed (no error, no panic). The
-	// runtime-behaviour differential vs the interpreter is in TestDowncast*
-	// (dyn_trait_compiled_test.go).
 	for _, target := range []string{"arm64-linux", "x86-64-linux", "wasm32-wasi"} {
 		gen := exec.Command(bin, "-target", target, "-o", filepath.Join(dir, "out_"+target), src)
 		var gerr bytes.Buffer
@@ -777,13 +681,6 @@ function main(): i32 {
 	}
 }
 
-// A `dyn` type may name a *module-qualified* imported trait
-// (`dyn cmp.Display`), not just a locally-declared one. Before the
-// modload fix, the qualified trait name in the `dyn` type kept its
-// dotted form and never matched the mangled `cmp__Display` key in
-// Info.Traits, so it failed with "unknown trait". A heterogeneous
-// `dyn cmp.Display[]` of scalars dispatches `to_string()` by runtime
-// type on the interpreter.
 func TestInterpDynTraitQualifiedTraitName(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -823,12 +720,6 @@ function main(): i32 {
 	}
 }
 
-// Parametric impl: `impl[T: Bound] Trait for Box[T]` makes a single
-// blanket impl cover every instantiation. The method bodies dispatch
-// on the bound (`self.v.to_string()` where `self.v: T`), and the
-// generic methods monomorphise per instantiation. The same `Box`
-// implements Display for i32 and string payloads from one impl block.
-// See docs/TRAITS.md.
 func TestInterpParametricImpl(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -877,9 +768,6 @@ function main(): i32 {
 	}
 }
 
-// A parametric impl that violates the bound is rejected: `Box[NoDisp]`
-// where `NoDisp` has no Display impl can't satisfy `[T: Display]`. The
-// diagnostic names the offending method as `Box.to_string`.
 func TestInterpParametricImplBoundRejected(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
@@ -903,11 +791,6 @@ function main(): i32 {
 	}
 }
 
-// @derive on a GENERIC struct / enum synthesises a parametric impl
-// (`impl[T: Trait] Trait for Box[T]`): the field/variant-wise body
-// dispatches through the per-param bound and monomorphises per
-// instantiation. Covers Eq, Display, Ord on a generic enum plus a
-// two-parameter generic struct. See docs/TRAITS.md.
 func TestInterpDeriveGenericTypes(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
@@ -954,10 +837,6 @@ function main(): i32 {
 	}
 }
 
-// Parametric impls + generic derive must hold on a compiled backend,
-// not just the interpreter — the generic methods monomorphise and the
-// native codegen handles the per-instantiation clones. Exercises arm64
-// (the default target) end-to-end.
 func TestArm64ParametricImplAndDerive(t *testing.T) {
 	src := `import "core/cmp";
 
@@ -992,10 +871,6 @@ function main(): i32 {
 	}
 }
 
-// A trait method with a default body is inherited by an impl that omits
-// it and may be overridden by one that provides its own. Both forms
-// dispatch through the interpreter, including when reached via a
-// trait-bounded generic. See docs/TRAITS.md.
 const traitDefaultMethodSrc = `import "std/i32";
 
 trait Greet {
@@ -1045,17 +920,11 @@ func TestInterpTraitDefaultMethod(t *testing.T) {
 			t.Errorf("stdout missing %q; got: %q (stderr: %s)", want, got, errb.String())
 		}
 	}
-	// `announce(d)` reuses the inherited default → "hello, rex" appears twice.
 	if strings.Count(got, "hello, rex") != 2 {
 		t.Errorf("expected inherited default reached twice (direct + via bound), got: %q", got)
 	}
 }
 
-// Default methods compile + run natively: they desugar to ordinary
-// receiver methods, so codegen needs no trait awareness. The x86-64 e2e
-// helper doesn't run the monomorph pass, so this variant uses direct
-// dispatch (inherited default + override); the bounded-generic path is
-// covered natively by the arm64 test below and on the interpreter.
 const traitDefaultMethodDirectSrc = `import "std/i32";
 
 trait Greet {
@@ -1093,9 +962,6 @@ func TestX86_64TraitDefaultMethod(t *testing.T) {
 	}
 }
 
-// arm64 native default-method coverage, including the bounded-generic
-// path (`announce[T: Greet]` → inherited default) which the arm64 helper
-// monomorphises like the production driver.
 func TestArm64TraitDefaultMethod(t *testing.T) {
 	out, code := compileAndRunArm64(t, traitDefaultMethodSrc)
 	if code != 0 {
@@ -1111,8 +977,6 @@ func TestArm64TraitDefaultMethod(t *testing.T) {
 	}
 }
 
-// wasm default-method coverage, including the bounded-generic path — the
-// wasm component builder monomorphises like the production driver.
 func TestWASMTraitDefaultMethod(t *testing.T) {
 	got := runWasmCapturingStdout(t, traitDefaultMethodSrc)
 	for _, want := range []string{"hello, rex", "meow from felix"} {
@@ -1125,11 +989,6 @@ func TestWASMTraitDefaultMethod(t *testing.T) {
 	}
 }
 
-// Supertraits (`trait Ord: Eq`): a `T: Ord` bound can call the
-// supertrait Eq's method on T, and the impl-time check requires every
-// `impl Ord for P` to also have `impl Eq for P`. The generic `rank`
-// exercises supertrait dispatch through monomorphisation. See
-// docs/TRAITS.md.
 const traitSupertraitSrc = `import "std/i32";
 
 trait Eq { function eq(self: Self, other: Self): boolean; }
@@ -1178,8 +1037,6 @@ func TestInterpTraitSupertrait(t *testing.T) {
 	}
 }
 
-// arm64 native supertrait coverage (the arm64 helper monomorphises the
-// `rank[T: Ord]` generic like the production driver).
 func TestArm64TraitSupertrait(t *testing.T) {
 	out, code := compileAndRunArm64(t, traitSupertraitSrc)
 	if code != 0 {
@@ -1192,7 +1049,6 @@ func TestArm64TraitSupertrait(t *testing.T) {
 	}
 }
 
-// wasm supertrait coverage (the wasm component builder monomorphises).
 func TestWASMTraitSupertrait(t *testing.T) {
 	got := runWasmCapturingStdout(t, traitSupertraitSrc)
 	for _, want := range []string{"lt", "gt", "eq"} {
@@ -1202,10 +1058,6 @@ func TestWASMTraitSupertrait(t *testing.T) {
 	}
 }
 
-// Direct (non-generic) supertrait dispatch, for the x86-64 e2e helper
-// (which doesn't run the monomorph pass). Still exercises supertrait
-// conformance (`impl Ord for P` requires `impl Eq for P`) and dispatch of
-// both the trait's own and the supertrait's methods on a concrete value.
 const traitSupertraitDirectSrc = `import "std/i32";
 
 trait Eq { function eq(self: Self, other: Self): boolean; }
@@ -1236,8 +1088,6 @@ func TestX86_64TraitSupertrait(t *testing.T) {
 	}
 }
 
-// A value named like its function's type parameter shadows it: `T.eq(u)`
-// calls `eq` on the value, in every instantiation (#10380).
 const valueSpelledLikeTypeParamSrc = `import "core/cmp";
 function same[T: cmp.Eq](T: T, u: T): i32 { if (T.eq(u)) { return 1; } return 0; }
 function main(): i32 {

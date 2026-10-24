@@ -21,8 +21,6 @@ const shippedArgsSrc = `function main(): i32 {
 }
 `
 
-// runFern runs bin with args under a private cache directory and returns its
-// combined output and exit status.
 func runFern(t *testing.T, bin, cache string, args ...string) (string, int) {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
@@ -40,9 +38,6 @@ func writeShippedSrc(t *testing.T, dir, name, src string) string {
 	return path
 }
 
-// The shipped `fern` carries its stdlib: it needs no stdlib root on the
-// command line, so every positional past the source file is the program's,
-// and it writes the stdlib to the cache directory once.
 func TestSelfHostShippedFernCarriesItsStdlib(t *testing.T) {
 	fern := e2eharness.ShippedFern(t)
 	dir := t.TempDir()
@@ -74,8 +69,6 @@ func TestSelfHostShippedFernCarriesItsStdlib(t *testing.T) {
 	}
 }
 
-// -version names the commit the embedded VERSION records, and -explain reads
-// the explanations the binary carries.
 func TestSelfHostShippedFernVersionAndExplain(t *testing.T) {
 	fern := e2eharness.ShippedFern(t)
 	cache := filepath.Join(t.TempDir(), "cache")
@@ -97,9 +90,6 @@ func TestSelfHostShippedFernVersionAndExplain(t *testing.T) {
 	}
 }
 
-// The self-host CLI's -run executes what it built with the program's
-// arguments, under the emulator for a foreign ISA, and removes the temporary
-// binary.
 func TestSelfHostCLIRun(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	root := e2eharness.SelfHostStdlibRoot(t)
@@ -109,7 +99,6 @@ func TestSelfHostCLIRun(t *testing.T) {
 	if err := os.Mkdir(tmp, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Each Linux target this host runs, natively or under its emulator.
 	var targets []string
 	for _, c := range []struct{ target, qemu string }{{e2eharness.TargetX86_64Linux, "qemu-x86_64"}, {e2eharness.TargetArm64Linux, "qemu-aarch64"}} {
 		if _, err := exec.LookPath(c.qemu); err == nil || c.target == e2eharness.HostSelfHostTarget() {
@@ -133,8 +122,6 @@ func TestSelfHostCLIRun(t *testing.T) {
 	}
 }
 
-// -cover-report folds a -cover run's stream into the per-file summary and the
-// lcov tracefile; a malformed prefixed row is an error, not a skip.
 func TestSelfHostCLICoverReport(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	dir := t.TempDir()
@@ -172,9 +159,6 @@ func TestSelfHostCLICoverReport(t *testing.T) {
 	}
 }
 
-// A build with no embedded tree has no VERSION, and says so. It reads the
-// explanations of the source tree its stdlib root names, and without that root
-// has none.
 func TestSelfHostCLIWithoutEmbeddedTree(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	root := e2eharness.SelfHostStdlibRoot(t)
@@ -200,9 +184,6 @@ func TestSelfHostCLIWithoutEmbeddedTree(t *testing.T) {
 	}
 }
 
-// A positioned diagnostic shows its source line and a caret under the column
-// (tabs shown as one space), as native's renderer does; -color draws a
-// line-number gutter, box-drawing under a UTF-8 locale and `|` under -ascii.
 func TestSelfHostCLIDiagnosticSnippet(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	root := e2eharness.SelfHostStdlibRoot(t)
@@ -233,9 +214,6 @@ func TestSelfHostCLIDiagnosticSnippet(t *testing.T) {
 	}
 }
 
-// -fmt reprints a `todo` stub, with or without its message, and a boolean
-// match whose `false` arm closes the domain, as written: neither the loop a
-// `todo` lowers to nor the `_` the closing arm is treated as.
 func TestSelfHostFmtKeepsTodoAndClosedBooleanArms(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	src := "function g(n: i32): i32 {\n  todo;\n}\n\n" +
@@ -249,8 +227,6 @@ func TestSelfHostFmtKeepsTodoAndClosedBooleanArms(t *testing.T) {
 	}
 }
 
-// Without -o, a compile prints its assembly for arm64-linux, the target a
-// compile gets when none is named, and for every other native target.
 func TestSelfHostCLIWritesAssemblyToStdout(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	root := e2eharness.SelfHostStdlibRoot(t)
@@ -267,11 +243,6 @@ func TestSelfHostCLIWritesAssemblyToStdout(t *testing.T) {
 	}
 }
 
-// Stdout takes only a target's text, so a wasm component or module with no -o
-// is a usage error, exit 2, with nothing written. It is refused before the
-// program is read: this one declares no HTTP handler, and the refusal still
-// comes first. `-emit asm` is the WAT, which stdout takes, and -check writes
-// nothing at all.
 func TestSelfHostCLIRefusesWasmBinaryOnStdout(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	root := e2eharness.SelfHostStdlibRoot(t)

@@ -6,15 +6,6 @@ import (
 	"testing"
 )
 
-// unannotatedBigLiteralProgram pins the #3676 semantics: an UNANNOTATED integer
-// literal that doesn't fit i32 (`2147483648`, one past i32 max) defaults to i64
-// rather than being silently truncated. i32 is the default int, so `let x = 5`
-// stays i32 — but a written-out constant past i32 range has no valid i32 reading,
-// so it widens to i64 (option 2 of the issue). Before the fix, native x86-64
-// truncated the literal to INT_MIN (so `x < 0` was true → exit 1) while the AST
-// interpreter and the self-host IR kept it wide (exit 0); native now widens too,
-// so all paths agree on exit 0. Arithmetic on an i32 value still wraps at 32
-// bits (#3581) — only the bare literal's own type widens.
 const unannotatedBigLiteralProgram = `
 function main(): i32 {
   let x = 2147483648;        // one past i32 max, no annotation → i64
@@ -23,9 +14,6 @@ function main(): i32 {
 }
 `
 
-// bigLiteralArithmeticProgram shows the widened literal carries its full value
-// into a later i64 op: 5000000000 / 1000000000 == 5 (would be garbage if
-// truncated to i32).
 const bigLiteralArithmeticProgram = `
 function main(): i32 {
   let x = 5000000000;
@@ -33,13 +21,6 @@ function main(): i32 {
 }
 `
 
-// compoundBigLiteralProgram pins #8668: the widening reads through an
-// unannotated binding's ARITHMETIC, not only a bare literal. `3 - 2^62` was
-// left polymorphic, nothing settled it, and the literal lowered at the i32
-// default as 0 — so `t` was 3, `u` was -3, and no engine complained. Every
-// form here must agree with the annotated `: i64` spelling: the compound in
-// either operand order, an if-expression arm, and a cast operand.
-// 2^62 / 10^18 = 4, so a correct run exits 44; the truncated one exited 1.
 const compoundBigLiteralProgram = `
 function main(): i32 {
   let w: i64 = 3 - 4611686018427387904;
@@ -55,13 +36,6 @@ function main(): i32 {
 }
 `
 
-// wideLiteralSiblingsProgram pins the shapes the compound rule reaches
-// through their own walks: a generic call whose T is pinned by nothing but
-// the literal (scalar, and carried inside a tuple result), and comparisons —
-// whose boolean result means nothing outside them ever settles the operands,
-// so they take the default at the comparison itself. Each shape adds a
-// distinct bit; a correct run exits 63, and one that truncates every literal
-// to the i32 default exits 0.
 const wideLiteralSiblingsProgram = `
 function id[T](v: T): T { return v; }
 function pair[A, B](a: A, b: B): (A, B) { return (a, b); }
@@ -80,17 +54,6 @@ function main(): i32 {
 }
 `
 
-// compositeBigLiteralProgram pins #8722: the widening reaches the ELEMENTS of
-// an unannotated tuple / array init, which nothing settled — so a wide element
-// typed i32 and lowered at that default, reading back as 0 for 2^62 on every
-// native backend while `-interp` computed it wide (`let t = (1, 2^62); let a:
-// i64 = t.1;` printed 0 against interp's 4611686018427387904, with no
-// diagnostic anywhere). Each element shape adds a distinct bit: a tuple
-// element, an array element, a tuple nested in a tuple, an array nested in a
-// tuple, an element written as arithmetic, and the neighbouring small elements
-// that must keep their own values. A correct run exits 63; before the fix the
-// program did not even compile, since comparing an i32-typed element against
-// the i64 `w` is E041.
 const compositeBigLiteralProgram = `
 function main(): i32 {
   let w: i64 = 4611686018427387904;
@@ -110,14 +73,6 @@ function main(): i32 {
 }
 `
 
-// matchScrutineeBigLiteralProgram pins the match half of #8722: a
-// still-polymorphic scrutinee settled at the i32 default before its literal
-// patterns did, so `3 - 2^62` compared as 3 and took the `3` arm on every
-// native engine and in the interpreter, where a wide reading of the scrutinee
-// (the annotated `: i64` spelling) rejects it. The scrutinee now settles at
-// the width its own literals and the patterns select, in both the statement
-// and the expression form. A correct run exits 62; the truncated one exited
-// 157 (both first arms taken).
 const matchScrutineeBigLiteralProgram = `
 function main(): i32 {
   let c = 0;
@@ -132,11 +87,6 @@ function main(): i32 {
 }
 `
 
-// genericScrutineeBigLiteralProgram: a generic call in SCRUTINEE position
-// settles its literal-bound type parameter the way an unannotated `let` init
-// does, so `pick(1, 2^62)` binds T = i64 and the payload compares wide. Before,
-// T took the i32 default there and the arm's comparison against a wide literal
-// was refused as E041 (#8722). A correct run exits 9.
 const genericScrutineeBigLiteralProgram = `
 function pick[T](a: T, b: T): Option[T] { return Some(b); }
 function main(): i32 {
@@ -148,9 +98,6 @@ function main(): i32 {
 }
 `
 
-// genericCalleeBigLiteralProgram: a generic call in CALLEE position has no
-// destination of its own, so its literal-bound type parameter takes the same
-// i64 default an unannotated `let` init gives it (#11488). A correct run exits 3.
 const genericCalleeBigLiteralProgram = `
 function make[T](seed: T): (i32) => T { return (k: i32): T => seed; }
 function main(): i32 {
@@ -163,15 +110,6 @@ function main(): i32 {
 }
 `
 
-// annotatedGenericBigLiteralProgram pins the annotated half of #8722: a
-// destination type reaches a generic call's type parameters through the
-// callee's RETURN type, so `(i64, string)` binds A of `pair` and `i64` binds A
-// of `first` whatever B is bound to, and `Option[i64]` binds T of `some`.
-// Before, a tuple or enum destination settled nothing (the parameter
-// defaulted to i32 and the literal truncated on the natives while the
-// interpreter kept it wide) and a scalar one restamped only a single type
-// parameter, so `first(1234567890123, "x")` was refused as E038. A correct
-// run exits 63.
 const annotatedGenericBigLiteralProgram = `
 function pair[A, B](a: A, b: B): (A, B) { return (a, b); }
 function first[A, B](a: A, b: B): A { return a; }
@@ -194,11 +132,6 @@ function main(): i32 {
 }
 `
 
-// arrayDestinationGenericProgram pins #9003: an annotated ARRAY destination
-// binds a generic call's type parameter through its `T[]` result the way a
-// tuple or scalar destination does. Before, the still-polymorphic element
-// compared unequal to the concrete one and the binding was refused as E003
-// (`expected i64[], got i32[]`). A correct run exits 15.
 const arrayDestinationGenericProgram = `
 function wrap[T](x: T): T[] { return [x]; }
 function two[T](a: T, b: T): T[] { return [a, b]; }
@@ -216,13 +149,6 @@ function main(): i32 {
 }
 `
 
-// genericPositionsBigLiteralProgram pins #10176: a generic call's type
-// parameter that only untyped literals bind settles in every position reading
-// it — an unannotated `let`, a scrutinee, a comparison, an annotated `u64`
-// destination, a destination reached through a field read of the result, and
-// arithmetic beside a wide literal. Before, the comparison was E041 and the
-// field read truncated 2^62 to 0 on the native backends. A correct run exits
-// 63.
 const genericPositionsBigLiteralProgram = `
 function both[T](a: T, b: T): (T, T) { return (a, b); }
 function pick[T](a: T, b: T): Option[T] { return Some(b); }
@@ -242,13 +168,6 @@ function main(): i32 {
 }
 `
 
-// typedFieldBindsAheadOfLiteralProgram pins #10453: a typed i64 value binds a
-// type parameter ahead of an untyped literal written before it, in a struct
-// literal and a generic call alike, and the literal is read at i64. Both used
-// to bind T at i32 from the literal and reject the typed value. A typed
-// element widens an array of literals in either order, and a literal-bound
-// struct local's copy and closure capture share its width. A correct run
-// exits 127.
 const typedFieldBindsAheadOfLiteralProgram = `
 struct Same[T] { a: T, b: T }
 @noinline function pair[T](a: T, b: T): T { return a; }
@@ -275,11 +194,6 @@ function main(): i32 {
 }
 `
 
-// genericStructLocalOneWidthProgram pins #10453: a generic struct local whose
-// type argument only literals bind takes the width its first fixing use
-// names — the whole local passed where a Same[i64] is wanted, inside an array
-// argument too, or a field read at an i64 destination — and is i32 when none
-// does, through a field declared `T[]` as well. A correct run exits 31.
 const genericStructLocalOneWidthProgram = `
 struct Same[T] { a: T, b: T }
 struct Stack[T] { items: T[] }
@@ -304,12 +218,6 @@ function main(): i32 {
 }
 `
 
-// genericStructLocalBigLiteralProgram pins #10453: an unannotated local bound
-// to a generic struct literal whose type argument only literals bind is a
-// Same[i64] when one of those literals has no i32 reading, inside an array
-// literal too, and through a field declared `T[]`. Before, native typed it
-// Same[i32] and truncated the wide field with no diagnostic. A correct run
-// exits 31.
 const genericStructLocalBigLiteralProgram = `
 struct Same[T] { a: T, b: T }
 struct Stack[T] { items: T[] }
@@ -328,11 +236,6 @@ function main(): i32 {
 }
 `
 
-// arrayArgumentStructLiteralProgram: an array argument's parameter is the
-// destination of its literal's elements, as an annotated `let` is. Each
-// `Same` literal is a Same[i64], so the first reads `3` at i64 beside the i64
-// `y` and the second holds 2^32. Before, the elements were typed on their
-// own, as Same[i32], and the call was refused as E038. A correct run exits 3.
 const arrayArgumentStructLiteralProgram = `
 struct Same[T] { a: T, b: T }
 function take(xs: Same[i64][]): i32 {
@@ -345,10 +248,6 @@ function main(): i32 {
 }
 `
 
-// shiftLiteralReadsCountWidthProgram: an unsuffixed literal on the left of a
-// shift reads at the count's width, so `1 << k` with an i64 k is an i64 and
-// keeps bit 40. The self-host checker typed it at the i32 default and refused
-// the i64 argument as E038. A correct run exits 7.
 const shiftLiteralReadsCountWidthProgram = `
 function wide(v: i64): i64 { return v; }
 function main(): i32 {

@@ -11,10 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The self-host twin of internal/testing/e2e's TestSocketV6*: the IPv6 probes
-// (#9853) compiled by the production self-host driver on every target it
-// serves here. A host without IPv6 is one where Go cannot listen on ::1;
-// there the probe must answer "nov6" and the test skips.
 func TestSelfHostSocketV6(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires Linux native targets")
@@ -61,8 +57,6 @@ func checkSelfHostSocketV6(t *testing.T, targets []string) {
 	}
 }
 
-// checkSelfHostSocketV6Probe is checkSelfHostSocketProbe with the "nov6"
-// answer accepted where the host has no IPv6.
 func checkSelfHostSocketV6Probe(t *testing.T, driver, stdlib, target, probe string) {
 	t.Helper()
 	dir := t.TempDir()

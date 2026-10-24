@@ -12,20 +12,10 @@ import (
 	"time"
 )
 
-// A poll-driven one-shot TCP server proves the `poll` builtin
-// multiplexes REAL network sockets end-to-end (so far poll was only
-// tested on files + timerfds): the server waits on the listener fd
-// with `poll` before accept, then on the connection fd with `poll`
-// before recv — no new non-blocking builtins, since a blocking
-// accept/recv won't block once poll reports the fd ready. This is the
-// shape a reactor-driven edge handler uses (docs/ASYNC-IMPLEMENTATION-PLAN.md
-// Phase 1c). Poll on arm64 is the same syscall path, validated
-// deterministically on files + timers.
 func TestPollDrivenTcpServerX86_64(t *testing.T) {
 	qemu := x86QemuOrEmpty(t)
 	bin := buildFernCLI(t)
 
-	// Pick a free port, then let the compiled server re-bind it.
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("no free TCP port: %v", err)
@@ -33,9 +23,6 @@ func TestPollDrivenTcpServerX86_64(t *testing.T) {
 	port := probe.Addr().(*net.TCPAddr).Port
 	probe.Close()
 
-	// One-shot server: poll the listener for a pending connection,
-	// accept, poll the connection for the request, recv, respond, exit
-	// 42. Distinct small codes localise a failed step.
 	src := fmt.Sprintf(`function main(): i32 {
     let fd: i32 = tcp_listen(%d);
     if (fd < 0) { return 91; }
@@ -70,8 +57,6 @@ func TestPollDrivenTcpServerX86_64(t *testing.T) {
 	}
 	defer func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() }()
 
-	// Retry the dial to absorb the bind race; the first successful
-	// connection IS the request (the server handles exactly one).
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	var resp string
 	deadline := time.Now().Add(10 * time.Second)

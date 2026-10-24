@@ -11,8 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Exercise the production scheduler with deterministic candidate outcomes.
-// Real filesystem, random alphabet and GNU parity checks remain in coreutils.
 func TestSelfHostMktempRetry(t *testing.T) {
 	source, err := os.ReadFile("../../../coreutils/mktemp.fern")
 	if err != nil {
@@ -27,9 +25,6 @@ func TestSelfHostMktempRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "mktemp-retry.fern")
-	// Copy the actual production loop, changing only its IO expression and
-	// limit input. Keep the loop itself verbatim, without adding a production
-	// callback allocation just for fault injection.
 	const makeDecl = "function make(s: Settings, head: string, run: i32, tail: string): Attempt {"
 	start := strings.Index(string(source), makeDecl)
 	if start < 0 {
@@ -94,9 +89,6 @@ func TestSelfHostMktempRetry(t *testing.T) {
 func mktempRetryMode(full bool) (env, args []string) {
 	env = []string{"FERN_STRICT_IR=1", "FERN_LEAKCHECK=1"}
 	if full {
-		// The sanitizer quarantines freed blocks. Hundreds of millions of
-		// attempts must recycle storage; use the balanced census here and
-		// retain sanitizer coverage on every boundary at the smaller scale.
 		args = []string{"full"}
 	} else {
 		env = append(env, "FERN_SANITIZE=1")

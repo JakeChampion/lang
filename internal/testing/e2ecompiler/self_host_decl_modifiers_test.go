@@ -9,24 +9,6 @@ import (
 	"testing"
 )
 
-// `async` (before `function`) and `opaque` (before `struct`) are the two
-// contextual declaration modifiers the native parser accepts. Before #6631
-// the self-host parser recognised neither: the modifier fell through the
-// top-level decl dispatch into `parse_stmt`, which read it as a bare
-// identifier expression, so `async function f()` type-checked as
-// `error[E001]: undefined name "async"` and the declaration itself was
-// still compiled — a program native accepts, rejected by the self-host for
-// a name the source never used.
-//
-// `async` is STAMPED onto the FuncDecl and `opaque` onto the StructDecl, and
-// `-fmt` reprints both; `opaque`'s access rule (E021) is pinned by
-// TestSelfHostCheckerOpaqueDifferentialX86_64. Neither mark changes
-// codegen on the paths below — only the wasm32-wasi component lifts an async
-// function, as an export too (TestSelfHostWasmAsyncExport) —
-// so the contract these tests pin is that each form parses, checks clean,
-// and reaches codegen as an ordinary function / struct decl, plus that both
-// names stay usable as ordinary identifiers. The `async` bit's own
-// round-trip is pinned in printer.fern and the CLI driver test.
 var declModifierCases = []struct {
 	name     string
 	src      string
@@ -40,22 +22,14 @@ var declModifierCases = []struct {
 		`opaque struct E { a: i32 } function main(): i32 { let e: E = E { a: 3 }; return e.a; }`, 3},
 	{"pub-opaque-struct",
 		`pub opaque struct E { a: i32 } function main(): i32 { let e: E = E { a: 5 }; return e.a + 4; }`, 9},
-	// Both declarations in one module, each still reachable.
 	{"both-modifiers",
 		`pub opaque struct E { a: i32 } async function compute(): i32 { return 2; } function main(): i32 { let e: E = E { a: 4 }; return e.a + compute(); }`, 6},
-	// Contextual: neither name is reserved, so both stay usable as locals.
 	{"still-identifiers",
 		`function f(): i32 { let async: i32 = 3; let opaque: i32 = 4; return async + opaque; } function main(): i32 { return f(); }`, 7},
-	// `async` / `opaque` NOT followed by their keyword are ordinary
-	// identifiers at statement position too — the modifier probe must not
-	// swallow them.
 	{"ident-before-other-decl",
 		`function async(): i32 { return 6; } function main(): i32 { return async(); }`, 6},
 }
 
-// TestSelfHostDeclModifiersChecker runs each form through the self-hosted
-// type checker (checker_run): the pre-#6631 failure was a spurious E001, so
-// a clean exit with empty stderr is the assertion that matters.
 func TestSelfHostDeclModifiersChecker(t *testing.T) {
 	checkerBin, runner, _ := buildCheckerDriverBin(t, "drivers/checker_run.fern", false)
 	for _, tc := range declModifierCases {
@@ -71,10 +45,6 @@ func TestSelfHostDeclModifiersChecker(t *testing.T) {
 	}
 }
 
-// TestSelfHostDeclModifiersIRX86_64 routes each form through the self-hosted
-// x86-64 driver (asm_run → emit_module, IR default-on), asserting the exit
-// code, and probes the routing (asm_pathprobe_run) to pin each case to the
-// "ir" path.
 func TestSelfHostDeclModifiersIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -107,8 +77,6 @@ func TestSelfHostDeclModifiersIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostDeclModifiersIRWasm runs the same forms through the wasm IR
-// backend (wasm_ir_run), so the stack-machine backend is covered too.
 func TestSelfHostDeclModifiersIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host decl-modifier wasm IR e2e")
@@ -147,17 +115,6 @@ func TestSelfHostDeclModifiersIRWasm(t *testing.T) {
 	}
 }
 
-// TestSelfHostImportAsyncFunctionChecks covers `@import(iface, wit) async
-// function …` — the Preview-3 async import, which reaches the decl dispatch
-// through the attribute arm rather than the top-level probe.
-//
-// It also pins the body-less exemption from E052. An `@import` declaration
-// legitimately has no body, and the self-host checker used to run the
-// missing-return walk over it anyway, so EVERY body-less import — async or
-// not — drew a spurious "can fall off the end" diagnostic that native does
-// not report. The empty block in `function f(): i32 { }` is the same empty
-// array to the self-host, so the import attribute is what separates the two;
-// the last case pins that the real E052 still fires.
 func TestSelfHostImportAsyncFunctionChecks(t *testing.T) {
 	checkerBin, runner, _ := buildCheckerDriverBin(t, "drivers/checker_run.fern", false)
 	const importDecl = `@import("wasi:random/random@0.2.0", "get-random-u64")`
@@ -171,7 +128,6 @@ func TestSelfHostImportAsyncFunctionChecks(t *testing.T) {
 			importDecl + "\nfunction get_random_u64(): i64;\nfunction main(): i32 { return 0; }", ""},
 		{"pub-async-import",
 			importDecl + "\npub async function get_random_u64(): i64;\nfunction main(): i32 { return 0; }", ""},
-		// Not an import: an empty body still falls off the end.
 		{"empty-body-still-e052",
 			"function f(): i32 { }\nfunction main(): i32 { return 0; }", "error[E052]"},
 	}
@@ -194,15 +150,6 @@ func TestSelfHostImportAsyncFunctionChecks(t *testing.T) {
 	}
 }
 
-// TestSelfHostOpaqueUnderAttributes covers `opaque` in the two decl arms
-// that sit behind an attribute (`@must_consume`, `@derive`), where the
-// modifier has to be skipped a second time after the attribute has already
-// consumed `pub`.
-//
-// These arms are asserted by EQUIVALENCE rather than by exit code: both
-// attributes carry checker rules of their own whose self-host coverage is
-// independently incomplete, and the property #6631 is about is that adding
-// `opaque` changes nothing — same diagnostics, byte-identical assembly.
 func TestSelfHostOpaqueUnderAttributes(t *testing.T) {
 	pairs := []struct {
 		name          string
@@ -230,8 +177,6 @@ func TestSelfHostOpaqueUnderAttributes(t *testing.T) {
 
 	for _, p := range pairs {
 		t.Run(p.name, func(t *testing.T) {
-			// The diagnostics carry source columns, which the extra `opaque `
-			// shifts — compare the codes, which is what the arm decides.
 			plainDiag, opaqueDiag := diagCodes(check(t, p.plain)), diagCodes(check(t, p.opaque))
 			if plainDiag != opaqueDiag {
 				t.Errorf("checker codes differ: plain %q, opaque %q", plainDiag, opaqueDiag)
@@ -248,9 +193,6 @@ func TestSelfHostOpaqueUnderAttributes(t *testing.T) {
 	}
 }
 
-// diagCodes extracts the `error[Ennn]` codes from a formatted diagnostic
-// stream, discarding the line/column suffixes that shift when a modifier
-// widens the source.
 func diagCodes(s string) string {
 	var out []string
 	for _, line := range strings.Split(s, "\n") {

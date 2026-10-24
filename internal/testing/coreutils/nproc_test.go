@@ -6,25 +6,6 @@ func init() {
 	registerCorpus("nproc", nprocCases)
 }
 
-// nproc(1) answers two different questions. The default is how many
-// units THIS PROCESS may run on — the affinity mask, overridable by the
-// two OpenMP variables — and `--all` is how many the machine has
-// installed, which those variables do NOT override. Both sides run on
-// the same machine under the same environment, so the numbers are
-// compared, not just the shape.
-//
-// The corners the corpus is built around:
-//
-//   - OMP_NUM_THREADS replaces the count and OMP_THREAD_LIMIT caps it,
-//     parsed the lenient way OpenMP asks for: blanks either side, a
-//     nested-level list accepted for its first element, and anything
-//     else — junk, a leading sign, an empty value — read as "not set"
-//     rather than as an error.
-//   - A value past `unsigned long` saturates instead of failing,
-//     because strtoul saturates and nothing looks at the ERANGE.
-//   - `--ignore=N` subtracts with a floor of 1, and its diagnostic is
-//     NOT a usage error: `invalid number: 'x'` and nothing else, no
-//     `Try …` line.
 func nprocCases(t *testing.T) []invocation {
 	return []invocation{
 		{name: "no arguments"},
@@ -32,7 +13,6 @@ func nprocCases(t *testing.T) []invocation {
 		{name: "--all", args: []string{"--all"}},
 		{name: "--a is all", args: []string{"--a"}},
 
-		// --ignore, its arithmetic and its floor.
 		{name: "ignore zero", args: []string{"--ignore=0"}},
 		{name: "ignore one", args: []string{"--ignore=1"}},
 		{name: "ignore more than there are", args: []string{"--ignore=1000"}},
@@ -52,7 +32,6 @@ func nprocCases(t *testing.T) []invocation {
 		{name: "all and ignore together", args: []string{"--all", "--ignore=1"}},
 		{name: "ignore then all", args: []string{"--ignore=1", "--all"}},
 
-		// The OpenMP variables, which the default honours and --all does not.
 		{name: "OMP_NUM_THREADS replaces the count", env: []string{"OMP_NUM_THREADS=2"}},
 		{name: "OMP_NUM_THREADS does not reach --all", args: []string{"--all"}, env: []string{"OMP_NUM_THREADS=2"}},
 		{name: "OMP_NUM_THREADS of one", env: []string{"OMP_NUM_THREADS=1"}},
@@ -76,7 +55,6 @@ func nprocCases(t *testing.T) []invocation {
 		{name: "OMP_THREAD_LIMIT junk is no limit", env: []string{"OMP_THREAD_LIMIT=abc"}},
 		{name: "the OpenMP count then ignored", args: []string{"--ignore=1"}, env: []string{"OMP_NUM_THREADS=3"}},
 
-		// Operands, all of them faults.
 		{name: "an operand", args: []string{"x"}},
 		{name: "two operands report the first", args: []string{"x", "y"}},
 		{name: "lone dash is an operand", args: []string{"-"}},
@@ -86,8 +64,6 @@ func nprocCases(t *testing.T) []invocation {
 		{name: "operand after an option", args: []string{"--all", "x"}},
 		{name: "operand before an option is permuted out", args: []string{"x", "--all"}},
 
-		// getopt faults. nproc declares no short option at all, so
-		// every short byte is invalid.
 		{name: "invalid short option", args: []string{"-a"}},
 		{name: "invalid short option n", args: []string{"-n"}},
 		{name: "unrecognized long option", args: []string{"--foo"}},
@@ -99,10 +75,8 @@ func nprocCases(t *testing.T) []invocation {
 		{name: "bad number before a bad option", args: []string{"--ignore=x", "--foo"}},
 		{name: "bad option before a bad number", args: []string{"--foo", "--ignore=x"}},
 
-		// POSIXLY_CORRECT stops the scan at the first operand.
 		{name: "posixly correct stops at an operand", args: []string{"x", "--all"}, env: []string{"POSIXLY_CORRECT=1"}},
 
-		// The write-failure paths: one write, one strerror.
 		{name: "stdout closed", stdout: stdoutClosed},
 		{name: "stdout full", stdout: stdoutFull},
 		{name: "stdout closed on a fault", args: []string{"x"}, stdout: stdoutClosed},

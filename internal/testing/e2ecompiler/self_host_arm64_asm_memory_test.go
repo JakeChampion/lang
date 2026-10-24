@@ -8,26 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64AsmMemoryLinear pins the in-process arm64 assembler's
-// memory to LINEAR in the size of the assembled program (#6011).
-//
-// arm64_gas_program used to hold the .text buffer inside its Arm64Asm /
-// Arm64GasProg structs while patching it, so every fixup read `a.text` while
-// `a` still referenced it. A second reference sends `.with` down the
-// copy-on-write path, so each patched instruction word cloned the whole
-// buffer: O(code_len^2) arena traffic, and `bin/fern-selfhost -target arm64-linux`
-// exhausted the 16 GiB arena (exit 137) compiling an empty `main` that
-// imports std/array.
-//
-// The gate is the ARENA HIGH-WATER MARK (__heap_bump_bytes — total bytes the
-// allocator handed out fresh, i.e. everything the freelist could not
-// recycle), NOT peak RSS. RSS is not portable here: a first touch anywhere in
-// the 16 GiB MAP_NORESERVE arena maps a 2 MB huge page under THP=always, so
-// the same binary on the same input measured 43 MB on a madvise host and
-// 552 MB on an always host. The bump counter is exact and host-independent.
-//
-// Measured on ~900 KB of stress input: 18 MB now. Before the fix the same
-// driver needed 238 MB at HALF this size and exhausted the arena at this one.
 func TestSelfHostArm64AsmMemoryLinear(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
@@ -59,9 +39,6 @@ func TestSelfHostArm64AsmMemoryLinear(t *testing.T) {
 		t.Fatalf("unparsable driver output %q: %v", out.String(), err)
 	}
 
-	// Check the work actually happened before believing the memory number:
-	// every instruction is 4 bytes and each `.ltorg`-flushed literal adds 8,
-	// plus a little 8-alignment padding per pool.
 	lo, hi := 4*(nInsns+1), 4*(nInsns+1)+16*nLits
 	if gotText < lo || gotText > hi {
 		t.Errorf("assembled %d bytes of .text, want %d..%d — the assembler dropped or duplicated work", gotText, lo, hi)
@@ -75,11 +52,6 @@ func TestSelfHostArm64AsmMemoryLinear(t *testing.T) {
 	}
 }
 
-// gasStressProgram builds a GAS program that exercises all four patch paths at
-// once: backward branches (patched during emit), forward branches (queued for
-// arm64_asm_resolve), `ldr =N` literals flushed by `.ltorg`, and enough plain
-// instructions to make the buffer large. Returns the source and the number of
-// literal-pool entries it contains.
 func gasStressProgram(n int) (string, int) {
 	var b strings.Builder
 	lits := 0
@@ -89,13 +61,13 @@ func gasStressProgram(n int) (string, int) {
 		case 0:
 			fmt.Fprintf(&b, ".Lback%d:\n    mov x0, #%d\n", i, i%4096)
 		case 1:
-			fmt.Fprintf(&b, "    b .Lback%d\n", i-1) // backward: patched in place
+			fmt.Fprintf(&b, "    b .Lback%d\n", i-1)
 		case 2:
-			fmt.Fprintf(&b, "    b .Lfwd%d\n", i) // forward: queued as a fixup
+			fmt.Fprintf(&b, "    b .Lfwd%d\n", i)
 		case 3:
 			fmt.Fprintf(&b, ".Lfwd%d:\n    add x1, x1, #1\n", i-1)
 		case 4:
-			fmt.Fprintf(&b, "    ldr x2, =%d\n", i+1) // literal-pool load
+			fmt.Fprintf(&b, "    ldr x2, =%d\n", i+1)
 			lits++
 		case 5:
 			b.WriteString("    .ltorg\n    sub x1, x1, #1\n")

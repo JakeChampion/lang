@@ -1,6 +1,6 @@
-// A method of a generic enum that builds a variant, read back by another
-// method (#12904). `put` builds `Bin` directly; `grow` hands a bare `Tip` to a
-// generic function, which takes its instantiation from the other argument.
+
+
+
 import "std/i32";
 
 enum Tree[K] { Tip, Bin(Tree[K], K, i32) }

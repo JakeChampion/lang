@@ -1,25 +1,3 @@
-// compiler/typeref_run.fern — round-trip driver for the structured
-// type reference (parser.fern's TypeRef / parse_type_ref / render_type_ref,
-// SH-021 foundation slice — unblocks #4394 lever 1).
-//
-// It walks a corpus of canonical type spellings covering every shape the
-// self-host type-string grammar produces — scalars, named + qualified names,
-// arrays (incl. multi-depth), generics (incl. nested), tuples (incl. nested and
-// inside generics), arrays of tuples/generics, and the opaque `dyn` spelling —
-// and asserts the parse/render round-trip render_type_ref(parse_type_ref(s)) == s
-// for each. A byte-scan bug in parse_type_ref (a mis-peeled array suffix, a
-// bad generic split, a tuple mis-classified as a generic) shows up here as a
-// MISMATCH rather than silently mis-decoding a type downstream once a consumer
-// is retargeted onto parse_type_ref.
-//
-// It also spot-checks the decoded STRUCTURE of a few representative types (base
-// / arg-count / array_depth / is_tuple), so a change that still round-trips but
-// decodes the wrong tree (e.g. reading "Map[string, i32]" as one arg) is caught.
-//
-// The companion Go test (internal/testing/e2e/self_host_typeref_test.go) asserts the
-// exact stdout and an exit code of 0 (zero round-trip failures), pinning the
-// contract end-to-end through the self-host -> native pipeline.
-
 import "../ast";
 import "../parser";
 import "../util";
@@ -31,12 +9,8 @@ function b2s(b: boolean): string {
   return "0";
 }
 
-// CheckResult carries a round-trip check's report line plus whether it failed
-// (Fern arrays are immutable after construction, so the driver accumulates its
-// report as a returned value rather than mutating a shared buffer cell).
 struct CheckResult { bad: i32, line: string }
 
-// check round-trips one spelling, returning the report line + a 0/1 fail flag.
 function check(s: string): CheckResult {
   let r: string = parser.render_type_ref(parser.parse_type_ref(s));
   if (r == s) {
@@ -64,7 +38,6 @@ function main(): i32 {
   let out: string = "";
   let bad: i32 = 0;
 
-  // 1. Full round-trip sweep over the type-string grammar.
   let i: i32 = 0;
   while (i < corpus.len()) {
     let cr: CheckResult = check(corpus[i]);
@@ -73,7 +46,6 @@ function main(): i32 {
     i = i + 1;
   }
 
-  // 2. Structure spot-checks — a wrong tree that still round-trips fails here.
   let mp: parser.TypeRef = parser.parse_type_ref("Map[string, Option[i32]]");
   out = out + "struct Map base=" + mp.base
     + " args=" + util.i32_to_string(mp.args.len())
@@ -94,18 +66,12 @@ function main(): i32 {
     + " args=" + util.i32_to_string(ar.args.len())
     + " depth=" + util.i32_to_string(ar.array_depth) + "\n";
 
-  // A `[T]` view is its own node: the brackets wrap one element, and an array
-  // of views keeps the view inside the suffix (#10926).
   let vw: parser.TypeRef = parser.parse_type_ref("[u8][]");
   out = out + "struct viewarr view=" + b2s(vw.is_view)
     + " depth=" + util.i32_to_string(vw.array_depth)
     + " elemview=" + b2s(parser.elem_type_ref(vw).is_view)
     + " elem=" + parser.render_type_ref(parser.elem_type_ref(vw).args[0]) + "\n";
 
-  // A function type round-trips even when it is NOT decoded — an unrecognised
-  // spelling survives whole as `base` and renders back byte-identical. So the
-  // structure is what proves it is understood: `(A, B) => C` must decode to
-  // three args (the result last) rather than one opaque name.
   let f2: parser.TypeRef = parser.parse_type_ref("(T, T) => i32");
   out = out + "struct fn2 base=" + f2.base
     + " args=" + util.i32_to_string(f2.args.len())
@@ -119,7 +85,6 @@ function main(): i32 {
     + " fn=" + b2s(f0.is_fn)
     + " ret=" + parser.render_type_ref(f0.args[0]) + "\n";
 
-  // The parameter's own arrow must not split the outer one.
   let fh: parser.TypeRef = parser.parse_type_ref("(() => T) => U");
   out = out + "struct fnho args=" + util.i32_to_string(fh.args.len())
     + " fn=" + b2s(fh.is_fn)
@@ -139,8 +104,6 @@ function main(): i32 {
     + " params=" + parser.ref_fn_param_spellings(fg)
     + " ret=" + parser.render_type_ref(parser.ref_fn_result(fg)) + "\n";
 
-  // A grouping must not unwrap through an array or turn a real tuple into
-  // a function. Right-associated arrows retain the innermost result array.
   if (parser.ref_is_fn_value(parser.parse_type_ref("((() => U)[])"))) {
     bad = bad + 1;
   }
@@ -173,10 +136,6 @@ function main(): i32 {
     bad = bad + 1;
   }
 
-  // The coarse "fn" / "fn[]" / "[fn]" declaration tag and its sidecars rebuild
-  // the spelling they were split from, so a reader that wants the declared
-  // SHAPE gets a TypeRef rather than an opaque name. A tag with no recorded
-  // result has no signature to rebuild and stays itself.
   out = out + "tag fn=" + parser.fn_tag_spelling("fn", "boolean", "T") + "\n";
   out = out + "tag fn0=" + parser.fn_tag_spelling("fn", "U", "") + "\n";
   out = out + "tag fn2=" + parser.fn_tag_spelling("fn", "(string, i32)", "T,Map[string, U]") + "\n";
@@ -184,8 +143,6 @@ function main(): i32 {
   out = out + "tag fnview=" + parser.fn_tag_spelling("[fn]", "U", "T") + "\n";
   out = out + "tag opaque=" + parser.fn_tag_spelling("fn", "", "") + "\n";
   out = out + "tag plain=" + parser.fn_tag_spelling("i32[]", "", "") + "\n";
-  // Rebuilt spellings decode as function values, so `(T) => boolean` reaches
-  // a structural reader as a parameter T rather than the name "fn".
   let tagged: parser.TypeRef = parser.parse_type_ref(parser.fn_tag_spelling("fn", "boolean", "T"));
   if (!parser.ref_is_fn_value(tagged) || parser.ref_ungroup(tagged).args[0].base != "T") {
     bad = bad + 1;
@@ -205,6 +162,5 @@ function main(): i32 {
   out = out + "round_trip_failures=" + util.i32_to_string(bad) + "\n";
   write(out);
 
-  // Exit code is the round-trip failure count: 0 on a clean sweep.
   return bad;
 }

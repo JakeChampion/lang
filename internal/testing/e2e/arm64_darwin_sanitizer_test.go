@@ -11,12 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestArm64DarwinSanitize runs the self-host's sanitizer probes from
-// sanitizer_test.go through the CLI (`-target arm64-darwin -sanitize`). The
-// Linux legs prove the arm64 generator carries the whole mode; this one proves
-// the Darwin image does too, on the one host that can launch it. It is also
-// the only sanitizer gate that runs natively on an Apple Silicon dev machine.
-// Builds everywhere; executes only on Apple Silicon.
 func TestArm64DarwinSanitize(t *testing.T) {
 	bin := buildFernCLI(t)
 	cases := []struct {
@@ -26,12 +20,8 @@ func TestArm64DarwinSanitize(t *testing.T) {
 		wantExit   int
 		wantStderr []string
 		noStderr   []string
-		// census: stderr is exactly one balanced leakcheck line and
-		// nothing else, which is what a clean sanitized run prints.
-		census bool
-		// env: what the compile needs beyond the harness's child
-		// environment; a planted double free opts out of the certifier.
-		env []string
+		census     bool
+		env        []string
 	}{
 		{name: "clean_run_is_silent", src: sanCleanSrc, sanitize: true, wantExit: 0, census: true},
 		{
@@ -40,17 +30,11 @@ func TestArm64DarwinSanitize(t *testing.T) {
 			wantStderr: []string{"fern-sanitizer: use-after-free (touched a quarantined block)", "backtrace:"},
 			noStderr:   []string{"rc over-release"},
 		},
-		// The second release lands on the quarantine's poison before the
-		// underflow test can see a zero, so a double free is reported as the
-		// touch it is (TestSelfHostOverReleaseReportArm64 pins the
-		// over-release report itself).
 		{
 			name: "double_free_reported", src: sanDoubleFreeSrc, sanitize: true, env: []string{uncertified},
 			wantExit:   e2eharness.ExitSanitizer,
 			wantStderr: []string{"fern-sanitizer: use-after-free (touched a quarantined block)", "backtrace:"},
 		},
-		// Flag off, the same stale touch recycles the block and bumps a
-		// recycled rc word: exit 0 and nothing on stderr.
 		{name: "use_after_free_silent_without_sanitize", src: sanStaleTouchSrc, sanitize: false, wantExit: 0},
 	}
 	for _, c := range cases {
@@ -66,8 +50,6 @@ func TestArm64DarwinSanitize(t *testing.T) {
 				args = append(args, "-sanitize")
 			}
 			args = append(args, "-o", out, src)
-			// The compiler reads FERN_SANITIZE / FERN_LEAKCHECK at init,
-			// so an ambient setting would turn the flag-off leg on.
 			build := exec.Command(bin, args...)
 			build.Env = e2eharness.ChildEnv(c.env...)
 			if o, err := build.CombinedOutput(); err != nil {

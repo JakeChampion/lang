@@ -1,22 +1,6 @@
-// compiler/wasm_extern_sum_run.fern — byte-identity guard for the wasm
-// backend's flat-sum extern type checks (wasm.fern's extern_sum_param_supported /
-// extern_sum_param_is_option, SH-021 slice — docs/SELF-HOST-AUDIT.md T2).
-//
-// Those two now decode an `Option[…]` / `Result[…, …]` type spelling via the
-// structured TypeRef (parser.parse_type_ref) instead of a magic-byte `Option[` /
-// `Result[` prefix + top-level-comma depth scan. This driver runs the REAL
-// (imported) functions AND a frozen copy of the FORMER magic-byte logic over a
-// corpus spanning every branch — Option/Result of i32/u32 (supported) vs of
-// string/struct/nested-generic (not), single- vs two- vs three-arg arities,
-// arrays (`Option[i32][]`), the degenerate `Option[]`, a bare `Option`/`Result`,
-// and plain scalars/structs — and asserts the new decode equals the old for each.
-// Exits with the mismatch count (0 = byte-identical), so a regression in the
-// TypeRef decode (or in parse_type_ref feeding it) fails the golden here.
-
 import "../wasm_ir";
 import "../util";
 
-// --- frozen reference: the exact magic-byte logic these replaced ---
 function ref_trim(s: string): string {
   let n: i32 = s.len();
   let lo: i32 = 0;

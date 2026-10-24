@@ -10,10 +10,6 @@ import (
 	"time"
 )
 
-// ConfigHandlerSource is a handler reading its deploy-time settings through
-// the platform: /greeting answers `plat.config("GREETING")`, /token the
-// length of `plat.secret("TOKEN")` (never the secret itself), and any other
-// path a name nothing sets, "unset" for None.
 func ConfigHandlerSource() string {
 	return `import "std/http";
 import "std/serve";
@@ -31,13 +27,8 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 `
 }
 
-// ConfigHandlerEnv is the environment ConfigHandlerSource is served with on a
-// target that has one.
 var ConfigHandlerEnv = []string{"GREETING=hello", "TOKEN=s3cr3t"}
 
-// CheckConfigHandler drives a served ConfigHandlerSource at addr: the
-// greeting and the secret's length arrive from the deployment, and a name it
-// does not set reads as None.
 func CheckConfigHandler(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -59,9 +50,6 @@ func CheckConfigHandler(t *testing.T, addr string) {
 	}
 }
 
-// ServeComponentWithConfig serves a wasi:http component under `wasmtime
-// serve`, its wasi:config store holding ConfigHandlerEnv's names, and answers
-// the address it listens on; the server is killed when the test ends.
 func ServeComponentWithConfig(t *testing.T, wasmtime, component string) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

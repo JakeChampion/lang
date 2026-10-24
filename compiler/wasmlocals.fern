@@ -1,31 +1,9 @@
-// wasmlocals coalesces a function's body slots into fewer wasm locals
-// (#12078). The lowering gives every temporary a slot of its own and wasm
-// declares a local per slot, so the local count grows with the function's
-// length although almost every slot is dead by the end of its statement, and
-// wasmtime refuses a function past 50,000 locals. Two slots of one wasm type
-// whose live ranges are disjoint share a local here.
-//
-// A slot shares only when its first reference is a store directly in the
-// innermost scope holding all its references: structured control flow can
-// leave that scope or restart an enclosing loop, but cannot reach a later
-// reference without passing the store, so the slot never reads what wasm's
-// zero-initialised local, or an earlier sharer, left in it. Every other
-// referenced slot keeps a local of its own, as do the runs of slots
-// dyn_dispatch reads, which must stay consecutive. A sharing slot live into a
-// loop stays live to the loop's end, for the back edge.
-
 import "./ir";
 
 pub struct Frame { ops: ir.Op[], n_locals: i32, i64_slots: i32[], f64_slots: i32[], v128_slots: i32[] }
 
-// Scopes is the scope tree the structured control flow opens: scope 0 is the
-// body, each block, loop and if arm another. scope_of is the scope each op
-// sits in, and the loops are listed in the order they open.
 struct Scopes { scope_of: i32[], parent: i32[], depth: i32[], loop_start: i32[], loop_end: i32[] }
 
-// Slots is what the references say about each slot: the first and last op
-// naming it (-1 when none does), whether the first is a store, and whether it
-// may share a local.
 struct Slots { first: i32[], last: i32[], share: boolean[], pinned: boolean[] }
 
 pub function coalesce(ops: ir.Op[], n_params: i32, n_locals: i32, i64_slots: i32[], f64_slots: i32[], v128_slots: i32[]): Frame {
@@ -49,8 +27,6 @@ function scopes(ops: ir.Op[]): Scopes {
   let depth: i32[] = [0];
   let loop_start: i32[] = [];
   let loop_end: i32[] = [];
-  // open_loop is a stack, nopen deep, of the open constructs' indexes in
-  // loop_start, -1 for one that is not a loop; an else replaces its if.
   let open_loop: i32[] = [];
   let nopen: i32 = 0;
   let cur: i32 = 0;
@@ -86,7 +62,6 @@ function scopes(ops: ir.Op[]): Scopes {
   return Scopes { scope_of: scope_of, parent: parent, depth: depth, loop_start: loop_start, loop_end: loop_end };
 }
 
-// pushed is stack, n deep, with v pushed.
 function pushed(stack: i32[], n: i32, v: i32): i32[] {
   if (n < stack.len()) {
     return stack.with(n, v);
@@ -94,7 +69,6 @@ function pushed(stack: i32[], n: i32, v: i32): i32[] {
   return stack.append(v);
 }
 
-// common_scope is the innermost scope enclosing both a and b.
 function common_scope(sc: Scopes, a: i32, b: i32): i32 {
   let x: i32 = a;
   let y: i32 = b;
@@ -148,8 +122,6 @@ function slots(ops: ir.Op[], n_params: i32, n_locals: i32, sc: Scopes): Slots {
   return Slots { first: first, last: last, share: share, pinned: pinned };
 }
 
-// dyn_dispatch_slots marks the slots a dyn_dispatch reads: argc of them from
-// its base, which its emission names by offset.
 function dyn_dispatch_slots(ops: ir.Op[], n_locals: i32): boolean[] {
   let k_dyn: i32 = ir.K_DYN_DISPATCH;
   let pinned: boolean[] = filled_bool(n_locals, false);
@@ -165,9 +137,6 @@ function dyn_dispatch_slots(ops: ir.Op[], n_locals: i32): boolean[] {
   return pinned;
 }
 
-// extend_over_loops is each sharing slot's last op, carried to the end of any
-// loop it is live into. Loops are in opening order, so a carry past a later
-// loop's start is seen when that loop is.
 function extend_over_loops(sl: Slots, sc: Scopes): i32[] {
   let last: i32[] = sl.last;
   let s: i32 = 0;
@@ -188,7 +157,6 @@ function extend_over_loops(sl: Slots, sc: Scopes): i32[] {
   return last;
 }
 
-// slot_types is each slot's wasm type: 0 i32, 1 i64, 2 f64, 3 v128.
 function slot_types(n_locals: i32, i64_slots: i32[], f64_slots: i32[], v128_slots: i32[]): i32[] {
   let types: i32[] = filled_i32(n_locals, 0);
   for s in i64_slots {
@@ -203,10 +171,6 @@ function slot_types(n_locals: i32, i64_slots: i32[], f64_slots: i32[], v128_slot
   return types;
 }
 
-// assign maps each slot to its local, or -1 for a slot nothing names. Params
-// keep their indexes, the slots that may not share take the next ones in
-// slot order, and the sharing slots follow, each taking the lowest local of
-// its type that is free by its first op.
 function assign(ops: ir.Op[], n_params: i32, sl: Slots, types: i32[]): i32[] {
   let n: i32 = sl.first.len();
   let map: i32[] = filled_i32(n, 0 - 1);
@@ -254,7 +218,6 @@ function free_local(kind: i32[], until: i32[], ty: i32, at: i32): i32 {
   return 0 - 1;
 }
 
-// remapped_types is each local's wasm type, by local index.
 function remapped_types(map: i32[], types: i32[]): i32[] {
   let n: i32 = 0;
   for m in map {

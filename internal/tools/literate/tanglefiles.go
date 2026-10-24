@@ -7,10 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// FileResult is one tangled output file: its declared path (as written
-// in the `file=PATH` directive), the generated Fern source, a per-line
-// provenance map back to the `.fern.md` document, and whether the block
-// carried the `entry` marker.
 type FileResult struct {
 	Path    string
 	Code    string
@@ -18,25 +14,14 @@ type FileResult struct {
 	IsEntry bool
 }
 
-// HasFiles reports whether the document defines any `file=PATH` blocks,
-// i.e. whether it tangles to multiple modules rather than the single
-// `<<*>>` root.
 func (doc *Document) HasFiles() bool { return len(doc.fileOrder) > 0 }
 
-// OutputFiles returns the output paths declared by `file=` blocks, in
-// first-definition order.
 func (doc *Document) OutputFiles() []string {
 	out := make([]string, len(doc.fileOrder))
 	copy(out, doc.fileOrder)
 	return out
 }
 
-// TangleFiles expands every `file=PATH` root into its own Fern source,
-// returning one FileResult per distinct path in document order. Each
-// file's body is expanded independently (resolving `<<ref>>` chunks),
-// so chunk definitions are shared across the whole document while the
-// file-roots partition the program into modules. Errors (undefined or
-// cyclic chunk reference) are reported against the document.
 func (doc *Document) TangleFiles() ([]FileResult, error) {
 	if !doc.HasFiles() {
 		return nil, &Error{
@@ -63,13 +48,6 @@ func (doc *Document) TangleFiles() ([]FileResult, error) {
 	return results, nil
 }
 
-// EntryFile picks the compile entry among the output files: the file
-// marked `entry`, or — when none is marked — the sole output file. It
-// errors when the choice is ambiguous (multiple `entry` markers, or
-// several files with none marked), naming the candidates so the author
-// can add an `entry` marker. A caller that can inspect the tangled
-// sources (e.g. to find the one defining `main`) may resolve the
-// ambiguous case itself instead.
 func (doc *Document) EntryFile() (string, error) {
 	var marked []string
 	for _, p := range doc.fileOrder {

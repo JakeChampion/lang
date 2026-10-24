@@ -7,15 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostEnumStrPayloadReclaimIRX86_64 pins release of enum and
-// Option/Result STRING payloads (#4355). A FRESH string payload (a literal or a
-// fresh producer) is solely owned by its box, so a consuming match frees the
-// payload through the rc-aware __fern_str_free and then the box. A payload that
-// aliases a live local, or that an arm moves out, must stay valid.
-//
-// The reclaim is proven by a BOUNDED HIGH-WATER assertion (__heap_bump_bytes()
-// stays flat across a second 5000-iteration churn), a double-free by the
-// over-release detector (__rc_underflow_count() → 99), and values checked in Fern.
 func TestSelfHostEnumStrPayloadReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -47,55 +38,33 @@ func TestSelfHostEnumStrPayloadReclaimIRX86_64(t *testing.T) {
 		}
 	}
 
-	// ENUM string payload, consumed by match: `Word(pre + "abc")` is a fresh
-	// concat, so the box solely owns it; the consumed-free's Word variant_is arm
-	// __fern_str_free's the payload then decs the box. After a 5000-iteration
-	// warmup a second churn re-serves everything from the freelist — the bump
-	// stays flat (< 256 B). A double free ticks the detector → 99.
 	run(t, `enum Tok { Word(string), Num(i32) }
 function go(pre: string): i32 { let x = Word(pre + "abc"); let r = 0; match (x) { Word(s) => { r = s.len(); }, Num(n) => { r = n; }, } return r; }
 function churn(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(5000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(5000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"enum-str-payload-flat", 0)
 
-	// OPTION string payload (`Option[string] = Some(<fresh concat>)`), consumed
-	// by match: the payload is freed (__fern_str_free), then the box. Flat
-	// across the second churn.
 	run(t, `function go(pre: string): i32 { let o: Option[string] = Some(pre + "xyz"); let r = 0; match (o) { Some(s) => { r = s.len(); }, None => { r = 1; }, } return r; }
 function churn(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(5000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(5000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"option-str-payload-flat", 0)
 
-	// RESULT Err string payload: the free must read Err's payload as E.
 	run(t, `function go(pre: string): i32 { let r2: Result[i32, string] = Err(pre + "e"); let r = 0; match (r2) { Ok(v) => { r = v; }, Err(e) => { r = e.len(); }, } return r; }
 function churn(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(5000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(5000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"result-err-str-payload-flat", 0)
 
-	// NON-FRESH payload excluded: `Some(nm)` aliases the live local nm — the
-	// classifier rejects it (leak), so nm reads valid bytes after the match and
-	// nothing double-frees. lens 3 + 3 = 6 over 2000 calls, detector 0.
 	run(t, `function go(pre: string): i32 { let nm: string = pre + "q"; let o: Option[string] = Some(nm); let r = 0; match (o) { Some(s) => { r = s.len(); }, None => { r = 1; }, } return r + nm.len(); }
 function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i32 = 0; while (i < n) { if (go(pre) != 6) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"option-aliased-str-payload-excluded", 0)
 
-	// ESCAPING arm binding via RETURN (#4400): `Word(s) => return s` moves the
-	// payload to the caller, so the match frees the box without releasing the
-	// payload. The returned string must stay valid and nothing may double-free.
-	// len 5 over 2000 calls, detector 0.
 	run(t, `enum Tok { Word(string), Num(i32) }
 function go(pre: string): string { let x = Word(pre + "abc"); match (x) { Word(s) => { return s; }, Num(n) => { return "n"; }, } return ""; }
 function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i32 = 0; while (i < n) { if (go(pre).len() != 5) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"enum-escaping-binding-return-moved", 0)
 
-	// ESCAPING arm binding via OUTER-VAR STORE — the shape the pre-#4400 gate
-	// rejected outright (box + payload both leaked per call). Now the candidate
-	// is admitted: the box is deep-drop-freed right after the match with the
-	// Word payload's dec SKIPPED, so `out` (which aliases the payload) reads
-	// valid bytes AFTER the free site. A skipped-dec mistake here shows up as
-	// 99 (the str_free/dec underflow detector) or a corrupted length.
 	run(t, `enum Tok { Word(string), Num(i32) }
 function go(pre: string): i32 {
     let out: string = "";
@@ -107,10 +76,6 @@ function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"enum-escaping-binding-store-moved", 0)
 
-	// GUARD + MOVE mix (the #4560 review point): the escaping Word arm sits
-	// behind a guarded sibling, so a guard-true run takes the borrow-only arm
-	// and a guard-false run moves the payload out. Values stay correct on both
-	// guard outcomes and the detector stays 0.
 	run(t, `enum Tok { Word(string), Num(i32) }
 function go(pre: string, k: i32): i32 {
     let out: string = "";
@@ -122,10 +87,6 @@ function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"enum-guarded-move-mix-rejected", 0)
 
-	// NESTED-if consuming match (the "opt-strpayload" precise-drop kind): the
-	// shape is not admitted by the current precise-drop gates (same as the
-	// pre-existing array-payload behavior — the box leaks soundly), so assert
-	// correctness + detector only, no flatness.
 	run(t, `function go(pre: string, k: i32): i32 { let o: Option[string] = Some(pre + "x"); let t = 0; if (k < 2) { match (o) { Some(s) => { t = s.len(); }, None => { t = 0; }, } } return t; }
 function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i32 = 0; while (i < n) { if (go(pre, 1) != 3) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,

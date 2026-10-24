@@ -7,25 +7,11 @@ import (
 	"testing"
 )
 
-// recvMoveNoDeepCases pin the #3425 residual miscompile: a builder local used
-// as a method RECEIVER (`ms.emit(op)`) can have its field MOVED into the
-// method's result — `ops: self.ops.append(op)` hands the SAME rc==1 buffer to
-// the result whenever the append is in place (spare capacity). Releasing the
-// dead receiver must not free that buffer's element boxes: the returned value
-// still holds them, the next allocation reuses them, and the live value reads
-// foreign data. This is the mechanism that corrupted the IR-built compiler's
-// own Op streams when the merged bundle first compiled irlower through the IR
-// path.
 var recvMoveNoDeepCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The builder chain: three grows leave spare capacity, so the final
-	// receiver-position emit appends IN PLACE — result.ops shares ms's rc==1
-	// buffer. Pre-fix the return sweep deep-dropped ms, freeing the shared
-	// element boxes; churn() then reused them (P{x:7}) and main read 7 where
-	// ops[0].x == 1 (observed exit 52, want 46).
 	{"receiver-move-inplace-append-survives-sweep", `struct P { x: i32 }
 struct S { ops: P[], n: i32 }
 function (self: S) emit(v: i32): S {
@@ -54,10 +40,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// The SNAPSHOT-LOCAL sibling: same chain, but ms is bound from a
-	// fresh-struct-returning CALL (`mk()`) — the shape of the compiler's own
-	// `let sb = se.add_local(..)` … `return sb.emit(..)` locals. Pre-fix exit
-	// 91, same mechanism.
 	{"snapshot-local-receiver-move-survives-sweep", `struct P { x: i32 }
 struct S { ops: P[], n: i32 }
 function (self: S) emit(v: i32): S {
@@ -89,10 +71,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// Read-only control: a local whose struct-array field is only READ
-	// (indexed, never a receiver / call arg) keeps the deep sweep — its
-	// fields reclaim (bounded churn, detector at zero). Guards that the
-	// NODEEP marker didn't turn off the field reclaim for intact locals.
 	{"read-only-local-still-deep-reclaims", `struct P { x: i32 }
 struct S { ops: P[], n: i32 }
 function go(k: i32): i32 {
@@ -112,8 +90,6 @@ function main(): i32 {
 }`, 0},
 }
 
-// TestSelfHostRecvMoveNoDeepIRX86_64 drives the cases through the self-hosted
-// x86-64 compiler (asm_run) — value-correct + underflow-guarded.
 func TestSelfHostRecvMoveNoDeepIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

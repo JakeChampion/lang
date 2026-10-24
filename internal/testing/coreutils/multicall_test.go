@@ -13,25 +13,8 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The multicall leg: every utility in `coreutils/` compiled into the single
-// binary `coreutils/multicall/fern-coreutils.fern` builds, run over the same
-// corpus, and required to agree with the standalone build byte for byte.
-//
-// The comparison is against the NATIVE STANDALONE binary rather than GNU for
-// the reason the self-host leg gives: standalone is already held to GNU by the
-// gate above, so agreeing with it is agreeing with GNU, and a failure here says
-// "one binary and 106 binaries disagree" rather than re-reporting a parity bug
-// in both.
-//
-// No symlink farm is needed to exercise it. The harness already runs a utility
-// with argv[0] set to the bare utility name, which is exactly what the
-// dispatcher reads, so the multicall binary can stand in for a standalone one
-// wherever a binary path is taken.
-
-// catalogueRe matches one name in the dispatcher's `catalogue()` table.
 var catalogueRe = regexp.MustCompile(`"([^"]+)"`)
 
-// multicallSource is the dispatcher, read once and shared by the gates below.
 func multicallSource(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(repoRoot(t), "coreutils", "multicall", "fern-coreutils.fern")
@@ -42,7 +25,6 @@ func multicallSource(t *testing.T) string {
 	return string(src)
 }
 
-// multicallCatalogue is the names `catalogue()` returns, in source order.
 func multicallCatalogue(t *testing.T) []string {
 	t.Helper()
 	src := multicallSource(t)
@@ -62,7 +44,6 @@ func multicallCatalogue(t *testing.T) []string {
 	return names
 }
 
-// multicallImports is the utility each `import "../x" as u_x;` line names.
 func multicallImports(t *testing.T) []string {
 	t.Helper()
 	var names []string
@@ -76,13 +57,8 @@ func multicallImports(t *testing.T) []string {
 
 var fernImportReTest = regexp.MustCompile(`(?m)^\s*import\s+"([^"]+)"`)
 
-// dispatchRe matches one arm of the dispatch chain in `main()`, and pairs the
-// name tested against the module called so that a copy-paste mismatch —
-// `if (n == "sum") { return u_shuf.main(); }` — is caught rather than counted.
 var dispatchRe = regexp.MustCompile(`if \(n == "([^"]+)"\) \{\s*return (\w+)\.main\(\);\s*\}`)
 
-// multicallDispatch is the utility each arm of `main()` dispatches to. An arm
-// whose name and module disagree is reported here rather than returned.
 func multicallDispatch(t *testing.T) []string {
 	t.Helper()
 	var names []string
@@ -96,12 +72,6 @@ func multicallDispatch(t *testing.T) []string {
 	return names
 }
 
-// TestMulticallCatalogue fails when a utility is missing from the dispatcher,
-// or listed there without a source file behind it.
-//
-// The catalogue is checked in rather than generated, so that the file is
-// reviewable; this is what stops it drifting. A new utility joins the
-// multicall binary by being added in two places, and the message says both.
 func TestMulticallCatalogue(t *testing.T) {
 	want := utilNames(t)
 	sort.Strings(want)
@@ -114,8 +84,6 @@ func TestMulticallCatalogue(t *testing.T) {
 		{"the imports", multicallImports(t)},
 		{"the dispatch chain in main()", multicallDispatch(t)},
 	} {
-		// A regex that matches nothing would otherwise pass every check
-		// below by vacuity, which is the shape this gate exists to refuse.
 		if len(got.names) == 0 {
 			t.Fatalf("read no names out of %s — this gate is matching the wrong shape, not finding an empty list", got.what)
 		}
@@ -142,10 +110,6 @@ var (
 	multicallFail string
 )
 
-// multicallBin compiles the dispatcher for the host, once per test process.
-//
-// Built without -O for the reason fernBin gives: the parity gate wants the
-// assert() checks live.
 func multicallBin(t *testing.T) string {
 	t.Helper()
 	multicallOnce.Do(func() {
@@ -157,10 +121,6 @@ func multicallBin(t *testing.T) string {
 		}
 		root := repoRoot(t)
 		srcDir := filepath.Join(root, "coreutils", "multicall")
-		// The compile is a child process, so the sources it reads reach the go
-		// command's test cache only if this process reads them too (#9087).
-		// The closure walk follows the `../` imports out into coreutils/, so
-		// this covers all 106 utilities and the lib/ they share.
 		e2eharness.TrackFernSources(t, srcDir, "fern-coreutils.fern")
 		bin := filepath.Join(dir, "fern-coreutils")
 		src := filepath.Join(srcDir, "fern-coreutils.fern")
@@ -177,9 +137,6 @@ func multicallBin(t *testing.T) string {
 	return multicallPath
 }
 
-// TestMulticallDispatch covers what the corpus below cannot: argv[0] naming
-// no utility, where the dispatcher either answers for ITSELF or runs the
-// utility its first argument names.
 func TestMulticallDispatch(t *testing.T) {
 	bin := multicallBin(t)
 	names := utilNames(t)
@@ -204,10 +161,6 @@ func TestMulticallDispatch(t *testing.T) {
 		}
 	})
 
-	// A utility named as an argument runs with argv shifted by set_args
-	// (#9694), so it answers exactly as it does under its own name,
-	// diagnostics and exit status included, whatever path the binary itself
-	// was invoked by.
 	t.Run("utility as argument", func(t *testing.T) {
 		for _, argv := range [][]string{
 			{"uname", "--bogus"},
@@ -238,8 +191,6 @@ func TestMulticallDispatch(t *testing.T) {
 		}
 	})
 
-	// The symlink IS the supported invocation, so one is exercised end to end
-	// rather than trusting that setting argv[0] is the same thing.
 	t.Run("through a symlink", func(t *testing.T) {
 		dir := t.TempDir()
 		link := filepath.Join(dir, "echo")
@@ -256,12 +207,6 @@ func TestMulticallDispatch(t *testing.T) {
 	})
 }
 
-// runAs runs bin with argv[0] set to argv0, the way the corpus harness does.
-//
-// Under the emulator that needs qemu's -0: the guest otherwise reads the
-// emulator's own argv, whose argv[0] is the binary's path, so every case
-// would dispatch on the dispatcher's name and exercise the own-name path
-// instead of the utility it names.
 func runAs(t *testing.T, bin, argv0 string, args ...string) ([]byte, error) {
 	t.Helper()
 	if pre := crossPrefix(); len(pre) > 0 {
@@ -273,8 +218,6 @@ func runAs(t *testing.T, bin, argv0 string, args ...string) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
-// exitStatus is the exit code runAs's error carries: 0 for none, -1 for a
-// failure to run at all.
 func exitStatus(err error) int {
 	if err == nil {
 		return 0
@@ -285,23 +228,17 @@ func exitStatus(err error) int {
 	return -1
 }
 
-// TestMulticallParity runs every utility's corpus against the multicall binary
-// and its standalone build and requires the two to agree.
 func TestMulticallParity(t *testing.T) {
 	ours := multicallBin(t)
 	for _, util := range utilNames(t) {
 		cases, ok := corpusRegistry[util]
 		if !ok {
-			continue // reported by TestSelfHostCoreutilsCoverage
+			continue
 		}
 		t.Run(util, func(t *testing.T) {
 			standalone := fernBin(t, util)
 			for _, inv := range cases(t) {
 				t.Run(inv.name, func(t *testing.T) {
-					// Parallel on the same terms the self-host leg states:
-					// two processes per case, almost all of the cost in
-					// spawning them, and a case that writes a corpus file
-					// runs alone.
 					if inv.stdoutPath == "" && len(inv.follow) == 0 &&
 						inv.prepare == nil && len(inv.artifacts) == 0 {
 						t.Parallel()

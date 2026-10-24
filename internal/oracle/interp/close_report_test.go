@@ -2,14 +2,6 @@ package interp
 
 import "testing"
 
-// A close the kernel would refuse answers EBADF, not Ok (#8569).
-//
-// The interpreter never closes the host's own stdio — the streams outlive the
-// program it is running — but it still has to answer a SECOND close the way
-// every compiled backend does, because that is the whole of gnulib's
-// close_stream contract and so of `prog >&-`'s exit status. Answering Ok
-// twice also made the interpreter useless as the oracle for the compiled
-// backends' close reporting, which is how this was found.
 func TestCloseReportsBadFdOnTheSecondClose(t *testing.T) {
 	src := `function code_of(o: Result[void, IoError]): i32 {
     match (o) {
@@ -34,10 +26,6 @@ function main(): i32 {
 	}
 }
 
-// The same rule for a file: closing it twice is EBADF, not an interpreter
-// error. The interpreter drops its host handle on the first close, and a
-// program that closes twice has done nothing illegal — the kernel simply says
-// the descriptor is not open.
 func TestCloseFileTwiceReportsBadFd(t *testing.T) {
 	dir := t.TempDir()
 	src := `function code_of(o: Result[void, IoError]): i32 {

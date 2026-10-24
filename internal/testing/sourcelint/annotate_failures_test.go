@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// scripts/ci-annotate-failures turns a failed test's test2json events into
-// one `::error` annotation naming the test, with the tail of its output,
-// so a failure is readable from the Checks tab and the REST API when the
-// log is not. The fixture is a real worker stream from a shard run, trimmed
-// to one failing test and its parent.
 func TestAnnotateFailuresNamesTheTestAndItsOutput(t *testing.T) {
 	root, err := repoRoot()
 	if err != nil {
@@ -45,8 +40,6 @@ func TestAnnotateFailuresNamesTheTestAndItsOutput(t *testing.T) {
 		t.Errorf("annotation carries the harness framing instead of the test's output:\n%s", line)
 	}
 
-	// No failure, no output, exit 0: the step runs only on failure, and a
-	// stream of passes must not invent a row.
 	passing := filepath.Join(t.TempDir(), "pass.jsonl")
 	if err := os.WriteFile(passing, []byte(`{"Time":"2026-10-01T21:00:00Z","Action":"run","Package":"p","Test":"TestOk"}
 {"Time":"2026-10-01T21:00:00Z","Action":"output","Package":"p","Test":"TestOk","Output":"=== RUN   TestOk\n"}

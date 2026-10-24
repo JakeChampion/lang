@@ -9,11 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// An arm a literal condition never takes is still type-checked: the fold
-// leaves it in the tree, and only PruneDeadArms, after the checker, drops it.
-// The fold used to drop it itself, so a type error behind `if (false)` or a
-// branch on another target passed the Go checker and failed the self-host's.
-// Found by TestDifferential_CheckerMutants.
 func TestFoldKeepsDeadArmsForTheChecker(t *testing.T) {
 	for _, cond := range []string{"false", `target_os() == "wasi-http"`} {
 		prog, err := parser.Parse(`struct Pair { fst: i32, snd: i32 }

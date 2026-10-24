@@ -1,41 +1,8 @@
-// examples/fip/packet_fip.fern — the strict-`fip` variant of the bounded packet
-// codec (#9584).
-//
-// Same protocol, same workload and the same answers as the other three. The
-// data plane is `fip` all the way down — a checked claim that it allocates
-// nothing, rather than `fbip`'s weaker "every construction is reuse-paired" —
-// and it holds no struct at all: one owned byte buffer is threaded through, and
-// the parse's results stay as scalars in the function that uses them.
-//
-// Two modes, selected by argv, because the issue asks for both:
-//
-//   (default)    the response is framed OVER the request, in one buffer
-//   `separate`   the response goes into a second buffer, preallocated once
-//
-// The first is the one that shows why this experiment counts bytes and not just
-// allocations: an echo's answer is already in the buffer, so the whole response
-// is 16 header bytes rewritten and no payload movement at all. No other variant
-// here can express that, and the allocation counter cannot see the difference —
-// both modes are flat at zero.
 import "core/cmp";
 import "std/bench";
 import "std/i32";
 import "std/i64";
 
-// ===================== THE PROTOCOL =====================
-//
-// A 16-byte fixed header and a bounded payload, so a whole packet fits in 256
-// bytes and every buffer in every variant can be sized once, up front.
-//
-//   0..1   magic 0xFE 0x52
-//   2      version
-//   3      message type
-//   4      status (0 on a request)
-//   5      reserved
-//   6..9   request id, u32 little-endian
-//   10..11 payload length, u16 little-endian
-//   12..13 Fletcher-16 of the payload
-//   14..15 reserved
 fip function header_len(): i32 {
   return 16;
 }
@@ -104,9 +71,6 @@ fip function st_bad_checksum(): i32 {
   return 6;
 }
 
-// Fletcher-16: two running sums mod 255, which catches byte transposition
-// where a plain sum does not. Cheap enough that it is not what any variant's
-// throughput is measuring.
 fip function checksum(bytes: u8[], from: i32, n: i32): i32 {
   let a: i32 = 0;
   let b: i32 = 0;
@@ -144,19 +108,6 @@ fip function pow256(k: i32): i64 {
   return p;
 }
 
-// ===================== THE DATA PLANE (strict fip) =====================
-//
-// No struct and no record: one owned byte buffer threaded through, and the
-// parse's results held as scalars inside the one function that uses them. Every
-// function here is `fip`, so the checker says the whole plane allocates nothing
-// — not that it reuses well, that it does not allocate at all.
-//
-// Every store is its own statement. `b = b.with(i, x).with(j, y)` reads better
-// for a run of header bytes and is what this file was first written as, but a
-// chained `.with` in assignment position allocates a fresh box per evaluation
-// (#9702) — so the spelling that reads best is the one that would have put an
-// allocation on every request.
-
 fip function rev_inplace(own b: u8[], at: i32, n: i32): u8[] {
   let i: i32 = 0;
   let j: i32 = n - 1;
@@ -183,11 +134,6 @@ fip function upper_inplace(own b: u8[], at: i32, n: i32): u8[] {
   return b;
 }
 
-// The in-place sum needs its own spelling rather than `sum_into(b, b, …)`:
-// handing the owned buffer in as its own borrowed source is E050, correctly,
-// since the callee would be writing through one reference while reading
-// through another. Every in-place transform here pays that — the copying and
-// the rewriting forms cannot share a body.
 fip function sum_inplace(own b: u8[], at: i32, n: i32): u8[] {
   let total: i64 = 0 as i64;
   let s: i32 = 0;
@@ -249,9 +195,6 @@ fip function upper_into(own dst: u8[], src: u8[], at: i32, n: i32, to: i32): u8[
   return dst;
 }
 
-// The validation ladder, returning the status rather than a record: a record
-// would be a fresh allocation per request, which is the whole cost this variant
-// exists to avoid.
 fip function validate(wire: u8[], wire_len: i32): i32 {
   if (wire_len < header_len()) {
     return st_truncated();
@@ -299,19 +242,11 @@ fip function frame(own out: u8[], mtype: i32, status: i32, rid: i64, plen: i32):
   return out.with(15, 0 as u8);
 }
 
-// IN-PLACE: the response is framed over the request, in the same buffer. An
-// echo moves no payload bytes at all — the answer is already where it belongs
-// and only the 16 header bytes are rewritten. That is the term no other variant
-// can remove, and it is why "bytes copied" is measured here and not just
-// "allocations".
 fip function serve_inplace(own buf: u8[], wire_len: i32): u8[] {
   let status: i32 = validate(buf, wire_len);
   let mtype: i32 = 0;
   let rid: i64 = 0 as i64;
   let plen: i32 = 0;
-  // Only a packet whose magic and version are good has a type and an id to
-  // echo back; the baseline's record leaves both zero on the earlier
-  // rejections, and the response bytes have to match.
   if (status != st_bad_magic() && status != st_bad_version() && wire_len >= header_len()) {
     mtype = buf[3] as i32;
     rid = read_u32(buf, 6);
@@ -333,10 +268,6 @@ fip function serve_inplace(own buf: u8[], wire_len: i32): u8[] {
   return frame(buf, mtype, status, rid, plen);
 }
 
-// SEPARATE: the response goes into a second buffer, preallocated once, and the
-// request buffer is only read. Every payload byte moves, so this is the cost of
-// the output buffer that the in-place path avoids — and the shape a real server
-// needs when the request must survive its own response.
 fip function serve_separate(own out: u8[], wire: u8[], wire_len: i32): u8[] {
   let status: i32 = validate(wire, wire_len);
   let mtype: i32 = 0;
@@ -366,8 +297,6 @@ fip function serve_separate(own out: u8[], wire: u8[], wire_len: i32): u8[] {
   return frame(out, mtype, status, rid, plen);
 }
 
-// Bytes the transform actually wrote, by the same rule in both modes: the
-// header always, plus whatever the payload cost. An in-place echo writes none.
 fip function moved(mtype: i32, status: i32, plen: i32, inplace: boolean): i64 {
   if (status != st_ok()) {
     return header_len() as i64;
@@ -380,13 +309,6 @@ fip function moved(mtype: i32, status: i32, plen: i32, inplace: boolean): i64 {
   }
   return (header_len() + plen) as i64;
 }
-
-// ===================== THE WORKLOAD =====================
-//
-// Identical in all four variants, verbatim, so the runs differ in how the
-// bytes are held and in nothing else. Every 17th request is malformed, cycling
-// through the six rejections, so the error ladder is exercised in the steady
-// state rather than in a separate test that proves nothing about throughput.
 
 fip function gen_payload_len(n: i64): i32 {
   return (n * (37 as i64) % (241 as i64)) as i32;
@@ -403,10 +325,6 @@ fip function corruption(n: i64): i32 {
   return (n / (17 as i64) % (6 as i64)) as i32;
 }
 
-// Writes one request into the buffer it is handed and gives it back. It takes
-// the buffer `own` in every variant, including this one: generating the input
-// is the harness, not the codec, and a borrowed `wire` would copy all 256
-// bytes on each `.with` — charging every variant for the instrument.
 fip function build_request(own wire: u8[], n: i64): u8[] {
   let t: i32 = 1 + (n % (4 as i64)) as i32;
   let plen: i32 = gen_payload_len(n);
@@ -462,9 +380,6 @@ fip function wire_len_for(n: i64): i32 {
   return header_len() + plen;
 }
 
-// A running digest over every response byte. Four implementations of one codec
-// agree only if this agrees, which is what makes the comparison a differential
-// test rather than three unrelated benchmarks.
 fip function mix(d: i64, b: i32): i64 {
   let x: i64 = d ^ b as i64;
   x = x * (1099511628211 as i64);
@@ -485,14 +400,6 @@ function zeros_u8(n: i32): u8[] {
   return xs;
 }
 
-// ===================== DRIVER =====================
-//
-// The driver is NOT `fip`: it owns the buffers, tallies, and prints. That is
-// the intended split — a strict data plane with an ordinary shell around it —
-// and it is what lets the plane return one owned buffer and nothing else. The
-// status and the response length come back in the response header, where a
-// caller would read them anyway.
-
 function main(): i32 {
   let argv: string[] = args();
   let inplace: boolean = true;
@@ -503,10 +410,6 @@ function main(): i32 {
   }
 
   let batch: i32 = 64;
-  // 4000 rounds is 256,000 requests, which holds the per-request medians steady
-  // while keeping this program the same weight as experiment 1's — it is run
-  // under both backends, under qemu, by the SSA differential sweep over
-  // examples/, and five times that was 5x the cost for no more signal.
   let rounds: i32 = 4000;
   let wire: u8[] = zeros_u8(max_packet());
   let out: u8[] = zeros_u8(max_packet());
@@ -531,7 +434,6 @@ function main(): i32 {
     p = p + 1;
   }
 
-  // One warm round before the mark.
   let w: i32 = 0;
   while (w < batch) {
     wire = build_request(wire, w as i64);

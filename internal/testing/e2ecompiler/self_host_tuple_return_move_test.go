@@ -9,12 +9,6 @@ import (
 	"testing"
 )
 
-// tupleReturnMoveProg is the #4598 reproducer: a `(St[], Par)` tuple return
-// under cursor threading. Returning an array local inside a tuple moves it into
-// the tuple box, so the exit sweep must not free `body` / `r_body` once the box
-// holds the buffer pointer — a use-after-free that stays latent until a later
-// same-size allocation recycles the freed block. The junk-allocation loop forces
-// that recycling deterministically, so a stray free segfaults.
 const tupleReturnMoveProg = `struct Par { toks: i32[], pos: i32 }
 struct SA { v: i32 }
 struct SB { name: string }
@@ -68,14 +62,8 @@ function main(): i32 {
 }
 `
 
-// want: len(b)*10 + sum(0+1+2) + pos(4) = 30 + 3 + 4.
 const tupleReturnMoveWant = 37
 
-// TestSelfHostTupleReturnArrayElemMove pins the x86-64 IR-path move-on-return
-// of an ARRAY tuple element (#4598): `return (body, p)` must keep `body` from
-// the exit dec-sweep — the buffer moves into the (leak-mode) tuple box exactly
-// like an enum payload (#3720). This is the gate for the #4406 parser.fern
-// *Result→tuple migration, whose parse_block corruption reduced to this shape.
 func TestSelfHostTupleReturnArrayElemMove(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -93,8 +81,6 @@ func TestSelfHostTupleReturnArrayElemMove(t *testing.T) {
 	if err != nil || len(asm) == 0 {
 		t.Fatalf("driver failed: %v", err)
 	}
-	// The guard is only meaningful on the IR path — assert the tuple-returning
-	// functions actually lowered there (an AST bail would pass vacuously).
 	for _, fn := range []string{".Lssa_parse_sts", ".Lssa_parse_block"} {
 		if !strings.Contains(string(asm), fn) {
 			t.Fatalf("%s not on the IR path (no %s label) — the move-on-return guard is not being exercised", strings.TrimPrefix(fn, ".Lssa_"), fn)
@@ -113,9 +99,6 @@ func TestSelfHostTupleReturnArrayElemMove(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleReturnArrayElemMoveWasm is the wasm-IR mirror — the lowering
-// is shared, so the same move-on-return keep must hold in the
-// WAT emit.
 func TestSelfHostTupleReturnArrayElemMoveWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host tuple-return wasm IR e2e")

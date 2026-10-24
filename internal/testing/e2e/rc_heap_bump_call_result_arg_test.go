@@ -5,22 +5,6 @@ import (
 	"testing"
 )
 
-// Owned call-RESULT passed as a borrowed arg (statement-temp stage-(b)
-// follow-up). `take(mk(i))` / `outer(inner(i))` — a fresh user-function
-// result handed straight into another call — leaked the result every
-// iteration (wasm: struct-result 800→80000, array-result 1600→160000). The
-// original stage (b) stashed + dec'd only fresh-allocating literal SHAPES
-// (freshOwnedRcTempType); this extends it to fresh-returning user-function
-// calls (ownedCallResultType), reclaimed identically (stash + post-call dec
-// via the is_unique-gated emitOwnedSlotDrop).
-//
-// Soundness is the union of the two existing guarantees: the ENCLOSING call
-// is admitted only when its resolved result is a concrete scalar
-// (resultCannotAliasArg), so it cannot hand the arg back; and the is_unique
-// gate frees the arg only when it's uniquely owned (rc==1) — an aliased
-// result (a callee returning its param, rc>=2 via the return-transfer inc)
-// is merely dec'd, never freed.
-
 func callResultArgStructBump(n string) string {
 	return `struct P { x: i32, y: i32 }
 function mk(v: i32): P { return P { x: v, y: v }; }
@@ -46,10 +30,6 @@ function main(): i32 {
 }`
 }
 
-// CRITICAL soundness: pass(arr) returns its param (aliased; rc>=2 via the
-// return-transfer inc). It's a call-result arg to sum(); the post-call dec
-// must only DEC it (is_unique false), never free, so `arr` stays valid and
-// readable on the next line. sum(pass(arr)) == 60, + arr[0] == 10, ×200.
 const callResultArgAliasedSafe = `@noinline function pass(p: i32[]): i32[] { return p; }
 function sum(xs: i32[]): i32 { return xs[0] + xs[1] + xs[2]; }
 function main(): i32 {

@@ -2,11 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/dotenv across backends: KEY=VALUE with
-// trimming, the export prefix, double-quoted (with \n escape) and
-// single-quoted (literal) values, last-key-wins, empty values, CRLF
-// endings, and malformed-line skipping. Returns 42 iff every check
-// holds. Each leg skips itself when its toolchain is absent.
 const dotenvProg = `
 import "std/dotenv" as dotenv;
 import "core/map";

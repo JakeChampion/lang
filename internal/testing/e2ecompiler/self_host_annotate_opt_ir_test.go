@@ -7,32 +7,19 @@ import (
 	"testing"
 )
 
-// annotateOptCases extend the typed-IR annotation (#5531) to Option/Result-valued
-// calls. TypeUnion carries its type arguments (Option[i32] →
-// TypeUnion{"Option", [i32]}), and type_to_irtag reconstructs the "Option[T]" /
-// "Result[T, E]" tag from them; that tag drives `match` scrutinee routing and
-// the `?` operator's payload/error typing.
-//
-// Option/Result box their payload on the heap; the binary runs via the
-// X86_64Tooling runner prefix (nil on an x86_64 host).
 var annotateOptCases = []struct {
 	name string
 	src  string
 }{
-	// match on an Option-returning call.
 	{"match_option", `function pick(n: i32): Option[i32] { if (n > 0) { return Some(n * 10); } return None; }
-function main(): i32 { match (pick(4)) { Some(v) => { return v; }, None => { return 0; } } }`}, // 40
-	// `?` propagation through Result-returning calls.
+function main(): i32 { match (pick(4)) { Some(v) => { return v; }, None => { return 0; } } }`},
 	{"try_result", `function half(n: i32): Result[i32, i32] { if (n % 2 == 0) { return Ok(n / 2); } return Err(1); }
 function run(): Result[i32, i32] { let x: i32 = half(8)?; let y: i32 = half(4)?; return Ok(x + y); }
-function main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return 99; } } }`}, // 4 + 2 = 6
-	// Option[string] payload used as a string (v.len()).
+function main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return 99; } } }`},
 	{"match_option_string", `function name_of(n: i32): Option[string] { if (n == 1) { return Some("hello"); } return None; }
-function main(): i32 { match (name_of(1)) { Some(v) => { return v.len(); }, None => { return 0; } } }`}, // 5
+function main(): i32 { match (name_of(1)) { Some(v) => { return v.len(); }, None => { return 0; } } }`},
 }
 
-// TestSelfHostAnnotateOptIR_X86_64 pins the checker-stamped Option/Result result
-// type feeding the lowering through the IR path (#5531).
 func TestSelfHostAnnotateOptIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 

@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// A script's top-level statements become a synthesized `function main(): i32`
-// (asmcore.synth_script_main), so a top-level `return` is checked against i32
-// as a written main's is (#10797). Native has no script form, so this is the
-// self-host CLI alone.
 func TestSelfHostScriptReturnType(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	cases := []struct{ name, src, want string }{

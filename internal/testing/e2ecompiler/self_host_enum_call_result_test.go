@@ -5,18 +5,6 @@ import (
 	"testing"
 )
 
-// An enum call result carries one count the caller owns when the callee is an
-// "ENUM:" member: every return is a fresh ctor, a forwarding call to a member,
-// a local built by one that escapes only by the return, or a `let g = h.e`
-// field alias, which the return retains when no credit dup'd it (#10365). A
-// binding of such a call is credited like a counted enum-field alias, the
-// struct and array literal consumers take the count over without a retain,
-// and a produced callee's union result joins the class at the semantic
-// boundary. Before, only a direct-ctor callee's rc-payload result was released,
-// so every other shape here leaked its box in the caller.
-//
-// Each row pairs a scalar payload with an rc-payload twin, and churns a
-// same-size box after every call so a box freed early reads back wrong.
 const enumCallResultSrc = `enum Sc { SA(i32), SB }
 enum Rc { RA(i32[]), RB }
 struct HS { e: Sc, n: i32 }
@@ -85,7 +73,6 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const enumCallResultWant = 64
 
 func TestSelfHostEnumCallResultX86_64(t *testing.T) {
@@ -107,12 +94,6 @@ func TestSelfHostEnumCallResultWasm(t *testing.T) {
 	checkEnumFieldAlias(t, "wasm32-wasi", enumCallResultSrc, enumCallResultWant)
 }
 
-// A callee handing back a borrowed parameter, or a borrowed struct parameter's
-// enum field, is an "ENUM:" member too: the return retains what it hands back,
-// so the result carries the caller's count (#10410). A lend at such a position
-// is a counted store, so the lender keeps its own release, and a temporary
-// argument there is released after the call. The last rows put a handback
-// result in each temporary position.
 const enumCallHandbackSrc = `enum Sc { SA(i32), SB }
 enum Rc { RA(i32[]), RB }
 struct HS { e: Sc, n: i32 }
@@ -156,7 +137,6 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const enumCallHandbackWant = 66
 
 func TestSelfHostEnumCallHandbackX86_64(t *testing.T) {
@@ -178,9 +158,6 @@ func TestSelfHostEnumCallHandbackWasm(t *testing.T) {
 	checkEnumFieldAlias(t, "wasm32-wasi", enumCallHandbackSrc, enumCallHandbackWant)
 }
 
-// A local lent to a handback callee and then returned (#10443). The returned
-// result is the same box, so it must carry a count of its own past the local's
-// release; otherwise the churned box is read back, 93 instead of 3.
 const enumHandbackReturnSrc = `enum Sc { SA(i32), SB }
 function k_of(x: i32): i32 { return x; }
 @noinline function sval(e: Sc): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }
@@ -204,7 +181,6 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const enumHandbackReturnWant = 3
 
 func TestSelfHostEnumHandbackReturnX86_64(t *testing.T) {
@@ -226,11 +202,6 @@ func TestSelfHostEnumHandbackReturnWasm(t *testing.T) {
 	checkEnumFieldAlias(t, "wasm32-wasi", enumHandbackReturnSrc, enumHandbackReturnWant)
 }
 
-// An "ENUM:" member's result in each temporary position: an argument, a match
-// scrutinee and a discarded call, for a callee returning a ctor and one
-// returning a local, with scalar and rc payloads. Each position released
-// nothing before, apart from a scalar-payload argument and an "RCE:" ctor
-// callee's argument and rc-payload scrutinee.
 const enumCallTempSrc = `enum Sc { SA(i32), SB }
 enum Rc { RA(i32[]), RB }
 function k_of(x: i32): i32 { return x; }
@@ -269,7 +240,6 @@ function main(): i32 {
 }
 `
 
-// Interpreter-confirmed.
 const enumCallTempWant = 42
 
 func TestSelfHostEnumCallTempX86_64(t *testing.T) {

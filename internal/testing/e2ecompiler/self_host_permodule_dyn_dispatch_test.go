@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostPerModuleDynDispatchCrossModule: a `dyn` call in one unit
-// dispatches to impls declared in other units, with the trait in a fourth. A
-// unit used to build its dispatch arms from its own functions only, so the
-// call had no arms and aborted with 134 (#10891).
 func TestSelfHostPerModuleDynDispatchCrossModule(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)

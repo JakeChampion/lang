@@ -1,4 +1,3 @@
-// Runtime metadata is retained from the invocation that produced these bodies.
 import "../semlower";
 import "../physicalbody";
 import "../ircore";
@@ -70,7 +69,6 @@ function wrapper(src: string, exiting: boolean, state: asmcore.EmitState): void 
   let selected = state.rt_lower(src);
   parity(src, selected);
   require(selected.declarations.len() == 5 && selected.bodies.len() > selected.declarations.len(), 120);
-  // No old bodies: the proof binds only these graphs and this selected metadata.
   let sub = ircore.Sub { ...ircore.no_sub(), physical_contracts: selected.contracts, physical_records: selected.records, physical_enums: selected.enums, physical_finalizers: selected.finalizers };
   let fs = graphs(selected);
   let p = abi.check_wrapper_final(sub, fs, "handoff", "replace", "__sem_drop_Parent", "__sem_release_Parent", ["require"]);
@@ -85,15 +83,12 @@ function wrapper(src: string, exiting: boolean, state: asmcore.EmitState): void 
   for bad in [missing, records, finalizer] {
     require(!abi.check_wrapper_final(bad, fs, "handoff", "replace", "__sem_drop_Parent", "__sem_release_Parent", ["require"]).ok, 123);
   }
-  // A later lowering must not replace this invocation's immutable selected facts.
   let unrelated = state.rt_lower("function identity(x: i64): i64 { return x; }");
   require(unrelated.declarations.len() == 1 && unrelated.declarations[0] == "identity", 124);
   require(abi.check_wrapper_final(sub, fs, "handoff", "replace", "__sem_drop_Parent", "__sem_release_Parent", ["require"]).ok == !exiting, 125);
 }
 
 pub function run(src: string, exiting: boolean): void {
-  // The application has no runtime declarations or record metadata to borrow.
-  // Carry the installed callback through Sub and EmitState, as native emit does.
   let application = semlower.driven(parser.parse_module(lexer.tokenize("")), "x86-64-linux");
   let state = asmcore.EmitState { ...asmcore.new_state(), rt_lower: application.sub.rt_lower };
   wrapper(src, exiting, state);

@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// A usize element is pointer-width on every target: the native backends
-// strided usize[] at 8 but stored and loaded it at 4, so an element past
-// 32 bits came back with a zero high word (#10753). Each case checks a
-// round-trip against the local it was built from, so the answer is 0 on
-// wasm's 32-bit usize as well as on the 64-bit natives.
 func TestUsizeArrayElementsKeepTheirHighWord(t *testing.T) {
 	const prelude = `function same(a: usize, b: usize): boolean { return (a as u64) == (b as u64); }
 function first(xs: usize[]): usize { return xs[0]; }

@@ -1,4 +1,4 @@
-// Short-circuit && / ||, unary !, and parenthesised grouping.
+
 function main(): i32 {
     let t: boolean = true;
     let f: boolean = false;

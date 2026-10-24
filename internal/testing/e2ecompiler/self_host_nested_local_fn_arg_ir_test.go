@@ -5,52 +5,26 @@ import (
 	"testing"
 )
 
-// nestedLocalFnArgIRCases pin a function value passed as an ARGUMENT to a
-// NESTED local function — #6341.
-//
-// Getting it wrong is a silent miscompile, not a bail: the program compiles
-// clean, with nothing printed even under FERN_STRICT_IR=1, and the binary
-// segfaults.
-//
-// The lift decides whether a fn-value argument must be env-boxed by asking
-// lift_callee_param_is_fn, and that has to cover a nested local function, which
-// is not a MODULE function: hoist_local_funcs_module only rewrites a body
-// containing a SELF-RECURSIVE local, so a plain nested function stays a
-// statement (a `let helper = <lambda>` binding) and never reaches `mfuncs`.
-// Judged "callee param is not fn-typed", the value passes RAW, and the callee —
-// which dispatches env-first, reading slot 0 of an assumed [funcval, caps…]
-// box — dereferences a bare code address (exit 139).
-//
-// The two controls are the shapes that need no nested-callee lookup — they are
-// what isolate "nested callee" as the variable rather than "fn-value argument".
 var nestedLocalFnArgIRCases = []struct {
 	name string
 	src  string
 	exit int
 }{
-	// A bare module fn-name as the argument. The minimal repro — no lambda at
-	// all, which is what rules out the lambda machinery as the cause.
 	{"fn-name-to-nested-fn", `function dbl(x: i32): i32 { return x * 2i32; }
 function main(): i32 {
     function helper(f: (i32) => i32): i32 { return f(3i32); }
     return helper(dbl) & 63i32;
 }`, 6},
-	// An inline lambda as the argument — the shape fernsmith generates.
 	{"lambda-to-nested-fn", `function main(): i32 {
     function helper(f: (i32) => i32): i32 { return f(3i32); }
     let v: i32 = helper(((x: i32) => 481i32));
     return v & 63i32;
 }`, 33},
-	// Control: the same call with the fn value bound to a LOCAL first. That
-	// path already boxed the value, so it answered correctly before the fix.
 	{"via-local-control", `function main(): i32 {
     function helper(f: (i32) => i32): i32 { return f(3i32); }
     let g: (i32) => i32 = ((x: i32) => 481i32);
     return helper(g) & 63i32;
 }`, 33},
-	// Control: the same call with the helper at TOP LEVEL, where
-	// lift_callee_param_is_fn could always see it. This is the row that says
-	// the bug was the callee's nesting, not the argument.
 	{"top-level-callee-control", `function helper(f: (i32) => i32): i32 { return f(3i32); }
 function main(): i32 {
     let v: i32 = helper(((x: i32) => 481i32));
@@ -58,9 +32,6 @@ function main(): i32 {
 }`, 33},
 }
 
-// TestSelfHostNestedLocalFnArgIRX86_64 runs each case through the production
-// x86-64 IR driver and asserts the ANSWER. A compile-only assertion would have
-// passed throughout the bug's lifetime — the module was always IR-eligible.
 func TestSelfHostNestedLocalFnArgIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -88,9 +59,6 @@ func TestSelfHostNestedLocalFnArgIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostNestedLocalFnArgIRArm64 — the arm64 counterpart. The fix is in the
-// shared lift, so arm64 picks it up unchanged; running it is what proves that
-// rather than assuming it.
 func TestSelfHostNestedLocalFnArgIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

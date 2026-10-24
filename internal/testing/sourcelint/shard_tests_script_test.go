@@ -10,15 +10,6 @@ import (
 	"testing"
 )
 
-// scripts/shard-tests partitions a test list into NSHARD buckets. The one
-// property every lane that uses it relies on is that the buckets cover the
-// list: a name in no bucket is a test no job runs, and nothing else notices.
-// It once lost the whole list when the weights file was empty (the /dev/null
-// fallback for a lane with no weights, or a file of comments): awk's
-// `NR == FNR` idiom read every test name as a weight row and printed nothing,
-// which the self-host lane's shard step then reported as a green shard with
-// no tests. So the script is run here with and without weights, and the
-// buckets are checked to be a partition of the input.
 func TestShardTestsCoversTheListWithAndWithoutWeights(t *testing.T) {
 	root, err := repoRoot()
 	if err != nil {
@@ -67,8 +58,6 @@ func TestShardTestsCoversTheListWithAndWithoutWeights(t *testing.T) {
 			t.Errorf("weights %s: the three buckets are %v, not a partition of %v", filepath.Base(weights), all, names)
 		}
 	}
-	// The weights steer: the two heaviest names land in different buckets,
-	// and the heaviest alone fills its bucket before the light names start.
 	g, a := -1, -1
 	for shard := 0; shard < 3; shard++ {
 		for _, n := range run(shard, 3, weighted) {

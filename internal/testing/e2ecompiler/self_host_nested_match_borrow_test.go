@@ -5,24 +5,6 @@ import (
 	"testing"
 )
 
-// --- A `match (o)` scrutinee is a borrow, wherever the match sits (#6127) -----
-//
-// The consuming match of an Option is not an escape of the Option, whether the
-// match is a top-level statement or sits inside an `if` or a `while`. Read as an
-// escape, the nested form released NOTHING and the whole box leaked every round.
-//
-// The nesting was the only variable, 100 rounds (allocs / frees / live bytes
-// before #6127):
-//
-//	match at top level        200 / 200      0
-//	match inside an `if`      200 /   0   8000
-//	match inside a `while`    200 /   0   8000
-//	string payload, in `if`   200 /   0   6400
-//	struct payload, in `if`   300 /   0  12800
-//
-// The struct-payload row also exercises the deep drop of an Option's struct
-// payload (#6308).
-
 func TestSelfHostNestedMatchBorrowX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -36,8 +18,6 @@ func TestSelfHostNestedMatchBorrowX86_64(t *testing.T) {
 		want int
 	}{
 		{
-			// The control: the same program with the match at top level always
-			// reclaimed. It is here so a regression on the OLD path fails too.
 			name: "match_at_top_level",
 			src: `function round(i: i32): i32 {
     let acc: i32 = 0;
@@ -92,8 +72,6 @@ function main(): i32 {
 			want: 4,
 		},
 		{
-			// The STRING payload kind — released by __fern_str_free rather than a
-			// plain dec, so it is a distinct emission and needs its own case.
 			name: "string_payload_inside_an_if",
 			src: `function round(i: i32): i32 {
     let acc: i32 = 0;
@@ -112,8 +90,6 @@ function main(): i32 {
 			want: 55,
 		},
 		{
-			// The STRUCT payload kind — the "opt-structpayload:<P>" drop from #6308,
-			// reachable for the first time.
 			name: "struct_payload_inside_an_if",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
@@ -167,17 +143,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostNestedMatchBorrowHazardsX86_64 — the scrutinee is a borrow, and it
-// must exempt nothing else: an alias, a return, a call argument or an escaping
-// arm binding keeps the value live past the match.
-//
-// These assert allocation and free counts as well as the exit. On the typed lowering every
-// row reclaims what it allocates; an over-release shows up as a count above
-// that even when the program still exits correctly. A
-// sibling change in #6308 exited correctly on all four of its hazards while
-// freeing a live buffer — the freelist had simply not reused it yet.
-//
-// Every `want` is from `fern -interp`.
 func TestSelfHostNestedMatchBorrowHazardsX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -192,8 +157,6 @@ func TestSelfHostNestedMatchBorrowHazardsX86_64(t *testing.T) {
 		wantAllocs int64
 	}{
 		{
-			// Aliased in the same block as the match. The initial None is
-			// static; each round allocates only the Some box and its array.
 			name: "aliased_beside_the_match",
 			src: `function round(i: i32): i32 {
     let acc: i32 = 0;
@@ -216,8 +179,6 @@ function main(): i32 {
 			wantAllocs: 200,
 		},
 		{
-			// Aliased AFTER the block — the drop point is the last top-level
-			// reference, so this is the one that would free a box still to be read.
 			name: "aliased_after_the_block",
 			src: `function round(i: i32): i32 {
     let acc: i32 = 0;
@@ -239,7 +200,6 @@ function main(): i32 {
 			wantAllocs: 200,
 		},
 		{
-			// Returned to the caller from the same function that matches it.
 			name: "returned_to_the_caller",
 			src: `function build(i: i32): Option[i32[]] {
     let o: Option[i32[]] = Some([i, i + 1]);
@@ -263,8 +223,6 @@ function main(): i32 {
 			wantAllocs: 200,
 		},
 		{
-			// Passed to a callee that keeps it. The initial None is static;
-			// each round allocates only the Some box and its array.
 			name: "passed_to_a_callee_that_keeps_it",
 			src: `@noinline function keepit(o: Option[i32[]]): Option[i32[]] { return o; }
 function round(i: i32): i32 {
@@ -288,7 +246,6 @@ function main(): i32 {
 			wantAllocs: 200,
 		},
 		{
-			// The arm BINDING escapes to an outer local.
 			name: "arm_binding_escapes_to_an_outer_local",
 			src: `function round(i: i32): i32 {
     let held: i32[] = [];
@@ -309,8 +266,6 @@ function main(): i32 {
 			wantAllocs: 200,
 		},
 		{
-			// The arm binding escapes into a container that outlives the
-			// match.
 			name: "arm_binding_escapes_into_a_container",
 			src: `function round(i: i32): i32 {
     let keep: i32[][] = [];
@@ -361,10 +316,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostNestedMatchBorrowNoUnderflowX86_64 — the array and string payload
-// kinds released through a nested match, with the release counted rather than
-// inferred. A string LITERAL payload is the sharp case: its data lives in
-// .rodata and the heap guard skips it, so a double release registers only here.
 func TestSelfHostNestedMatchBorrowNoUnderflowX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

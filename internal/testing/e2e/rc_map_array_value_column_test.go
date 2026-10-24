@@ -4,21 +4,6 @@ import (
 	"testing"
 )
 
-// #7910 (a) — a map whose VALUES are `string[]`.
-//
-// mapValHasDrop had no arm for a string-element array value, so the column
-// fell to __map_drop_values' kind-2 release: one flat __fern_arr_dec per value,
-// which frees each value's buffer and strands every string in it — two heap
-// strings per insert, unbounded. The column now routes through
-// __drop_map_via___drop_strarr, whose per-value drop is __fern_drop_arr_str
-// (element walk at rc==1, a dec otherwise), the same release a `string[]`
-// local, field or payload already gets.
-//
-// The strings are built by a call that branches on the loop variable, so
-// nothing folds and nothing packs inline. FERN_LEAKCHECK is the instrument on
-// the natives; wasm has no leak counter, so it uses the __heap_bump_bytes()
-// high-water probe, flat under reclaim and linear under a leak.
-
 const mapArrayValueColumnSrc = `import "core/map";
 function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function main(): i32 {
@@ -34,10 +19,6 @@ function main(): i32 {
     return 0;
 }`
 
-// The same column read through a BOUND get_or result. get_or on a counted-read
-// value column hands back a reference the caller owns on both outcomes (the
-// runtime retains a hit's value and a miss's fallback alike), which is what
-// lets the binding reclaim it and the temp form above end its fallback.
 const mapArrayValueColumnBoundSrc = `import "core/map";
 function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function main(): i32 {
@@ -73,9 +54,6 @@ function main(): i32 {
 }`
 }
 
-// Value correctness + zero over-release: a value read back out of the column
-// after a second insert must still hold its strings, and the map's drop must
-// release each value exactly once — the direction leakcheck cannot see.
 const mapArrayValueColumnUnderflowSrc = `import "core/map";
 function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function main(): i32 {

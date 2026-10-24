@@ -10,19 +10,6 @@ import (
 	"testing"
 )
 
-// A CAPTURING lambda handed to a SIBLING module's fn-typed parameter is the
-// shape #7215 broke on. The lift pass decides whether such an argument is
-// env-boxed by looking the CALLEE up, so a per-module build that lifts a part
-// against only its own functions cannot see that `lib.apply` takes a fn — the
-// lambda stays raw, and lowering then emits `const_func(<fd>$clo)` naming a
-// closure body no lift ever hoisted. The whole-program build never noticed (one
-// module, every callee visible); every per-unit link failed on
-// `undefined reference to __fn_<fd>$clo`.
-//
-// The cases below walk the positions that share that code path — the reported
-// assignment RHS, plus var-init, return, nested-call, if-condition, an escaping
-// closure built by a local factory, and the local-binding control that already
-// worked — so a regression in any one of them fails by name.
 const perModuleClosureArgLib = `pub function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
 `
 
@@ -31,47 +18,33 @@ var perModuleClosureArgCases = []struct {
 	entry string
 	want  int
 }{
-	// The reported shape: the call is the value of an ASSIGNMENT.
 	{"assign-arg", `import "./lib";
 function run(n: i32): i32 { let acc: i32 = 0; acc = lib.apply((y: i32): i32 => { return y + n; }, 4); return acc; }
 function main(): i32 { return run(3); }`, 7},
-	// The same, accumulating in a loop — the form the issue's repro used, where
-	// the capture is read once per iteration.
 	{"assign-arg-loop", `import "./lib";
 function run(n: i32, k: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < k) { acc = lib.apply((y: i32): i32 => { return y + n; }, acc); i = i + 1; } return acc; }
 function main(): i32 { return run(3, 4); }`, 12},
-	// var-init position.
 	{"var-arg", `import "./lib";
 function run(n: i32): i32 { let acc: i32 = lib.apply((y: i32): i32 => { return y + n; }, 4); return acc; }
 function main(): i32 { return run(3); }`, 7},
-	// return position — the one the issue expected to work.
 	{"return-arg", `import "./lib";
 function run(n: i32): i32 { return lib.apply((y: i32): i32 => { return y + n; }, 4); }
 function main(): i32 { return run(3); }`, 7},
-	// Nested: the argument of the outer call is itself a call carrying one.
 	{"nested-arg", `import "./lib";
 function run(n: i32): i32 { let acc: i32 = 0; acc = lib.apply((y: i32): i32 => { return y + n; }, lib.apply((z: i32): i32 => { return z * 2; }, 5)); return acc; }
 function main(): i32 { return run(3); }`, 13},
-	// if-condition position.
 	{"if-cond-arg", `import "./lib";
 function run(n: i32): i32 { if (lib.apply((y: i32): i32 => { return y + n; }, 4) > 5) { return 7; } return 1; }
 function main(): i32 { return run(3); }`, 7},
-	// The closure is a RETURNED value first, then handed across the boundary —
-	// the escaping-closure hoist feeding a cross-module fn param.
 	{"returned-closure-arg", `import "./lib";
 function mk(n: i32): (i32) => i32 { return (y: i32): i32 => { return y + n; }; }
 function run(n: i32): i32 { return lib.apply(mk(n), 4); }
 function main(): i32 { return run(3); }`, 7},
-	// Control: bound to a local first. This one already linked before the fix,
-	// because the var-binding lift boxes a value-used lambda without consulting
-	// the callee at all.
 	{"local-first", `import "./lib";
 function run(n: i32): i32 { let f: (i32) => i32 = (y: i32): i32 => { return y + n; }; let acc: i32 = 0; acc = lib.apply(f, 4); return acc; }
 function main(): i32 { return run(3); }`, 7},
 }
 
-// writeClosureArgProject writes one case's two-module project and returns the
-// entry path.
 func writeClosureArgProject(t *testing.T, root, name, entry string) string {
 	t.Helper()
 	proj := filepath.Join(root, "cloarg_"+name)
@@ -88,10 +61,6 @@ func writeClosureArgProject(t *testing.T, root, name, entry string) string {
 	return entryPath
 }
 
-// TestSelfHostPerModuleClosureArgLinkX86_64 is the gate for #7215: each case is
-// emitted as SEPARATE translation units and linked. The link is the assertion —
-// a `$clo` reference with no definition behind it is invisible until then — and
-// the exit code proves the closure the units agreed on actually computes.
 func TestSelfHostPerModuleClosureArgLinkX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -152,12 +121,6 @@ func TestSelfHostPerModuleClosureArgLinkX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostWholeProgramClosureArgX86_64 runs the same cases through the
-// MERGED whole-program emit. That build never failed on #7215 — one module, so
-// every callee is in the lift's view — which is exactly why it is worth pinning:
-// it is the oracle the per-unit leg above has to agree with, and the leg that
-// would notice if the cross-module boxing changed the answer rather than only
-// the symbol set.
 func TestSelfHostWholeProgramClosureArgX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -182,10 +145,6 @@ func TestSelfHostWholeProgramClosureArgX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostPerModuleClosureArgLinkWasm is the wasm leg of the same gate. The
-// wasm failure mode is not a linker error but a missing elem-table entry —
-// `unknown func: failed to find name $<fd>$clo` — so the assertion is that the
-// linked module parses at all, then that it computes.
 func TestSelfHostPerModuleClosureArgLinkWasm(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

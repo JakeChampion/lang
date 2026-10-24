@@ -12,16 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExportListResultRunsViaConsumer is the P6 numeric-array (`list<T>`) result
-// export gate (docs/WIT-BRING-YOUR-OWN.md): the first composite EXPORT beyond
-// strings. A Fern reactor `@export iota(): i32[]` returns a length-prefixed
-// native array; the wasmbin wrapper writes the canonical `[ptr,len]` return area
-// (no copy — a Fern numeric array is already contiguous at the canonical
-// stride), the composer emits the `list<s32>` component type and lifts the
-// export with the memory lift, and a separate Fern consumer that `@import`s
-// `iota() -> list<s32>` reads the array back — linked with `wasm-tools compose`
-// and run under wasmtime. Proves the whole Fern→component→consumer list-export
-// path.
 func TestExportListResultRunsViaConsumer(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -39,7 +29,6 @@ func TestExportListResultRunsViaConsumer(t *testing.T) {
 		}
 	}
 
-	// --- exporter: Fern reactor `@export iota(): i32[]` returning [10,20,30,40]. ---
 	expWit := filepath.Join(dir, "expwit")
 	if err := os.MkdirAll(expWit, 0o755); err != nil {
 		t.Fatalf("mkdir expwit: %v", err)
@@ -78,7 +67,6 @@ function iota(): i32[] { return [10, 20, 30, 40]; }`
 	}
 	run(wasmtools, "validate", exporter)
 
-	// --- consumer: Fern, @imports iota() -> list<s32> and checks it. ---
 	userWit := filepath.Join(dir, "userwit")
 	if err := os.MkdirAll(userWit, 0o755); err != nil {
 		t.Fatalf("mkdir userwit: %v", err)

@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for the std/ansi 256-colour + truecolour helpers
-// across backends: fg_256 / bg_256 and fg_rgb / bg_rgb must wrap their
-// content in an SGR escape (so the wrapped string is longer than the
-// content) and strip() must recover the original text, including when
-// nested inside another style. Returns 42 iff every check holds. Each
-// leg skips itself when its toolchain is absent.
 const ansiColorProg = `
 import "std/ansi" as ansi;
 function main(): i32 {

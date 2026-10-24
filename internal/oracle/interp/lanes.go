@@ -6,10 +6,6 @@ import (
 	"strings"
 )
 
-// Lanes is a value of a lane type: `f64x2` (Width 64) or `f32x4` (Width 32).
-// Each lane is held as its bits, because a comparison gives a mask of all-ones
-// lanes and `select` combines masks bit by bit. An f32 lane holds its bits in
-// the low 32 of the word.
 type Lanes struct {
 	Width int
 	Bits  []uint64
@@ -30,7 +26,6 @@ func (l Lanes) String() string {
 
 func (l Lanes) count() int { return 128 / l.Width }
 
-// lane reads lane i as a float of the lane width.
 func (l Lanes) lane(i int) Float {
 	if l.Width == 32 {
 		return Float{V: float64(math.Float32frombits(uint32(l.Bits[i]))), Width: 32}
@@ -38,7 +33,6 @@ func (l Lanes) lane(i int) Float {
 	return Float{V: math.Float64frombits(l.Bits[i]), Width: 64}
 }
 
-// laneBits is the bits of v at the lane width, rounding an f32 lane.
 func laneBits(width int, v float64) uint64 {
 	if width == 32 {
 		return uint64(math.Float32bits(float32(v)))
@@ -46,8 +40,6 @@ func laneBits(width int, v float64) uint64 {
 	return math.Float64bits(v)
 }
 
-// mapLanes applies fn to each lane's value and gives the lanes of the result.
-// An f32 lane computes in single precision, as the vector unit does.
 func mapLanes(ls []Lanes, fn func(xs []float64) float64) Lanes {
 	w := ls[0].Width
 	out := Lanes{Width: w, Bits: make([]uint64, ls[0].count())}
@@ -61,7 +53,6 @@ func mapLanes(ls []Lanes, fn func(xs []float64) float64) Lanes {
 	return out
 }
 
-// mask is the all-ones lane where `hold` and zero otherwise.
 func mask(width int, hold bool) uint64 {
 	if !hold {
 		return 0
@@ -72,7 +63,6 @@ func mask(width int, hold bool) uint64 {
 	return ^uint64(0)
 }
 
-// round is v at the lane width: an f32 lane rounds to single precision.
 func round(width int, v float64) float64 {
 	if width == 32 {
 		return float64(float32(v))
@@ -87,7 +77,6 @@ func signBit(width int) uint64 {
 	return 1 << 63
 }
 
-// lanesBinary evaluates `+ - * /` over two values of one lane type.
 func lanesBinary(op string, a, b Lanes) (Value, error) {
 	w := a.Width
 	var fn func(x, y float64) float64
@@ -111,8 +100,6 @@ func lanesBinary(op string, a, b Lanes) (Value, error) {
 	return mapLanes([]Lanes{a, b}, func(xs []float64) float64 { return fn(xs[0], xs[1]) }), nil
 }
 
-// lanesNeg flips each lane's sign bit, as the vector negation does, NaN
-// included.
 func lanesNeg(a Lanes) Lanes {
 	out := Lanes{Width: a.Width, Bits: make([]uint64, len(a.Bits))}
 	for i, b := range a.Bits {
@@ -136,8 +123,6 @@ func laneArgs(name string, args []Value, n int) ([]Lanes, error) {
 	return out, nil
 }
 
-// laneWindow is the index range a `load` or `with` at i covers, or an error
-// when the array does not hold all of it.
 func laneWindow(name string, arr Value, idx Value, lanes int) (Array, int, error) {
 	a, ok := arr.(Array)
 	if !ok {
@@ -154,8 +139,6 @@ func laneWindow(name string, arr Value, idx Value, lanes int) (Array, int, error
 	return a, i, nil
 }
 
-// registerLaneBuiltins installs the lane builtins of f64x2 and f32x4
-// (docs/SIMD-GENERIC-KERNELS.md §6).
 func (i *Interp) registerLaneBuiltins() {
 	for _, w := range []int{64, 32} {
 		p := fmt.Sprintf("__f%dx%d_", w, 128/w)
@@ -236,13 +219,10 @@ func (i *Interp) registerLaneBuiltins() {
 			if err != nil {
 				return nil, err
 			}
-			// Unfused, as the scalar mul_add: the product rounds before the add.
 			return mapLanes(ls, func(xs []float64) float64 {
 				return round(width, round(width, xs[0]*xs[1])+xs[2])
 			}), nil
 		}}
-		// min and max are `b < a ? b : a` and `a < b ? b : a`, the order the
-		// IR's vmin and vmax define.
 		i.Builtins[p+"min"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 			ls, err := laneArgs(p+"min", args, 2)
 			if err != nil {
@@ -327,8 +307,6 @@ func (i *Interp) registerLaneBuiltins() {
 	}
 }
 
-// pickLanes takes b's lane where `takeB` holds for the lane pair and a's
-// otherwise.
 func pickLanes(a, b Lanes, takeB func(a, b float64) bool) Lanes {
 	out := Lanes{Width: a.Width, Bits: make([]uint64, len(a.Bits))}
 	for k := range out.Bits {

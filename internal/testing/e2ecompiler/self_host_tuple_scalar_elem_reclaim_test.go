@@ -8,24 +8,11 @@ import (
 	"testing"
 )
 
-// tupleScalarElemReclaimCases pin an rc-tuple whose literal carries a SCALAR
-// arithmetic element alongside its rc children.
-//
-// `i + 1` is a numeric add, not a fresh string, so a tuple that merely counts
-// (`(i + 1, [i, i + 1])`) must keep its deep reclaim: the scalar element is
-// simply not freed, and the array buffer, the box, and any string element
-// beside them are.
-//
-// Each byte case returns the MEASURED bytes per round as its exit code, so a
-// regression reports its own size. Unreclaimed: 80 | 80 | 48 (flat), 120 | 120 |
-// 72 (nested) and 112 | 112 | 80 (fresh-string sibling) as x86-64 | arm64 | wasm.
 var tupleScalarElemReclaimCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The scalar binary element on its own. Nothing is nested and nothing is a
-	// string: the tuple leaked only because `i + 1` is an ExprBinary.
 	{"tuple-scalar-binary-elem-flat", `function churn(n: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -45,10 +32,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// The shape §9 recorded as "a NESTED rc-tuple is not reclaimed at all". The
-	// nesting was never the fault: the same tuple with a bare ident in place of
-	// `i + 1` was already flat, and the un-nested tuple leaks as soon as it
-	// carries the binary.
 	{"tuple-nested-scalar-binary-flat", `function churn(n: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -68,9 +51,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// The refusal cost the OTHER elements their release too: this tuple's string
-	// is a provable fresh producer, admitted and deep-freed on its own, and the
-	// scalar sibling is all that held it back.
 	{"tuple-string-elem-with-scalar-sibling-flat", `function churn(n: i32, s: string): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -92,10 +72,6 @@ function main(): i32 {
     if (s.len() != 4) { return 96; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// ALIASING negative: a CALL element handing back one of its own parameters.
-	// The tuple is admitted now (the array literal is its rc child), so its box
-	// is freed each round while the call element still points at a live local.
-	// The emitter must leave that position alone; freeing it corrupts `live`.
 	{"tuple-call-elem-alias-safe", `@noinline function id(xs: i32[]): i32[] { return xs; }
 function churn(n: i32): i32 {
     let live: i32[] = [7, 8, 9];
@@ -115,13 +91,6 @@ function main(): i32 {
     if (w != x) { return 97; }
     return w;
 }`, 72},
-	// ESCAPE negative: the tuple outlives the scope that would otherwise free it.
-	// `last = t` carries each round's tuple out of the loop body and the function
-	// returns it, so the loop body must not free it. A freed-then-returned
-	// tuple reads its buffer back wrong. 1000 + 999 + 1000 = 2999, reduced mod
-	// 97 to 89 — WASI's proc_exit rejects a status of 126 or more, so an
-	// expectation carried in the exit
-	// code has to stay under it on the wasm leg.
 	{"tuple-scalar-binary-escape-safe", `function churn(n: i32): (i32, i32[]) {
     let last: (i32, i32[]) = (0, [0, 0]);
     let i: i32 = 0;
@@ -137,9 +106,6 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return (r.0 + r.1[0] + r.1[1]) % 97;
 }`, 89},
-	// CONCAT-OF-LIVE-STRINGS negative: `a + b` of two live strings in a tuple
-	// element. What must hold is that both operands survive the tuple's
-	// reclaim.
 	{"tuple-unproven-concat-safe", `function churn(n: i32, a: string, b: string): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -164,8 +130,6 @@ function main(): i32 {
 
 const tupleScalarElemReclaimFailFmt = "%s = %d, want %d (a small non-zero is the leaked bytes per round; 99 = over-release; 97 = value corrupted; 96 = an operand was freed under a live local)"
 
-// TestSelfHostTupleScalarElemReclaimIRX86_64 drives the cases through the
-// self-hosted x86-64 compiler.
 func TestSelfHostTupleScalarElemReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -193,8 +157,6 @@ func TestSelfHostTupleScalarElemReclaimIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleScalarElemReclaimIRArm64 is the arm64 leg. Case table shared
-// with the x86-64 one; the pre-fix byte figures were identical on both.
 func TestSelfHostTupleScalarElemReclaimIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -218,9 +180,6 @@ func TestSelfHostTupleScalarElemReclaimIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleScalarElemReclaimWasmIR is the wasm leg. The admission is
-// shared lowering, so the refusal cost all three backends their release; the
-// wasm byte figures differ only because its boxes are narrower.
 func TestSelfHostTupleScalarElemReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping tuple scalar-element reclaim wasm IR e2e")

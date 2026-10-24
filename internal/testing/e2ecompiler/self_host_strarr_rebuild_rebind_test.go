@@ -4,23 +4,6 @@ import (
 	"testing"
 )
 
-// --- A string[] local REBUILT by a rebind ------------------------------------
-//
-// `let x: string[] = [mk("x")]; x = [mk("y"), mk("z")];` must balance: the
-// rebind releases the old array's buffer AND its element strings (#5338). It is
-// `str_arr__rebind__{read,unused}` on both leak-matrix arches.
-//
-// The failure mode to guard is an over-release — freeing element boxes another
-// holder could still reach — so the hazard rows are essential. Five shapes
-// return the array after rebuilding it, bind an element out of it, rebind from
-// a live local, rebuild from the array's own element, or store it into a
-// container; each reads its value back after 200 rounds of churn have recycled
-// the freelist and answers as `bin/fern -interp` does. Every row balances.
-//
-// `alias_before_rebind` binds an alias BEFORE the rebind and still goes CLEAN:
-// __fern_str_arr_free walks elements only at the last owner's rc 1. It reads
-// every element back after churn.
-
 const strarrRebuildDecl = `function mkstr(a: string): string { return a + "-long-enough-to-heap-allocate"; }
 function mkarr(i: i32): string[] { let o: string[] = []; o = o.append(mkstr("a")); o = o.append(mkstr("b")); return o; }
 function churn(i: i32): i32 { let a: string[] = mkarr(i); let b: string[] = mkarr(i + 1); return a[0].len() + b[1].len(); }
@@ -46,7 +29,6 @@ function main(): i32 {
 func strarrRebuildCases() []arrenumShareCase {
 	return []arrenumShareCase{
 		{
-			// THE CELL, in the matrix's own spelling. 800/200 before.
 			name: "literal_rebuild",
 			src: `function mkstr(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -60,8 +42,6 @@ function round(i: i32): i32 {
 			want: 51,
 		},
 		{
-			// The producer-call form of the same rebuild, which the declaration
-			// already admitted through the whole-program "STRARR:" registry.
 			name: "producer_rebuild",
 			src: strarrRebuildDecl + `function round(i: i32): i32 {
     let t: i32 = 0;
@@ -73,9 +53,6 @@ function round(i: i32): i32 {
 			want: 51,
 		},
 		{
-			// Rebuilding to `[]` drops every element the slot held — the case
-			// that isolated the shallow store, since the new value has no
-			// elements of its own to mask a missed free.
 			name: "rebuild_to_empty",
 			src: `function mkstr(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -88,7 +65,6 @@ function round(i: i32): i32 {
 			want: 17,
 		},
 		{
-			// Three superseded buffers per round, each freed at its own store.
 			name: "loop_rebuild",
 			src: strarrRebuildDecl + `function round(i: i32): i32 {
     let x: string[] = [mkstr("x")];
@@ -101,8 +77,6 @@ function round(i: i32): i32 {
 			want: 72,
 		},
 		{
-			// Half the rounds take the rebind; the other half leave the
-			// declaration's value to the exit sweep.
 			name: "conditional_rebuild",
 			src: strarrRebuildDecl + `function round(i: i32): i32 {
     let x: string[] = [mkstr("x")];
@@ -114,10 +88,6 @@ function round(i: i32): i32 {
 			want: 72,
 		},
 		{
-			// NOT a refusal — the arbitration. The alias is bound before the
-			// rebind and read after churn; it earns the same "SARR:" credit, so
-			// the store's free finds rc 2 and only decs, and the element walk
-			// runs once at whichever owner reaches rc 1.
 			name: "alias_before_rebind",
 			src: strarrRebuildDecl + `function round(i: i32): i32 {
     let want: i32 = mkstr("x").len();
@@ -131,8 +101,6 @@ function round(i: i32): i32 {
 			want: 67,
 		},
 		{
-			// Control: the self-append rebind, sanctioned and clean before this
-			// change. If it moves, the rebuild admission reached into it.
 			name: "self_append_unchanged",
 			src: `function mkstr(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -145,8 +113,6 @@ function round(i: i32): i32 {
 			want: 51,
 		},
 		{
-			// A local returned bare after its rebuild (#10721): the rebind releases
-			// the superseded array and the return moves the rebuilt one out.
 			name: "returned_after_rebuild",
 			src: strarrRebuildDecl + `function grab(i: i32): string[] { let x: string[] = [mkstr("x")]; x = [mkstr("y"), mkstr("z")]; return x; }
 function round(i: i32): i32 {
@@ -160,8 +126,6 @@ function round(i: i32): i32 {
 			want: 72,
 		},
 		{
-			// An ELEMENT is bound out before the rebind, so the store's
-			// element walk would free a box the local still reads.
 			name: "refused_element_bound",
 			src: strarrRebuildDecl + `function round(i: i32): i32 {
     let want: i32 = mkstr("x").len();
@@ -175,7 +139,6 @@ function round(i: i32): i32 {
 			want: 57,
 		},
 		{
-			// The rebind value is another LIVE local, not a rebuild.
 			name: "refused_nonfresh_rebind",
 			src: strarrRebuildDecl + `function round(i: i32): i32 {
     let other: string[] = [mkstr("o")];
@@ -188,8 +151,6 @@ function round(i: i32): i32 {
 			want: 82,
 		},
 		{
-			// The new literal is built FROM the array's own element, so
-			// the value shares a box with what the store is about to free.
 			name: "refused_self_element",
 			src: strarrRebuildDecl + `function round(i: i32): i32 {
     let x: string[] = [mkstr("x"), mkstr("q")];
@@ -202,8 +163,6 @@ function round(i: i32): i32 {
 			want: 72,
 		},
 		{
-			// The rebuilt value is stored into a container that
-			// outlives the sweep.
 			name: "refused_container_store",
 			src: strarrRebuildDecl + `function round(i: i32): i32 {
     let x: string[] = [mkstr("x")];
@@ -218,9 +177,6 @@ function round(i: i32): i32 {
 	}
 }
 
-// TestSelfHostStrArrRebuildRebindX86_64 — a string[] local rebuilt by a rebind
-// releases the buffer AND its element boxes at the store, and every use that
-// could still reach one of them refuses the credit.
 func TestSelfHostStrArrRebuildRebindX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// std/convert provides the canonical `From[T]` / `Into[T]` conversion
-// traits (built on generic traits, #3254). Celsius.from(20).into():
-// Fahrenheit = 20*9/5+32 = 68. See std/convert.fern.
 const stdConvertSrc = `import "std/convert" as convert;
 struct Celsius { deg: i32 }
 struct Fahrenheit { deg: i32 }

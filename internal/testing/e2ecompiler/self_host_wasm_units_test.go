@@ -10,25 +10,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmUnitsN2 is the first test that exercises MULTI-unit wasm emit
-// (#5331 step 4b).
-//
-// Steps 1-3 and 4a/4b each landed on a byte-identity invariant: whole-program
-// output must not change. That is a strong safety property and a weak
-// correctness one — it proves nothing was broken, but until this test existed
-// nothing ever emitted more than one unit, so "two units link into a working
-// module" was unverified.
-//
-// wasm_units_probe.fern splits a program's functions in half, emits each half as
-// its own unit against its own $__str_base/$__fn_base, and links the two through
-// wasm.emit_ir_module_units. The assertion is behavioural: the linked two-unit
-// module must produce the same answer as the ordinary whole-program build of the
-// identical source.
-//
-// The split is arbitrary rather than along import boundaries, deliberately. An
-// arbitrary cut guarantees cross-unit calls in BOTH directions plus literals and
-// funcrefs on both sides — strictly harder than the module-boundary case the
-// real driver will produce. If this passes, that one is easier.
 func TestSelfHostWasmUnitsN2(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -45,10 +26,6 @@ func TestSelfHostWasmUnitsN2(t *testing.T) {
 	probeBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_units_probe.fern", "wasm_units_probe")
 	wholeBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	// Each case must survive an arbitrary bisection of its function list, so the
-	// interesting content is spread across several functions: cross-unit calls
-	// in both directions, string literals owned by different halves, and a
-	// function VALUE taken in one half and called in another.
 	cases := []struct {
 		name string
 		src  string
@@ -74,7 +51,7 @@ function b(n: i32): i32 { return c(n) * 2; }
 function c(n: i32): i32 { return n + 3; }
 function d(n: i32): i32 { return a(n) - 1; }
 function main(): i32 { return d(4); }`,
-			want: 14, // c=7, b=14, a=15, d=14
+			want: 14,
 		},
 		{
 			name: "literals_owned_by_different_halves",
@@ -83,7 +60,7 @@ function second(): string { return "beta"; }
 function third(): string { return "gamma-longer"; }
 function fourth(): i32 { return first().len() + second().len(); }
 function main(): i32 { return fourth() + third().len(); }`,
-			want: 21, // 5 + 4 + 12
+			want: 21,
 		},
 		{
 			name: "fn_value_taken_in_one_half_called_in_another",
@@ -92,22 +69,18 @@ function twice(n: i32): i32 { return n * 2; }
 function apply(f: (i32) => i32, n: i32): i32 { return f(n); }
 function useit(): i32 { return apply(add10, 5) + apply(twice, 3); }
 function main(): i32 { return useit(); }`,
-			want: 21, // 15 + 6
+			want: 21,
 		},
 		{
-			// The record an instance builds at its binding is declared by the
-			// typed lowering, not the module; its i64 field is stored through
-			// that declaration (#10827).
 			name: "instance_record_with_a_wide_field",
 			src: `struct Slot[T] { v: T }
 function keep[T](f: () => T): T { let c: Slot[T] = Slot[T] { v: f() }; return c.v; }
 function wide(): i64 { let fs: (() => i64)[] = [(): i64 => 5000000010 as i64]; return keep(fs[0]); }
 function main(): i32 { let gs: (() => string)[] = [(): string => "ab" + "c"]; return ((wide() - (5000000000 as i64)) as i32) + keep(gs[0]).len(); }`,
-			want: 13, // 10 + 3
+			want: 13,
 		},
 	}
 
-	// build compiles src with `bin` and returns the program's exit code.
 	build := func(t *testing.T, bin, tag, src string) int {
 		t.Helper()
 		var cmd *exec.Cmd
@@ -144,10 +117,6 @@ function main(): i32 { let gs: (() => string)[] = [(): string => "ab" + "c"]; re
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// The two-unit build is the subject; the whole-program build is the
-			// oracle. Comparing against a hardcoded want as well as against the
-			// oracle matters — if BOTH paths regressed identically, an
-			// oracle-only assertion would stay green.
 			whole := build(t, wholeBin, tc.name+"_whole", tc.src)
 			if whole != tc.want {
 				t.Fatalf("whole-program build returned %d, want %d — the oracle itself is wrong, so the N=2 comparison below would be meaningless", whole, tc.want)
@@ -159,15 +128,7 @@ function main(): i32 { let gs: (() => string)[] = [(): string => "ab" + "c"]; re
 		})
 	}
 
-	// The probe must actually have emitted two namespaced units. Without this a
-	// regression that silently collapsed the split to one unit would leave every
-	// assertion above passing while testing nothing.
 	t.Run("emits_two_namespaced_units", func(t *testing.T) {
-		// Read the LITERALS case specifically: it is the one guaranteed to own
-		// string literals in both halves, so its second unit must declare a
-		// namespaced string base. Checking a case with neither literals nor
-		// function values would assert nothing — both bases are legitimately
-		// absent there, since each section is emitted only when non-empty.
 		wat, err := os.ReadFile(filepath.Join(dir, "literals_owned_by_different_halves_split.wat"))
 		if err != nil {
 			t.Fatalf("read split wat: %v", err)

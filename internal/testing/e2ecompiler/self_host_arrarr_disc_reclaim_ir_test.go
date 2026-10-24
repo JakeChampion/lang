@@ -7,18 +7,11 @@ import (
 	"testing"
 )
 
-// arrArrDiscReclaimCases pin the #4365 discarded scalar-inner array-of-arrays
-// reclaim: a discarded `[[i, i+1], [i]];` literal releases every inner buffer
-// and then the outer buffer, so rebuilding it in a loop keeps the heap bounded.
-// A bare-ident inner aliases a live local and must not be freed through the
-// literal (no double free); string-element inners stay value-correct on the
-// plain drop.
 var arrArrDiscReclaimCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// Core churn: discarded i32[][] literal rebuilt per iteration, heap bounded.
 	{"arrarr-disc-churn", `function main(): i32 {
     let acc: i32 = 0;
     let w: i32 = 0;
@@ -32,8 +25,6 @@ var arrArrDiscReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// f64 inners are scalar-leaf too (value-copied elements are stored in the freed
-	// buffer) — reclaimed and bounded.
 	{"arrarr-disc-f64", `function main(): i32 {
     let acc: i32 = 0;
     let w: i32 = 0;
@@ -47,9 +38,6 @@ var arrArrDiscReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// ALIAS-inner negative: a bare-ident inner (`[[9], inner]`) aliases a live
-	// local the exit sweep also frees — the literal is excluded (leak-mode), the
-	// aliased row stays valid, no double-free (detector zero).
 	{"arrarr-disc-alias-safe", `function main(): i32 {
     let inner: i32[] = [7, 8];
     [[9], inner];
@@ -62,9 +50,6 @@ var arrArrDiscReclaimCases = []struct {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// STRING-inner negative: string[][] is excluded from the scalar-inner path
-	// (a first cut) and stays leak-safe on the plain drop — no crash, no
-	// double-free, values exact.
 	{"arrarr-disc-strinner-safe", `function main(): i32 {
     let w: i32 = 0;
     while (w < 100) { [["a" + "x"], ["b", "c"]]; w = w + 1; }
@@ -75,8 +60,6 @@ var arrArrDiscReclaimCases = []struct {
 }`, 0},
 }
 
-// TestSelfHostArrArrDiscReclaimIRX86_64 drives the cases through the self-hosted
-// x86-64 compiler (asm_run), heap-bump + underflow guarded.
 func TestSelfHostArrArrDiscReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

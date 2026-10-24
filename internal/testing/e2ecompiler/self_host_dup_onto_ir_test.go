@@ -9,17 +9,6 @@ import (
 	"testing"
 )
 
-// selfHostDupOntoSource drives `r.dup_onto(fd)` / `w.dup_onto(fd)` through the
-// self-host's lowering: the `fd_dup_onto` op and the Fern runtime leaf behind
-// it, which is dup3(2) on the two Linux targets and dup2(2) on Darwin.
-//
-// One op for both handle types, because a Reader and a Writer are both their
-// fd there. Each failure returns its own exit code; the assertion that the
-// descriptor TABLE moved, rather than that an errno classified, is the last
-// one — `print` after the redirect has to land in the file.
-//
-// 7 is above the three standard descriptors and nothing these runners hold,
-// so the success case is a real duplication rather than a replacement.
 func selfHostDupOntoSource(data string, out string) string {
 	return fmt.Sprintf(`function main(): i32 {
     match (write_file(%[1]q, "hello\n")) { Ok(_) => {}, Err(_) => { return 10; } }
@@ -45,9 +34,6 @@ func selfHostDupOntoSource(data string, out string) string {
 `, data, out)
 }
 
-// selfHostDupOntoCheck reads the redirected line back off disk. Closing the
-// handle after the print leaves fd 1 alone — dup2 semantics, and what `nohup`
-// relies on — so the file holds the line either way.
 func selfHostDupOntoCheck(t *testing.T, path string) {
 	t.Helper()
 	got, err := os.ReadFile(path)
@@ -59,10 +45,6 @@ func selfHostDupOntoCheck(t *testing.T, path string) {
 	}
 }
 
-// TestSelfHostDupOntoIR is the x86-64 IR leg: the op lowers to a call into
-// the Fern-compiled __fern_fd_dup_onto, which swaps its two stack operands
-// into parameter order the way writer_truncate does — so a lowering that
-// skipped the swap asks dup3 to duplicate a descriptor nobody opened.
 func TestSelfHostDupOntoIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -89,8 +71,6 @@ func TestSelfHostDupOntoIR(t *testing.T) {
 	selfHostDupOntoCheck(t, out)
 }
 
-// TestSelfHostDupOntoArm64IR is the arm64 leg of the same programme, through
-// asm_ir_run -target arm64-linux under qemu.
 func TestSelfHostDupOntoArm64IR(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -118,12 +98,6 @@ func TestSelfHostDupOntoArm64IR(t *testing.T) {
 	selfHostDupOntoCheck(t, out)
 }
 
-// TestSelfHostDupOntoWasmIRUnsupported is the preview-1 leg, where the answer
-// is the refusal: no WASI preview can install a descriptor at a chosen
-// number, so the self-host's wasm emitter backs the op with a body that
-// drops both operands and reports Unsupported. Every arm flips, and the
-// closed-handle case is left out — the point here is that none of them
-// silently succeeds.
 func TestSelfHostDupOntoWasmIRUnsupported(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host dup_onto wasm IR e2e")

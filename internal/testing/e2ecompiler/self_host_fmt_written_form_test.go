@@ -12,26 +12,6 @@ import (
 	goprinter "github.com/jakechampion/lang/internal/syntax/printer"
 )
 
-// TestSelfHostFmtWrittenFormViaInterp gates the self-host formatter on every
-// host, by driving compiler/fern.fern through the native `-interp`
-// instead of building an x86-64 driver.
-//
-// Every other self-host `-fmt` gate is suffixed X86_64 and needs a cross gcc
-// plus native execution of the linked binary, so all of them skip on a
-// non-x86-64 host — the shapes in #6802 were reachable in ~0.35 s per file from
-// any machine the whole time (`-fmt` loads no stdlib), and nothing was checking
-// them there.
-//
-// It states the two properties that see data loss, per #6838:
-//
-//   - STRUCTURAL: the self-host's output, re-parsed, is the same program as the
-//     input. Byte-parity against native only catches a leak where native is
-//     right, and a type-check of the output passes on output that still compiles
-//     while having lost information.
-//   - byte-parity with native, which is what pins layout.
-//
-// plus idempotence and the type-check property, so a case where both formatters
-// agree on something broken still fails.
 func TestSelfHostFmtWrittenFormViaInterp(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
 	driver, err := filepath.Abs("../../../compiler/fern.fern")
@@ -40,14 +20,6 @@ func TestSelfHostFmtWrittenFormViaInterp(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	// Every case file is written first and formatted by ONE `-fmt -w` over the
-	// whole list: each interp spawn re-parses and re-checks the 200k-line
-	// self-host compiler (~6 s) before it formats anything, so one process per
-	// case (and a second per case for idempotence) was ~190 s of that against
-	// under a second of formatting. A refusal by the write-back guard names its
-	// file on stderr and leaves that file unformatted, so the refusals are
-	// collected by path and each case reports its own rather than a
-	// misleading parity diff against its unformatted input.
 	selfHostFmtWrite := func(t *testing.T, paths []string) map[string]string {
 		t.Helper()
 		cmd := exec.Command(interpBin, append([]string{"-interp", driver, "--", "-fmt", "-w"}, paths...)...)
@@ -92,7 +64,6 @@ func TestSelfHostFmtWrittenFormViaInterp(t *testing.T) {
 	}
 	refused := selfHostFmtWrite(t, paths)
 	got := readAll(t, paths)
-	// A second pass over the written files is the idempotence property.
 	refusedAgain := selfHostFmtWrite(t, paths)
 	again := readAll(t, paths)
 
@@ -103,16 +74,12 @@ func TestSelfHostFmtWrittenFormViaInterp(t *testing.T) {
 			}
 			got := got[i]
 
-			// The desugar leaks #6802 names are each a marker a reader of the
-			// issue would grep for, and they are checked by name because the
-			// properties below report a shape diff rather than the cause.
 			for _, leak := range []string{"try_", "__discard_", "__forc_", "/*unknown"} {
 				if strings.Contains(got, leak) && !strings.Contains(tc.src, leak) {
 					t.Errorf("self-host -fmt wrote the desugar's %q into the source:\n%s", leak, got)
 				}
 			}
 
-			// Structural: same program in, same program out.
 			in, err := goparser.Parse(tc.src)
 			if err != nil {
 				t.Fatalf("case source does not parse: %v", err)
@@ -125,7 +92,6 @@ func TestSelfHostFmtWrittenFormViaInterp(t *testing.T) {
 				t.Errorf("self-host -fmt changed the program\n%s", goprinter.FirstShapeDiff(want, have))
 			}
 
-			// Layout: byte-identical to native.
 			want := goprinter.Format(in)
 			if got != want {
 				t.Errorf("self-host -fmt differs from native -fmt\n--- native ---\n%s\n--- self-host ---\n%s", want, got)
@@ -143,16 +109,6 @@ func TestSelfHostFmtWrittenFormViaInterp(t *testing.T) {
 	}
 }
 
-// TestSelfHostFmtWriteAndDiffViaInterp pins #6804: the self-host driver exited 2
-// on `-w` and `-d`, so `-fmt` could only reach stdout.
-//
-// `-w` was held back until #6802 — a formatter that emits source which does not
-// compile turns an in-place write into a destroyed file — so the assertions here
-// are as much about the ORDER of the two fixes as about the flags: the written
-// file has to still be the same program, and a second `-w` has to be a no-op.
-//
-// `-d`'s output is compared byte-for-byte with native's, since a diff both tools
-// print differently is not usable in a pre-commit hook that may call either.
 func TestSelfHostFmtWriteAndDiffViaInterp(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
 	driver, err := filepath.Abs("../../../compiler/fern.fern")
@@ -160,7 +116,6 @@ func TestSelfHostFmtWriteAndDiffViaInterp(t *testing.T) {
 		t.Fatalf("abs driver path: %v", err)
 	}
 
-	// Deliberately mis-laid-out, so every mode has something to report.
 	const unformatted = `function add(a: i32,b: i32): i32 {
 return a+b;
 }
@@ -203,7 +158,6 @@ function main(): i32 {
 		if string(got) != want {
 			t.Errorf("-fmt -w wrote something other than the formatted source\n--- want ---\n%s\n--- got ---\n%s", want, got)
 		}
-		// Same program in the file afterwards, not merely a compiling one.
 		back, err := goparser.Parse(string(got))
 		if err != nil {
 			t.Fatalf("the written-back file does not parse: %v", err)
@@ -236,7 +190,6 @@ function main(): i32 {
 		if want := goprinter.UnifiedDiff(unformatted, want, path, path); got != want {
 			t.Errorf("-fmt -d differs from native's\n--- native ---\n%s\n--- self-host ---\n%s", want, got)
 		}
-		// `-d` is read-only: the file it reported on is untouched.
 		after, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -254,12 +207,6 @@ function main(): i32 {
 		}
 	})
 
-	// `-fmt FILE...` is gofmt-shaped on both compilers, and this pins the
-	// self-host half of that parity: every positional is an input (the second
-	// used to be read as a stdlib root and silently ignored), stdout mode
-	// concatenates in argument order, `-d` prints one diff per differing file
-	// and exits 1 when any does, `-w` writes every file, and `-o` — one output
-	// name — is refused with more than one input rather than clobbered.
 	t.Run("file-list", func(t *testing.T) {
 		dir := t.TempDir()
 		messy := filepath.Join(dir, "messy.fern")

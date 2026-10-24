@@ -14,44 +14,6 @@ func init() {
 	registerCorpus("uptime", uptimeCases)
 }
 
-// uptime(1) prints one line, and three of its fields move while the
-// corpus is reading them. The GNU leg and the Fern leg run milliseconds
-// apart over one machine: the clock advances a second, the elapsed time
-// advances a minute, and the kernel recomputes the load averages every
-// five seconds. Diffing those bytes would measure the gap between two
-// processes rather than either implementation.
-//
-// So the mask canonicalises DIGITS and nothing else, by position:
-//
-//	 19:49:16  up  1:02,  3 users,  load average: 0.56, 0.81, 0.67
-//	 00:00:00  up  0:00,  3 users,  load average: 0.00, 0.00, 0.00
-//
-// Everything that says whether the FORMAT is right survives it: the
-// leading space, the colons, the two spaces after the clock, the single
-// space after `up`, the `%2d`
-// hours column that keeps a space for a single digit, the `%02d`
-// minutes, the comma-and-two-spaces between fields, the singular or
-// plural of `user`, and the whole load-average clause including its
-// two decimals. The digit COUNT survives too, so a `%2d` that became
-// `%d` still fails, everywhere but the whole part of a load average:
-// that is `%.2f`, so its width moves with the value, and a load that
-// crosses 10.00 between the two runs would otherwise read as 0.00
-// against 00.00 (#9866). The mask collapses it to one digit.
-//
-// What the mask costs is the VALUES, and they are pinned separately:
-// the boot times come from the fixture, so the elapsed time is chosen
-// rather than observed, and TestUptimeReportsTheRealLoadAverages checks
-// the printed numbers against /proc/loadavg beside the corpus, the way
-// mktemp's randomness and df's reserve are checked.
-//
-// The database is a fixture handed to both sides as the FILE operand,
-// which is what makes the rest deterministic. gnulib synthesises a boot
-// record from /proc when the file it reads IS /var/run/utmp and not
-// otherwise, so a named file is the whole answer and the session count
-// and boot instant are ours to choose. `uptime` with no operand is
-// therefore NOT in the corpus: it reads the machine's live login state,
-// which is the reasoning `df`'s no-operand case records.
-
 var (
 	uptimeClockRe = regexp.MustCompile(`^ \d\d:\d\d:\d\d`)
 	uptimeElapsed = regexp.MustCompile(` ?\d{1,2}:\d{2},`)
@@ -62,9 +24,6 @@ var (
 
 func uptimeZeroDigits(s string) string { return uptimeDigitRe.ReplaceAllString(s, "0") }
 
-// maskUptime zeroes the digits of the three moving fields. The clock
-// goes first: once it reads 00:00:00 it can no longer be mistaken for
-// the elapsed time, which is the only other HH:MM run on the line.
 func maskUptime(s string) string {
 	s = uptimeClockRe.ReplaceAllStringFunc(s, uptimeZeroDigits)
 	s = uptimeElapsed.ReplaceAllStringFunc(s, uptimeZeroDigits)
@@ -74,8 +33,6 @@ func maskUptime(s string) string {
 	return s
 }
 
-// A load average that crosses 10.00 between the two legs changes width,
-// not format; a dropped decimal or separator still shows through.
 func TestMaskUptimeLoadWidth(t *testing.T) {
 	line := func(loads string) string {
 		return " 19:49:16  up  1:02,  2 users,  load average: " + loads + "\n"
@@ -91,23 +48,12 @@ func TestMaskUptimeLoadWidth(t *testing.T) {
 	}
 }
 
-// maskBootErrno drops the strerror suffix GNU appends to `couldn't get
-// boot time`. Nothing on that path sets errno, so the value is whatever
-// gnulib's proper_name_lite left behind probing the locale at startup —
-// EILSEQ under LC_ALL=C, ENOENT under C.UTF-8. Only cases whose
-// database READS fine and simply holds no boot record need it: where
-// the open itself failed, the errno is that failure's and is compared.
 func maskBootErrno(s string) string {
 	return uptimeBootErrno.ReplaceAllString(s, "couldn't get boot time\n")
 }
 
 var uptimeBootErrno = regexp.MustCompile(`couldn't get boot time: [^\n]*\n`)
 
-// uptimeDB writes a database whose boot record sits `ago` before now and
-// which holds `sessions` logged-in users. `ago` is chosen per case so the
-// elapsed time lands in the shape that case is about; it is relative to
-// the clock because the elapsed time is, and a fixed instant would drift
-// into a different shape as the file aged.
 func uptimeDB(t *testing.T, dir, name string, ago time.Duration, sessions int, extra ...utmpRec) string {
 	t.Helper()
 	now := time.Now().Unix()
@@ -128,9 +74,6 @@ func uptimeDB(t *testing.T, dir, name string, ago time.Duration, sessions int, e
 func uptimeCases(t *testing.T) []invocation {
 	dir := t.TempDir()
 
-	// The elapsed-time spellings. GNU has exactly three — under a day,
-	// one day, and more than one — and the hours column is `%2d`, so
-	// which side of ten the hour falls on is its own case.
 	shapes := []struct {
 		name string
 		ago  time.Duration
@@ -151,9 +94,6 @@ func uptimeCases(t *testing.T) []invocation {
 		cases = append(cases, invocation{name: s.name, args: []string{db}, mask: maskUptime})
 	}
 
-	// The session count, which is the plural and nothing else. Records
-	// that are not USER_PROCESS, and a USER_PROCESS with an empty name,
-	// do not count -- that is gnulib's IS_USER_PROCESS.
 	for _, c := range []struct {
 		name string
 		n    int
@@ -174,7 +114,6 @@ func uptimeCases(t *testing.T) []invocation {
 	)
 	cases = append(cases, invocation{name: "only USER_PROCESS with a name counts", args: []string{noise}, mask: maskUptime})
 
-	// The LAST boot record wins, which is what GNU's loop leaves behind.
 	twoBoots := uptimeFile(t, dir, "twoboots",
 		utmpRec{typ: utBootTime, line: "~", user: "reboot", sec: int32(time.Now().Unix() - 90000)},
 		utmpRec{typ: utUserProcess, pid: 1, line: "pts/0", user: "alice", sec: utmpWhen},
@@ -182,8 +121,6 @@ func uptimeCases(t *testing.T) []invocation {
 	)
 	cases = append(cases, invocation{name: "the last boot record wins", args: []string{twoBoots}, mask: maskUptime})
 
-	// A boot time that is not usable. Both print the question-mark form
-	// and exit 1, and the first prints a diagnostic before anything.
 	future := uptimeFile(t, dir, "future",
 		utmpRec{typ: utBootTime, line: "~", user: "reboot", sec: int32(time.Now().Unix() + 3600)},
 		utmpRec{typ: utUserProcess, pid: 1, line: "pts/0", user: "alice", sec: utmpWhen},
@@ -206,8 +143,6 @@ func uptimeCases(t *testing.T) []invocation {
 		invocation{name: "an empty operand", args: []string{""}, mask: maskUptime},
 	)
 
-	// The option surface, which is the two standard options and nothing
-	// else. -p and -s belong to procps' uptime, not to this one.
 	db := uptimeDB(t, dir, "opt", 3*time.Hour, 1)
 	cases = append(cases,
 		invocation{name: "pretty is not an option here", args: []string{"-p"}},
@@ -234,7 +169,6 @@ func uptimeCases(t *testing.T) []invocation {
 	return cases
 }
 
-// uptimeFile is utmpFile under a name that says which corpus writes it.
 func uptimeFile(t *testing.T, dir, name string, recs ...utmpRec) string {
 	t.Helper()
 	return utmpFile(t, dir, name, recs...)
@@ -252,15 +186,6 @@ func TestUptimeHelp(t *testing.T) {
 	requireVersion(t, "uptime", []string{"--vers"}, 0)
 }
 
-// The corpus masks the load averages, so this is what says they are the
-// machine's and not three zeroes: the printed numbers have to be values
-// /proc/loadavg actually held. Reading the file either side of the run
-// bounds what the child could legitimately have seen, so a value from
-// neither sample is wrong rather than merely stale.
-//
-// It is the same shape as mktemp's randomness check and df's reserve
-// check: a property no diff against GNU can see, asserted against the
-// machine rather than against the reference.
 func TestUptimeReportsTheRealLoadAverages(t *testing.T) {
 	loads := uptimeKernelLoads(t)
 	before := loads()
@@ -285,9 +210,6 @@ func TestUptimeReportsTheRealLoadAverages(t *testing.T) {
 	}
 }
 
-// uptimeKernelLoads answers a reader of the kernel's load averages as text
-// holding each with two decimals: /proc/loadavg on Linux, and on Darwin
-// `sysctl -n vm.loadavg`, which prints them with %.2f.
 func uptimeKernelLoads(t *testing.T) func() string {
 	t.Helper()
 	switch runtime.GOOS {

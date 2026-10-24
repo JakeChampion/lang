@@ -8,22 +8,6 @@ import (
 	"testing"
 )
 
-// The self-host's WAT → binary assembler (compiler/watbin.fern)
-// wrote every global's type as i32, whatever the text said. An i64 global then
-// produced a module whose declared global type disagreed with its own
-// `i64.const` initialiser, and the loader rejected the whole module — "type
-// mismatch: expected i32, found i64" — before a single instruction ran.
-//
-// Two i64 globals reach that path: the leak census's counters under
-// FERN_LEAKCHECK, and the allocation count of #9596. So the bug hid where
-// nobody looked: the WAT the compiler printed was correct and validated, only
-// the binary it assembled from that WAT was wrong, and neither observable is
-// on by default.
-//
-// This runs the shape that has no env var to forget: a program reading
-// `__heap_alloc_count()`, compiled to wasm by the self-host compiler and
-// executed. It exits with the count it observed, so a module that loads but
-// mis-encodes the global fails here too.
 func TestSelfHostWasmI64GlobalEncodesItsOwnType(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wasm i64-global check")
@@ -36,10 +20,6 @@ func TestSelfHostWasmI64GlobalEncodesItsOwnType(t *testing.T) {
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
-	// Three allocations, then the count: each `+` builds a fresh string, so
-	// the count has to have moved. The verdict goes to stdout rather than the
-	// exit code, because `wasmtime run` reports every non-zero program exit as
-	// 1 and would flatten "counted" and "blind" into the same reading.
 	const src = `function main(): i32 {
 	let a: string = "x" + "y";
 	let b: string = a + "z";

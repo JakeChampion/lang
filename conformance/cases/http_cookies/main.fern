@@ -2,10 +2,10 @@ import "std/http";
 import "std/http/cookie";
 import "std/string";
 
-// Cookies (std/http/cookie): request-side `req.cookie(name)` parse,
-// response-side `SetCookie` serialization and `with_cookie` append
-// semantics, and the refusals that keep a header injection off the wire.
-// Returns 42 only if every check holds.
+
+
+
+
 
 function serialized(c: cookie.SetCookie): string {
     match (c.serialize()) {
@@ -16,7 +16,7 @@ function serialized(c: cookie.SetCookie): string {
 }
 
 function main(): i32 {
-    // ---- request side: parse out of the Cookie header ----
+
     let wire: string = "GET / HTTP/1.1\r\nHost: x\r\nCookie: a=1; session=abc; b=2\r\n\r\n";
     match (http.http_parse_request(wire)) {
         Some(req) => {
@@ -28,12 +28,12 @@ function main(): i32 {
                 Some(v) => { if (v != "1") { return 3; } },
                 None => { return 4; }
             }
-            // Last pair parses too (no trailing separator needed).
+
             match (req.cookie("b")) {
                 Some(v) => { if (v != "2") { return 5; } },
                 None => { return 6; }
             }
-            // Missing cookie and case-sensitive names → None.
+
             match (req.cookie("nope")) {
                 Some(v) => { return 7; },
                 None => { }
@@ -46,30 +46,30 @@ function main(): i32 {
         None => { return 9; }
     }
 
-    // ---- response side: SetCookie serialization ----
+
     let c: cookie.SetCookie = cookie.new("session", "abc");
     if (serialized(c) != "session=abc; Path=/; HttpOnly; SameSite=Lax") { return 10; }
 
-    // Struct-update spread adjusts attributes; Max-Age and Secure
-    // serialize in their fixed positions.
+
+
     let hard: cookie.SetCookie = cookie.SetCookie { ...c, secure: true, max_age: 3600 };
     if (serialized(hard) != "session=abc; Path=/; Max-Age=3600; Secure; HttpOnly; SameSite=Lax") { return 11; }
 
-    // Deletion: empty value, Max-Age=0.
+
     if (serialized(cookie.delete("session")) != "session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax") { return 12; }
 
-    // Attribute omission: an empty path and an unset SameSite drop their attributes.
+
     let bare: cookie.SetCookie = cookie.SetCookie { ...c, path: "", same_site: cookie.Unset, http_only: false };
     if (serialized(bare) != "session=abc") { return 13; }
 
-    // Header-injection defence: a `=` in the name and a CR LF in the
-    // value are refused rather than written.
+
+
     let evil_name: cookie.SetCookie = cookie.SetCookie { ...bare, name: "na=me" };
     if (!serialized(evil_name).starts_with("error: a cookie name")) { return 14; }
     let evil_value: cookie.SetCookie = cookie.SetCookie { ...bare, value: "v\r\nSet-Cookie: hax=1;x" };
     if (!serialized(evil_value).starts_with("error: the value of cookie")) { return 15; }
 
-    // ---- with_cookie: append semantics on the wire ----
+
     let resp: HttpResponse = http.ok("hi");
     match (resp.with_cookie(cookie.new("a", "1"))) {
         Ok(r) => { resp = r; },

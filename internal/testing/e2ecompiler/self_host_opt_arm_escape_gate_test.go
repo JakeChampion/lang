@@ -5,26 +5,6 @@ import (
 	"testing"
 )
 
-// --- The consumer-side escape of a call-bound Option payload (#6360) ----------
-//
-// `match (v) { Some(s) => { held = s; }, None => ... }` on a call-bound Option:
-// the arm binding escapes into `held`, so the payload must outlive the match.
-// For an ARRAY payload the escaping assignment retains the buffer; for a STRING
-// payload the release must not free a box the caller still reads. The escaping
-// string rows balance and read back correctly, and the array and scalar-`Err`
-// rows reclaim fully.
-//
-// THE FAILURE IS INVISIBLE TO A PLAIN PROBE. An early release still exits
-// correctly when the freed box is not reused before it is read; it only shows
-// once same-shaped strings are churned in between, which recycles it: exit 178
-// against `-interp`'s 55. Both hazard probes below therefore churn before the
-// aliased read, and both take their expected exit from `fern -interp` rather
-// than a constant.
-//
-// #6469's suite covers the producer-side aliases (payload aliases a live local or
-// a parameter). This is the consumer side: what the match arm does with a
-// payload the producer built fresh.
-
 func TestSelfHostOptArmEscapeGateX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -62,9 +42,6 @@ func TestSelfHostOptArmEscapeGateX86_64(t *testing.T) {
 		return allocs, frees, live
 	}
 
-	// The shape that dangles when the gate matches nothing. `held = s` aliases the
-	// arm binding out of the match; the churn recycles the released box before the
-	// read, which is what turns a silent corruption into a wrong exit code.
 	t.Run("escaping_arm_binding_string_is_refused", func(t *testing.T) {
 		src := `function mk(i: i32): Option[string] {
     return Some("va" + "lue");
@@ -93,14 +70,11 @@ function main(): i32 {
     return x % 251;
 }`
 		allocs, frees, live := counts(t, "oae_str_escape", src)
-		// A release of the escaping binding's string under its live alias would
-		// read back wrong; the exit agreement inside counts() guards that.
 		if live != 0 || allocs != frees {
 			t.Errorf("allocs=%d frees=%d live_bytes=%d — want an exact balance", allocs, frees, live)
 		}
 	})
 
-	// Same escape written as a `Result`, so the SUCCESS arm is spelled `Ok`.
 	t.Run("escaping_arm_binding_result_ok_is_refused", func(t *testing.T) {
 		src := `function mk(i: i32): Result[string, i32] {
     return Ok("va" + "lue");
@@ -135,8 +109,6 @@ function main(): i32 {
 		}
 	})
 
-	// A borrow-only arm binding is still admitted — the gate must refuse escapes,
-	// not every binding.
 	t.Run("borrowing_arm_binding_still_reclaims", func(t *testing.T) {
 		src := `function mk(i: i32): Option[string] {
     return Some("va" + "lue");
@@ -164,7 +136,6 @@ function main(): i32 {
 		}
 	})
 
-	// An escaping array binding retains, so it reclaims fully.
 	t.Run("escaping_arm_binding_array_still_reclaims", func(t *testing.T) {
 		src := `function mk(i: i32): Option[i32[]] {
     return Some([i + 11, i + 22]);
@@ -197,9 +168,6 @@ function main(): i32 {
 		}
 	})
 
-	// A scalar `Err(e)` used in arithmetic must NOT read as an escape. This is the
-	// row that strands at 22400 if the marker matches every arm rather than the
-	// success one.
 	t.Run("scalar_err_binding_is_not_an_escape", func(t *testing.T) {
 		src := `function mk(i: i32): Result[string, i32] {
     if (i % 3 == 0) { return Err(i); }

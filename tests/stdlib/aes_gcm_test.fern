@@ -3,12 +3,6 @@ import "std/hex";
 import "std/crypto/aead";
 import "std/crypto/aes_gcm";
 
-// tests/stdlib/aes_gcm_test.fern — std/crypto/aes_gcm against the AES known
-// answers of FIPS-197 Appendix C, the GCM specification's test cases 1 to 4
-// (AES-128) and 13 to 16 (AES-256), and vectors from Go's crypto/cipher for
-// additional data alone, a one-byte message, and messages of 33 and 255
-// bytes, plus the refusals.
-
 function shown(r: Result[u8[], aead.AeadError]): string {
   match (r) {
     Ok(b) => {
@@ -25,7 +19,6 @@ function zeros(n: i32): u8[] {
   return __alloc_u8(n);
 }
 
-// The cipher alone: one block of keystream XOR zeros is E(K, block).
 function test_block128(): test.TestOutcome {
   let rk: u8[] = __aes_expand_key(hex.hex_decode("000102030405060708090a0b0c0d0e0f"));
   return test.assert_eq(hex.hex_encode(__aes_ctr32(rk, hex.hex_decode("00112233445566778899aabbccddeeff"), zeros(16))), "69c4e0d86a7b0430d8cdb78070b4c55a");
@@ -175,8 +168,6 @@ function forged(r: Result[u8[], aead.AeadError]): boolean {
   return false;
 }
 
-// A flipped bit in the tag, the ciphertext or the additional data, another
-// key or nonce, or a message shorter than a tag does not open.
 function test_open_refuses(): test.TestOutcome {
   let key: u8[] = hex.hex_decode(k3());
   let sealed: u8[] = hex.hex_decode(sealed4());
@@ -214,8 +205,6 @@ function test_lengths(): test.TestOutcome {
   return test.assert_eq(shown(aes_gcm.seal(zeros(16), zeros(8), zeros(0), zeros(0))), "aead: the nonce is 8 bytes, want 12");
 }
 
-// A key prepared once seals and opens as the one-shot calls do, under
-// both key sizes, and is refused at the wrong length.
 function test_prepared_key(): test.TestOutcome {
   let Ok(k) = aes_gcm.key(hex.hex_decode(k3())) else {
     return test.fail("a 16-byte key was refused");

@@ -2,20 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// urlQueryIRCases exercise std/url's `query_parse` — parsing a query string
-// into a `Map[string, string[]]` (duplicate keys accumulate) — through the
-// self-host IR path on x86-64 + wasm, completing the std/url audit (after
-// url_codec + url_parse). `query_parse` + `url_decode` are inlined rather than
-// imported; this verifies the constructs it lowers to compile on the IR path: a
-// `Map[string, string[]]` (string keys, string-ARRAY values) built via `Map {}`
-// / `.get` / `.insert`, the append-or-create idiom over the map's `string[]`
-// value, `Option[string[]]` `Some`/`None` `match`, `url_decode`'s `u8[]` +
-// `string_from_bytes_unchecked`, and byte scanning. Each program returns a
-// small deterministic int (kept <= 126); expectations are hardcoded, verified
-// against the native interp + x86-64 backends. The `dup-keys` case (append to
-// an existing `string[]` map value) is the #3495 regression guard: it corrupts
-// a sibling key's array (returning 22 not 21) if the map does not retain a
-// pointer value. FEATURE-AUDIT std/url row.
 const urlQueryIRPrelude = `function url_hex_val(c: i32): i32 {
     if (c >= 48 && c <= 57) { return c - 48; }
     if (c >= 97 && c <= 102) { return c - 87; }
@@ -85,22 +71,12 @@ var urlQueryIRCases = []struct {
 	main string
 	want int
 }{
-	// duplicate-key accumulation: "a" -> [1,3] (2), "b" -> [2] (1) -> 2*10+1.
-	// #3495 regression guard (pre-fix the wasm IR backend returned 22 — b's
-	// array corrupted by the append to a — because map_set's value `vis` flag
-	// was hardcoded 0 for the string[] value).
 	{"dup-keys", `let m: Map[string, string[]] = query_parse("a=1&b=2&a=3"); return vcount(m, "a") * 10 + vcount(m, "b");`, 21},
-	// single value.
 	{"single", `return vcount(query_parse("x=hello"), "x");`, 1},
-	// missing key -> the None arm -> 0.
 	{"missing", `return vcount(query_parse("a=1"), "zzz");`, 0},
-	// a bare key (no '=') stores one empty-string value.
 	{"flag-no-value", `return vcount(query_parse("flag"), "flag");`, 1},
-	// empty query -> empty map -> 0.
 	{"empty", `return vcount(query_parse(""), "a");`, 0},
-	// percent-decoded key: "a%20b" -> "a b".
 	{"decoded-key", `return vcount(query_parse("a%20b=c"), "a b");`, 1},
-	// percent-decoded value: "c%2Fd" -> "c/d" (len 3).
 	{"decoded-value", `return v0len(query_parse("k=c%2Fd"), "k");`, 3},
 }
 
@@ -108,8 +84,6 @@ func urlQueryIRSrc(mainBody string) string {
 	return "import \"core/map\";\nimport \"std/string\";\n" + urlQueryIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostUrlQueryIR compiles each case with the self-host CLI for
-// x86-64 and wasm and checks the exit code.
 func TestSelfHostUrlQueryIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {

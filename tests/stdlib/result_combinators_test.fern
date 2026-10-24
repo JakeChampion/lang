@@ -2,15 +2,6 @@ import "std/test";
 import "std/result";
 import "std/option";
 
-// tests/stdlib/result_combinators_test.fern — pure-Fern coverage of the
-// std/result COMBINATOR surface (distinct from result_assertions_test, which
-// covers the std/test Result assertion helpers): is_ok / is_err / unwrap_or /
-// unwrap_or_else / map / and_then / map_err / ok / err / map_or / is_ok_and /
-// is_err_and / or — the Rust-parity vocabulary (#2691) as ordinary generic
-// methods on Result[T, E] with closure args. The Go-side suite unit-tests
-// these; this is the migration-shaped (pure-Fern, std/test-driven,
-// self-host-gated) companion.
-
 function test_is_ok_is_err(): test.TestOutcome {
   let ok: Result[i32, string] = Ok(5);
   let er: Result[i32, string] = Err("bad");
@@ -24,7 +15,6 @@ function test_unwrap_or(): test.TestOutcome {
 }
 
 function test_unwrap_or_else(): test.TestOutcome {
-  // (E) => T : recover the value from the error.
   let er: Result[i32, string] = Err("bad");
   return test.assert_eq(er.unwrap_or_else((e: string): i32 => e.len()), 3);
 }
@@ -42,7 +32,6 @@ function test_and_then(): test.TestOutcome {
 }
 
 function test_map_err(): test.TestOutcome {
-  // Err("bad").map_err(len) => Err(3); read it back via err().
   let er: Result[i32, string] = Err("bad");
   let r = er.map_err((e: string): i32 => e.len());
   return test.assert_eq(r.err().unwrap_or(0), 3);
@@ -89,7 +78,6 @@ function test_and(): test.TestOutcome {
   let ok: Result[i32, string] = Ok(5);
   let er: Result[i32, string] = Err("bad");
   let other: Result[i32, string] = Ok(9);
-  // Ok -> other; Err short-circuits, preserving the original error.
   if (ok.and(other).unwrap_or(0) != 9) {
     return test.fail("Ok.and should yield other");
   }
@@ -99,8 +87,6 @@ function test_and(): test.TestOutcome {
 function test_or_else(): test.TestOutcome {
   let ok: Result[i32, string] = Ok(5);
   let er: Result[i32, string] = Err("bad");
-  // Ok passes through untouched; Err routes through the recovery fn,
-  // which sees the error ("bad" -> len 3) and produces a fresh Ok.
   let recovered: Result[i32, string] = er.or_else((e: string): Result[i32, string] => Ok(e.len()));
   if (recovered.unwrap_or(0) != 3) {
     return test.fail("or_else recovery wrong");
@@ -111,8 +97,6 @@ function test_or_else(): test.TestOutcome {
 function test_map_or_else(): test.TestOutcome {
   let ok: Result[i32, string] = Ok(5);
   let er: Result[i32, string] = Err("bad");
-  // Ok routes through `f` (x*2); Err computes the default from the
-  // error ("bad" -> len 3).
   let a: i32 = ok.map_or_else((e: string): i32 => 0, (x: i32): i32 => x * 2);
   let b: i32 = er.map_or_else((e: string): i32 => e.len(), (x: i32): i32 => x * 2);
   return test.assert_true(a == 10 && b == 3);
@@ -122,7 +106,6 @@ function test_flatten(): test.TestOutcome {
   let ok_ok: Result[Result[i32, string], string] = Ok(Ok(30));
   let ok_err: Result[Result[i32, string], string] = Ok(Err("inner"));
   let outer_err: Result[Result[i32, string], string] = Err("outer");
-  // Ok(Ok(x)) -> Ok(x); Ok(Err(e)) -> Err(e); Err(e) -> Err(e).
   return test.assert_true(
     ok_ok.flatten().unwrap_or(0) == 30
       && ok_err.flatten().is_err()

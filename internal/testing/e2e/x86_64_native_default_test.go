@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// x86QemuOrEmpty returns "" on a native amd64 host (binaries run directly)
-// or the path to qemu-x86_64 on a cross host. Skips when neither applies.
 func x86QemuOrEmpty(t *testing.T) string {
 	t.Helper()
 	runner, ok := x86Runner()
@@ -19,11 +17,6 @@ func x86QemuOrEmpty(t *testing.T) string {
 	return runner
 }
 
-// x86Runner is x86QemuOrEmpty without the skip: ("", true) on a native amd64
-// Linux host, (qemuPath, true) on a cross host with an emulator, and
-// ("", false) when there is no way to run an x86-64 binary at all. Mirrors
-// arm64Runner, for callers that decide for themselves what a missing emulator
-// means.
 func x86Runner() (string, bool) {
 	if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
 		return "", true
@@ -43,8 +36,6 @@ func runX86Bin(qemu, binPath string, args ...string) *exec.Cmd {
 	return exec.Command(qemu, append([]string{binPath}, args...)...)
 }
 
-// `fern -target x86-64-linux` builds with no external toolchain, mirroring
-// arm64. Exercises the default path and the -run temp-binary path.
 func TestX86_64NativeIsCLIDefault(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -56,7 +47,6 @@ func TestX86_64NativeIsCLIDefault(t *testing.T) {
 	t.Run("default_build_is_native", func(t *testing.T) {
 		qemu := x86QemuOrEmpty(t)
 		out := filepath.Join(dir, "prog.bin")
-		// Must build with no external assembler/linker.
 		if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", out, src).CombinedOutput(); err != nil {
 			t.Fatalf("default x86-64 build failed: %v\n%s", err, o)
 		}
@@ -75,8 +65,6 @@ func TestX86_64NativeIsCLIDefault(t *testing.T) {
 	})
 
 	t.Run("run_flag_native", func(t *testing.T) {
-		// On a native amd64 host the CLI execs directly; on a cross host it
-		// shells out to qemu-x86_64, so skip there if it's unavailable.
 		if runtime.GOARCH != "amd64" {
 			if _, err := exec.LookPath("qemu-x86_64"); err != nil {
 				t.Skip("-run on this host needs qemu-x86_64")

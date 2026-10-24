@@ -1,55 +1,10 @@
-// Ownership inference: which of a function's reference parameters it CONSUMES.
-//
-// A consumed parameter is counted — the caller hands over a unit and the
-// callee releases it, so a reader reclaims its argument when it holds the last
-// reference. A parameter the frame only reads stays borrowed, because the
-// retain and the release would cancel: a balanced pair on a value that cannot
-// outlive the call moves rc traffic and nothing else. This is Koka's borrow
-// inference and native's `paramVerdict` ladder
-// (docs/OWNERSHIP-INFERENCE-PLAN.md, sub-slice 2d).
-//
-// Both halves are needed together. Counting every reference parameter with no
-// inference is slower on nine of the twenty-nine bench programs and faster on
-// none — 1.901x on `ordmap_insert`, 1.079x on `enum_match`, whose `weigh`
-// never lets its argument leave the frame
-// (docs/rc-log/2026-09-21-owned-by-default-alone-is-a-regression.md).
-//
-// The analysis reads the PRODUCED graphs rather than the declarations.
-// `semsource` never branches on a parameter's mode while it builds a body — it
-// appends the mode and hands it back untouched — so the graph is the same
-// whichever answer this reaches, and an escape is far easier to see on the
-// typed IR than on the AST.
-//
-// It is a GREATEST fixpoint: every reference parameter starts escaping and is
-// demoted once a round finds no escaping use. A least fixpoint would answer
-// "borrowed" for every recursive traversal, since the only use that carries
-// the parameter out is the recursive call whose own slot is counted only if
-// the parameter is — the cycle never starts from below. That is right for a
-// walk that rebuilds (`std/pvec`'s `__pv_with_in` takes its child out of a
-// unique node), and wrong for a parameter whose type the result cannot hold:
-// nothing a take frees from it can leave the frame, so its own recursive call
-// carries nothing at that slot (#10352). The same holds across a cycle:
-// `semtypes.equal` and `equal_list` call each other, and each kept the other's
-// parameters counted until a call inside a quiet cycle stopped carrying
-// (#10941). A walk folding a tree into a list of strings is quiet at the tree
-// and counted at the list.
 import "./ssa";
 import "./ssasem";
 import "./typeinfo";
 import "./util";
 
-// One row per produced symbol: whether each parameter leaves the frame.
-// `lends` says a slot the row leaves uncounted may still be kept as a borrow in
-// what the callee returns (lent_values); a builtin whose result holds no
-// reference cannot keep one, and a produced function's is inferred (`lends`). `cycle` is the row's quiet cycle (`cycles`), -1
-// on none. `quiet` says, per parameter, that a call to the row from inside its
-// cycle carries nothing at that slot: the row's result cannot hold the
-// parameter's type.
 pub struct Escapes { name: string, bits: boolean[], lends: boolean, cycle: i32, quiet: boolean[] }
 
-// Rows by name, chained per hash bucket in ascending row order. A round
-// rewrites a row's bits and never its name, so one index built over the
-// finished rows serves every round.
 pub struct Index { head: i32[], next: i32[] }
 
 pub function index(rows: Escapes[]): Index {
@@ -66,7 +21,6 @@ pub function index(rows: Escapes[]): Index {
   return Index { head: head, next: next };
 }
 
-// The first row named `name`, or -1.
 pub function find(rows: Escapes[], ix: Index, name: string): i32 {
   let i: i32 = ix.head[util.hash_bucket(name, ix.head.len())];
   while (i >= 0) {
@@ -78,13 +32,6 @@ pub function find(rows: Escapes[], ix: Index, name: string): i32 {
   return 0 - 1;
 }
 
-// Whether parameter `at` of the row `find` answered (-1 for none) is
-// consumed, for the ANALYSIS: a symbol with no row — a template, a body this
-// boundary declined, a closure — answers "yes", so an operand handed to one is
-// read as leaving the frame. A builtin has a fixed row, its contract's own
-// modes. That is the conservative direction here, and only here: a caller
-// deciding what to REWRITE must ask `find` first, because "no row" means
-// "this symbol keeps the mode it declared", not "count it".
 pub function consumed_at(rows: Escapes[], row: i32, at: i32): boolean {
   if (row < 0) {
     return true;
@@ -95,13 +42,6 @@ pub function consumed_at(rows: Escapes[], row: i32, at: i32): boolean {
   return rows[row].bits[at];
 }
 
-// The bodies any function VALUE names. A counted parameter is spelled in the
-// type `ssasem.closure_type` builds, and that type is what every call through
-// the box is checked against — so inferring one counted on a body someone
-// takes the address of rewrites the type out from under its call sites
-// ("closure signature"). Native has the same rung for the opposite reason:
-// `OpCallIndirect` has no callee name, so no retain is emitted there at all.
-// Either way the answer is that such a body keeps the modes it declared.
 pub function address_taken(f: ssasem.Func, seen: string[]): string[] {
   let out: string[] = seen;
   for b in f.graph.blocks {
@@ -124,14 +64,6 @@ function all_true(n: i32): boolean[] {
   return out;
 }
 
-// The operations that put a value somewhere this frame does not control: a
-// container or box built here and handed back, and a store into a cell, into
-// a map the frame may not be the only holder of, or into a hole. A record
-// update carries its base out too, whichever fields it keeps: the update is
-// where the base's box is reused, which only a counted base allows. An `append` or
-// a `with` answers a NEW container holding the stored value, so the value goes
-// out with it — the receiver does not, which is why those two are read operand
-// by operand below rather than whole.
 function builds_out(kind: i32): boolean {
   return constructs_container(kind) || kind == ssasem.cell_set()
     || kind == ssasem.map_insert() || kind == ssasem.hole_fill();
@@ -143,16 +75,10 @@ function constructs_container(kind: i32): boolean {
     || kind == ssasem.cell_new() || kind == ssasem.dyn_box();
 }
 
-// A store whose RECEIVER is operand 0 and whose stored value is every operand
-// after it: the receiver is consumed by the operation, not carried out of the
-// frame, and counting it here is what would make every `a = a.with(i, x)` on a
-// parameter look like an escape.
 function stores_after_receiver(kind: i32): boolean {
   return kind == ssasem.append() || kind == ssasem.with();
 }
 
-// Mark `v` and everything it is anchored to. A projection's chain is already
-// transitive in `dependencies`, so one pass over it reaches the root.
 function carry(own out: boolean[], a: ssasem.Analysis, v: i32): boolean[] {
   if (v < 0 || v >= out.len()) {
     return out;
@@ -166,8 +92,6 @@ function carry(own out: boolean[], a: ssasem.Analysis, v: i32): boolean[] {
   return out;
 }
 
-// Whether the rows `caller` and `callee` (-1 for none) lie on one quiet
-// cycle, where a call carries nothing at the callee's quiet slots.
 function same_cycle(rows: Escapes[], caller: i32, callee: i32): boolean {
   return caller >= 0 && callee >= 0 && rows[caller].cycle >= 0 && rows[caller].cycle == rows[callee].cycle;
 }
@@ -176,17 +100,12 @@ function quiet_slot(rows: Escapes[], row: i32, slot: i32): boolean {
   return slot >= 0 && slot < rows[row].quiet.len() && rows[row].quiet[slot];
 }
 
-// The strongly connected components of `succ` that hold a cycle, numbered from
-// 0; -1 for a node on none. Tarjan's algorithm, iterative so a deep call chain
-// cannot exhaust the stack.
 pub function cycles(succ: i32[][]): i32[] {
   let n: i32 = succ.len();
   let order: i32[] = [];
   let low: i32[] = [];
   let on: boolean[] = [];
   let comp: i32[] = [];
-  // The Tarjan stack and the DFS's own, each a prefix of its array: `slen`
-  // and `wlen` are their depths, and a push past the end appends.
   let stack: i32[] = [];
   let work: i32[] = [];
   let edge: i32[] = [];
@@ -269,14 +188,6 @@ pub function cycles(succ: i32[][]): i32[] {
   return comp;
 }
 
-// The operands a direct call consumes: the slots its callee's contract counts.
-// The contract's own modes are stale by construction here — they are what this
-// analysis is computing — so the CURRENT round's answer is read instead, which
-// is what makes the fixpoint close over a call graph rather than a tree.
-//
-// A dyn call has no row, and needs none: semsource admits one only where
-// every implementation lends every operand, and those keep the modes they
-// declared (`semsource.dyn_arms`).
 function call_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index, fr: Frame): boolean[] {
   if (ssasem.is_dyn_call(ins.str)) {
     return out;
@@ -285,8 +196,6 @@ function call_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
   let cycle: boolean = same_cycle(rows, fr.me, row);
   let i: i32 = 0;
   while (i < ins.args.len()) {
-    // Passing the same parameter to the same slot supplies no independent
-    // reason to consume it. Any other escaping use still carries it.
     let unchanged: boolean = ins.str == f.graph.name && unchanged_slot(fr, ins.args[i], i) || cycle && quiet_slot(rows, row, i);
     if (!unchanged && ssasem.reference(f.values[ins.args[i]]) && consumed_at(rows, row, i)) {
       out = carry(out, a, ins.args[i]);
@@ -296,16 +205,10 @@ function call_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
   return out;
 }
 
-// Tail recursion replaces parameters with named phis even when another
-// recursive call remains in the body. A phi fed only by its parameter and
-// itself still forwards exactly that parameter, without advancing through it.
 function unchanged_slot(fr: Frame, value: i32, slot: i32): boolean {
   return value == slot || value >= 0 && value < fr.forwards.len() && fr.forwards[value] == slot;
 }
 
-// Frame is what one function's instructions are read against: its own row
-// (-1 for none) and, per value, the parameter slot it forwards unchanged
-// (`forwarded`), -1 for none. The table is empty until a self call needs it.
 struct Frame { me: i32, forwards: i32[] }
 
 function forwarded(f: ssasem.Func): i32[] {
@@ -329,9 +232,6 @@ function only_forwards(ins: ssa.SInst): boolean {
   return true;
 }
 
-// A call THROUGH a function value consumes only at the slots its type spells
-// `own`; the callee box (operand 0) and every other reference are lent, as
-// the unit planner reads the same call (`ssaunits.call_value_supplied`).
 function indirect_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst): boolean[] {
   let callee: typeinfo.Type = f.values[ins.args[0]];
   let i: i32 = 1;
@@ -344,12 +244,6 @@ function indirect_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis
   return out;
 }
 
-// A phi `ssasem.tail_recursion` left for parameter `imm` of the call `str` is
-// that call's slot: every operand after the first is an argument a call
-// passed, carried as `call_carried` would carry it, and the first is the
-// parameter itself, which whatever carries the phi carries too (`continued`).
-// Read as a plain loop instead, a walk that rebuilds its input would never
-// consume it.
 function slot_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index, fr: Frame): boolean[] {
   let row: i32 = find(rows, ix, ins.str);
   if (same_cycle(rows, fr.me, row) && quiet_slot(rows, row, ins.imm) || !consumed_at(rows, row, ins.imm)) {
@@ -357,8 +251,6 @@ function slot_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
   }
   let i: i32 = 1;
   while (i < ins.args.len()) {
-    // A backedge that just forwards its own phi is the loop form of an
-    // unchanged recursive argument, not an escaping use of that parameter.
     if (ins.args[i] != ins.result && ssasem.reference(f.values[ins.args[i]])) {
       out = carry(out, a, ins.args[i]);
     }
@@ -371,11 +263,6 @@ function slot_phi(ins: ssa.SInst): boolean {
   return ins.kind_tag == 8 && ins.str != "";
 }
 
-// A carried phi carries what flows into it: the value a consumer takes from
-// the phi is one of its operands, so a parameter that enters a loop's phi
-// and is consumed through it leaves the frame on that path. A slot phi's
-// later operands are arguments a call passed (`slot_carried`); its first is
-// the parameter itself. Phis chain, so this runs to a fixpoint.
 function continued(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis): boolean[] {
   let phis: ssa.SInst[] = [];
   for b in f.graph.blocks {
@@ -443,22 +330,6 @@ function instruction_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analy
   return out;
 }
 
-// The values a callee may keep a borrow of. A slot the callee does NOT count
-// is lent, and nothing here can see what the callee does with what it was
-// lent: `hands_out` models a call result as a FRESH unit, which severs the
-// result's dependency on the argument, so a callee that puts a lent value in
-// the thing it returns is invisible from the caller.
-//
-// That is only a leak while the caller borrows the container too. Once the
-// caller OWNS it, the caller also drops it — and the drop frees a box the
-// result still points at. `semsource.stmt` is the shape: every arm destructures
-// `st` and hands a payload on (`declare(st, v, s)`, `discard(e.value, s)`)
-// before the frame's drop of `st` runs, which segfaulted the compiler at
-// `semtypes.numeric_equal` reading a null type.
-//
-// So a parameter with a value of its own in a lent slot is not counted. The
-// container stays borrowed, nobody drops it, and the callee's borrow stays
-// good — which is what happened before this pass existed.
 function lent_values(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
   let at: i32 = find(rows, ix, ins.str);
   if (at >= 0 && !rows[at].lends) {
@@ -486,9 +357,6 @@ function lent_out(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index
   return out;
 }
 
-// Whether `f`'s result may keep an uncounted borrow of a parameter, the
-// `lends` of its row: a parameter is lent to a callee that lends, or the frame
-// returns a view, which counts nothing it reads.
 pub function lends(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index): boolean {
   if (!a.ok) {
     return true;
@@ -509,11 +377,6 @@ pub function lends(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Inde
   return false;
 }
 
-// The values this frame lets out, under the current round's answers. A
-// return lets out the returned value and not what it is anchored to: the
-// planner retains a projection of a borrowed parameter to hand it back, so a
-// reader such as `p.toks[p.pos]` keeps `p` lent, and a returned view reads its
-// root without taking a unit at all.
 function carried_values(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
   let fr: Frame = Frame { me: find(rows, ix, f.graph.name), forwards: [] };
@@ -531,14 +394,7 @@ function carried_values(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix:
   return continued(out, f, a);
 }
 
-// Parameter `i` is value `i` — `ssasem`'s parameter instruction pins
-// `result == imm` — so the carried set is read off its own slot.
-//
-// The analysis is the caller's to hold rather than this function's to make:
-// it does not depend on `rows`, and remaking it every round cost 23% of the
-// whole compiler's build time when it was made here.
 pub function escaping(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index): boolean[] {
-  // A function this boundary cannot analyse keeps every declared mode.
   if (!a.ok) {
     return all_true(f.params.len());
   }

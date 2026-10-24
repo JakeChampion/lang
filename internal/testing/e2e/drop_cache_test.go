@@ -1,14 +1,3 @@
-// `drop_cache(offset, len)` end to end on every backend: posix_fadvise(2)
-// with POSIX_FADV_DONTNEED on both handle types (#11248).
-//
-// A dropped page is not observable from userspace, so the probe pins the
-// call to answers only the right syscall gives. A negative length is EINVAL
-// from fadvise64, where a call that ignored its arguments (fsync, say)
-// answers None, and a closed handle is EBADF, which a call that never
-// reached the kernel cannot produce. Neither WASI preview can be asked
-// those: the length is unsigned there, and a dropped preview-2 descriptor
-// traps rather than answering. So the wasm legs assert the success path
-// only, which is what a host that ignores the advice answers too.
 package e2e
 
 import (
@@ -19,9 +8,6 @@ import (
 	"testing"
 )
 
-// dropCacheSource is the probe. `prefix` is the directory its file lives in,
-// "" for wasm, whose cwd is its preopen. `kernel` adds the EINVAL and EBADF
-// cases a Linux kernel answers. Every failure returns its own exit code.
 func dropCacheSource(prefix string, kernel bool) string {
 	path := "cached.txt"
 	if prefix != "" {
@@ -58,8 +44,6 @@ func dropCacheSource(prefix string, kernel bool) string {
 `, path, writerChecks, readerChecks)
 }
 
-// dropCacheCheckTree reads the file back through Go: advice must not change
-// a byte of it.
 func dropCacheCheckTree(t *testing.T, dir string) {
 	t.Helper()
 	got, err := os.ReadFile(filepath.Join(dir, "cached.txt"))
@@ -74,7 +58,6 @@ func dropCacheCheckTree(t *testing.T, dir string) {
 func TestInterpDropCache(t *testing.T) {
 	dir := t.TempDir()
 	if runtime.GOOS != "linux" {
-		// XNU has no fadvise: every call answers Unsupported there.
 		src := fmt.Sprintf(`function main(): i32 {
     match (open_writer(%q)) {
         Ok(w) => { match (w.drop_cache(0i64, 0i64)) { Err(Unsupported()) => { return 0; }, _ => { return 1; } } },
@@ -111,7 +94,6 @@ func TestArm64DropCache(t *testing.T) {
 	dropCacheCheckTree(t, dir)
 }
 
-// Preview 1's fd_advise and preview 2's descriptor.advise are two bodies.
 func TestWASMPreview1DropCache(t *testing.T) {
 	mod := buildWasmCore(t, dropCacheSource("", false))
 	dir := t.TempDir()

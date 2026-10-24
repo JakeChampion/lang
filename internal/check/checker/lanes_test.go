@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// The lane types f64x2 and f32x4 (docs/SIMD-GENERIC-KERNELS.md §6): each
-// rejected program names its code and the words of its message.
 func TestLanesRejected(t *testing.T) {
 	for name, tc := range map[string]struct{ src, code, msg string }{
 		"array of lanes":     {`function f(): i32 { let xs: f64x2[] = []; return xs.len(); }`, "E085", "f64x2[] holds a lane value inside another type"},
@@ -37,9 +35,6 @@ func TestLanesRejected(t *testing.T) {
 	}
 }
 
-// What a lane value may do: arithmetic and negation on one lane type, every
-// builtin, a parameter and a result of a direct call, and the reads and
-// writes of an array's lanes.
 func TestLanesAccepted(t *testing.T) {
 	for name, src := range map[string]string{
 		"arithmetic":   `function f(a: f64x2, b: f64x2): f64x2 { return -(a + b) * a / b - a; }`,

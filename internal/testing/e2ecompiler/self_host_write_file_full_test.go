@@ -7,11 +7,6 @@ import (
 	"testing"
 )
 
-// A write that fails is an error. The runtime's `write_file` loop stopped on
-// any non-positive write(2) and answered Ok, so a full disk left a short file
-// behind a compile that exited 0 — the self-hosted compiler wrote a truncated
-// listing that way. /dev/full fails every write with ENOSPC; native and the
-// interpreter answer Err here.
 const selfHostWriteFileFullSource = `function main(): i32 {
     match (write_file("/dev/full", "hello")) {
         Ok(_) => { print("ok"); return 1; },

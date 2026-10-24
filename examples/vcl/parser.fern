@@ -1,17 +1,3 @@
-// examples/vcl/parser.fern — recursive-descent parser for VCL 4.0 / 4.1.
-//
-// Fern struct fields are immutable after construction, so there is no
-// mutable parser object to carry a cursor. Every parse function instead
-// takes the token index it starts at and returns the node together with
-// the index just past it — the same shape `std/regex` uses for its
-// pattern parser. One carrier struct per node type is the cost of that,
-// and `ok` / `err` on each is how a failure propagates to the statement
-// or declaration level that can recover from it.
-//
-// Recovery is per-declaration and per-statement: a bad statement costs
-// one diagnostic and resumes at the next `;` or `}`, a bad declaration
-// resumes at the next top-level keyword. So a file with three unrelated
-// errors reports three, not one.
 import "std/string";
 import "std/i32";
 import "./ast";
@@ -20,17 +6,10 @@ import "./lexer";
 
 pub struct ParseResult { decls: ast.Decl[], diags: diag.Diag[] }
 
-// no_diag is the placeholder every successful carrier holds. A carrier
-// cannot leave `err` unset — Fern has no null — and an Option per result
-// would cost an allocation on the hot success path.
 function no_diag(): diag.Diag {
   return diag.at("", 0, 0);
 }
 
-// at reads the token at `i`, clamped to the trailing TEOF. Every parse
-// loop stops on EOF, so clamping turns what would be an out-of-bounds
-// read after an unexpected end of input into one more EOF token and the
-// error message that goes with it.
 function at(toks: lexer.Tok[], i: i32): lexer.Tok {
   if (i >= toks.len()) {
     return toks[toks.len() - 1];
@@ -38,7 +17,6 @@ function at(toks: lexer.Tok[], i: i32): lexer.Tok {
   return toks[i];
 }
 
-// describe names a token in a diagnostic the way it was written.
 function describe(t: lexer.Tok): string {
   if (t.is_eof()) {
     return "end of input";
@@ -49,14 +27,12 @@ function describe(t: lexer.Tok): string {
   return "'" + t.text + "'";
 }
 
-// ---------------------------------------------------------------- expressions
 struct EParse { node: ast.Expr, pos: i32, ok: boolean, err: diag.Diag }
 
 function eok(n: ast.Expr, pos: i32): EParse {
   return EParse { node: n, pos: pos, ok: true, err: no_diag() };
 }
 
-// eerr carries a dummy node: the caller checks `ok` before touching it.
 function eerr(msg: string, t: lexer.Tok, pos: i32): EParse {
   let dummy: ast.Expr = ENumber(ast.NumLit { text: "0", line: t.line, col: t.col });
   return EParse { node: dummy, pos: pos, ok: false, err: diag.at(msg, t.line, t.col) };
@@ -64,8 +40,6 @@ function eerr(msg: string, t: lexer.Tok, pos: i32): EParse {
 
 struct AParse { args: ast.Expr[], pos: i32, ok: boolean, err: diag.Diag }
 
-// parse_args reads a parenthesised, comma-separated argument list. `i`
-// is the index of the `(`.
 function parse_args(toks: lexer.Tok[], i: i32): AParse {
   let args: ast.Expr[] = [];
   let pos: i32 = i + 1;
@@ -92,9 +66,6 @@ function parse_args(toks: lexer.Tok[], i: i32): AParse {
   return AParse { args: args, pos: pos + 1, ok: true, err: no_diag() };
 }
 
-// parse_ident_expr reads a name and, if a `(` follows, the call it heads.
-// `true` and `false` are ordinary identifiers to the lexer and become
-// booleans here.
 function parse_ident_expr(toks: lexer.Tok[], i: i32): EParse {
   let t: lexer.Tok = at(toks, i);
   if (t.text == "true" || t.text == "false") {
@@ -110,8 +81,6 @@ function parse_ident_expr(toks: lexer.Tok[], i: i32): EParse {
   return eok(EVar(ast.VarRef { name: t.text, line: t.line, col: t.col }), i + 1);
 }
 
-// parse_primary reads a literal, a name or call, or a parenthesised
-// expression.
 function parse_primary(toks: lexer.Tok[], i: i32): EParse {
   let t: lexer.Tok = at(toks, i);
   if (t.punct("(")) {
@@ -147,7 +116,6 @@ function parse_primary(toks: lexer.Tok[], i: i32): EParse {
   }
 }
 
-// in_list reports whether `s` is one of `items`.
 function in_list(s: string, items: string[]): boolean {
   let i: i32 = 0;
   while (i < items.len()) {
@@ -159,25 +127,10 @@ function in_list(s: string, items: string[]): boolean {
   return false;
 }
 
-// VCL's `~` (regex match, or ACL membership when the right operand is an
-// ACL name) and its negation sit with the other comparisons.
 function comparison_ops(): string[] {
   return ["==", "!=", "<", "<=", ">", ">=", "~", "!~"];
 }
 
-// The grammar below is vcc's, and its one surprise is where `!` sits: it
-// binds LOOSER than the comparison operators, not tighter as it does in
-// C. So `!client.ip ~ purgers` — the idiomatic Varnish ACL-mismatch test
-// — is `!(client.ip ~ purgers)`, not `(!client.ip) ~ purgers`. Numeric
-// negation is the opposite and stays tight against its operand.
-//
-//   or   := and { "||" and }
-//   and  := not { "&&" not }
-//   not  := "!" not | cmp
-//   cmp  := add [ COMPARISON add ]        (non-associative, as in vcc)
-//   add  := mul { ("+" | "-") mul }
-//   mul  := neg { ("*" | "/") neg }
-//   neg  := "-" neg | primary
 function parse_or(toks: lexer.Tok[], i: i32): EParse {
   let left: EParse = parse_and(toks, i);
   if (!left.ok) {
@@ -228,8 +181,6 @@ function parse_not(toks: lexer.Tok[], i: i32): EParse {
   return parse_cmp(toks, i);
 }
 
-// parse_cmp takes at most ONE comparison: vcc rejects `a == b == c`
-// rather than folding it, and so does this.
 function parse_cmp(toks: lexer.Tok[], i: i32): EParse {
   let left: EParse = parse_add(toks, i);
   if (!left.ok) {
@@ -255,9 +206,6 @@ function parse_mul(toks: lexer.Tok[], i: i32): EParse {
   return parse_left_assoc(toks, i, ["*", "/"], false);
 }
 
-// parse_left_assoc folds one arithmetic level. `additive` selects which
-// level supplies the operands, keeping the two tiers in one routine
-// rather than two near-identical ones.
 function parse_left_assoc(toks: lexer.Tok[], i: i32, ops: string[], additive: boolean): EParse {
   let left: EParse = parse_operand(toks, i, additive);
   if (!left.ok) {
@@ -284,7 +232,6 @@ function parse_operand(toks: lexer.Tok[], i: i32, additive: boolean): EParse {
   return parse_neg(toks, i);
 }
 
-// parse_neg is numeric negation, which unlike `!` binds tightly.
 function parse_neg(toks: lexer.Tok[], i: i32): EParse {
   let t: lexer.Tok = at(toks, i);
   if (t.punct("-")) {
@@ -301,13 +248,6 @@ pub function parse_expr(toks: lexer.Tok[], i: i32): EParse {
   return parse_or(toks, i);
 }
 
-// ---------------------------------------------------------------- statements
-// `err` is the failure that stopped this statement, valid only when
-// `ok` is false. `errs` is separate and orthogonal: the diagnostics
-// already recovered from INSIDE a statement that nonetheless parsed —
-// a bad line in the body of an `if` does not stop the `if`. Without the
-// second channel those inner errors would be dropped on the way up, and
-// a file with three unrelated errors would report one.
 struct SParse { node: ast.Stmt, pos: i32, ok: boolean, err: diag.Diag, errs: diag.Diag[] }
 
 function sok(n: ast.Stmt, pos: i32): SParse {
@@ -315,8 +255,6 @@ function sok(n: ast.Stmt, pos: i32): SParse {
   return SParse { node: n, pos: pos, ok: true, err: no_diag(), errs: none };
 }
 
-// sok_with is `sok` for a statement that parsed while recovering from
-// errors in its own body.
 function sok_with(n: ast.Stmt, pos: i32, errs: diag.Diag[]): SParse {
   return SParse { node: n, pos: pos, ok: true, err: no_diag(), errs: errs };
 }
@@ -333,12 +271,8 @@ function serr_from(d: diag.Diag, pos: i32): SParse {
   return SParse { node: dummy, pos: pos, ok: false, err: d, errs: none };
 }
 
-// A block carries the same two channels: `err` is the structural failure
-// (a missing or unclosed brace), `errs` every statement error it
-// recovered from and kept parsing past.
 struct BParse { blk: ast.Block, pos: i32, ok: boolean, err: diag.Diag, errs: diag.Diag[] }
 
-// concat appends every element of `more` to `into`.
 function concat(into: diag.Diag[], more: diag.Diag[]): diag.Diag[] {
   let out: diag.Diag[] = into;
   let i: i32 = 0;
@@ -349,7 +283,6 @@ function concat(into: diag.Diag[], more: diag.Diag[]): diag.Diag[] {
   return out;
 }
 
-// expect_semi consumes the `;` that ends a statement.
 function expect_semi(toks: lexer.Tok[], pos: i32, what: string): SParse {
   let t: lexer.Tok = at(toks, pos);
   if (!t.punct(";")) {
@@ -358,7 +291,6 @@ function expect_semi(toks: lexer.Tok[], pos: i32, what: string): SParse {
   return sok(SCall(ast.CallStmt { name: "", line: 0, col: 0 }), pos + 1);
 }
 
-// parse_set reads `set <target> <op> <expr>;`.
 function parse_set(toks: lexer.Tok[], i: i32): SParse {
   let kw: lexer.Tok = at(toks, i);
   let target: lexer.Tok = at(toks, i + 1);
@@ -381,7 +313,6 @@ function parse_set(toks: lexer.Tok[], i: i32): SParse {
   return sok(s, semi.pos);
 }
 
-// parse_unset reads `unset <target>;`.
 function parse_unset(toks: lexer.Tok[], i: i32): SParse {
   let kw: lexer.Tok = at(toks, i);
   let target: lexer.Tok = at(toks, i + 1);
@@ -395,8 +326,6 @@ function parse_unset(toks: lexer.Tok[], i: i32): SParse {
   return sok(SUnset(ast.UnsetStmt { target: target.text, line: kw.line, col: kw.col }), semi.pos);
 }
 
-// parse_return reads a bare `return;` or `return (action);`, where the
-// action may itself take arguments — `return (synth(750, "Moved"));`.
 function parse_return(toks: lexer.Tok[], i: i32): SParse {
   let kw: lexer.Tok = at(toks, i);
   let empty: ast.Expr[] = [];
@@ -436,7 +365,6 @@ function parse_return(toks: lexer.Tok[], i: i32): SParse {
   return sok(r, semi.pos);
 }
 
-// parse_call reads `call <sub>;`.
 function parse_call(toks: lexer.Tok[], i: i32): SParse {
   let kw: lexer.Tok = at(toks, i);
   let name: lexer.Tok = at(toks, i + 1);
@@ -450,8 +378,6 @@ function parse_call(toks: lexer.Tok[], i: i32): SParse {
   return sok(SCall(ast.CallStmt { name: name.text, line: kw.line, col: kw.col }), semi.pos);
 }
 
-// parse_new reads `new <name> = <ctor>(...);`, the VMOD object
-// declaration that only `vcl_init` may contain.
 function parse_new(toks: lexer.Tok[], i: i32): SParse {
   let kw: lexer.Tok = at(toks, i);
   let name: lexer.Tok = at(toks, i + 1);
@@ -473,8 +399,6 @@ function parse_new(toks: lexer.Tok[], i: i32): SParse {
   return sok(SNew(ast.NewStmt { name: name.text, init: init.node, line: kw.line, col: kw.col }), semi.pos);
 }
 
-// parse_include reads `include "path";`, which is legal both at top
-// level and inside a subroutine body.
 function parse_include(toks: lexer.Tok[], i: i32): SParse {
   let kw: lexer.Tok = at(toks, i);
   let path: lexer.Tok = at(toks, i + 1);
@@ -488,7 +412,6 @@ function parse_include(toks: lexer.Tok[], i: i32): SParse {
   return sok(SInclude(ast.IncludeStmt { path: path.text, line: kw.line, col: kw.col }), semi.pos);
 }
 
-// parse_expr_stmt reads a call evaluated for effect: `std.log("x");`.
 function parse_expr_stmt(toks: lexer.Tok[], i: i32): SParse {
   let t: lexer.Tok = at(toks, i);
   let e: EParse = parse_expr(toks, i);
@@ -502,9 +425,6 @@ function parse_expr_stmt(toks: lexer.Tok[], i: i32): SParse {
   return sok(SExpr(ast.ExprStmt { value: e.node, line: t.line, col: t.col }), semi.pos);
 }
 
-// arm_keyword reports the `elseif` spelling starting at `i`, or "" when
-// no further arm follows. VCL accepts all three, and the printer puts
-// back whichever was written.
 function arm_keyword(toks: lexer.Tok[], i: i32): string {
   let t: lexer.Tok = at(toks, i);
   if (t.word("elseif")) {
@@ -519,7 +439,6 @@ function arm_keyword(toks: lexer.Tok[], i: i32): string {
   return "";
 }
 
-// parse_if reads a whole if/elseif/else chain into one flat IfStmt.
 function parse_if(toks: lexer.Tok[], i: i32): SParse {
   let kw: lexer.Tok = at(toks, i);
   let arms: ast.IfArm[] = [];
@@ -559,7 +478,6 @@ function parse_if(toks: lexer.Tok[], i: i32): SParse {
   return finish_if(toks, pos, arms, kw, inner);
 }
 
-// finish_if attaches the trailing bare `else` block, if there is one.
 function finish_if(toks: lexer.Tok[], pos: i32, arms: ast.IfArm[], kw: lexer.Tok, inner: diag.Diag[]): SParse {
   let no_stmts: ast.Stmt[] = [];
   let empty: ast.Block = ast.Block { stmts: no_stmts, line: 0, col: 0 };
@@ -575,7 +493,6 @@ function finish_if(toks: lexer.Tok[], pos: i32, arms: ast.IfArm[], kw: lexer.Tok
   return sok_with(withelse, eb.pos, concat(inner, eb.errs));
 }
 
-// parse_keyword_stmt routes a leading bare word to its statement parser.
 function parse_keyword_stmt(toks: lexer.Tok[], i: i32, w: string): SParse {
   if (w == "set") {
     return parse_set(toks, i);
@@ -598,9 +515,6 @@ function parse_keyword_stmt(toks: lexer.Tok[], i: i32, w: string): SParse {
   return parse_include(toks, i);
 }
 
-// stmt_keywords is what may open a statement. VCL reserves nothing, so
-// these are recognised by spelling and only in the leading position —
-// `set` is a perfectly good header name anywhere else.
 function stmt_keywords(): string[] {
   return ["set", "unset", "if", "return", "call", "new", "include"];
 }
@@ -609,7 +523,6 @@ function is_keyword_stmt(w: string): boolean {
   return in_list(w, stmt_keywords());
 }
 
-// parse_stmt reads one statement.
 pub function parse_stmt(toks: lexer.Tok[], i: i32): SParse {
   let t: lexer.Tok = at(toks, i);
   if (t.punct("{")) {
@@ -635,8 +548,6 @@ pub function parse_stmt(toks: lexer.Tok[], i: i32): SParse {
   }
 }
 
-// recover_stmt skips to just past the next `;` or to the `}` that ends
-// the enclosing block, so one bad statement costs one diagnostic.
 function recover_stmt(toks: lexer.Tok[], i: i32): i32 {
   let pos: i32 = i;
   while (!at(toks, pos).is_eof()) {
@@ -651,8 +562,6 @@ function recover_stmt(toks: lexer.Tok[], i: i32): i32 {
   return pos;
 }
 
-// parse_block reads `{ stmt* }`, recovering within the block so a later
-// statement's errors are still reported.
 pub function parse_block(toks: lexer.Tok[], i: i32): BParse {
   let open: lexer.Tok = at(toks, i);
   let stmts: ast.Stmt[] = [];
@@ -681,7 +590,6 @@ pub function parse_block(toks: lexer.Tok[], i: i32): BParse {
   return BParse { blk: done, pos: pos + 1, ok: true, err: no_diag(), errs: errs };
 }
 
-// --------------------------------------------------------------- declarations
 struct PParse { blk: ast.PropBlock, pos: i32, ok: boolean, err: diag.Diag }
 
 function perr(msg: string, t: lexer.Tok, pos: i32, props: ast.Prop[]): PParse {
@@ -689,9 +597,6 @@ function perr(msg: string, t: lexer.Tok, pos: i32, props: ast.Prop[]): PParse {
   return PParse { blk: blk, pos: pos, ok: false, err: diag.at(msg, t.line, t.col) };
 }
 
-// parse_prop_block reads a `{ .name = value; … }` body — the shape of a
-// backend, a probe, and an inline `.probe = { … }` alike. A block-valued
-// property may be followed by a `;` or not; Varnish accepts both.
 function parse_prop_block(toks: lexer.Tok[], i: i32): PParse {
   let open: lexer.Tok = at(toks, i);
   let props: ast.Prop[] = [];
@@ -714,9 +619,6 @@ function parse_prop_block(toks: lexer.Tok[], i: i32): PParse {
   return PParse { blk: blk, pos: pos + 1, ok: true, err: no_diag() };
 }
 
-// parse_prop reads one `.name = value;`, appending it to `props`. The
-// accumulator is passed in and returned so a failure still carries the
-// properties read so far, which keeps a partial tree printable.
 function parse_prop(toks: lexer.Tok[], i: i32, props: ast.Prop[]): PParse {
   let name: lexer.Tok = at(toks, i);
   if (!name.is_ident() || !name.text.starts_with(".")) {
@@ -774,8 +676,6 @@ function no_errs(): diag.Diag[] {
   return none;
 }
 
-// parse_vcl reads the `vcl 4.1;` version marker every file must open
-// with. The version is a plain number to the lexer.
 function parse_vcl(toks: lexer.Tok[], i: i32): DParse {
   let kw: lexer.Tok = at(toks, i);
   let ver: lexer.Tok = at(toks, i + 1);
@@ -794,8 +694,6 @@ function parse_vcl(toks: lexer.Tok[], i: i32): DParse {
   }
 }
 
-// parse_import reads `import std;` and the explicit-path form
-// `import kv from "/path/libvmod_kv.so";`.
 function parse_import(toks: lexer.Tok[], i: i32): DParse {
   let kw: lexer.Tok = at(toks, i);
   let name: lexer.Tok = at(toks, i + 1);
@@ -822,8 +720,6 @@ function parse_import(toks: lexer.Tok[], i: i32): DParse {
   return dok(d, pos + 1, no_errs());
 }
 
-// parse_backend reads `backend name { … }` or the VCL 4.1
-// `backend name none;`, which declares a backend that always fails.
 function parse_backend(toks: lexer.Tok[], i: i32): DParse {
   let kw: lexer.Tok = at(toks, i);
   let name: lexer.Tok = at(toks, i + 1);
@@ -878,9 +774,6 @@ function parse_sub(toks: lexer.Tok[], i: i32): DParse {
 
 struct EntryParse { entry: ast.AclEntry, pos: i32, ok: boolean, err: diag.Diag }
 
-// parse_acl_entry reads one ACL line: an optional `!`, a quoted host
-// either bare or wrapped in the VCL 4.1 `( … )` form that defers name
-// resolution to load time, an optional `/bits` mask, and a `;`.
 function parse_acl_entry(toks: lexer.Tok[], i: i32): EntryParse {
   let start: lexer.Tok = at(toks, i);
   let pos: i32 = i;
@@ -956,7 +849,6 @@ function parse_acl(toks: lexer.Tok[], i: i32): DParse {
   return dok(d, pos + 1, no_errs());
 }
 
-// parse_top_include reads a top-level `include "other.vcl";`.
 function parse_top_include(toks: lexer.Tok[], i: i32): DParse {
   let s: SParse = parse_include(toks, i);
   if (!s.ok) {
@@ -972,8 +864,6 @@ function parse_top_include(toks: lexer.Tok[], i: i32): DParse {
   }
 }
 
-// decl_keywords lists what may open a top-level declaration — also the
-// resynchronisation set after a bad one.
 function decl_keywords(): string[] {
   return ["vcl", "import", "include", "backend", "probe", "acl", "sub"];
 }
@@ -1019,9 +909,6 @@ function parse_decl_keyword(toks: lexer.Tok[], i: i32, t: lexer.Tok): DParse {
   return derr("expected a top-level declaration, found " + describe(t), t, i);
 }
 
-// recover_decl resynchronises on the next top-level keyword. It always
-// advances at least one token past `from`, which is what guarantees the
-// top-level loop terminates on input it cannot parse at all.
 function recover_decl(toks: lexer.Tok[], from: i32, at_least: i32): i32 {
   let pos: i32 = from;
   if (pos < at_least) {
@@ -1038,11 +925,6 @@ function recover_decl(toks: lexer.Tok[], from: i32, at_least: i32): i32 {
   return pos;
 }
 
-// parse turns VCL source into declarations plus every diagnostic found:
-// the lexer's, then one per declaration or statement that failed. An
-// empty `diags` is the only signal that the tree is complete — a
-// non-empty one still returns whatever parsed, which is what a formatter
-// or an editor wants.
 pub function parse(src: string): ParseResult {
   let lr: lexer.LexResult = lexer.lex(src);
   let diags: diag.Diag[] = lr.diags;

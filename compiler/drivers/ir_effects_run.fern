@@ -1,13 +1,3 @@
-// compiler/drivers/ir_effects_run.fern — prints the operand-stack effect of
-// every registered op kind, one `| `name` | id | pops | pushes |` row per
-// kind in id order: the instruction table of spec/core.md, read from the
-// tables the verifier and the backends use (ir.op_pops / ir.op_pushes).
-//
-// pops is a count, `n` / `n+1` for a variadic op (the count is its i32
-// immediate), or `—` for an op the stack model does not cover.
-// internal/testing/e2ecompiler/self_host_core_spec_test.go diffs this output
-// against the table in spec/core.md.
-
 import "../ir";
 import "../util";
 

@@ -1,10 +1,10 @@
 import "core/int";
 import "std/i32";
 
-// A named-field variant pattern renames a field the way a struct pattern
-// does: `field: local` binds the field to a local of another name. Fields
-// may be listed in any order and mixed with the shorthand form, in both
-// match forms.
+
+
+
+
 enum Shape {
     Circle { r: i32 },
     Rect { w: i32, h: i32 },

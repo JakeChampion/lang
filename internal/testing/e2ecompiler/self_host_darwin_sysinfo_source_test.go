@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// Execute the actual generated XNU bodies with a mock kernel on both native
-// ISAs. Darwin's sysinfo gate separately checks their real sysctl emission.
 func TestSelfHostDarwinSysinfoSource(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

@@ -10,17 +10,6 @@ import (
 	"testing"
 )
 
-// largeSingleFnProgram builds a single `main` with `n` sequential accumulator
-// statements followed by an `acc == acc` guard that always returns 42. Every
-// statement lowers to a run of IR ops, so the function's op count scales with
-// `n` — the shape behind the #4652 quadratic, where re-lowering every function
-// once PER collect / gate pass (~30×), each paying an O(statements²) ops-array
-// clone, grew peak RSS ≈ 0.16·n² MB until the self-host wasm compile was killed
-// (exit 137).
-//
-// The guard reads `acc` (so the accumulator chain stays live against any DCE)
-// but the result is constant, so the wasm exit code is a fixed 42 regardless of
-// the arithmetic — the assertion doesn't have to mirror the computation.
 func largeSingleFnProgram(n int) string {
 	var b strings.Builder
 	b.WriteString("function main(): i32 {\n    let acc: i32 = 0;\n")
@@ -32,15 +21,6 @@ func largeSingleFnProgram(n int) string {
 	return b.String()
 }
 
-// TestSelfHostLargeFnWasmIR compiles a large single-function module through the
-// self-host wasm IR path and asserts it (a) emits non-empty WAT and (b) runs to
-// exit 42. The point is the SIZE: at 240 statements the pre-#4652 quadratic
-// re-lowering needed ≈ 9 GB of bump arena, well past the 3.875 GiB cap, so the
-// driver was OOM-killed and produced no WAT. With the lower-once cache
-// (the gate's `cache`, threaded through every collect pass) the
-// same compile is linear (≈ 0.3 GB), so this is a regression guard: reintroduce
-// the per-pass re-lowering and the driver OOMs (empty output / signal: killed)
-// instead of emitting a valid module.
 func TestSelfHostLargeFnWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host large-fn wasm IR e2e")
@@ -50,8 +30,6 @@ func TestSelfHostLargeFnWasmIR(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
-	// 240 statements: comfortably past the ~150-statement point where the old
-	// O(passes)·O(statements²) re-lowering exceeded the 3.875 GiB arena.
 	src := []byte(largeSingleFnProgram(240))
 	var cmd *exec.Cmd
 	if len(runner) == 0 {

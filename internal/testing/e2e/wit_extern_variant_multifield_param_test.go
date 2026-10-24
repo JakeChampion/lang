@@ -12,17 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternVariantMultiFieldParamCustomProvider is the *multi-field* `variant`
-// *parameter* gate (docs/WIT-BRING-YOUR-OWN.md): a Fern enum whose cases carry
-// more than one payload — `enum Ev { Click(i32, i32), Key(i32), Close }` — passed
-// to an `@import` extern taking the WIT `variant ev { click(tuple<u32, u32>),
-// key(u32), close }` (a WIT case carries one type, so multiple values go in a
-// tuple, which flattens identically). The canonical join is SlotCount=2 i32 slots;
-// the param wrapper pushes each slot by branching on the box tag — the matching
-// arm's field j, or 0 to pad shorter arms (appendVariantParamMultiField).
-//
-// `take: func(e: ev) -> s32`: click(a,b) → a + b*1000, key(k) → 100000+k,
-// close → -1. The Fern side passes Click(3,4), Key(7), Close.
 func TestExternVariantMultiFieldParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -49,8 +38,6 @@ func TestExternVariantMultiFieldParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// take receives the variant flattened to (disc:i32, slot0:i32, slot1:i32).
-	// click=0 uses both slots; key=1 uses slot0 (slot1 padded); close=2 neither.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (func (export "local:test/sink@0.1.0#take") (param $disc i32) (param $s0 i32) (param $s1 i32) (result i32)

@@ -9,13 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostIRCheckGate pins #4327: the x86-64 driver's IR fast-path used to
-// return emitted assembly BEFORE the asmcore.check_module abort ran, so every
-// IR-eligible module skipped type checking entirely — type-invalid programs
-// compiled cleanly into wrong binaries. The gate now runs ahead of the IR
-// branch (mirroring the arm64 driver's ordering): ill-typed input exits 1
-// with a diagnostic and emits nothing, and valid input still routes through
-// the IR fast-path (the .Lssa_ label marker).
 func TestSelfHostIRCheckGate(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -48,21 +41,9 @@ func TestSelfHostIRCheckGate(t *testing.T) {
 		name string
 		src  string
 	}{
-		// The issue's repro: an Option-returning call in i32 return position.
-		// IR-eligible, so pre-fix it skipped the check and the binary exited
-		// with an Option-box pointer fragment.
 		{"option-as-i32-return", "function find(i: i32): Option[i32] { if (i > 0) { return Some(i); } return None; }\nfunction main(): i32 { return find(3); }"},
-		// Annotated-var mismatch (native E003) — same silent-compile class.
 		{"option-as-i32-var", "function find(i: i32): Option[i32] { if (i > 0) { return Some(i); } return None; }\nfunction main(): i32 { let x: i32 = find(3); return 0; }"},
-		// Assignment mismatch (native E003; the asmcore guard's code was
-		// renumbered E004 -> E003 in this fix).
 		{"option-as-i32-assign", "function find(i: i32): Option[i32] { if (i > 0) { return Some(i); } return None; }\nfunction main(): i32 { let x = 1; x = find(3); return 0; }"},
-		// Bare-map_new chain with a key-kind mismatch (native E038/E003 class):
-		// a NUMBER key dispatched through the string-keyed map_new() chain
-		// (and the __map_new_i32 mirror) used to pass check and
-		// miscompile — the emitted binary SIGSEGV'd. check_map_new_chain now
-		// rejects both directions; a kind-CONSISTENT chain (the Map{…} literal
-		// desugar) stays accepted — see the accept case below.
 		{"mapnew-chain-num-key", "function main(): i32 { let mm: Map[i32, i32] = map_new(8).insert(1, 10); return mm.len(); }"},
 		{"mapnew-i32-chain-str-key", `function main(): i32 { let mm: Map[string, i32] = __map_new_i32(8).insert("a", 1); return mm.len(); }`},
 		{"mapnew-chain-num-key-deep", "function main(): i32 { let mm: Map[i32, i32] = map_new(8).insert(1, 10).insert(2, 20); return mm.len(); }"},
@@ -83,12 +64,6 @@ func TestSelfHostIRCheckGate(t *testing.T) {
 	}
 
 	t.Run("accept-map-literal-desugar", func(t *testing.T) {
-		// The Map{…} literal desugars to the SAME chain shape with a
-		// kind-consistent ctor (__map_new_i32 for number keys) — the chain gate
-		// flags only mismatched kinds, so it must not raise a diagnostic. This
-		// driver loads no imports, so the lowering then refuses core/map's
-		// calls; the program's answer is TestSelfHostMapPrograms'
-		// ir-check-gate/literal-desugar row.
 		_, errOut, _ := run(t, `function main(): i32 { let m: Map[i32, i32] = Map { 1: 40, 2: 2 }; return m.get_or(1, 0) + m.get_or(2, 0); }`)
 		if strings.Contains(string(errOut), "error[") {
 			t.Fatalf("stderr = %q — Map literal desugar false-positived the chain gate", errOut)
@@ -100,8 +75,6 @@ func TestSelfHostIRCheckGate(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("driver exited %d (stderr %q), want 0", code, errOut)
 		}
-		// `.Lssa_` is the x86 IR emitter's label prefix; its presence proves the
-		// module still takes the IR fast-path with the gate ahead of it.
 		if !bytes.Contains(out, []byte(".Lssa_")) {
 			t.Fatal("emitted asm has no .Lssa_ label — valid module no longer emits through the register path")
 		}
@@ -119,9 +92,6 @@ func TestSelfHostIRCheckGate(t *testing.T) {
 	})
 }
 
-// The typed drivers run the emit entry's checks before the lowering, and the
-// entry they hand the module to skips its own copy (#10838): one run per
-// build, counted through FERN_ENTRY_CHECK_TRACE.
 func TestSelfHostIRCheckGateRunsOnce(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

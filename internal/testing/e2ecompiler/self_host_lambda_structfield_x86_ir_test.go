@@ -9,23 +9,6 @@ import (
 	"testing"
 )
 
-// lambdaStructFieldIRCases place a lambda LITERAL in a STRUCT-FIELD value
-// position (the array-element case landed separately in #3036). A bare named
-// function value already lowered there (`[inc]`, `Box { f: inc }` → const_func),
-// but a lambda literal did not: the lift walk (lift_expr_walk) only recursed
-// into call-argument positions, so a lambda inside an array / struct literal was
-// never hoisted and the module bailed. lift_expr_walk now
-// recurses into ExprArray and ExprStructLit, hoisting each no-capture lambda
-// element to a top-level __lam_N (leaving a bare fn-name → const_func), exactly
-// like a no-capture call arg.
-//
-// A CAPTURING lambda in a struct field (`Box { f: (x) => { return x + n; } }`)
-// is the env-box fn-value shape from #3445 — the capturing lambda hoists to a
-// `$cloN` env box `[funcval, caps…]` and `(b.f)(x)` dispatches env-first. The
-// `capturing-*` cases below pin it (it was the last of #3445's three shapes
-// — struct field / call arg / map value — to lack value-pinned coverage; the
-// other two are covered by self_host_asm_ir_path_test.go's `clo-cap-fn-arg`
-// family and self_host_closure_*_ir_test.go's `map-value-closure-captured`).
 var lambdaStructFieldIRCases = []struct {
 	name     string
 	src      string
@@ -34,18 +17,11 @@ var lambdaStructFieldIRCases = []struct {
 	{"one-field", `struct Box { f: (i32) => i32 } function main(): i32 { let b = Box { f: (x: i32): i32 => { return x + 1; } }; return (b.f)(10); }`, 11},
 	{"two-fields", `struct Ops { inc: (i32) => i32, dbl: (i32) => i32 } function main(): i32 { let o = Ops { inc: (x: i32): i32 => { return x + 1; }, dbl: (x: i32): i32 => { return x * 2; } }; return (o.inc)(10) + (o.dbl)(10); }`, 31},
 	{"mixed-scalar-and-fn", `struct Wrap { n: i32, f: (i32) => i32 } function main(): i32 { let w = Wrap { n: 5, f: (x: i32): i32 => { return x * 3; } }; return w.n + (w.f)(10); }`, 35},
-	// #3445 case 1: a CAPTURING lambda in a struct field (captures the local `n`).
 	{"capturing-field", `struct Box { f: (i32) => i32 } function main(): i32 { let n = 10; let b = Box { f: (x: i32): i32 => { return x + n; } }; return (b.f)(7); }`, 17},
-	// Two captured locals in the struct-field closure.
 	{"capturing-two-caps", `struct Box { f: (i32) => i32 } function main(): i32 { let a = 8; let b = 100; let bx = Box { f: (x: i32): i32 => { return x + a + b; } }; return (bx.f)(0); }`, 108},
-	// A capturing closure field alongside a scalar field (the env box and the
-	// i32 field coexist in the struct).
 	{"capturing-mixed-field", `struct Wrap { n: i32, f: (i32) => i32 } function main(): i32 { let k = 3; let w = Wrap { n: 5, f: (x: i32): i32 => { return x * k; } }; return w.n + (w.f)(10); }`, 35},
 }
 
-// TestSelfHostLambdaStructFieldX86IR gates no-capture lambda literals stored in an
-// array / struct on x86-64: each case asserts the program routes through the
-// "ir" path (via asm_pathprobe_run) and that the IR path computes the oracle.
 func TestSelfHostLambdaStructFieldX86IR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

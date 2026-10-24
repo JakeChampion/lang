@@ -1,13 +1,6 @@
 import "std/test";
 import "std/f64";
 
-// tests/stdlib/float_hyperbolic_test.fern — pure-Fern coverage of
-// std/f64.sinh / cosh / tanh: the hyperbolic trig functions, built on the
-// natural exp. Reference values at x=1, odd/even symmetry, the cosh²-sinh²==1
-// identity, and tanh's ±1 saturation. Both f64 and f32. The Go-side
-// TestFloatHyperbolic pins these across interp / x86-64 / arm64; this is the
-// migration-shaped companion.
-
 function test_at_zero(): test.TestOutcome {
   if (!float_near(0.0.sinh(), 0.0)) {
     return test.fail("sinh 0");
@@ -29,7 +22,6 @@ function test_at_one(): test.TestOutcome {
 }
 
 function test_symmetry(): test.TestOutcome {
-  // sinh is odd, cosh is even.
   if (!float_near((0.0 - 1.0).sinh(), 0.0 - 1.1752011936)) {
     return test.fail("sinh odd");
   }
@@ -37,7 +29,6 @@ function test_symmetry(): test.TestOutcome {
 }
 
 function test_identity(): test.TestOutcome {
-  // cosh² - sinh² == 1 for all x.
   let c: f64 = 2.0.cosh();
   let s: f64 = 2.0.sinh();
   return test.assert_eq_f64_near(c * c - s * s, 1.0, 0.001);

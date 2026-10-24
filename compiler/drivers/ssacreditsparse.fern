@@ -1,5 +1,3 @@
-// Mutation support only: preserve physical operand relationships while moving
-// the first call's result close enough to i32 max to catch result+credit offsets.
 import "../ssa";
 
 function id(value: i32, size: i32, pivot: i32): i32 {
@@ -44,7 +42,6 @@ pub function rename(f: ssa.SFunc): ssa.SFunc {
   return ssa.SFunc { ...f, blocks: blocks, nvals: 2147483647 };
 }
 
-// Zero is a hole after rename, even though it remains within the value extent.
 pub function hole(f: ssa.SFunc, mode: i32): ssa.SFunc {
   let blocks: ssa.SBlock[] = [];
   for b in f.blocks {

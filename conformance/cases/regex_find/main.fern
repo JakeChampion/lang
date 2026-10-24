@@ -1,23 +1,23 @@
-// std/regex (#2680) position APIs across the native backends: regex_find
-// returns the leftmost match's start index (None if none), and regex_search
-// returns the leftmost-longest span (start, end). Each check sets a bit;
-// all eight hold → 255.
+
+
+
+
 import "std/regex";
 
 function main(): i32 {
     let r: i32 = 0;
-    if (at(regex.regex_find("cat", "the cat sat"), 4)) { r = r + 1; }      // start index
-    match (regex.regex_find("dog", "the cat sat")) {                      // no match → None
+    if (at(regex.regex_find("cat", "the cat sat"), 4)) { r = r + 1; }
+    match (regex.regex_find("dog", "the cat sat")) {
         Some(_) => {},
         None => { r = r + 2; }
     }
-    if (at(regex.regex_find("[0-9]+", "abc42"), 3)) { r = r + 4; }         // leftmost digit run
-    if (at(regex.regex_find("^the", "the cat"), 0)) { r = r + 8; }         // anchored at 0
+    if (at(regex.regex_find("[0-9]+", "abc42"), 3)) { r = r + 4; }
+    if (at(regex.regex_find("^the", "the cat"), 0)) { r = r + 8; }
 
-    if let Some(m) = regex.regex_search("(a|b)+", "xxabbay") {             // greedy span
+    if let Some(m) = regex.regex_search("(a|b)+", "xxabbay") {
         r = r + 16;
         if (m.start == 2) { r = r + 32; }
-        if (m.end == 6) { r = r + 64; }                                    // "abba" → [2,6)
+        if (m.end == 6) { r = r + 64; }
     }
 
     match (regex.regex_search("zzz", "abc")) {

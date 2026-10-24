@@ -7,42 +7,22 @@ import (
 	"testing"
 )
 
-// annotateWidthCases pin that a checker-typed i64/u64-returning call is a
-// 64-bit value: the annotate pass (#5531) stamps ExprCall.ty ("i64"/"u64").
-// Each case uses the CALL RESULT in a 64-bit op whose answer a truncated-32
-// width would get wrong (the value exceeds 2^32), so the exit code is a direct
-// oracle on the width decision.
 var annotateWidthCases = []struct {
 	name string
 	src  string
 }{
-	// i64 call result mod: 5000000000 % 7 == 2 at 64-bit; a 32-bit truncation
-	// (705032704) % 7 == 5 — so the exit code proves the call typed 64-bit.
 	{"i64_call_mod", `function big(): i64 { return 5000000000; }
-function main(): i32 { return (big() % 7) as i32; }`}, // 2
-	// two i64 calls summed then divided — needs 64-bit through the call results.
+function main(): i32 { return (big() % 7) as i32; }`},
 	{"i64_call_sum_div", `function big(): i64 { return 5000000000; }
-function main(): i32 { return ((big() + big()) / 1000000000) as i32; }`}, // 10
-	// u64 call result mod (bit-63 set value): unsigned 64-bit.
+function main(): i32 { return ((big() + big()) / 1000000000) as i32; }`},
 	{"u64_call_mod", `function bu(): u64 { return 18000000000000000000 as u64; }
-function main(): i32 { return (bu() % 1000000007 as u64) as i32; }`}, // 18000000000000000000 % 1000000007
-	// A u64-SUFFIXED literal in a desugared if-expression branch. check_expr
-	// typed every integer literal i32 whatever its suffix, so check_call_expr
-	// stamped the IIFE i32 and expr_is_u64 — which trusts that tag ahead of its
-	// structural walk — answered false: the chained `>>` took the SIGNED shift
-	// and 0xFFFF… >> 60 came back -1 instead of 15. Only the direct-operand
-	// position was exposed; through a local the slot carries the width.
+function main(): i32 { return (bu() % 1000000007 as u64) as i32; }`},
 	{"u64_suffix_if_expr_shift", `function shifted(c: boolean, p: u64): u64 { return (if (c) { 18446744073709551615u64 } else { p }) >> 60u64; }
-function main(): i32 { return shifted(true, 1u64) as i32; }`}, // 15
-	// The match-EXPRESSION spelling desugars to the same IIFE, and both branches
-	// being literals is what makes check_call_expr's branch types agree — the
-	// shape that stamped a confident, wrong i32.
+function main(): i32 { return shifted(true, 1u64) as i32; }`},
 	{"u64_suffix_match_expr_shift", `function d(c: i32): u64 { return (match (c) { 1 => 18446744073709551615u64, _ => 0u64 }) >> 60u64; }
-function main(): i32 { return d(1) as i32; }`}, // 15
+function main(): i32 { return d(1) as i32; }`},
 }
 
-// TestSelfHostAnnotateWidthIR_X86_64 pins the checker-stamped result type feeding
-// the lowering through the IR path (#5531).
 func TestSelfHostAnnotateWidthIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 

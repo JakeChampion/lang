@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-// Lazy adapters as an iterator trait's default methods, chained left to right
-// (#12113, #6795): `filter`, `map` and `fold` on an array iterator, `map` into
-// another element type, a `filter` called through a trait bound inside a
-// generic function, and two filters that keep nothing. Each adapter's result
-// holds its receiver inside a larger instance with the same methods, so the
-// monomorphisers clone those methods per call rather than per instance.
 const lazyTraitAdaptersSrc = `import "std/i64";
 
 pub trait Iter[T] {

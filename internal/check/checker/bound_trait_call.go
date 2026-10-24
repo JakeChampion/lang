@@ -6,16 +6,11 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// A bound's signature can itself be generic when a default method declares
-// type parameters. Bind those at the call, independently of the receiver's
-// already-bound trait arguments.
 func (c *checker) checkBoundTraitCall(call *ast.Call, method ast.TraitMethod, params []ast.Param, receiver, expected ast.Type, s *scope) ast.Type {
 	sub := map[string]ast.Type{}
 	bind := func(want, actual ast.Type) {
 		candidate := maps.Clone(sub)
 		c.unifyType(want, actual, candidate)
-		// Enclosing type parameters (including Self) remain abstract. Only
-		// the method's own variables can be inferred by this call.
 		for _, tp := range method.TypeParams {
 			if value := candidate[tp]; value != nil {
 				sub[tp] = value

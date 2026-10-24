@@ -10,9 +10,6 @@ import (
 	"testing"
 )
 
-// Every self-host driver must refuse a declaration with no name or parameter type.
-// The parser now records the failed token. The drivers must report that finding
-// before they emit code, including on paths that bypass the checker.
 func TestSelfHostDeclNamesGate(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -30,30 +27,19 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 		reject bool
 		cause  string
 	}{
-		// `use` is the one that actually cost us. The others are keywords a
-		// reasonable person might reach for as an identifier.
 		{"keyword-use", "function use(): i32 { return 1; }\nfunction main(): i32 { return use(); }", true, "expected a name, got"},
 		{"keyword-type", "function type(): i32 { return 1; }\nfunction main(): i32 { return type(); }", true, "expected a name, got"},
 		{"keyword-match", "function match(): i32 { return 1; }\nfunction main(): i32 { return match(); }", true, "expected a name, got"},
 		{"keyword-impl", "function impl(): i32 { return 1; }\nfunction main(): i32 { return impl(); }", true, "expected a name, got"},
 
-		// A parameter with no type (#10260): the parser records it with an
-		// empty type, on a free function, a method and a trait requirement.
 		{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }", true, "expected \":\", got"},
 		{"untyped-impl-self", "trait Conv { function conv(self: Self): i32; }\nstruct A { v: i32 }\nimpl Conv for A { function conv(self): i32 { return 1; } }\nfunction main(): i32 { return 0; }", true, "expected \":\", got"},
 		{"untyped-trait-requirement", "trait Conv { function conv(self): i32; }\nfunction main(): i32 { return 0; }", true, "expected \":\", got"},
 		{"keyword-trait-requirement", "trait Conv { function use(): i32; }\nfunction main(): i32 { return 0; }", true, "expected a name, got"},
-		// A local function's FuncDecl is desugared to a closure, so the parser
-		// reports its untyped parameter through a sentinel instead.
 		{"untyped-local-fn", "function outer(): i32 {\n    function g(y): i32 { return 0; }\n    return g(1);\n}\nfunction main(): i32 { return outer(); }", true, "expected \":\", got"},
-		// The same arm refuses a local declaration parse_func_decl returns
-		// nameless: a keyword name, or any destructured parameter
-		// parse_pattern_param rejects (a missing type, a singleton tuple).
 		{"keyword-local-fn", "function outer(): i32 {\n    function use(): i32 { return 0; }\n    return 1;\n}\nfunction main(): i32 { return outer(); }", true, "expected a name, got"},
 		{"untyped-destructure-local-fn", "function outer(): i32 {\n    function g((a, b)): i32 { return a; }\n    return 1;\n}\nfunction main(): i32 { return outer(); }", true, "its name or signature could not be read"},
 		{"singleton-destructure-local-fn", "function outer(): i32 {\n    function g((a): (i32)): i32 { return a; }\n    return 1;\n}\nfunction main(): i32 { return outer(); }", true, "its name or signature could not be read"},
-		// Declaration parts the parser discards rather than records (#10290):
-		// each is reported through a sentinel at its own token.
 		{"trait-assoc-type-nameless", "trait T { type 123; }\nfunction main(): i32 { return 0; }", true, "malformed associated type declaration: its name could not be read"},
 		{"trait-stray-token", "trait T { 123 }\nfunction main(): i32 { return 0; }", true, "unexpected token in a trait body"},
 		{"impl-assoc-binding-nameless", "trait T { type Item; }\nstruct A { x: i32 }\nimpl T for A { type 123 = i32; }\nfunction main(): i32 { return 0; }", true, "malformed associated type binding: its name could not be read"},
@@ -61,24 +47,15 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 		{"import-alias-keyword", "import \"./lib\" as use;\nfunction main(): i32 { return 0; }", true, "malformed import alias: its name could not be read"},
 		{"pub-use-keyword", "pub use \"./lib\".{use};\nfunction main(): i32 { return 0; }", true, "expected a name, got \"use\""},
 		{"import-resource-nameless", "@import(\"wasi:io@0.2.0\", \"thing\") resource 123;\nfunction main(): i32 { return 0; }", true, "@import only applies to a function or resource declaration"},
-		// An attribute neither parser knows (#11852): named, not read as a
-		// statement at top level.
 		{"unknown-attribute", "@foo\nfunction f(): i32 { return 1; }\nfunction main(): i32 { return f(); }", true, "unknown attribute @foo"},
-		// A keyword where only an identifier is legal (#10292): a const name,
-		// and a trait name in `impl Trait for Type`. A built-in type name,
-		// itself a keyword, stays legal in type position.
 		{"keyword-impl-trait", "struct A { x: i32 }\nimpl use for A { }\nfunction main(): i32 { return 0; }", true, "malformed impl: its trait name could not be read"},
 		{"pathless-import", "import;\nfunction main(): i32 { return 0; }", true, "malformed import: its path could not be read"},
 		{"pathless-reexport", "pub use;\nfunction main(): i32 { return 0; }", true, "malformed re-export: its path could not be read"},
 		{"pathless-import-list", "import x.{a};\nfunction main(): i32 { return 0; }", true, "malformed import: its path could not be read"},
 		{"pathless-reexport-list", "pub use x.{a};\nfunction main(): i32 { return 0; }", true, "malformed re-export: its path could not be read"},
 		{"primitive-impl-type", "trait T { function f(self: Self): i32; }\nimpl T for i32 { function f(self: i32): i32 { return self; } }\nfunction main(): i32 { return 0; }", false, ""},
-		// A parser sentinel: wasm_run has no checked prologue to report it.
 		{"sentinel", "function main(): i32 { return @; }", true, "expected an expression, got"},
 
-		// Controls: ordinary names, a name that merely CONTAINS a keyword, a
-		// receiver method, and `default`, an identifier rather than a keyword —
-		// the gate must not fire on any of them.
 		{"ordinary-name", "function helper(): i32 { return 42; }\nfunction main(): i32 { return helper(); }", false, ""},
 		{"name-containing-keyword", "function usenow(): i32 { return 42; }\nfunction main(): i32 { return usenow(); }", false, ""},
 		{"receiver-method", "struct S { }\nfunction (s: S) twice(): i32 { return 42; }\nfunction main(): i32 { let s = S { }; return s.twice(); }", false, ""},
@@ -87,7 +64,6 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.src + "\n")
 
-			// The Go front end is the oracle for what is legal Fern.
 			nativeOK := exec.Command(interpBin, "-check", writeTemp(t, dir, tc.name+".fern", src)).Run() == nil
 			if nativeOK == tc.reject {
 				t.Fatalf("native -check accepted=%v, want accepted=%v — the fixture no longer means what it says", nativeOK, !tc.reject)
@@ -109,8 +85,6 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 		})
 	}
 
-	// A malformed declaration raises one diagnostic, as on native: what follows
-	// it up to the next declaration is skipped rather than read as new ones.
 	for _, src := range []string{
 		"import x.{a};\nfunction main(): i32 { return 0; }",
 		"pub use x.{a};\nfunction main(): i32 { return 0; }",
@@ -125,8 +99,6 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 	}
 }
 
-// TestSelfHostDeclNamesGateNativeX86_64 is the same refusal on the x86-64
-// stdin driver, which calls the gate before emitting through asm_ir.
 func TestSelfHostDeclNamesGateNativeX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -153,10 +125,6 @@ func TestSelfHostDeclNamesGateNativeX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostDeclNamesGateRawPathsX86_64 covers asm_ir_run, and the driver
-// paths that emit or report without the emitters' checked prologue: the
-// loading drivers' merged, over-budget, per-module, probe and decide paths. Each refuses an untyped parameter, alone or beside a parser sentinel,
-// and a sentinel alone wherever the checker does not report it first.
 func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	irDir := writeSelfHostAsmProject(t)
@@ -199,8 +167,6 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 		{"asm_modload_run", buildSelfHostBin(t, gcc, writeSelfHostModloadProject(t), "drivers/asm_modload_run.fern", "modload"), [][]string{nil, {"-per-module-count"}, {"-ir-probe"}}},
 		{"wasm_modload_run", buildWasmModloadDriver(t, gcc), [][]string{{"-per-module-emit", "0"}, {"-per-module-count"}}},
 	}
-	// Past the 512-function IR budget the default path emits per module, which
-	// skips the emitters' prologue; a sentinel must still be refused there.
 	var overBudget strings.Builder
 	for i := 0; i < 600; i++ {
 		fmt.Fprintf(&overBudget, "function filler%d(): i32 { return %d; }\n", i, i)
@@ -223,7 +189,6 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 			{"untyped", untyped, "expected \":\", got"},
 			{"sentinel-and-untyped", both, "expected \":\", got"},
 			{"sentinel", sentinel, "expected an expression, got"},
-			// The loaders report the parser's message at the failed token.
 			{"keyword-function", "function use(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", "expected a name, got \"use\" (1:10)"},
 			{"keyword-trait-requirement", "trait Conv { function use(): i32; }\nfunction main(): i32 { return 0; }\n", "expected a name, got \"use\" (1:23)"},
 			{"numeric-trait-name", "trait 123 { }\nfunction main(): i32 { return 0; }\n", "expected a name, got \"123\" (1:7)"},
@@ -235,8 +200,6 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 			{"pathless-import", "import;\nfunction main(): i32 { return 0; }\n", "malformed import: its path could not be read (1:7)"},
 			{"keyword-alias", "type match = i32;\nfunction main(): i32 { return 0; }\n", "expected a name, got \"match\" (1:6)"},
 			{"numeric-alias-name", "type 123 = i32;\nfunction main(): i32 { return 0; }\n", "expected a name, got \"123\" (1:6)"},
-			// The one sentinel with a native code names it on every driver,
-			// whether or not a checker runs before the gate.
 			{"valueless-block", "function side(): i32 { return 1; }\nfunction main(): i32 {\n    let x: i32 = { side(); };\n    return x;\n}\n", "E061"},
 		} {
 			mainPath := writeTemp(t, stage, tc.name+".fern", []byte(tc.src))
@@ -256,10 +219,6 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostDeclNamesGateWasmStdinX86_64 covers the wasm stdin drivers
-// TestSelfHostDeclNamesGate does not build, and the playground's emit and
-// -check modes. None needs wasmtime: each refusal comes before any module is
-// emitted.
 func TestSelfHostDeclNamesGateWasmStdinX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -313,14 +272,6 @@ func TestSelfHostDeclNamesGateWasmStdinX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostEmittingDriversRunDeclGates pins that every self-host driver
-// calling an emitter entry point also runs the parse gates
-// (asmcore.parse_errors, or parse_errors_before_check where the checker runs
-// next), the declaration gate among them. The gates cannot live in the emitters, which see the module
-// after the local-function lift has added untyped capture parameters, so each
-// driver carries its own call and a new driver must too. A driver is a file
-// with a main; emitforms.fern is a library its drivers reach the wasm emitter
-// through, so a call into it counts as an emitter call.
 func TestSelfHostEmittingDriversRunDeclGates(t *testing.T) {
 	emits := regexp.MustCompile(`\b(asm_ir|asm_arm64_ir|wasm_ir)\.emit_\w*\(|\bemitforms\.wasm_component\(`)
 	hasMain := regexp.MustCompile(`(?m)^(pub )?function main\(`)
@@ -373,8 +324,6 @@ func writeTemp(t *testing.T, dir, name string, src []byte) string {
 	return p
 }
 
-// runDeclGate runs the driver returning stdout, stderr and the exit code — the
-// gate cases expect a non-zero exit, which runCapture would fatal on.
 func runDeclGate(t *testing.T, runner []string, bin string, stdin []byte, args ...string) ([]byte, string, int) {
 	t.Helper()
 	var cmd *exec.Cmd

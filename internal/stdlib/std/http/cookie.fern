@@ -1,16 +1,4 @@
-// std/http/cookie — cookies as draft-ietf-httpbis-rfc6265bis has them:
-// the `Set-Cookie` a server writes, checked before it reaches the wire; the
-// `Cookie` header a handler reads; and the jar a client keeps, which stores
-// what a response set under the rules a browser applies and writes the
-// `Cookie` header the next request to that site carries.
-//
-//     let c: cookie.SetCookie = cookie.SetCookie { ...cookie.new("session", sid), secure: true };
-//     resp = resp.with_cookie(c)?;                 // Err(CookieError) for a cookie no browser would keep
-//     let sid: Option[string] = req.cookie("session");
-//
-// A jar is reached through the platform: `platform.host().with_jar(cookie.jar())`,
-// or `serve.Config { cookie_jar: true }` for one per worker, and every
-// `plat.http` request then carries and stores cookies as a browser's would.
+// This module reads, writes, and stores HTTP cookies.
 
 import "std/http";
 import "std/headers";
@@ -23,41 +11,24 @@ import "core/int";
 import "std/error";
 import "core/cmp";
 
-// SameSite — the attribute's value; `Unset` leaves it out (a browser then
-// reads Lax), `CrossSite` is `SameSite=None` on the wire.
 pub enum SameSite { Unset, Strict, Lax, CrossSite }
 
-// SetCookie — a response cookie. `path` and `domain` empty leave the
-// attribute out; `max_age` negative leaves it out (a session cookie), 0
-// deletes the cookie; `expires` is a Unix time in seconds, 0 leaving it
-// out. Build with `new` or `delete` and adjust by spread.
 pub struct SetCookie { name: string, value: string, path: string, domain: string, max_age: i32, expires: i64, secure: boolean, http_only: boolean, same_site: SameSite, partitioned: boolean }
 
-// MAX_AGE_CAP — 400 days in seconds, the longest lifetime a browser keeps
-// (rfc6265bis §5.5); a longer `max_age` is refused, and the jar caps what
-// it stores at it.
 pub const MAX_AGE_CAP: i32 = 34560000;
 
-// PAIR_CAP — the most bytes of name and value together a browser keeps.
 pub const PAIR_CAP: i32 = 4096;
 
-// ATTRIBUTE_CAP — the most bytes of one attribute's value a browser keeps.
 pub const ATTRIBUTE_CAP: i32 = 1024;
 
-// new(name, value) — `Path=/`, a session lifetime, `HttpOnly`,
-// `SameSite=Lax`, not `Secure` (plain-http development would otherwise
-// lose every cookie; set it for HTTPS).
 pub function new(name: string, value: string): SetCookie {
   return SetCookie { name: name, value: value, path: "/", domain: "", max_age: -1, expires: 0 as i64, secure: false, http_only: true, same_site: Lax, partitioned: false };
 }
 
-// delete(name) — a cookie that expires `name` now, on `Path=/`.
 pub function delete(name: string): SetCookie {
   return SetCookie { ...new(name, ""), max_age: 0 };
 }
 
-// CookieError — a cookie no browser would keep, refused before the wire:
-// a 500 as a response, since it is the program's mistake.
 pub enum CookieError {
   BadName(string),
   BadValueByte(string),
@@ -105,13 +76,6 @@ impl http.ToResponse for CookieError {
   }
 }
 
-// (c).serialize() — the `Set-Cookie` header value, or why a browser would
-// not keep the cookie: a name that is not a token, a value byte outside
-// the cookie-octets (quotes around the whole value allowed), a Path or
-// Domain with a control byte or a `;`, the pair past 4096 bytes, an
-// attribute past 1024, a Max-Age past 400 days, `__Host-` without
-// Secure, `Path=/` and no Domain, `__Secure-` without Secure,
-// `Partitioned` or `SameSite=None` without Secure.
 pub function (c: SetCookie) serialize(): Result[string, CookieError] {
   __pair_ok(c)?;
   __attributes_ok(c)?;
@@ -210,7 +174,6 @@ function __prefix_ok(c: SetCookie): Result[boolean, CookieError] {
   return Ok(true);
 }
 
-// __is_token: RFC 9110's token, every byte a tchar.
 function __is_token(s: string): boolean {
   let i: i32 = 0;
   while (i < s.len()) {
@@ -222,8 +185,6 @@ function __is_token(s: string): boolean {
   return true;
 }
 
-// __is_tchar: a visible ASCII byte that is not one of RFC 9110's
-// delimiters.
 function __is_tchar(b: i32): boolean {
   if (b < 33 || b > 126) {
     return false;
@@ -231,7 +192,6 @@ function __is_tchar(b: i32): boolean {
   return !"\"(),/:;<=>?@[\\]{}".contains(string_from_bytes_unchecked([b as u8]));
 }
 
-// __is_cookie_value: cookie-octets, optionally between two quotes.
 function __is_cookie_value(v: string): boolean {
   let s: string = v;
   if (s.len() >= 2 && s.starts_with("\"") && s.ends_with("\"")) {
@@ -247,14 +207,10 @@ function __is_cookie_value(v: string): boolean {
   return true;
 }
 
-// __is_cookie_octet: a printable ASCII byte other than space, a quote,
-// a comma, a semicolon and a backslash.
 function __is_cookie_octet(b: i32): boolean {
   return b == 33 || b >= 35 && b <= 43 || b >= 45 && b <= 58 || b >= 60 && b <= 91 || b >= 93 && b <= 126;
 }
 
-// __is_attribute_value: at most 1024 bytes, none a control, a `;` or
-// outside ASCII.
 function __is_attribute_value(v: string): boolean {
   if (v.len() > ATTRIBUTE_CAP) {
     return false;
@@ -270,16 +226,11 @@ function __is_attribute_value(v: string): boolean {
   return true;
 }
 
-// (r).with_cookie(c) — `c` appended as its own `Set-Cookie` header, or
-// `c`'s error.
 pub function (r: HttpResponse) with_cookie(c: SetCookie): Result[HttpResponse, CookieError] {
   let v: string = c.serialize()?;
   return Ok(HttpResponse { ...r, headers: r.headers.append("Set-Cookie", v) });
 }
 
-// (r).cookie(name) — the value of cookie `name` from the request's
-// `Cookie` header(s), the first when it is sent twice, or None. Names are
-// case-sensitive; the value is as sent, quotes and all.
 pub function (r: HttpRequest) cookie(name: string): Option[string] {
   for h in r.headers.get_all("cookie") {
     for pair in h.split(";") {
@@ -294,17 +245,8 @@ pub function (r: HttpRequest) cookie(name: string): Option[string] {
   return None;
 }
 
-// Cookie — one a jar holds: the pair, the domain it reaches (`host_only`
-// when only that host), the path, the flags, when it expires in Unix
-// milliseconds (-1 for a session cookie), and when it was created and
-// last sent.
 pub struct Cookie { name: string, value: string, domain: string, path: string, host_only: boolean, secure: boolean, http_only: boolean, partitioned: boolean, expires: i64, created: i64, accessed: i64 }
 
-// Ignored — why a jar did not store a cookie a response set: it did not
-// parse, named a domain the request's host is not under, a domain that is
-// a public suffix, was Secure over plain http or would replace a Secure
-// cookie over plain http, lacked what its `__Host-` or `__Secure-` prefix
-// requires, or was Partitioned without Secure.
 pub enum Ignored { NotACookie, ForeignDomain, PublicSuffixDomain, InsecureOrigin, SecureKept, PrefixBroken, UnsecuredPartition }
 
 pub function (i: Ignored) message(): string {
@@ -334,26 +276,16 @@ pub function (i: Ignored) message(): string {
   return "";
 }
 
-// Jar — a client's cookies, shared by every copy of the value through
-// `rows` (one cookie per line) as a `fetch.Idle` pool shares its table;
-// `suffix` tells a public suffix, `per_domain` and `total` bound what it
-// keeps, the least recently sent evicted first.
 pub struct Jar { rows: Cell[string], suffix: (string) => boolean, per_domain: i32, total: i32 }
 
-// jar() — an empty jar under the public suffix list, keeping 50 cookies
-// per domain and 3000 in all (rfc6265bis §5.7's floors).
 pub function jar(): Jar {
   return jar_with((host: string): boolean => publicsuffix.is_public_suffix(host), 50, 3000);
 }
 
-// jar_with(suffix, per_domain, total) — a jar with its own public suffix
-// test and bounds.
 pub function jar_with(suffix: (string) => boolean, per_domain: i32, total: i32): Jar {
   return Jar { rows: cell_new(""), suffix: suffix, per_domain: per_domain, total: total };
 }
 
-// (j).store(url, headers, now) — every `Set-Cookie` of a response to
-// `url` stored, at `now` in Unix milliseconds; how many were.
 pub function (j: Jar) store(request_url: string, h: HeaderMap, now: i64): i32 {
   let n: i32 = 0;
   for v in h.get_all("set-cookie") {
@@ -367,10 +299,6 @@ pub function (j: Jar) store(request_url: string, h: HeaderMap, now: i64): i32 {
   return n;
 }
 
-// (j).set(url, set_cookie, now) — one `Set-Cookie` value stored as a
-// browser receiving it from `url` would (rfc6265bis §5.6, §5.7): the
-// cookie as kept, or why it was not. An expired one removes what it names
-// and is Ok.
 pub function (j: Jar) set(request_url: string, set_cookie: string, now: i64): Result[Cookie, Ignored] {
   let u: Url = __url(request_url)?;
   let parsed: __Parsed = __parse(set_cookie, now)?;
@@ -388,10 +316,6 @@ pub function (j: Jar) set(request_url: string, set_cookie: string, now: i64): Re
   return Ok(c);
 }
 
-// (j).header(url, now) — the `Cookie` header value for a request to
-// `url`, the cookies that reach it by domain, path and scheme in
-// rfc6265bis §5.8.3's order (the longer path first, then the earlier
-// created), each marked sent; None when there are none.
 pub function (j: Jar) header(request_url: string, now: i64): Option[string] {
   let u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
   match (url.url_parse(request_url)) {
@@ -422,7 +346,6 @@ pub function (j: Jar) header(request_url: string, now: i64): Option[string] {
   return Some(__pairs(picked));
 }
 
-// (j).all(now) — every cookie not expired at `now`, in the jar's order.
 pub function (j: Jar) all(now: i64): Cookie[] {
   let out: Cookie[] = [];
   for line in j.rows.get().split("\n") {
@@ -436,14 +359,10 @@ pub function (j: Jar) all(now: i64): Cookie[] {
   return out;
 }
 
-// (j).clear() — every cookie dropped.
 pub function (j: Jar) clear(): void {
   j.rows.set("");
 }
 
-// __Parsed — a set-cookie-string read: the pair, the attributes that
-// matter to a jar, and `expires` resolved against now (-1 when neither
-// Max-Age nor Expires was given, 0 for one already past).
 struct __Parsed { name: string, value: string, domain: string, path: string, has_path: boolean, secure: boolean, http_only: boolean, partitioned: boolean, expires: i64, max_age_set: boolean }
 
 function __url(request_url: string): Result[Url, Ignored] {
@@ -461,9 +380,6 @@ function __url(request_url: string): Result[Url, Ignored] {
   return Err(NotACookie);
 }
 
-// __parse is rfc6265bis §5.6: the pair before the first `;`, split at
-// its first `=`, then each attribute; a control byte anywhere, an empty
-// pair or one past 4096 bytes is no cookie.
 function __parse(s: string, now: i64): Result[__Parsed, Ignored] {
   if (__has_ctl(s)) {
     return Err(NotACookie);
@@ -500,8 +416,6 @@ function __has_ctl(s: string): boolean {
   return false;
 }
 
-// __attribute applies one `name=value` (or `name`) attribute, the name
-// compared in any case, a value past 1024 bytes dropped with it.
 function __attribute(p: __Parsed, raw: string, now: i64): __Parsed {
   let name: string = raw.trim();
   let value: string = "";
@@ -538,9 +452,6 @@ function __flag(p: __Parsed, key: string): __Parsed {
   return p;
 }
 
-// __lifetime: Max-Age wins over Expires whatever their order; a Max-Age
-// of zero or less, or an Expires already past, expires the cookie now;
-// either is capped at 400 days from now.
 function __lifetime(p: __Parsed, key: string, value: string, now: i64): __Parsed {
   let cap: i64 = now + MAX_AGE_CAP as i64 * (1000 as i64);
   if (key == "max-age") {
@@ -571,8 +482,6 @@ function __lifetime(p: __Parsed, key: string, value: string, now: i64): __Parsed
   return p;
 }
 
-// __max_age: an optional `-` then digits, as rfc6265bis §5.6.2 reads it;
-// None for anything else.
 function __max_age(v: string): Option[i32] {
   if (v.len() == 0) {
     return None;
@@ -605,11 +514,6 @@ function __min(a: i64, b: i64): i64 {
   return b;
 }
 
-// parse_date(s) — rfc6265bis §5.1.1's cookie-date algorithm, which reads
-// every date format servers have sent: the tokens between delimiters
-// give the time (hh:mm:ss), the day, the month by its first three
-// letters and the year (two digits read as 1970 to 2069), in any order.
-// Unix seconds, or None when a part is missing or out of range.
 pub function parse_date(s: string): Option[i64] {
   let found: i32[] = [0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1];
   for token in __date_tokens(s) {
@@ -627,7 +531,6 @@ pub function parse_date(s: string): Option[i64] {
   return Some(days as i64 * (86400 as i64) + (found[0] * 3600 + found[1] * 60 + found[2]) as i64);
 }
 
-// __year_of reads a two-digit year as 1970 to 2069.
 function __year_of(year: i32): i32 {
   if (year >= 70 && year <= 99) {
     return year + 1900;
@@ -638,8 +541,6 @@ function __year_of(year: i32): i32 {
   return year;
 }
 
-// __date_in_range: every field found, the year from 1601, the day at
-// most 31, the time of day within its fields.
 function __date_in_range(found: i32[], year: i32): boolean {
   if (found[0] < 0 || found[3] < 0 || found[4] < 0 || found[5] < 0 || year < 1601) {
     return false;
@@ -647,8 +548,6 @@ function __date_in_range(found: i32[], year: i32): boolean {
   return found[3] <= 31 && found[0] <= 23 && found[1] <= 59 && found[2] <= 59;
 }
 
-// __date_tokens splits at the delimiters: tab, and every byte 0x20-0x2F,
-// 0x3B-0x40, 0x5B-0x60 and 0x7B-0x7E.
 function __date_tokens(s: string): string[] {
   let out: string[] = [];
   let cur: string = "";
@@ -674,8 +573,6 @@ function __is_date_delimiter(b: i32): boolean {
   return b == 9 || b >= 32 && b <= 47 || b >= 59 && b <= 64 || b >= 91 && b <= 96 || b >= 123 && b <= 126;
 }
 
-// __date_token fills the first of the time, the day, the month and the
-// year the token can be, each taken once.
 function __date_token(found: i32[], token: string): i32[] {
   if (found[0] < 0) {
     match (__time_of(token)) {
@@ -688,8 +585,6 @@ function __date_token(found: i32[], token: string): i32[] {
   return __date_number(found, token);
 }
 
-// __date_number fills the day, the month or the year from a token that
-// is one or two digits, a month's name, or two to four digits.
 function __date_number(found: i32[], token: string): i32[] {
   let digits: i32 = __leading_digits(token);
   if (found[3] < 0 && digits >= 1 && digits <= 2) {
@@ -704,8 +599,6 @@ function __date_number(found: i32[], token: string): i32[] {
   return found;
 }
 
-// __time_of: `h:m:s`, each one or two digits, anything but a digit
-// allowed after the seconds.
 function __time_of(token: string): Option[(i32, i32, i32)] {
   let parts: string[] = token.split(":");
   if (parts.len() < 3) {
@@ -720,8 +613,6 @@ function __time_of(token: string): Option[(i32, i32, i32)] {
   return Some((h, m, s));
 }
 
-// __two_digits is the value of the one or two digits opening `s`, -1
-// when there are none or more; `whole` requires nothing after them.
 function __two_digits(s: string, whole: boolean): i32 {
   let n: i32 = __leading_digits(s);
   if (n < 1 || n > 2 || whole && n != s.len()) {
@@ -730,7 +621,6 @@ function __two_digits(s: string, whole: boolean): i32 {
   return __digits_value(s, n);
 }
 
-// __leading_digits is how many digits open the token.
 function __leading_digits(token: string): i32 {
   let n: i32 = 0;
   while (n < token.len() && token[n] >= 48 && token[n] <= 57) {
@@ -765,12 +655,6 @@ function __month_of(token: string): i32 {
   return 0;
 }
 
-// __place is rfc6265bis §5.7's domain and path steps: a Domain that is
-// a public suffix is refused unless it is the host itself, which is then
-// host-only; a Domain the host is not under is refused; any other Domain,
-// the host's own name included, reaches every host under it; without one
-// the cookie is host-only; a Path not starting with `/` takes the default
-// path.
 function __place(j: Jar, u: Url, p: __Parsed, now: i64): Result[Cookie, Ignored] {
   let host: string = u.host.to_lower();
   let domain: string = host;
@@ -792,10 +676,6 @@ function __place(j: Jar, u: Url, p: __Parsed, now: i64): Result[Cookie, Ignored]
   return Ok(Cookie { name: p.name, value: p.value, domain: domain, path: path, host_only: host_only, secure: p.secure, http_only: p.http_only, expires: p.expires, created: now, accessed: now, partitioned: p.partitioned });
 }
 
-// __secure_shadowed is rfc6265bis §5.7's "leave Secure cookies alone":
-// over plain http a cookie does not replace a Secure one of the same name
-// whose domain covers its own or is under it, and whose path covers its
-// own.
 function __secure_shadowed(all: Cookie[], c: Cookie): boolean {
   for old in all {
     if (old.secure && old.name == c.name && (domain_matches(c.domain, old.domain) || domain_matches(old.domain, c.domain)) && path_matches(c.path, old.path)) {
@@ -805,10 +685,6 @@ function __secure_shadowed(all: Cookie[], c: Cookie): boolean {
   return false;
 }
 
-// __prefixes_ok: `__Secure-` needs Secure; `__Host-` needs Secure, no
-// Domain and a `Path` attribute of `/`; Partitioned needs Secure. A jar
-// matches the prefixes in any case (rfc6265bis §5.4), since a server
-// that miscapitalises one still means it.
 function __prefixes_ok(c: Cookie, has_path: boolean): Result[boolean, Ignored] {
   let name: string = c.name.to_lower();
   if (name.starts_with("__secure-") && !c.secure) {
@@ -823,9 +699,6 @@ function __prefixes_ok(c: Cookie, has_path: boolean): Result[boolean, Ignored] {
   return Ok(true);
 }
 
-// __replaced is `all` with `c` in place of the cookie of its name, domain
-// and path, keeping that one's creation time, or appended; an expired
-// `c` only removes.
 function __replaced(all: Cookie[], c: Cookie): Cookie[] {
   let out: Cookie[] = [];
   let fresh: Cookie = c;
@@ -842,8 +715,6 @@ function __replaced(all: Cookie[], c: Cookie): Cookie[] {
   return out;
 }
 
-// __evicted drops the least recently sent cookies of `domain` past the
-// per-domain bound, then the least recently sent of all past the total.
 function __evicted(all: Cookie[], j: Jar, domain: string): Cookie[] {
   let out: Cookie[] = all;
   while (__count_of(out, domain) > j.per_domain) {
@@ -865,8 +736,6 @@ function __count_of(all: Cookie[], domain: string): i32 {
   return n;
 }
 
-// __without_oldest drops the least recently sent cookie of `domain`, or
-// of any when `domain` is "".
 function __without_oldest(all: Cookie[], domain: string): Cookie[] {
   let pick: i32 = 0 - 1;
   let i: i32 = 0;
@@ -882,9 +751,6 @@ function __without_oldest(all: Cookie[], domain: string): Cookie[] {
   return array.slice(all, 0, pick).concat(array.slice(all, pick + 1, all.len()));
 }
 
-// __reaches is whether `c` goes to a request for `path` on `host`
-// (rfc6265bis §5.8.3): the host itself for a host-only cookie, any host
-// under the domain otherwise; a matching path; https for a Secure one.
 function __reaches(c: Cookie, host: string, path: string, secure: boolean): boolean {
   if (c.host_only && host != c.domain) {
     return false;
@@ -895,8 +761,6 @@ function __reaches(c: Cookie, host: string, path: string, secure: boolean): bool
   return path_matches(path, c.path) && (secure || !c.secure);
 }
 
-// __ordered inserts `c` into `picked`: the longer path first, then the
-// earlier created.
 function __ordered(picked: Cookie[], c: Cookie): Cookie[] {
   let k: i32 = 0;
   while (k < picked.len() && (picked[k].path.len() > c.path.len() || picked[k].path.len() == c.path.len() && picked[k].created <= c.created)) {
@@ -905,8 +769,6 @@ function __ordered(picked: Cookie[], c: Cookie): Cookie[] {
   return array.slice(picked, 0, k).append(c).concat(array.slice(picked, k, picked.len()));
 }
 
-// __pairs writes the header value: `name=value` pairs joined by `; `, a
-// nameless cookie as its value alone.
 function __pairs(picked: Cookie[]): string {
   let out: string = "";
   for c in picked {
@@ -921,8 +783,6 @@ function __pairs(picked: Cookie[]): string {
   return out;
 }
 
-// domain_matches(host, domain) — rfc6265bis §5.1.3: `host` is `domain` or
-// a name under it, never an IP address.
 pub function domain_matches(host: string, domain: string): boolean {
   let h: string = host.to_lower();
   let d: string = domain.to_lower();
@@ -932,8 +792,6 @@ pub function domain_matches(host: string, domain: string): boolean {
   return h.ends_with("." + d) && !__is_ip(h);
 }
 
-// path_matches(request_path, cookie_path) — rfc6265bis §5.1.4: the same
-// path, or the cookie's path a prefix of the request's ending at a `/`.
 pub function path_matches(request_path: string, cookie_path: string): boolean {
   if (request_path == cookie_path) {
     return true;
@@ -944,8 +802,6 @@ pub function path_matches(request_path: string, cookie_path: string): boolean {
   return cookie_path.ends_with("/") || request_path[cookie_path.len()] == 47;
 }
 
-// __is_ip: a bracketless IPv6 address, or a name whose last label is all
-// digits.
 function __is_ip(host: string): boolean {
   if (host.contains(":")) {
     return true;
@@ -954,8 +810,6 @@ function __is_ip(host: string): boolean {
   return labels[labels.len() - 1].is_ascii_numeric();
 }
 
-// __default_path is rfc6265bis §5.1.4: the request path up to its last
-// `/`, or `/` when that leaves nothing.
 function __default_path(u: Url): string {
   let p: string = u.path;
   if (!p.starts_with("/")) {
@@ -970,7 +824,6 @@ function __default_path(u: Url): string {
   return p.slice_snap(0, last);
 }
 
-// __request_path is the URL's path, `/` when it has none.
 function __request_path(u: Url): string {
   if (!u.path.starts_with("/")) {
     return "/";
@@ -978,8 +831,6 @@ function __request_path(u: Url): string {
   return u.path;
 }
 
-// A row is the cookie's fields between bytes of value 1, which no field
-// can hold: a control byte other than tab is refused on the way in.
 function __sep(): string {
   return string_from_bytes_unchecked([1 as u8]);
 }

@@ -1,7 +1,7 @@
-// `@derive(json.FromJson)` over every field shape it decodes: a nested
-// struct through its own derive, an array and an Option through std/json's
-// generic readers, and the integer, float and boolean leaves; each failure
-// names the field it happened in, from the innermost out.
+
+
+
+
 import "std/json";
 @derive(json.Json, json.FromJson)
 struct Address { city: string, zip: i32 }

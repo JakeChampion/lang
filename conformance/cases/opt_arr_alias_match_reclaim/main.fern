@@ -1,24 +1,24 @@
-// An Option[i32[]] ALIASED and then consumed by a match. The alias bind alone
-// used to void the credit: name_escapes_outside_stmt reads `let x = src` as an
-// escape of src, the per-block consuming-match free is declined, and nothing
-// else covers the shape — Option[<flat scalar array>] has only a reassigned
-// class and a non-match-consumed one, and this falls between them. It leaked
-// every round while the identical shape over an enum was clean.
-//
-// Four positions, and the last two are the point: a fix here is one wrong
-// clause away from a DOUBLE free, and the leak checker cannot see one.
-//   both    — src and its alias each consumed by their own match. The alias is
-//             never a credit candidate (its init is an ident, not a fresh
-//             Some), so the source's match is the only free.
-//   unused  — the alias is declared and never read. The bind alone must not
-//             cost the source its credit.
-//   escapes — the alias is RETURNED. The guard must still refuse here: the box
-//             outlives the frame, so freeing it at the match would dangle.
-//             Leaking is the safe direction and what this pins.
-//   twofresh— two independent Options, no aliasing, both freed as before.
-//
-// Sentinels are 251-253, above the `% 113` the success path returns: a sentinel
-// inside that range is indistinguishable from a correct answer landing on it.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 function both(i: i32): i32 {
     let src: Option[i32[]] = Some([i, i + 1]);
     let x: Option[i32[]] = src;

@@ -1,5 +1,5 @@
-// `_` separates digits in every numeric form, and `usize` is a literal
-// suffix like the other integer types (#12707).
+
+
 import "std/i32";
 import "std/i64";
 import "std/u64";

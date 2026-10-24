@@ -9,10 +9,6 @@ import (
 	"testing"
 )
 
-// `take` is inlined into `walk`, and its `Result[Got, Bad]` is split into its
-// parts: every return passes the payloads of the variant it built and a zero
-// for each of the others. A zero's unit is the null word, so the paths that
-// leave the loop must drop the zeros they carry without a call.
 const zeroDropProg = `struct Bad { code: i32, why: string }
 struct Item { tag: i32, body: u8[] }
 enum Got { Whole(Item, i32), More }
@@ -71,7 +67,6 @@ function main(): i32 {
 }
 `
 
-// A release helper called on a constant null, per target.
 var zeroDropCall = map[string]*regexp.Regexp{
 	"x86-64-linux": regexp.MustCompile(`xorl %eax, %eax\n\s+call __fn___sem_(release|drop)_`),
 	"arm64-linux":  regexp.MustCompile(`mov x0, #0\n\s+bl __fn___sem_(release|drop)_`),

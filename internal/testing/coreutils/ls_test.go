@@ -18,21 +18,6 @@ func init() {
 	registerCorpus("vdir", vdirCases)
 }
 
-// lsTree builds the one tree every ls / dir / vdir case reads.
-//
-// ONE tree, not one per side, for the same reason stat's corpus has one:
-// most of what a long listing prints is the machine's answer rather than
-// the utility's — an inode number, a link count, an allocated block
-// count, a timestamp — so two implementations can only be compared on
-// those fields by pointing them at the same inode. Nothing here writes.
-//
-// The timestamps are PINNED, and the set is chosen for the six-month
-// rule. That rule is a fixed 15778476 seconds rather than a calendar
-// offset, so the fixtures sit either side of the 182.62-day mark with
-// most of a day of slack each way — a suite that runs for an hour
-// cannot walk one of them across the boundary. `future` is pinned ahead
-// of now, where GNU has no grace at all and the year format starts at
-// +1 second.
 func lsTree(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -69,11 +54,6 @@ func lsTree(t *testing.T) string {
 		}
 	}
 
-	// The eight S_IFMT kinds a mode column, an indicator and a colour
-	// have to tell apart. A socket and a device node need privilege this
-	// suite does not have, so they are absent: the two kinds the corpus
-	// cannot make are covered by the /dev cases below, which read a tree
-	// the machine already has.
 	write(j("plain"), 3)
 	write(j("empty"), 0)
 	write(j("big"), 100000)
@@ -90,10 +70,6 @@ func lsTree(t *testing.T) string {
 		t.Fatal(err)
 	}
 
-	// The permission and special bits the mode column and the colour
-	// table switch on: setuid with and without the execute bit under it,
-	// setgid the same, an executable, a sticky directory, an
-	// other-writable one, and one that is both.
 	write(j("exe"), 0)
 	write(j("setuid"), 0)
 	write(j("setgid"), 0)
@@ -114,7 +90,6 @@ func lsTree(t *testing.T) string {
 	mkdir(j("d-otherw"), 0o777)
 	mkdir(j("d-sticky-otherw"), os.ModeSticky|0o777)
 
-	// Extensions, for `-X` and for the LS_COLORS suffix rules.
 	write(j("a.c"), 1)
 	write(j("b.h"), 1)
 	write(j("c.txt"), 1)
@@ -122,11 +97,6 @@ func lsTree(t *testing.T) string {
 	write(j("e.tar.gz"), 1)
 	write(j("backup~"), 1)
 
-	// Names the quoting styles and the `-q` substitution have to get
-	// right: a space, an apostrophe, a double quote, a backslash, a
-	// dollar, a tab, a newline, a control byte, and bytes that are not
-	// ASCII. The last four are also what makes a column layout measure
-	// the DISPLAYED width rather than the byte count.
 	write(j("sp ace"), 1)
 	write(j("quo'te"), 1)
 	write(j("dq\"x"), 1)
@@ -137,28 +107,19 @@ func lsTree(t *testing.T) string {
 	write(j("ctl\001x"), 1)
 	write(j("utf8\303\251"), 1)
 
-	// A dotfile, and one whose name sorts before the capitals, for `-a`
-	// / `-A` and for the byte-wise sort having no dot rule.
 	write(j(".dotfile"), 1)
 	write(j(".hidden"), 1)
 	mkdir(j(".dotdir"), 0o755)
 
-	// Names whose byte order and whose filevercmp order differ, which is
-	// the whole of what `-v` has to prove.
 	for _, n := range []string{"Aa", "Bb", "aB", "a_b", "aa", "z1", "z9", "z10", "z100"} {
 		write(j(n), 1)
 	}
 
-	// Sizes for `-S`, including a tie that the name has to break.
 	write(j("s1"), 1)
 	write(j("s5"), 5)
 	write(j("s3a"), 3)
 	write(j("s3b"), 3)
 
-	// Times for `-t` and for the two long-format formats. `recent` and
-	// `older` straddle the 182.62-day window; `epoch` and `y2020` are
-	// far outside it; `future` is ahead of now, which takes the year
-	// format with no grace.
 	now := time.Now().Unix()
 	write(j("t-recent"), 0)
 	write(j("t-older"), 0)
@@ -170,31 +131,20 @@ func lsTree(t *testing.T) string {
 	stamp(j("t-epoch"), 0)
 	stamp(j("t-y2020"), 1577934245)
 	stamp(j("t-future"), now+86400*30)
-	// atime, mtime and ctime all differ, so `-lu` / `-lc` / `-l` cannot
-	// pass by printing one field three times.
 	write(j("t-split"), 0)
 	if err := os.Chtimes(j("t-split"), time.Unix(now-200*86400, 0), time.Unix(now-190*86400, 0)); err != nil {
 		t.Fatal(err)
 	}
 
-	// An empty directory, and one holding a single entry, for the column
-	// layout's degenerate cases and for the `total 0` line.
 	mkdir(j("empty-dir"), 0o755)
 	mkdir(j("one-dir"), 0o755)
 	write(j("one-dir", "only"), 1)
 
-	// A directory whose name needs quoting, for the header's own quoting
-	// rules — where a COLON joins the escaped set and a space does not.
 	mkdir(j("colon:dir"), 0o755)
 	write(j("colon:dir", "in"), 1)
 	mkdir(j("sp dir"), 0o755)
 	write(j("sp dir", "in"), 1)
 
-	// Recursive listings and readlink change access times even though no case
-	// writes. Pin directory and symlink atimes ahead of both mtime and ctime
-	// so Linux relatime cannot change them between the compared processes.
-	// GNU touch -h sets the link's own time, including dangling links. Keep
-	// mtimes and the explicit timestamp edge-case files unchanged.
 	args := append([]string{"-h", "-a", "-d", "@" + strconv.FormatInt(now+30*86400, 10), "--"}, readPaths...)
 	argv := crossArgv(referenceBin(t, "touch"), args...)
 	if out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput(); err != nil {
@@ -204,19 +154,6 @@ func lsTree(t *testing.T) string {
 	return dir
 }
 
-// lsCases is ls(1)'s corpus.
-//
-// The utility is three programs at once — an option scan, a set of
-// sorts, and five output formats — so the corpus is organised the same
-// way: every option on its own first, then the combinations where one
-// changes what another does, then the layout grid, then the errors.
-//
-// Two whole areas are deliberately reachable WITHOUT a terminal, and
-// that is measured rather than assumed. COLUMNS is read even when
-// standard output is a pipe, so `-C -w N` and `COLUMNS=N -C` produce
-// byte-identical output and the column formats need no pty; and
-// `--color=always` / `--hyperlink=always` force what `auto` would
-// decline.
 func lsCases(t *testing.T) []invocation {
 	return listingCases(t, "ls")
 }
@@ -229,10 +166,6 @@ func vdirCases(t *testing.T) []invocation {
 	return listingCases(t, "vdir")
 }
 
-// One corpus for the three programs. `dir` is `ls -C -b` and `vdir` is
-// `ls -l -b`, and the two defaults are all that differs — so running
-// the same argv through each is what proves that, and it multiplies the
-// coverage of every case below by three for free.
 func listingCases(t *testing.T, util string) []invocation {
 	dir := lsTree(t)
 	var cases []invocation
@@ -243,7 +176,6 @@ func listingCases(t *testing.T, util string) []invocation {
 		cases = append(cases, invocation{name: name, args: args, dir: dir, env: envs})
 	}
 
-	// --- one option at a time ---------------------------------------------
 	add("bare")
 	for _, flag := range []string{
 		"-a", "-A", "-b", "-B", "-c", "-C", "-d", "-D", "-F", "-g",
@@ -267,10 +199,6 @@ func listingCases(t *testing.T, util string) []invocation {
 		add("long"+long, long)
 	}
 
-	// --- the long format's columns -----------------------------------------
-	// Each option that adds or drops one, and each that changes which way
-	// a column pads: the owner and group names pad LEFT and `-n`'s
-	// numeric ids pad RIGHT, which is the opposite.
 	add("long-plain", "-l")
 	add("long-all", "-la")
 	add("long-numeric", "-ln")
@@ -289,22 +217,11 @@ func listingCases(t *testing.T, util string) []invocation {
 	add("long-dir-itself", "-ld", "adir")
 	add("long-empty-dir", "-l", "empty-dir")
 
-	// A device node and a socket, which the size column renders as
-	// `major, minor` in two widths of its own. The corpus cannot create
-	// either, so it reads /dev — whose entries both sides see the same
-	// way, and where the majors reach three digits, so the device field
-	// is wider than the file-size one and the two have to be reconciled.
-	// The time column is pinned to the year: on Darwin a write to /dev/null
-	// moves its mtime, so the two sides, run moments apart, printed
-	// different minutes.
 	add("long-dev-null", "-l", "--time-style=+%Y", "/dev/null")
 	add("long-dev-pair", "-l", "--time-style=+%Y", "/dev/null", "/dev/zero")
 	add("long-dev-and-file", "-l", "--time-style=+%Y", "/dev/null", "plain")
 	add("long-dev-numeric", "-ln", "--time-style=+%Y", "/dev/null")
 
-	// --- the block and size units ------------------------------------------
-	// `-k` moves the `total` and `-s` unit and NOT the size column, which
-	// is why `ls -lk` still prints a file size in bytes.
 	add("size-k", "-lk")
 	add("size-k-blocks", "-sk")
 	add("size-human", "-lh")
@@ -323,10 +240,6 @@ func listingCases(t *testing.T, util string) []invocation {
 	env("size-env-posix", []string{"POSIXLY_CORRECT=1"}, "-s")
 	env("size-env-beaten-by-option", []string{"LS_BLOCK_SIZE=K"}, "-s", "-k")
 
-	// --- sorting ------------------------------------------------------------
-	// Every key, each with `-r`, because `-r` swaps the arguments of the
-	// WHOLE comparison and so reverses the name tie-break too: `-Sr` over
-	// two files of one size prints them backwards.
 	for _, key := range []string{"-t", "-S", "-U", "-v", "-X"} {
 		add("sort"+key, key)
 		add("sort"+key+"-reverse", key, "-r")
@@ -348,12 +261,9 @@ func listingCases(t *testing.T, util string) []invocation {
 	add("sort-dirs-first-long", "-l", "--group-directories-first")
 	add("sort-dirs-first-time", "-t", "--group-directories-first")
 
-	// --- which timestamp, and how it renders --------------------------------
 	for _, word := range []string{"atime", "access", "use", "ctime", "status", "mtime", "modification", "birth", "creation"} {
 		add("time-word-"+word, "-l", "--time="+word)
 	}
-	// The birth time, which a filesystem that records none prints as `?`
-	// and sorts before every real one.
 	add("time-birth-full", "-l", "--time=birth", "--full-time")
 	add("sort-time-word-birth", "-t", "--time=birth")
 	add("sort-time-word-birth-reverse", "-tr", "--time=birth")
@@ -379,15 +289,12 @@ func listingCases(t *testing.T, util string) []invocation {
 	env("time-style-env", []string{"TIME_STYLE=long-iso"}, "-l")
 	env("time-style-env-beaten", []string{"TIME_STYLE=long-iso"}, "-l", "--time-style=iso")
 	env("time-style-env-format", []string{"TIME_STYLE=+%Y"}, "-l")
-	// The window is a fixed number of seconds and any future time takes
-	// the year format, so these four files are the whole of the rule.
 	add("time-recent-boundary", "-l", "t-recent", "t-older", "t-epoch", "t-future")
 	add("time-recent-boundary-iso", "-l", "--time-style=iso", "t-recent", "t-older")
 	add("time-split-mtime", "-l", "t-split")
 	add("time-split-atime", "-lu", "t-split")
 	add("time-split-ctime", "-lc", "t-split")
 
-	// --- quoting -------------------------------------------------------------
 	for _, style := range []string{
 		"literal", "shell", "shell-always", "shell-escape",
 		"shell-escape-always", "c", "c-maybe", "escape", "locale", "clocale",
@@ -398,21 +305,12 @@ func listingCases(t *testing.T, util string) []invocation {
 	env("quote-env", []string{"QUOTING_STYLE=shell-escape"})
 	env("quote-env-bogus", []string{"QUOTING_STYLE=bogus"})
 	env("quote-env-beaten", []string{"QUOTING_STYLE=c"}, "--quoting-style=literal")
-	// `-q` substitutes AFTER quoting and only for the three styles that
-	// can leave a non-printable byte behind, so `-q -b` is `-b` and
-	// `-q --quoting-style=shell` leaves a control-byte name unquoted.
 	add("quote-qmark", "-q")
 	add("quote-qmark-escape", "-q", "-b")
 	add("quote-qmark-c", "-q", "-Q")
 	add("quote-qmark-shell", "-q", "--quoting-style=shell")
 	add("quote-qmark-shell-always", "-q", "--quoting-style=shell-always")
 	add("quote-qmark-shell-escape", "-q", "--quoting-style=shell-escape")
-	// A hyperlinked name wearing outer quotes leaves them OUTSIDE the
-	// link, but only under the padding regime: the quote is what the
-	// bare names' leading space lines up with, so it belongs to the
-	// column rather than to the link. Reachable down a pipe, which is
-	// why these are here rather than among the terminal cases — the
-	// aligned formats pad and the other two do not.
 	add("link-quote-outside-C", "--hyperlink=always", "--quoting-style=shell-escape", "-C", "-w", "80")
 	add("link-quote-outside-across", "--hyperlink=always", "--quoting-style=shell-escape", "-x", "-w", "80")
 	add("link-quote-outside-long", "--hyperlink=always", "--quoting-style=shell-escape", "-l")
@@ -428,17 +326,11 @@ func listingCases(t *testing.T, util string) []invocation {
 	add("quote-q-after-show-control", "--show-control-chars", "-q")
 	add("quote-last-wins-b-then-N", "-b", "-N")
 	add("quote-last-wins-N-then-b", "-N", "-b")
-	// The header's set is a COLON, not a space.
 	add("quote-header-colon", "-R", "colon:dir")
 	add("quote-header-colon-escape", "-bR", "colon:dir")
 	add("quote-header-space", "-bR", "sp dir")
 	add("quote-header-styles", "-R", "--quoting-style=shell-always", "colon:dir")
 
-	// --- the layouts ---------------------------------------------------------
-	// A column layout is per-COLUMN widths with a floor of three, a count
-	// that must be strictly under the width, and tab-aware padding — so
-	// the grid sweeps the width across the interesting range at three tab
-	// sizes, in both the down-then-across and across-then-down order.
 	for _, w := range []string{"1", "2", "3", "5", "8", "13", "20", "26", "40", "60", "79", "80", "81", "200"} {
 		add("cols-C-w"+w, "-C", "-w", w)
 		add("cols-x-w"+w, "-x", "-w", w)
@@ -449,8 +341,6 @@ func listingCases(t *testing.T, util string) []invocation {
 		add("cols-tab"+ts+"-across", "-x", "-w", "60", "-T", ts)
 		add("cols-tab"+ts+"-tabsize", "-C", "-w", "60", "--tabsize="+ts)
 	}
-	// A width of zero is unlimited and puts the whole listing on ONE
-	// line, two spaces apart — the same writer `-m` uses with a comma.
 	add("cols-unlimited-C", "-C", "-w", "0")
 	add("cols-unlimited-x", "-x", "-w", "0")
 	add("cols-unlimited-m", "-m", "-w", "0")
@@ -461,14 +351,12 @@ func listingCases(t *testing.T, util string) []invocation {
 	env("cols-env-columns-bogus", []string{"COLUMNS=abc"}, "-C")
 	env("cols-env-columns-empty", []string{"COLUMNS="}, "-C")
 	env("cols-env-columns-zero", []string{"COLUMNS=0"}, "-C")
-	// The frills are part of the measured width.
 	add("cols-with-inode", "-iC", "-w", "60")
 	add("cols-with-blocks", "-sC", "-w", "60")
 	add("cols-with-indicator", "-FC", "-w", "60")
 	add("cols-with-all-frills", "-isFC", "-w", "60")
 	add("cols-qmark-width", "-qC", "-w", "40")
 	add("cols-escape-width", "-bC", "-w", "40")
-	// A single entry, and none at all, in each layout.
 	for _, f := range []string{"-C", "-x", "-m", "-1", "-l"} {
 		add("cols-empty"+f, f, "empty-dir")
 		add("cols-single"+f, f, "one-dir")
@@ -476,19 +364,12 @@ func listingCases(t *testing.T, util string) []invocation {
 	for _, word := range []string{"verbose", "long", "commas", "horizontal", "across", "vertical", "single-column"} {
 		add("format-"+word, "--format="+word, "-w", "60")
 	}
-	// `-1` gives way to a long format that was typed and overrides one
-	// that came from being `vdir`.
 	add("format-1-then-l", "-1", "-l")
 	add("format-l-then-1", "-l", "-1")
 	add("format-C-then-l", "-C", "-l")
 	add("format-l-then-C", "-l", "-C")
 	add("format-m-then-x", "-m", "-x", "-w", "60")
 
-	// --- --zero ---------------------------------------------------------------
-	// It replaces the end of every ENTRY line and of the `total` line,
-	// and nothing else: a directory header keeps its newline. And it
-	// always asks for one per line, so a format option after it wins and
-	// one before it does not.
 	add("zero-plain", "--zero")
 	add("zero-long", "--zero", "-l")
 	add("zero-long-before", "-l", "--zero")
@@ -499,7 +380,6 @@ func listingCases(t *testing.T, util string) []invocation {
 	add("zero-cancels-q", "-q", "--zero")
 	add("zero-then-q", "--zero", "-q")
 
-	// --- indicators -----------------------------------------------------------
 	add("ind-classify", "-F")
 	add("ind-classify-long", "-lF")
 	add("ind-slash", "-p")
@@ -512,13 +392,10 @@ func listingCases(t *testing.T, util string) []invocation {
 	for _, when := range []string{"always", "yes", "force", "never", "no", "none", "auto", "tty", "if-tty"} {
 		add("ind-classify-when-"+when, "--classify="+when)
 	}
-	// `-FC` is two options, not a WHEN of "C": only the long spelling
-	// takes a value.
 	add("ind-classify-short-takes-no-value", "-FC", "-w", "60")
 	add("ind-last-wins", "-p", "-F")
 	add("ind-style-beats-F", "-F", "--indicator-style=slash")
 
-	// --- dereferencing --------------------------------------------------------
 	add("deref-none", "-l", "link_ok", "link_dir", "link_broken")
 	add("deref-all", "-lL", "link_ok", "link_dir", "link_broken")
 	add("deref-all-short", "-L")
@@ -531,7 +408,6 @@ func listingCases(t *testing.T, util string) []invocation {
 	add("deref-link-itself", "-d", "link_dir")
 	add("deref-link-itself-long", "-ld", "link_dir")
 
-	// --- hiding ---------------------------------------------------------------
 	add("hide-backups", "-B")
 	add("hide-ignore", "-I", "a*")
 	add("hide-ignore-twice", "-I", "a*", "-I", "b*")
@@ -545,7 +421,6 @@ func listingCases(t *testing.T, util string) []invocation {
 	add("hide-all-and-almost", "-a", "-A")
 	add("hide-almost-and-all", "-A", "-a")
 
-	// --- operands --------------------------------------------------------------
 	add("operand-file", "plain")
 	add("operand-two-files", "plain", "empty")
 	add("operand-dir", "adir")
@@ -565,7 +440,6 @@ func listingCases(t *testing.T, util string) []invocation {
 	add("operand-empty-long", "-l", "")
 	add("operand-repeated", "plain", "plain")
 
-	// --- recursion --------------------------------------------------------------
 	add("recursive-bare", "-R")
 	add("recursive-dir", "-R", "bdir")
 	add("recursive-long", "-lR", "bdir")
@@ -575,10 +449,6 @@ func listingCases(t *testing.T, util string) []invocation {
 	add("recursive-reverse", "-Rr", "bdir")
 	add("recursive-indicator", "-RF", "bdir")
 
-	// --- --dired -----------------------------------------------------------------
-	// The offsets are byte positions into the whole of standard output,
-	// so a case that changes anything before a name moves them — which is
-	// what makes these worth having one apiece.
 	add("dired-long", "-l", "--dired", "adir")
 	add("dired-long-inode", "-li", "--dired", "adir")
 	add("dired-recursive", "-lR", "--dired", "bdir")
@@ -588,10 +458,6 @@ func listingCases(t *testing.T, util string) []invocation {
 	add("dired-columns", "--dired", "-C", "-w", "60")
 	add("dired-empty", "-l", "--dired", "empty-dir")
 
-	// --- colour --------------------------------------------------------------------
-	// `auto` off a pipe is never, so the corpus forces `always`. The
-	// built-in table is what LS_COLORS unset selects and is NOT what
-	// `dircolors` writes — `mi`, `or`, `ca` and `mh` are unset here.
 	for _, when := range []string{"always", "yes", "force", "never", "no", "none", "auto", "tty", "if-tty"} {
 		env("color-when-"+when, []string{}, "--color="+when)
 	}
@@ -627,18 +493,12 @@ func listingCases(t *testing.T, util string) []invocation {
 	env("color-after-f", []string{"LS_COLORS=di=2"}, "-f", "-t", "--color=always")
 	env("color-f-unsorted", []string{"LS_COLORS=di=2"}, "-f", "--color=always")
 	env("color-before-f", []string{"LS_COLORS=di=2"}, "--color=always", "-f", "-t")
-	// 9.5 cut -f back to -a -U, so it no longer turns the long format,
-	// -s or --hyperlink off along with the sorting.
 	add("f-keeps-long", "-f", "-l")
 	add("f-keeps-blocks", "-f", "-s")
 	add("f-keeps-hyperlink", "-f", "--hyperlink=always")
 	add("f-after-long", "-l", "-f")
 	add("f-alone", "-f")
 
-	// --- --hyperlink ------------------------------------------------------------------
-	// The URI is the CANONICAL path with links resolved, percent-encoded
-	// in lower-case hex — so a symbolic link points at its referent and a
-	// broken one at the name it names.
 	add("hyperlink-always", "--hyperlink=always")
 	add("hyperlink-no-value", "--hyperlink")
 	add("hyperlink-never", "--hyperlink=never")
@@ -648,12 +508,6 @@ func listingCases(t *testing.T, util string) []invocation {
 	add("hyperlink-quoted", "--hyperlink=always", "sp ace", "dollar$x", "utf8\303\251")
 	add("hyperlink-dir", "--hyperlink=always", "adir")
 
-	// --- -f, which is three options at once ---------------------------------------------
-	// `-f` is `-a` plus `-U`, so an unsorted listing carries `.` and `..`
-	// wherever the directory itself holds them. That position is what
-	// read_dir_all exists for (#9279); it is compared byte for byte here
-	// like every other case, and one shared tree is what makes the
-	// comparison meaningful — both sides read the same directory.
 	add("f", "-f")
 	add("f-one-per-line", "-f", "-1")
 	add("f-long", "-f", "-l")
@@ -662,20 +516,10 @@ func listingCases(t *testing.T, util string) []invocation {
 	add("f-then-almost-all", "-f", "-A")
 	add("f-unsorted-almost-all", "-A", "-U")
 	add("f-then-sort-size", "-f", "-S")
-	// `.` and `..` reach the ignore checks like any other name, so -I can
-	// take them out of an `-a` listing while -B cannot.
 	add("all-ignore-every-dotfile", "-a", "-I", ".*")
 	add("all-ignore-dot", "-a", "-I", ".")
 	add("all-ignore-backups", "-a", "-B")
 
-	// --- a real terminal on standard output -----------------------------------------------
-	//
-	// The half of the utility a pipe cannot reach. Four questions change
-	// their answer: the DEFAULT format is columns rather than one per
-	// line, the width comes from the terminal rather than from COLUMNS or
-	// -w, the default QUOTING becomes shell-escape, and `auto` on the two
-	// frills decides yes. The harness runs the terminal at 24x80, so the
-	// width is the case's rather than a fallback's.
 	tty := func(name string, args ...string) {
 		cases = append(cases, invocation{name: name, args: args, dir: dir, ttyOut: true})
 	}
@@ -690,9 +534,6 @@ func listingCases(t *testing.T, util string) []invocation {
 	tty("tty-width-beats-the-terminal", "-w", "40")
 	ttyEnv("tty-columns-env-against-the-terminal", []string{"COLUMNS=40"})
 	ttyEnv("tty-columns-env-zero", []string{"COLUMNS=0"})
-	// A terminal that answers ENDS the width question, so this unparsable
-	// COLUMNS is never looked at and nothing reaches stderr. The warning
-	// the same value draws down a pipe is cols-env-columns-bogus above.
 	ttyEnv("tty-columns-env-bogus", []string{"COLUMNS=abc"})
 	ttyEnv("tty-columns-env-empty", []string{"COLUMNS="})
 	tty("tty-color-auto", "--color=auto")
@@ -705,7 +546,6 @@ func listingCases(t *testing.T, util string) []invocation {
 	tty("tty-one-entry", "plain")
 	tty("tty-empty-dir", "empty-dir")
 
-	// --- errors ---------------------------------------------------------------------------
 	add("err-missing", "nosuchfile")
 	add("err-missing-long", "-l", "nosuchfile")
 	add("err-missing-with-good", "nosuchfile", "plain")
@@ -755,7 +595,6 @@ func listingCases(t *testing.T, util string) []invocation {
 	add("err-zero-and-dired", "--zero", "--dired", "-l")
 	add("err-no-option-after-dashdash", "--", "--all")
 
-	// readdir supplies inodes even when the directory denies entry lookup.
 	if os.Geteuid() != 0 {
 		namesOnly := t.TempDir()
 		if err := os.WriteFile(filepath.Join(namesOnly, "file"), nil, 0o644); err != nil {
@@ -778,7 +617,6 @@ func listingCases(t *testing.T, util string) []invocation {
 		}
 	}
 
-	// --- the write paths -----------------------------------------------------------------
 	cases = append(cases,
 		invocation{name: "write-error-full", args: []string{"-l"}, dir: dir, stdout: stdoutFull},
 		invocation{name: "write-error-closed", args: []string{"-l"}, dir: dir, stdout: stdoutClosed},

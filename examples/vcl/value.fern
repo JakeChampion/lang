@@ -1,29 +1,9 @@
-// examples/vcl/value.fern — VCL's runtime values and its coercion rules.
-//
-// VCL is not dynamically typed the way a scripting language is: every
-// expression has a static type, and the interesting behaviour is in the
-// IMPLICIT conversions between them. `"" + 256KB` is a string because one
-// operand is; `1h - 10s` is a duration because neither is. Those rules
-// live here rather than in the evaluator, because they are the part a
-// checker would need too.
-//
-// The numeric families are kept apart on purpose. INT stays integral —
-// `beresp.status + 1` must not become 200.0 and print as "200.000" — so
-// only a mixed or fractional operation widens to the f64 side.
 import "std/string";
 import "std/i64";
 import "std/f64";
 
-// The VCL types this evaluator represents. DURATION is seconds and BYTES
-// is a byte count, both already normalised from their unit suffix at
-// evaluation time, so nothing downstream carries a unit around.
-//
-// VNone is not a VCL type. It is the value of an unset header, which VCL
-// treats as absent in a boolean context and as "" in a string one — a
-// distinction no other value needs to make.
 pub enum Value { VString(string), VInt(i64), VReal(f64), VDuration(f64), VBytes(i64), VBool(boolean), VBackend(string), VAcl(string), VNone }
 
-// type_name is the VCL spelling of a value's type, for diagnostics.
 pub function type_name(v: Value): string {
   match (v) {
     VString(s) => {
@@ -56,10 +36,6 @@ pub function type_name(v: Value): string {
   }
 }
 
-// to_str is VCL's STRING coercion. Reals and durations print with three
-// decimals, which is what Varnish does and what makes `set
-// resp.http.X-TTL = beresp.ttl;` produce "3600.000" rather than "3600".
-// A total dispatch over Value, one arm per variant.
 // fern-lint: allow cyclomatic-complexity
 pub function to_str(v: Value): string {
   match (v) {
@@ -96,9 +72,6 @@ pub function to_str(v: Value): string {
   }
 }
 
-// to_bool is the BOOL coercion. An unset header is false and a set one is
-// true whatever it contains — `if (req.http.Cookie)` asks whether the
-// header is there, not whether it is non-empty.
 pub function to_bool(v: Value): boolean {
   match (v) {
     VBool(b) => {
@@ -119,8 +92,6 @@ pub function to_bool(v: Value): boolean {
   }
 }
 
-// is_string reports whether a value is on the STRING side of `+`, which
-// is what makes concatenation win over addition.
 function is_string(v: Value): boolean {
   match (v) {
     VString(s) => {
@@ -135,7 +106,6 @@ function is_string(v: Value): boolean {
   }
 }
 
-// as_f64 widens any numeric value for a mixed-family operation.
 function as_f64(v: Value): f64 {
   match (v) {
     VInt(n) => {
@@ -162,7 +132,6 @@ function as_f64(v: Value): f64 {
   }
 }
 
-// as_i64 is the integral view, used only when both operands are integral.
 function as_i64(v: Value): i64 {
   match (v) {
     VInt(n) => {
@@ -177,8 +146,6 @@ function as_i64(v: Value): i64 {
   }
 }
 
-// is_int reports whether a value stays on the integral side of an
-// arithmetic operation.
 function is_int(v: Value): boolean {
   match (v) {
     VInt(n) => {
@@ -193,9 +160,6 @@ function is_int(v: Value): boolean {
   }
 }
 
-// is_duration reports whether an operand carries the DURATION family, so
-// that `1h - 10s` and `10s * 2` both come back as durations rather than
-// as bare reals.
 function is_duration(v: Value): boolean {
   match (v) {
     VDuration(d) => {
@@ -207,7 +171,6 @@ function is_duration(v: Value): boolean {
   }
 }
 
-// wrap_real re-tags an f64 result with the family its operands implied.
 function wrap_real(x: f64, a: Value, b: Value): Value {
   if (is_duration(a) || is_duration(b)) {
     return VDuration(x);
@@ -215,9 +178,6 @@ function wrap_real(x: f64, a: Value, b: Value): Value {
   return VReal(x);
 }
 
-// arith applies a binary arithmetic operator. `+` concatenates when
-// either side is a string; everything else is numeric, integral when both
-// operands are and f64 otherwise.
 pub function arith(op: string, a: Value, b: Value): Result[Value, string] {
   if (op == "+" && (is_string(a) || is_string(b))) {
     return Ok(VString(to_str(a) + to_str(b)));
@@ -231,8 +191,6 @@ pub function arith(op: string, a: Value, b: Value): Result[Value, string] {
   return arith_real(op, as_f64(a), as_f64(b), a, b);
 }
 
-// arith_int keeps INT arithmetic integral, including division: VCL's
-// INT / INT truncates, so `3 / 2` is 1.
 function arith_int(op: string, x: i64, y: i64, a: Value, b: Value): Result[Value, string] {
   if (op == "+") {
     return Ok(retag_int(x + y, a, b));
@@ -252,8 +210,6 @@ function arith_int(op: string, x: i64, y: i64, a: Value, b: Value): Result[Value
   return Err("unknown arithmetic operator '" + op + "'");
 }
 
-// retag_int keeps a BYTES operand's family: `256KB * 2` is a byte count,
-// not a bare integer.
 function retag_int(x: i64, a: Value, b: Value): Value {
   match (a) {
     VBytes(n) => {
@@ -289,9 +245,6 @@ function arith_real(op: string, x: f64, y: f64, a: Value, b: Value): Result[Valu
   return Err("unknown arithmetic operator '" + op + "'");
 }
 
-// equal is `==`. Two values compare as strings when either is one, and
-// numerically otherwise — so `beresp.status == 200` works without the
-// author writing a cast, and `req.method == "GET"` does too.
 pub function equal(a: Value, b: Value): boolean {
   if (is_string(a) || is_string(b)) {
     return to_str(a) == to_str(b);
@@ -308,10 +261,6 @@ pub function equal(a: Value, b: Value): boolean {
   return as_f64(a) == as_f64(b);
 }
 
-// compare orders two values for `<`, `<=`, `>`, `>=`, returning -1, 0, or
-// 1. Ordering is numeric; comparing strings that way is a type error a
-// checker would reject, and here it compares their numeric coercion of
-// zero, so the evaluator rejects it up front instead.
 pub function compare(a: Value, b: Value): Result[i32, string] {
   if (is_string(a) || is_string(b)) {
     return Err("cannot order " + type_name(a) + " and " + type_name(b));
@@ -327,9 +276,6 @@ pub function compare(a: Value, b: Value): Result[i32, string] {
   return Ok(0);
 }
 
-// duration_seconds converts a unit-suffixed duration literal to seconds.
-// VCL's units are fixed: a month is not one of them, and a year is 365
-// days.
 pub function duration_seconds(n: f64, unit: string): Result[f64, string] {
   if (unit == "ms") {
     return Ok(n / 1000.0);
@@ -355,8 +301,6 @@ pub function duration_seconds(n: f64, unit: string): Result[f64, string] {
   return Err("unknown duration unit '" + unit + "'");
 }
 
-// byte_count converts a unit-suffixed size literal to bytes. VCL's
-// multiplier is 1024, so KB here is what other tools spell KiB.
 pub function byte_count(n: f64, unit: string): Result[i64, string] {
   if (unit == "B") {
     return Ok(n as i64);

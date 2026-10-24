@@ -7,22 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Fault injection (docs/DST-PLATFORM-BRIEF.md slice 3) is std/sim's
-// seed-driven fault layer on SimNet endpoints: fail (the real fetch's
-// immediate-"" connect failure), stall (never resolves — exercises
-// with_deadline drops), partial(k) (the first k chunks arrive on
-// schedule, then silence — never resolves), and flaky(p) (each fetch
-// draws once from the sim PRNG; the endpoint's fault fires when the
-// draw lands below p). Every fault outcome is a pure function of the
-// seed and the call order, and sim.sweep_seeds(n, prop) is the replay
-// workflow in miniature: run a property over n seeds, report the first
-// failing one.
-
-// `tests/stdlib/sim_fault_test.fern` is the TAP suite: the four
-// fault modes through gather / with_deadline / a hand drain, the
-// seed-1 flaky(50) golden pattern, same-seed reproducibility +
-// different-seed divergence, and sweep_seeds on both its all-green and
-// first-failing-seed paths. Passing → exit 0.
 func TestRunnerSimFaultExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/sim_fault_test.fern")

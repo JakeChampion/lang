@@ -8,15 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Persistent connections on the production accept loop (#9854): the same
-// bounded loop as the census, driven by e2eharness.HTTPKeepAliveRequests,
-// whose doc comment lists the cases (pipelines beyond the burst and the
-// cap, a half-closed one, a partial request, handlers outlasting the read
-// deadline, a reset peer, a malformed request and one past the field cap,
-// both refused, a chunked request echoed, the HTTP/1.0 and
-// `Connection: close` forms).
-// Every response's `Connection` is checked, every close the server owes is
-// read as EOF, and the census must balance.
 func TestHTTPKeepAlive(t *testing.T) {
 	compiler := buildFernCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
@@ -33,7 +24,6 @@ func TestArm64DarwinHTTPKeepAlive(t *testing.T) {
 	checkHTTPHandlerCensus(t, buildFernCLI(t), "arm64-darwin", func(p string) *exec.Cmd { return exec.Command(p) }, e2eharness.RunHTTPKeepAlive, e2eharness.KeepAliveCycle)
 }
 
-// TestWasmHTTPKeepAlive is the same loop against real wasi:sockets.
 func TestWasmHTTPKeepAlive(t *testing.T) {
 	component := buildLeakCheckCLIComponent(t, e2eharness.WasiHTTPHandlerCensusSource(t, "../../..", e2eharness.KeepAliveCycle), false)
 	out := e2eharness.RunWasiHTTPKeepAlive(t, component, e2eharness.KeepAliveCycle)

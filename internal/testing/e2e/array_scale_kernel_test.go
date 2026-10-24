@@ -4,18 +4,6 @@ import (
 	"testing"
 )
 
-// The scale kernel rewrite (#9735), from the outside.
-//
-// The IR tests prove the rewrite fires where it should and declines where it
-// should not. They cannot prove it computes the same thing: swapping a scalar
-// loop for a vectorised kernel is exactly the transform that gives a
-// plausible-looking wrong answer — the last element or two dropped where the
-// block loop hands over to its tail, or a sign lost on a negative factor.
-//
-// So this compares each rewritten shape against a hand-written loop inside
-// the program, over the lengths where a 4-lane block (x86-64 AVX2) and a
-// 2-lane one (arm64 NEON, wasm v128) hand over to their tails: 0 through 9
-// covers two whole blocks and every tail remainder of both.
 const arrayScaleKernelSrc = `import "std/array";
 
 // Each of these is the shape the kernel takes: one multiply by a literal.
@@ -127,12 +115,6 @@ function main(): i32 {
 }
 `
 
-// 1x/3x/5x/7x = the length at which a scaled shape disagreed with the loop,
-// for the doubling, the negative factor, the zero factor and the named
-// element function; 9x = the result-shape and borrowed-receiver checks;
-// 11x = the variable-bound shape the pass declines, which still has to run;
-// 13x/15x = the captured factor, as a parameter and as a local in the
-// commuted operand order; 17x = the boxed capture the pass declines.
 func TestArm64ScaleKernelMatchesTheLoop(t *testing.T) {
 	if _, code := compileAndRunArm64FreeOn(t, arrayScaleKernelSrc); code != 0 {
 		t.Errorf("scale kernel on arm64: got %d, want 0", code)

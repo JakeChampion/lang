@@ -5,27 +5,9 @@ import (
 	"testing"
 )
 
-// The RUNTIME half of the borrowed-parameter leg (#9291, landed by #9298):
-// `let v = p` where p is an array parameter this frame only borrows takes no
-// reference of its own, because the caller owns p across the whole call and
-// the callee never releases it.
-//
-// TestSelfHostLeakMatrixX86_64 pins a per-round census verdict, which cannot
-// see what actually breaks if the cancellation half-lands: the pair is
-// NET-ZERO, so a missing retain with the
-// sweep dec still in place, or a `.with` mutating the caller's array through
-// the alias, moves the ANSWER and leaves allocs == frees. These cases check
-// the answer alongside the balance — the refused rows assert the caller's
-// buffer is untouched and that the copy carries the new element.
-//
-// Exits confirmed against both oracles (bin/fern -interp and native x86-64);
-// each case re-runs under FERN_SANITIZE=1.
 func borrowedParamAliasCancelCases() []tupleAliasParamCase {
 	return []tupleAliasParamCase{
 		{
-			// The cancelled shape: every mention of v is a read through the
-			// value, so the confinement gate admits it and no retain is
-			// emitted. xs is read after v, on the same borrowed reference.
 			name: "read_through_alias",
 			src: `function g(xs: i32[]): i32 {
     let v: i32[] = xs;
@@ -45,13 +27,6 @@ function main(): i32 {
 			want: 87,
 		},
 		{
-			// REFUSED: the alias is a `.with` receiver. Cancelling the retain
-			// here would leave __fern_arr_cow_inplace seeing rc == 1 and
-			// mutating the CALLER's buffer, so the leg declines and the
-			// retain stands. The round asserts both halves of that — the copy
-			// carries the new element (99 - i) and buf[0] is untouched — so a
-			// widening that admitted this shape reads 1000 per round, not a
-			// census move.
 			name: "with_receiver_refused",
 			src: `function g(xs: i32[]): i32 {
     let v: i32[] = xs;
@@ -75,10 +50,6 @@ function main(): i32 {
 			want: 6,
 		},
 		{
-			// REFUSED: the alias leaves the frame whole. The return hands out
-			// the pointer itself rather than a read through it, which the
-			// confinement gate refuses outright — the caller's buffer is what
-			// comes back, and the retain that pays for it must stand.
 			name: "returned_alias_refused",
 			src: `function g(xs: i32[]): i32[] {
     let v: i32[] = xs;

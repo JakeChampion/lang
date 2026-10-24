@@ -1,9 +1,9 @@
-// now_ns() — wall-clock nanoseconds since the Unix epoch (the i64
-// nanosecond-resolution twin of now_unix_ms). Previously implemented
-// only on native wasm; this fixture locks it in on all four native
-// backends (interp + x86-64 + arm64 + wasm). Two reads of a
-// non-decreasing wall clock satisfy b >= a, so exit 8 proves the
-// runtime is present and well-ordered.
+
+
+
+
+
+
 function main(): i32 {
     let a: i64 = now_ns();
     let b: i64 = now_ns();

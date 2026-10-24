@@ -9,8 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/modload"
 )
 
-// loadCheckFiles is checkFiles for the cases whose diagnostic comes from the
-// loader: a load error is returned rather than failing the test.
 func loadCheckFiles(t *testing.T, files map[string]string, entry string) error {
 	t.Helper()
 	dir := t.TempDir()
@@ -27,10 +25,6 @@ func loadCheckFiles(t *testing.T, files map[string]string, entry string) error {
 	return err
 }
 
-// `mod.Variant` names a variant of one of mod's exported enums, in
-// expression position (a constructor call or a payload-less value) and in
-// pattern position, nested to any depth (#10430). Every case is
-// multi-module because the spelling only exists across a module boundary.
 func TestModuleQualifiedVariant(t *testing.T) {
 	const lib = "pub enum Shape { Circle(i32), Unit, Other(i32) }\n" +
 		"pub function area(s: Shape): i32 { match (s) { Circle(r) => { return r * r; }, Unit => { return 1; }, Shape.Other(n) => { return n; } } }\n" +
@@ -42,8 +36,6 @@ func TestModuleQualifiedVariant(t *testing.T) {
 			"main.fern": "import \"./lib\";\n" +
 				"function main(): i32 {\n" +
 				"    let c: lib.Shape = lib.Circle(3);\n" +
-				// `Other` is also an IoError variant, so the module form is
-				// the only spelling that reaches lib's.
 				"    let o: lib.Shape = lib.Other(5);\n" +
 				"    let total: i32 = 0;\n" +
 				"    match (c) { lib.Circle(r) => { total = total + r; }, _ => { return 1; } }\n" +
@@ -59,8 +51,6 @@ func TestModuleQualifiedVariant(t *testing.T) {
 	})
 
 	t.Run("a public function of the same name wins", func(t *testing.T) {
-		// lib exports both a payload-less variant `Unit` and a function
-		// `Unit()`: the call is the function, as a bare name would be.
 		err, _ := checkFiles(t, map[string]string{
 			"lib.fern": lib,
 			"main.fern": "import \"./lib\";\n" +

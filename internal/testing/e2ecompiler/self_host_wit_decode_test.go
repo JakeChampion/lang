@@ -9,15 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostWitSectionRoundTrip gates the self-host port of the
-// bring-your-own-WIT decoder (compiler/wit_decode.fern, P1 slice
-// 1). It compiles, through the self-host, a driver that walks the real
-// fern.bin component-type payload into sections and re-emits them, and
-// asserts under wasmtime that the result reproduces the input byte-for-byte
-// — the same round-trip the Go decoder's tests use, but executed by the
-// self-hosted compiler. The payload is injected from componenttype (single
-// source of truth; no duplicated hex). Returns 0 on success, a check id
-// otherwise.
 func TestSelfHostWitSectionRoundTrip(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wit-decode e2e")
@@ -32,9 +23,6 @@ func TestSelfHostWitSectionRoundTrip(t *testing.T) {
 	}
 }
 
-// witSectionSelfTestMain builds the Fern driver: a FERN_BIN() returning the
-// real fern.bin payload, plus a main() that round-trips it through
-// wit_reencode_sections and returns 0 iff the bytes match.
 func witSectionSelfTestMain(t *testing.T) string {
 	t.Helper()
 	var sb strings.Builder
@@ -55,11 +43,6 @@ function main(): i32 {
 	return sb.String()
 }
 
-// TestSelfHostWitValtypeRoundTrip gates P1 slice 2 of the self-host WIT
-// decoder port: the value-type grammar (defined types + func types) decoded
-// into a model and re-encoded must reproduce crafted byte vectors, run
-// through the self-host under wasmtime. Returns 0 on success, else a check id
-// (def checks 1..6, func checks 7..8).
 func TestSelfHostWitValtypeRoundTrip(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wit-valtype e2e")
@@ -74,9 +57,6 @@ func TestSelfHostWitValtypeRoundTrip(t *testing.T) {
 	}
 }
 
-// witValtypeSelfTestMain round-trips one crafted vector per defined-type kind
-// and func shape (incl. the result variants, a multi-byte sleb type index,
-// and the empty-named-results func), returning the first failing check id.
 const witValtypeSelfTestMain = `
 function wit_eq(a: i32[], b: i32[]): boolean {
     if (a.len() != b.len()) { return false; }
@@ -107,14 +87,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostWitWorldRoundTrip completes P1 of the self-host WIT decoder
-// port: it compiles, through the self-host, a driver that transcodes the
-// whole type and export sections of BOTH shipped worlds (fern + http) — the
-// full nested component/instance-type + decl/alias/externdesc grammar — and
-// asserts under wasmtime that each reproduces the original section bytes. The
-// payloads are injected from componenttype (single source of truth). This is
-// the self-host mirror of the Go decoder's fern.bin/http.bin round-trip.
-// Returns 0 on success; 1/2 = fern type/export, 3/4 = http type/export.
 func TestSelfHostWitWorldRoundTrip(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wit-world e2e")
@@ -129,7 +101,6 @@ func TestSelfHostWitWorldRoundTrip(t *testing.T) {
 	}
 }
 
-// witPayloadFunc emits a function `fn` returning the world's payload bytes.
 func witPayloadFunc(t *testing.T, fn, world string) string {
 	t.Helper()
 	payload, err := componenttype.PayloadFor(world)
@@ -157,11 +128,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostWitWorldLift gates the self-host P2 lift: extracting the world's
-// imported interface names from the decoded fern world, run through the
-// self-host under wasmtime, must match the 19 fern imports in order. Returns
-// 0 on success, else the 1-based index of the first mismatch (or 99 for a
-// count mismatch).
 func TestSelfHostWitWorldLift(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wit-lift e2e")
@@ -199,12 +165,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostWitEmitWorldImports gates the self-host P2 emit: replaying the
-// decoded world's decls as component sections, with every import kept whole, must
-// reproduce the Go EmitWorldImports bytes exactly (which wasm-tools
-// validates, see the Go tests), run through the self-host under wasmtime.
-// The Go reference is computed and injected so the two implementations are
-// pinned together.
 func TestSelfHostWitEmitWorldImports(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wit-emit e2e")
@@ -228,8 +188,6 @@ func TestSelfHostWitEmitWorldImports(t *testing.T) {
 	}
 }
 
-// witBytesFunc emits a function `fn` returning `b`, which it carries as hex
-// for watbin's hex_to_bytes: a string literal cannot hold a byte above 0x7F.
 func witBytesFunc(fn string, b []byte) string {
 	return fmt.Sprintf("function %s(): i32[] { return hex_to_bytes(\"%x\"); }\n", fn, b)
 }
@@ -253,12 +211,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostWitClassify gates the self-host P2 classifier: deriving each
-// import's lowering kind from the decoded fern world (via the canonical-ABI
-// flattening rules) must match the Go classifier's kinds, run through the
-// self-host under wasmtime. Covers all three kinds and the subtle cases
-// (indirect-return mem, scalar-handle no-opt, heap-result mem+realloc).
-// Returns 0 on success, else the 1-based index of the first mismatch.
 func TestSelfHostWitClassify(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wit-classify e2e")
@@ -294,15 +246,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostWitPrefixLayout gates the self-host import plan's index layout:
-// keeping every interface whole, the component type / instance counts and each
-// interface's instance index must be the Go PrefixLayout /
-// ImportInstanceIndex ones for the decoded fern world. A plan for what a stdout
-// core calls keeps wasi:io/streams for the output-stream it reads and nothing
-// else, and a plan for stat-at keeps only wasi:filesystem/types: the
-// descriptor-stat timestamps' datetime is declared inline rather than read
-// from wasi:clocks/wall-clock. Run through the self-host under wasmtime;
-// returns 0 on success, else a check id.
 func TestSelfHostWitPrefixLayout(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wit-layout e2e")

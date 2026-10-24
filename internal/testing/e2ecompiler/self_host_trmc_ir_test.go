@@ -10,22 +10,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostTrmcIRX86_64 pins the #4352 slice-1 TRMC port: the canonical
-// single-hole modulo-cons shape (`return Cons(g(h), self(t))` under a
-// single-match-on-enum-param body) lowers as a hole-passing loop — each
-// iteration builds the node with a dummy tail (normal op_struct_make, so
-// layout/rc parity is automatic), links it into the previous hole via a plain
-// op_struct_set at the held node's compile-time tail index, rebinds the params,
-// and continues. O(1) stack: a 300k-element inc_all SIGSEGVs pre-port (one frame
-// per element) and completes post-port.
-//
-// Recursive arms may build DIFFERENT variants (#5334) as long as they agree on
-// the hole's PAYLOAD POSITION, which is what makes the link's field index a
-// single constant. Since #5334 the detector also admits `when` guards, a `_`
-// arm, statements before the match and before an arm's tail, a tail `if`/`else`,
-// a bare tail self-call, and a hole that is not the last payload. Tree-shaped
-// bodies (two self-calls) and ctors whose holes sit at different positions keep
-// the plain recursion — the detector bails, which countSelfCalls witnesses.
 func TestSelfHostTrmcIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -58,8 +42,6 @@ func TestSelfHostTrmcIRX86_64(t *testing.T) {
 		return string(asm)
 	}
 
-	// VALUE + BALANCE: the native trmcMapSrc shape — inc_all over build(50),
-	// sum(1..50) = 1275, detector 0.
 	run(t, `enum List { Cons(i32, List), Nil }
 function inc_all(xs: List): List {
     match (xs) {
@@ -72,8 +54,6 @@ function sum(l: List): i32 { let acc: i32 = 0; let cur: List = l; let go: boolea
 function main(): i32 { let ys: List = inc_all(build(50)); if (sum(ys) != 1275) { return 1; } return __rc_underflow_count(); }`,
 		"trmc-value", 0)
 
-	// O(1) STACK: 300k elements — pre-port this SIGSEGVs (verified: exit 139 on
-	// the pre-port driver), post-port it completes with the right sum.
 	run(t, `enum List { Cons(i32, List), Nil }
 function inc_all(xs: List): List {
     match (xs) {
@@ -86,7 +66,6 @@ function sum(l: List): i32 { let acc: i32 = 0; let cur: List = l; let go: boolea
 function main(): i32 { let ys: List = inc_all(build(300000)); if (sum(ys) != 600000) { return 1; } return __rc_underflow_count(); }`,
 		"trmc-deep-stack", 0)
 
-	// STRING-HEAD payloads take the same rewrite (width-0 pointer fields).
 	run(t, `enum SList { SCons(string, SList), SNil }
 function tag_all(xs: SList): SList {
     match (xs) {
@@ -98,8 +77,6 @@ function len_all(l: SList): i32 { let acc: i32 = 0; let cur: SList = l; let go: 
 function main(): i32 { let xs: SList = SCons("ab", SCons("cde", SNil)); let ys: SList = tag_all(xs); if (len_all(ys) != 7) { return 1; } return __rc_underflow_count(); }`,
 		"trmc-string-head", 0)
 
-	// TREE-SHAPED (two self-calls) keeps the plain recursion — detection bails,
-	// values stay correct via the normal path.
 	run(t, `enum Tree { Node(Tree, Tree), Leaf(i32) }
 function deep(t: Tree): Tree {
     match (t) {
@@ -110,27 +87,12 @@ function deep(t: Tree): Tree {
 function main(): i32 { let t: Tree = Node(Leaf(1), Node(Leaf(2), Leaf(3))); let u: Tree = deep(t); match (u) { Node(a, b) => { match (a) { Leaf(x) => { return x; }, Node(c, d) => { return 90; } } }, Leaf(y) => { return 91; } } return 92; }`,
 		"trmc-tree-not-rewritten", 2)
 
-	// MIXED-VARIANT recursive arms (#5334): each arm rebuilds its OWN ctor, so
-	// `score` (which signs Cons and Neg oppositely) separates a correct rewrite
-	// from one that stamped every node with the first arm's variant — the latter
-	// scores 60, not 6. `__rc_underflow_count()` covers the consuming traversal, which
-	// now runs once per recursive arm.
 	run(t, mixedCtorProg(3, 6), "trmc-mixed-ctor-value", 0)
 
-	// …and the O(1)-stack discriminator on the same shape: 200k cells, one frame
-	// per cell without the rewrite.
 	run(t, mixedCtorProg(100000, 200000), "trmc-mixed-ctor-deep", 0)
 
-	// The gate is on the arity of the ctors BUILT, not of the variants matched: a
-	// one-payload `B` cell can be walked (and shallow-freed by the consuming
-	// traversal) while the node built over it is a two-payload `A`.
 	run(t, mixedScrutArityProg(), "trmc-mixed-ctor-narrow-scrutinee", 0)
 
-	// EXCLUDED — recursive ctors whose holes sit at different payload POSITIONS.
-	// The hole is filled by an op_struct_set at a compile-time field index, so the
-	// tail cannot sit at index 1 in one iteration and index 0 in the next; the
-	// detector bails and the self-calls stay in the asm. (Differing ARITY is fine,
-	// as long as the hole index agrees.)
 	asm := run(t, `enum List { Cons(i32, List), Wrap(List), Nil }
 function step(xs: List): List {
     match (xs) {
@@ -146,13 +108,6 @@ function main(): i32 { let xs: List = Cons(1, Wrap(Cons(2, Nil))); if (score(ste
 		t.Errorf("trmc-mixed-hole-pos-not-rewritten: %d call sites to step in the asm, want more than main's one (TRMC must not fire when the hole position differs between arms)", n)
 	}
 
-	// GUARDED arms (#5334). A failing guard falls through to the next arm exactly
-	// as in ordinary match lowering, so what the detector must establish is that
-	// the UNGUARDED arms alone still cover every variant — off the last arm the
-	// loop would otherwise re-enter with the scrutinee unchanged, a hang rather
-	// than a wrong answer. Here the guarded `Cons` has an unguarded `Cons` sibling,
-	// so the chain is total. `1, 0, 3` exercises both arms: 2 + 0 + 4 = 6.
-	// Here and below, the subject is @noinline so main's one call stays a call.
 	asm = run(t, `enum List { Cons(i32, List), Nil }
 @noinline function step(xs: List): List {
     match (xs) {
@@ -168,10 +123,6 @@ function main(): i32 { let xs: List = Cons(1, Cons(0, Cons(3, Nil))); if (score(
 		t.Errorf("trmc-guarded-arm: %d call sites to step in the asm, want 1 (main's) — TRMC must fire on a guarded arm whose variant has an unguarded sibling", n)
 	}
 
-	// MULTI-STATEMENT arm body (#5334), matching native #5344. Only rc-NEUTRAL
-	// statements qualify: the loop returns through its own `return`, which
-	// bypasses the RC sweeps, so anything that could bind a reference-counted
-	// value declines the transform instead of leaking it.
 	asm = run(t, `enum List { Cons(i32, List), Nil }
 @noinline function step(xs: List): List {
     match (xs) {
@@ -187,11 +138,6 @@ function main(): i32 { if (sum(step(build(50))) != 1275) { return 1; } return __
 		t.Errorf("trmc-multi-statement-arm: %d call sites to step in the asm, want 1 (main's) — TRMC must fire on a scalar-only multi-statement arm", n)
 	}
 
-	// SETUP STATEMENTS before the match, one of them an early `return`. They are
-	// emitted INSIDE the loop, because the recursion re-enters them: hoisting them
-	// out would freeze `lim` at its first-call value while the loop advances `n`
-	// underneath it, and `take` would never terminate its take-count.
-	// build(6) = [5,4,3,2,1,0]; take 3, +1 each = [6,5,4] = 15.
 	asm = run(t, `enum List { Cons(i32, List), Nil }
 @noinline function take(xs: List, n: i32): List {
     let lim: i32 = n;
@@ -209,9 +155,6 @@ function main(): i32 { if (sum(take(build(6), 3)) != 15) { return 1; } return __
 		t.Errorf("trmc-setup-statements: %d call sites to take in the asm, want 1 (main's)", n)
 	}
 
-	// A `_` arm as the base case, and a guard clause INSIDE an arm body whose
-	// `return` has to reach the hole machinery rather than the function's real
-	// return. `stop_at_zero` over [3,0,4] keeps only the leading 3.
 	asm = run(t, `enum List { Cons(i32, List), Nil }
 @noinline function stop_at_zero(xs: List): List {
     match (xs) {
@@ -226,10 +169,6 @@ function main(): i32 { let xs: List = Cons(3, Cons(0, Cons(4, Nil))); if (sum(st
 		t.Errorf("trmc-wildcard-and-inner-guard: %d call sites in the asm, want 1 (main's)", n)
 	}
 
-	// TAIL if/else whose true leaf is a BARE self-call — the filter shape, where
-	// the hole stays put and only the params advance. Dropping the negatives from
-	// [-5,4,-3,2,-1,0] leaves [4,2,0] = 6. 200k cells also pins that the mixed
-	// cons/self loop still holds the stack flat.
 	asm = run(t, `enum List { Cons(i32, List), Nil }
 @noinline function drop_neg(xs: List): List {
     match (xs) {
@@ -256,8 +195,6 @@ function sum(l: List): i32 { let acc: i32 = 0; let cur: List = l; let go: boolea
 function main(): i32 { if (sum(drop_neg(build(200000))) != 400000) { return 1; } return __rc_underflow_count(); }`,
 		"trmc-branch-tail-deep", 0)
 
-	// The hole in the FIRST payload rather than the last: the link's field index
-	// is the self-call's payload position, not "the last field".
 	asm = run(t, `enum List { Cons(i32, List), Nil }
 enum Rev { Node(Rev, i32), End }
 @noinline function to_rev(xs: List): Rev {
@@ -275,11 +212,6 @@ function main(): i32 { if (sum_rev(to_rev(build(6))) != 21) { return 1; } return
 	}
 }
 
-// mixedCtorProg is the mixed-variant TRMC shape over `n` Cons/Neg pairs, whose
-// `score` must come out `want`. Cons and Neg carry the same payload arity, so
-// both recursive arms share one tail index; they are signed oppositely by
-// `score`, so a node built under the wrong ctor is a wrong answer, not a
-// coincidence.
 func mixedCtorProg(n, want int) string {
 	return fmt.Sprintf(`enum List { Cons(i32, List), Neg(i32, List), Nil }
 function step(xs: List): List {
@@ -294,11 +226,6 @@ function score(l: List): i32 { let acc: i32 = 0; let cur: List = l; let go: bool
 function main(): i32 { let ys: List = step(build(%d)); if (score(ys) != %d) { return 1; } return __rc_underflow_count(); }`, n, want)
 }
 
-// mixedScrutArityProg walks a list whose `B` cells carry one payload and whose
-// `A` / `Z` cells carry two, rebuilding every cell as a two-payload node. The
-// consuming traversal shallow-frees the `B` box while the loop holds an `A`
-// under construction; `score` signs the three variants apart, so
-// A(2) Z(4) A(7) A(4) scores 2 - 4 + 7 + 4 = 9.
 func mixedScrutArityProg() string {
 	return `enum L { A(i32, L), Z(i32, L), B(L), Nil }
 function step(xs: L): L {
@@ -313,14 +240,10 @@ function score(l: L): i32 { let acc: i32 = 0; let cur: L = l; let go: boolean = 
 function main(): i32 { let xs: L = A(1, Z(5, B(A(3, Nil)))); if (score(step(xs)) != 9) { return 1; } return __rc_underflow_count(); }`
 }
 
-// countSelfCalls counts the sites calling __fn_<name> in emitted x86-64 asm,
-// a tail call's `jmp` to the register entry among them. A TRMC'd function
-// keeps only its callers' call sites; the recursive ones are gone.
 func countSelfCalls(asm, name string) int {
 	return strings.Count(asm, "call __fn_"+name+"\n") + strings.Count(asm, "call __fn_"+name+".r\n") + strings.Count(asm, "jmp __fn_"+name+".r\n")
 }
 
-// TestSelfHostTrmcWasmIR: the wasm sibling through the wasm_ir_run driver.
 func TestSelfHostTrmcWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping TRMC wasm IR e2e")
@@ -355,8 +278,6 @@ function inc_all(xs: List): List {
 function build(n: i32): List { let acc: List = Nil; let i: i32 = 0; while (i < n) { acc = Cons(1, acc); i = i + 1; } return acc; }
 function sum(l: List): i32 { let acc: i32 = 0; let cur: List = l; let go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
 function main(): i32 { let ys: List = inc_all(build(200000)); if (sum(ys) != 400000) { return 1; } return __rc_underflow_count(); }`, 0},
-		// Mixed-variant recursive arms (#5334), value and 200k-deep, on the wasm
-		// layout engine as well as the register one.
 		{"trmc-mixed-ctor-wasm", mixedCtorProg(3, 6), 0},
 		{"trmc-mixed-ctor-deep-wasm", mixedCtorProg(100000, 200000), 0},
 		{"trmc-mixed-ctor-narrow-scrutinee-wasm", mixedScrutArityProg(), 0},
@@ -390,8 +311,6 @@ function main(): i32 { let ys: List = inc_all(build(200000)); if (sum(ys) != 400
 	}
 }
 
-// TestSelfHostTrmcIRArm64: the arm64 sibling under qemu — value + the deep
-// O(1)-stack discriminator.
 func TestSelfHostTrmcIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

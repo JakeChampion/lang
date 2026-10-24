@@ -6,26 +6,6 @@ import (
 	"testing"
 )
 
-// --- A map local borrowed by a TUPLE element keeps its reclaim (#7212) -------
-//
-// `let t: (i32, Map[K, V]) = (i, m)` mentions `m` at a container-element
-// position. The tuple takes no retain for a map element and its child drops
-// skip a bare-ident element, so when the tuple is the ONLY thing aliasing the
-// map and cannot outlive it, the map local itself must still release the
-// mapbox. Without that it has no owner at all:
-//
-//	(i, m), churn 200 rounds   allocs=1000 frees=400  live_bytes=12800   (64 B/round)
-//	the same map with no tuple allocs=1600 frees=1597 live_bytes=64      (flat)
-//
-// Exactly ONE release is owed. The tuple holds a BARE pointer — no retain at
-// construction — so `m` and `t.1` are one box at rc 1. Releasing from both
-// sides would double-free, which is why every case below folds
-// `__rc_underflow_count()` into its exit code: a byte delta alone cannot tell a
-// fixed leak from an over-release.
-
-// mapTupleElemChurn wraps a loop body in the churn/`main` shape every case
-// shares. `rounds` is what the flatness assertion varies; the underflow term is
-// what turns an over-release into an exit code no `want` can collide with.
 func mapTupleElemChurn(prelude, body string, rounds int) string {
 	return fmt.Sprintf(`import "core/map";
 %sfunction churn(n: i32): i32 {
@@ -41,10 +21,6 @@ function main(): i32 { return churn(%d) + __rc_underflow_count() * 100; }
 `, prelude, body, rounds)
 }
 
-// mapTupleElemFlatCases are the shapes the credit now covers. Each must be FLAT
-// — the same live_bytes at 100 and 200 rounds — where the parent leaked 64 B per
-// round per map. Both `want`s of every case were adjudicated against
-// `bin/fern -interp`, never read off the self-host run under test.
 var mapTupleElemFlatCases = []struct {
 	name    string
 	prelude string
@@ -53,11 +29,6 @@ var mapTupleElemFlatCases = []struct {
 	want200 int
 }{
 	{
-		// The shape itself: a fresh map at a tuple element, read back through
-		// the tuple. The tuple is built AFTER the map's last direct mention, so
-		// a PRECISE drop on `m` would free it before `t.1` is read — which is
-		// why only the exit-set gate is overridden and precise_drop_names is
-		// left refusing.
 		name: "basic",
 		body: `        let m: Map[string, i32] = map_new(4);
         let t: (i32, Map[string, i32]) = (i, m);
@@ -66,8 +37,6 @@ var mapTupleElemFlatCases = []struct {
 		want200: 62,
 	},
 	{
-		// The map at element 0. Nothing in the gate keys on position; this pins
-		// that.
 		name: "pos0",
 		body: `        let m: Map[string, i32] = map_new(4);
         let t: (Map[string, i32], i32) = (m, i);
@@ -76,9 +45,6 @@ var mapTupleElemFlatCases = []struct {
 		want200: 62,
 	},
 	{
-		// Two maps in one tuple: two names, two boxes, two releases. The gate
-		// checks EVERY Map-typed position of the host, not just the one the
-		// call is about, so a second map cannot rely on the first's proof.
 		name: "two_maps",
 		body: `        let a: Map[string, i32] = map_new(4);
         let b: Map[string, i32] = map_new(4);
@@ -88,8 +54,6 @@ var mapTupleElemFlatCases = []struct {
 		want200: 62,
 	},
 	{
-		// The SAME map at both positions. One box, two uncounted pointers, one
-		// release — an over-release here would show as +100 in the exit code.
 		name: "same_map_twice",
 		body: `        let m: Map[string, i32] = map_new(4);
         let t: (Map[string, i32], Map[string, i32]) = (m, m);
@@ -98,9 +62,6 @@ var mapTupleElemFlatCases = []struct {
 		want200: 62,
 	},
 	{
-		// A tuple that ALSO carries a fresh array literal, so it is credited
-		// "TUPRC:" and emit_tuple_child_drops runs over it. That walk must free
-		// the array and still skip the map, or the map is released twice.
 		name: "arr_and_map",
 		body: `        let m: Map[string, i32] = map_new(4);
         let t: (i32[], Map[string, i32]) = ([i, i + 1], m);
@@ -109,8 +70,6 @@ var mapTupleElemFlatCases = []struct {
 		want200: 36,
 	},
 	{
-		// The host nested in an `if` body, then in a `match` arm. A use in the
-		// enclosing tail must still be seen.
 		name: "if_host",
 		body: `        if (i % 2 == 0) {
             let m: Map[string, i32] = map_new(4);
@@ -135,8 +94,6 @@ var mapTupleElemFlatCases = []struct {
 		want200: 62,
 	},
 	{
-		// The map ALSO passed as a bare call argument to a borrowing parameter,
-		// which is a borrow too; the reclaim must survive both.
 		name:    "borrow_call_arg",
 		prelude: "function tlen(mm: Map[string, i32]): i32 { return mm.len(); }\n",
 		body: `        let m: Map[string, i32] = map_new(4);
@@ -147,19 +104,12 @@ var mapTupleElemFlatCases = []struct {
 	},
 }
 
-// mapTupleElemHazardCases are the shapes the gate must keep REFUSING. They
-// assert BEHAVIOUR, not bytes: in each of the first three the map box leaves
-// through `t.1`, so a release from the local's sweep would free it under its
-// new owner and SEGFAULT. A leak here is the correct outcome.
 var mapTupleElemHazardCases = []struct {
 	name string
 	src  string
 	want int
 }{
 	{
-		// The element is extracted and RETURNED. `t.1` is a field read on an
-		// ident, which on its own reads as a borrow, so the host looks
-		// non-escaping — only the positional check sees this.
 		name: "payload_returned",
 		src: `import "core/map";
 function pick(i: i32): Map[string, i32] {
@@ -179,7 +129,6 @@ function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
 		want: 41,
 	},
 	{
-		// The same escape routed through a local first.
 		name: "payload_extracted_escapes",
 		src: `import "core/map";
 function pick(i: i32): Map[string, i32] {
@@ -200,9 +149,6 @@ function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
 		want: 41,
 	},
 	{
-		// Extracted but never escaping. Refused anyway: the positional check
-		// asks whether the box gets a second NAME, not whether that name
-		// outlives the frame — the cheap conservative reading.
 		name: "payload_extracted_local",
 		src: mapTupleElemChurn("", `        let m: Map[string, i32] = map_new(4);
         let t: (i32, Map[string, i32]) = (i, m);
@@ -211,9 +157,6 @@ function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
 		want: 41,
 	},
 	{
-		// An identity-carrying method reached THROUGH the tuple: insert hands
-		// back the receiver's own box, so `mm` is a third name for it and the
-		// shape must stay refused.
 		name: "identity_through_tuple",
 		src: mapTupleElemChurn("", `        let m: Map[string, i32] = map_new(4);
         let t: (i32, Map[string, i32]) = (i, m);
@@ -222,7 +165,6 @@ function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
 		want: 82,
 	},
 	{
-		// The tuple itself is moved out by return.
 		name: "tuple_returned",
 		src: `import "core/map";
 function mk(i: i32): (i32, Map[string, i32]) {
@@ -241,8 +183,6 @@ function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
 		want: 41,
 	},
 	{
-		// A second local alias of the map, alongside the tuple. The override is
-		// for tuple-element positions ONLY; anything else still excludes.
 		name: "second_alias",
 		src: mapTupleElemChurn("", `        let m: Map[string, i32] = map_new(4);
         let t: (i32, Map[string, i32]) = (i, m);
@@ -251,7 +191,6 @@ function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
 		want: 41,
 	},
 	{
-		// No tuple ANNOTATION, so nothing says which positions are maps.
 		name: "unannotated_host",
 		src: mapTupleElemChurn("", `        let m: Map[string, i32] = map_new(4);
         let t = (i, m);
@@ -259,8 +198,6 @@ function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
 		want: 41,
 	},
 	{
-		// The host is REASSIGNED, so the tuple binding is not the only thing
-		// that decides what the box is reachable from.
 		name: "host_reassigned",
 		src: mapTupleElemChurn("", `        let m: Map[string, i32] = map_new(4);
         let t: (i32, Map[string, i32]) = (i, m);
@@ -269,8 +206,6 @@ function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
 		want: 10,
 	},
 	{
-		// A `for (k, v) in m` alongside the tuple. Iteration has its own
-		// exclusion and it is not one this override touches.
 		name: "map_iterated",
 		src: mapTupleElemChurn("", `        let m: Map[string, i32] = map_new(4);
         m = m.insert("k", i);
@@ -280,14 +215,6 @@ function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
 		want: 82,
 	},
 	{
-		// The host in a `for` body. The map IS reclaimed here — this is in the
-		// hazard table rather than the flat one because the tuple BOX is not:
-		// a `(i32, Map[K, V])` tuple is neither all-scalar ("TUP:") nor
-		// carrying an rc child ("TUPRC:"), so it earns no box reclaim of its
-		// own, and the something-else that frees it at the other nesting levels
-		// does not reach a for-body local. Measured 208 B/round before, 80 B
-		// after; the no-tuple control at the same nesting is flat, so the
-		// residue is the box, not the map.
 		name: "for_host_box_residue",
 		src: mapTupleElemChurn("", `        for k in 0 .. 2 {
             let m: Map[string, i32] = map_new(4);
@@ -298,11 +225,6 @@ function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
 	},
 }
 
-// TestSelfHostMapTupleElemReclaimX86_64 is the leak gate: every case balances
-// (allocs == frees, live_bytes 0) at both 100 and 200 rounds.
-//
-// Non-vacuity: all eight cases fail this against the parent commit, at 64 B per
-// round per map (128 for two_maps).
 func TestSelfHostMapTupleElemReclaimX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	dir := t.TempDir()
@@ -346,10 +268,6 @@ func TestSelfHostMapTupleElemReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMapTupleElemHazardsX86_64 pins the refusals. A wrong answer or a
-// crash here means the map was freed while the tuple, an extracted local, or the
-// caller still owned it — an over-release, not a leak. Each `want` came from the
-// interpreter.
 func TestSelfHostMapTupleElemHazardsX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range mapTupleElemHazardCases {
@@ -362,12 +280,6 @@ func TestSelfHostMapTupleElemHazardsX86_64(t *testing.T) {
 	}
 }
 
-// mapTupleElemAllCases is every case above as a (name, src, want) triple, for
-// the backend legs — which check the ANSWER and the over-release counter rather
-// than bytes. The self-host x86-64 emitter is the only one that carries the
-// leakcheck census (asm_ir.fern's leak_check_on has no arm64 or wasm sibling),
-// so the byte gate lives in the test above and these two prove the same programs
-// still compute the right thing everywhere.
 func mapTupleElemAllCases() []struct {
 	name string
 	src  string
@@ -395,8 +307,6 @@ func mapTupleElemAllCases() []struct {
 	return out
 }
 
-// TestSelfHostMapTupleElemReclaimArm64 runs them through the self-host arm64
-// backend.
 func TestSelfHostMapTupleElemReclaimArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)
@@ -409,8 +319,6 @@ func TestSelfHostMapTupleElemReclaimArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMapTupleElemReclaimWasm is the wasm leg. Every `want` is well
-// under WASI's 126 ceiling, so an over-release (+100) is still expressible.
 func TestSelfHostMapTupleElemReclaimWasm(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range mapTupleElemAllCases() {

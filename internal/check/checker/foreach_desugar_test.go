@@ -9,11 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// The plain `for x in expr` form parses to an ast.ForEach (parser tests), which
-// the checker lowers by the iterand's type; over an array it is the `.len()` +
-// index C-style loop. These tests pin that the lowering reproduces it exactly
-// (Block of iter/len/idx + a For carrying a step so `continue` advances), and
-// mints unique slot names for nested loops.
 func TestForEachDesugarsToIndexLoop(t *testing.T) {
 	prog, err := parser.Parse(`function f(): i32 {
 		let sum: i32 = 0;
@@ -26,7 +21,6 @@ func TestForEachDesugarsToIndexLoop(t *testing.T) {
 	if _, err := Check(prog); err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	// After Check, the ForEach has been replaced by the desugared Block.
 	blk, ok := prog.Funcs[0].Body.Stmts[1].(*ast.Block)
 	if !ok {
 		t.Fatalf("ForEach should lower to a Block, got %T", prog.Funcs[0].Body.Stmts[1])
@@ -84,11 +78,6 @@ func TestForEachNestedDesugarUniqueSlots(t *testing.T) {
 	}
 }
 
-// A nested named function is an *ast.FuncDecl STATEMENT, whose body is a block
-// the desugar walk has to enter on its own — nothing downstream lowers one, and
-// a surviving ForEach reaches IR, which has no case for it ("ir: unsupported
-// statement *ast.ForEach"). The parse-time desugar walk this replaced had no
-// FuncDecl arm, so every `for..in` inside a local function failed to compile.
 func TestForEachInsideNestedFuncDesugars(t *testing.T) {
 	prog, err := parser.Parse(`function total(xs: i32[]): i32 {
 		function sum(acc: i32): i32 {
@@ -127,9 +116,6 @@ func TestForEachInsideNestedFuncDesugars(t *testing.T) {
 	}
 }
 
-// A foreach over a core/iter Iterator lowers to the `next()` loop: the iterand
-// bound once, then a Loop whose match advances the iterator before the body
-// runs. A range held in a variable is such an Iterator.
 func TestForEachOverIteratorLowersToNextLoop(t *testing.T) {
 	prog, _, err := modload.LoadSource(`import "core/iter";
 function main(): i32 {
@@ -164,9 +150,6 @@ function main(): i32 {
 	}
 }
 
-// Whatever `for` cannot walk is E083 naming the type, in place of the array
-// lowering's `len` and index diagnostics. The same programs are rows of the
-// self-host's TestSelfHostCheckerCodesX86_64.
 func TestForEachNotIterableE083(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{
 		{"struct", "struct Point { x: i32, y: i32 }\nfunction main(): i32 { let p: Point = Point { x: 1, y: 2 }; for c in p { } return 0; }\n", "type Point"},
@@ -190,10 +173,6 @@ func TestForEachNotIterableE083(t *testing.T) {
 	}
 }
 
-// What `for` walks through the iterator protocol checks clean: an adapter
-// chain, a tuple-yielding Iterator under a pattern header, a bounded type
-// parameter, a value whose iter() returns an Iterator, and an OrdMap's
-// entries. The element binds at the Iterator's element type.
 func TestForEachOverIteratorChecks(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"adapter-chain", "import \"core/iter\";\nfunction main(): i32 { let n: i32 = 0; for x in iter.range(0, 9).filter((v: i32): boolean => v > 2) { n = n + x; } return n; }\n"},
@@ -214,8 +193,6 @@ func TestForEachOverIteratorChecks(t *testing.T) {
 	}
 }
 
-// A `for x in xs` inside a `defer` block lowers like any other, so its body is
-// checked and no ForEach survives the check.
 func TestForEachInDeferLowers(t *testing.T) {
 	prog, err := parser.Parse(`function f(xs: i32[]): i32 { defer { for x in xs { let y: i32 = x; } } return 0; }`)
 	if err != nil {

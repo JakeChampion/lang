@@ -10,15 +10,6 @@ import (
 	"time"
 )
 
-// The `poll(fds, timeout_ms)` builtin is the std/task reactor's
-// readiness multiplexer (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1).
-// It marshals a length-prefixed i32[] of fds into a struct pollfd[],
-// requests POLLIN on each, calls the OS poll (x86-64 poll(2) #7;
-// arm64 ppoll(2) #73), and returns the index of the first fd a read
-// would not block on, a hung-up or closed one included (or -1). A regular file is always poll-readable, so a poll over file
-// fds is deterministic — no socket timing in the test.
-//
-// (wasm (wasi:io/poll) follows.)
 func TestPollBuiltin(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -65,7 +56,7 @@ func TestPollBuiltin(t *testing.T) {
     let fds: i32[] = [];
     return poll(fds, 0);
 }`,
-			want: 255, // -1 truncated to the process exit low byte
+			want: 255,
 		},
 	}
 
@@ -81,7 +72,7 @@ func TestPollBuiltin(t *testing.T) {
 	for _, be := range backends {
 		be := be
 		t.Run(be.target, func(t *testing.T) {
-			qemu := be.qemu(t) // skips if no runner for this backend
+			qemu := be.qemu(t)
 			for _, tc := range cases {
 				t.Run(tc.name, func(t *testing.T) {
 					src := filepath.Join(dir, be.target+"_"+tc.name+".fern")
@@ -103,10 +94,6 @@ func TestPollBuiltin(t *testing.T) {
 	}
 }
 
-// A pipe whose write end is closed polls as POLLHUP without POLLIN. A read
-// on it does not block (it reports the end of the stream), so poll counts
-// the fd as ready rather than returning -1, which callers read as a timeout
-// (#11646). The read end reaches the program as fd 3.
 func TestPollHangupIsReady(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -143,9 +130,6 @@ func TestPollHangupIsReady(t *testing.T) {
 	}
 }
 
-// A closed fd polls as POLLNVAL, and an fd the interpreter's epoll set
-// refuses (a regular file) is one a read would not block on either: both
-// count as ready at once rather than as a timeout (#11646).
 func TestPollUnwatchableFdIsReady(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()

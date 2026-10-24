@@ -10,22 +10,8 @@ import (
 	"testing"
 )
 
-// The self-host's syscall numbers are hand-written tables in asmcore.fern's
-// `sysno`, and Go's zsysnum files are a second transcription of the same
-// kernel sources. Comparing them catches a TRANSPOSITION, the one error in a
-// table no behavioural test can see: fsync(2) and fdatasync(2) have identical
-// error contracts, so a program cannot tell which of the two ran, and their
-// Linux numbers are adjacent, which is exactly when a transposition happens.
-//
-// The oracle is read from GOROOT's source rather than taken from
-// `syscall.SYS_*`, which only holds the host's GOARCH, so every table is
-// checked on every host.
-
 const sysnoSrc = "../../../compiler/asmcore.fern"
 
-// sysnoAliases maps a self-host row to the kernel name whose number it
-// carries, where the two differ on purpose (asmcore.fern says why at each
-// row). Go's tables stop before faccessat2, so those rows go unchecked.
 var sysnoAliases = map[string]map[string]string{
 	"sysno_x86_64": {
 		"getdents":  "getdents64",
@@ -43,7 +29,6 @@ var sysnoAliases = map[string]map[string]string{
 	},
 }
 
-// fernSysnoTable reads the `name -> number` rows of the `sysno_*` function fn.
 func fernSysnoTable(t *testing.T, src, fn string) map[string]int {
 	t.Helper()
 	head := "function " + fn + "(name: string): string {"
@@ -68,8 +53,6 @@ func fernSysnoTable(t *testing.T, src, fn string) map[string]int {
 	return out
 }
 
-// goSysnoTable reads the SYS_* constants of GOROOT's zsysnum file `file`,
-// keyed by lower-case name.
 func goSysnoTable(t *testing.T, file string) map[string]int {
 	t.Helper()
 	path := filepath.Join(runtime.GOROOT(), "src", "syscall", file)
@@ -98,8 +81,6 @@ func TestSelfHostSysnoMatchesTheKernelTables(t *testing.T) {
 	} {
 		t.Run(c.fn, func(t *testing.T) {
 			fern, kernel := fernSysnoTable(t, src, c.fn), goSysnoTable(t, c.oracle)
-			// Anchors: a table that stopped matching the row pattern would
-			// otherwise pass on an empty intersection.
 			for _, name := range []string{"read", "write", "fsync", "fdatasync"} {
 				if _, ok := fern[name]; !ok {
 					t.Fatalf("no `%s` row read from %s: the extraction is reading the wrong block", name, c.fn)
@@ -127,12 +108,6 @@ func TestSelfHostSysnoMatchesTheKernelTables(t *testing.T) {
 	}
 }
 
-// TestSelfHostSysnoLinuxTablesPairUp pins that the two Linux tables name the
-// same calls. `sysno` answers a name it has no row for with "-1", which the
-// emit splices in as a real syscall number: the kernel answers ENOSYS, the
-// helper returns as if it had worked, and only the missing effect shows
-// (#8827). The exceptions are the calls arm64 does not have, which its
-// table spells as their replacements.
 func TestSelfHostSysnoLinuxTablesPairUp(t *testing.T) {
 	b, err := os.ReadFile(sysnoSrc)
 	if err != nil {

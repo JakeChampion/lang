@@ -2,8 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A str[] literal mixing string literals and views runs, the literals widened
-// to views at their elements (#10889).
 const strArrayLiteralSrc = `function main(): i32 {
     let owned: string = "ab" + "cd";
     let s: str = slice_unchecked(owned, 1, 3);
@@ -14,7 +12,7 @@ const strArrayLiteralSrc = `function main(): i32 {
 `
 
 func TestSelfHostStrArrayLiteral(t *testing.T) {
-	const want = 85 // 20 + 1 + 4 + 60
+	const want = 85
 	if got := interpExit(t, buildLangBinForInterp(t), strArrayLiteralSrc); got != want {
 		t.Fatalf("interpreter exit %d, want %d", got, want)
 	}

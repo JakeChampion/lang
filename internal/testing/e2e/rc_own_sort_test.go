@@ -4,14 +4,6 @@ import (
 	"testing"
 )
 
-// Dogfood: core/cmp's `own`-taking in-place sorts. `sort_in_place` and
-// `sort_desc_in_place` consume their array argument and return the SAME
-// buffer, sorted — no copy, zero allocation. These exercise the `own` feature
-// (affine + ownership-guard + transfer-by-return) through real stdlib code: a
-// fresh literal is an owned value (passes the E051 guard), the function
-// permutes it in place, and the returned array IS the input box (the own param
-// escapes via `return`, so the exit sweep must not free it).
-
 const ownInplaceSortSrc = `
 import "core/cmp";
 function main(): i32 {
@@ -48,9 +40,6 @@ func TestWASMOwnInplaceSort(t *testing.T) {
 	if got := runWasm(t, ownInplaceSortSrc); got != 0 {
 		t.Errorf("in-place own sort: got %d, want 0", got)
 	}
-	// Bounded: the in-place sort doesn't allocate an output buffer (it returns
-	// the input box), so a sort loop holds a flat high-water rather than leaking
-	// a fresh sorted array per iteration.
 	bump := func(n string) string {
 		return `
 import "core/cmp";

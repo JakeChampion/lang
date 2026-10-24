@@ -2,19 +2,6 @@ import "std/test";
 import "std/async";
 import "std/time";
 
-// tests/stdlib/async_combinators_test.fern — the supported
-// structured-concurrency surface (docs/ASYNC-REDESIGN.md): the
-// `gather` / `race` / `with_deadline` combinators over `Future[T]`.
-//
-// These exercise the PORTABLE contract — fan-outs of already-`Ready`
-// futures, which resolve on every backend (interp / wasm / native).
-// `Pending` (real-fd) futures are proven separately in the Go e2e
-// suite (async_combinators_test.go, async_fetch_future_test.go) since
-// they need real sockets.
-//
-// Run:  fern -interp tests/stdlib/async_combinators_test.fern
-
-// gather collects every future's value in input order.
 function test_gather_all(): test.TestOutcome {
   let fs: async.Future[i32][] = [Ready(5), Ready(7), Ready(30)];
   let got: i32[] = async.gather(fs, -1);
@@ -24,16 +11,12 @@ function test_gather_all(): test.TestOutcome {
   return test.assert_eq(got[0] + got[1] + got[2], 42);
 }
 
-// gather over string futures — generic over T (the i32-throughout
-// restriction is gone).
 function test_gather_strings(): test.TestOutcome {
   let fs: async.Future[string][] = [Ready("hello"), Ready("world")];
   let got: string[] = async.gather(fs, "");
   return test.assert_eq(got[0] + "-" + got[1], "hello-world");
 }
 
-// race returns (winnerIndex, value); an already-Ready future at the
-// lowest index wins immediately.
 function test_race_first_ready(): test.TestOutcome {
   let fs: async.Future[i32][] = [Ready(9), Ready(8), Ready(7)];
   let (w, v) = async.race(fs, -1);
@@ -43,8 +26,6 @@ function test_race_first_ready(): test.TestOutcome {
   return test.assert_eq(v, 9);
 }
 
-// with_deadline returns Option[T] per future: Some for ready, None for
-// timed out. All ready here (none miss the budget) → all Some.
 function test_deadline_all_ready(): test.TestOutcome {
   let fs: async.Future[i32][] = [Ready(40), Ready(2)];
   let got: Option[i32][] = async.with_deadline(time.duration_millis(50), fs);
@@ -64,16 +45,12 @@ function test_deadline_all_ready(): test.TestOutcome {
   return test.assert_eq(sum, 42);
 }
 
-// An empty fan-out gathers to an empty result.
 function test_gather_empty(): test.TestOutcome {
   let fs: async.Future[i32][] = [];
   let got: i32[] = async.gather(fs, -1);
   return test.assert_eq(got.len(), 0);
 }
 
-// `parks()` says what a task that waits on a descriptor nothing writes to
-// does: parks (Suspended) under a scheduler, returns at its bound (Done)
-// under the blocking fallback.
 function test_parks_agrees(): test.TestOutcome {
   match (pipe()) {
     Ok(q) => {

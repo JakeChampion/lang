@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// mapBoxedInsertSrc overwrites a struct-valued map's entries many times, so
-// every insert after the seventh supersedes a box the map must release.
 const mapBoxedInsertSrc = `import "core/map";
 import "std/i32";
 struct P { a: i32, b: string }
@@ -34,16 +32,11 @@ function main(): i32 {
 
 const mapBoxedInsertWant = "7 343\n"
 
-// A call (x86-64 `call`, arm64 `bl`) to core/map's lookup or put entries. The
-// functions themselves are emitted either way.
 var (
 	lookupCall = regexp.MustCompile(`(?m)^\s+(call|bl)\s+\S*__map_lookup_val`)
 	putCall    = regexp.MustCompile(`(?m)^\s+(call|bl)\s+\S*__map_put_`)
 )
 
-// An insert into a map whose values are boxes finds its key once: the set hands
-// back the box it supersedes (core/map's __map_put_*), where the lowering used
-// to look the key up first to read that box out, hashing it twice.
 func TestMapBoxedInsertLooksUpOnce(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")

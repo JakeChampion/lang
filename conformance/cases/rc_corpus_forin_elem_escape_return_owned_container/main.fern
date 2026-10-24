@@ -1,18 +1,18 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The return-escape shape where the returned guard is ESSENTIAL
-// at runtime: the iterand is an owned CALL RESULT, so the sweep at
-// the in-loop return deep-frees the container inside the callee —
-// there is no caller-side may-alias conservatism to absorb an
-// uncounted return (unlike the param-container case below, where a
-// wrong borrow degrades to a leak). @noinline keeps the call
-// boundary real — inlined, the return becomes an assignment that
-// takes its own transfer inc and the case goes vacuous.
-// Verified non-vacuous: with aliasReturnsConfined and
-// bindingConfinedToArm knocked out of walk 3 this fails under
-// free-on on x86-64, arm64 AND wasm (recycled churn read), and
-// passes with the guards restored.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 struct S { name: string, fields: string[] }
 function mkstr(p: string): string { return p + "!"; }
 function mks(): S[] { return [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] }]; }

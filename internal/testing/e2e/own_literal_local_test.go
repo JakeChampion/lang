@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// A local built from a literal and grown in place is as fresh as a call
-// result, so it may be handed to an `own` parameter at its last use in any
-// position (#10864): one through four, and nested's at any depth, would be E051
-// without that. Five is
-// the call-bound string the move already took, which nulled its two-word
-// slot with one word on arm64 and wasm and passed the callee half a string
-// (#10992). Every move must free each value exactly once.
 const ownLiteralLocalSrc = `
 struct Box { xs: i64[], tag: string }
 @noinline function take(own xs: i64[]): i32 { return xs.len() as i32; }

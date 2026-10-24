@@ -1,29 +1,5 @@
 package e2e
 
-// Coverage for core/map's string-key bucket hash.
-//
-// It was textbook byte-at-a-time FNV-1a. It now mixes 4-byte blocks and
-// finishes with a murmur3 fmix32 avalanche, because callers mask the result
-// with `cap - 1` and therefore read only the LOW bits — which is where FNV-1a
-// diffuses worst.
-//
-// Two programs, mirroring how the RNG change is covered:
-//
-//  1. `map_string_hash` exercises the REAL map through the public API across
-//     key lengths chosen around the 4-byte block boundary (1, 2, 3, 4, 5, 7,
-//     8, 15, 16, 17 bytes), so both the block loop and the tail loop are hit,
-//     plus a 2000-key round trip with deletes. Changing a hash cannot change
-//     map semantics — iteration is insertion order and lookups re-check keys
-//     by equality — so this is the guard that the new mixing did not break
-//     bucketing, growth, or delete's swap-with-last.
-//
-//  2. `map_string_hash_spread` replicates both the old and the new hash and
-//     compares bucket occupancy, since the real map exposes no bucket view.
-//     For 1000 short keys in 1024 buckets a uniform hash fills ~638 buckets;
-//     the old hash manages 562 and the new one 618. The test asserts the new
-//     hash clears 590, which the old hash does not, so it fails if the
-//     avalanche is removed.
-
 import "testing"
 
 const mapStringHashProg = `

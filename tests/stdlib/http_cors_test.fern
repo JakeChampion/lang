@@ -5,15 +5,6 @@ import "std/http/router";
 import "std/platform";
 import "std/option";
 
-// tests/stdlib/http_cors_test.fern — std/http/cors: a request with no
-// Origin passes through, an actual request from an admitted origin is
-// marked and one from another is not, a preflight is answered without
-// reaching the handler, with the allow headers only when everything asked
-// for is admitted, credentials replace the wildcard, and a failure behind
-// the middleware is marked like any answer, and a preflight reaches the
-// middleware through a router it wraps, for a path whose routes do not
-// register OPTIONS.
-
 function header(resp: HttpResponse, name: string): string {
   return resp.headers.get(name).unwrap_or("-");
 }

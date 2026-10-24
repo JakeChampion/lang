@@ -1,10 +1,10 @@
-// What every implementation must agree on about target_arch(): the value is
-// one of the documented ISA names, and a branch on it takes the arm that
-// name selects — on the interpreter, where the host is the target, as much
-// as on a compile, where the value is a literal and the other arms are
-// pruned. The per-target values are target_arch_x86_64 / target_arch_arm64 /
-// target_arch_wasm32, which is also why the width below is asserted as
-// "known" rather than printed: it is the one fact that differs per leg.
+
+
+
+
+
+
+
 import "core/int";
 
 function main(): i32 {
@@ -15,8 +15,8 @@ function main(): i32 {
     } else {
         print("unnamed: " + arch);
     }
-    // The ISA half and the environment half are different questions: no
-    // target names the same string for both.
+
+
     if (target_arch() != target_os()) {
         print("distinct halves");
     }

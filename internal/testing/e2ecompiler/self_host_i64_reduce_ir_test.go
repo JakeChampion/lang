@@ -9,18 +9,6 @@ import (
 	"testing"
 )
 
-// i64MeanReduceProgram is the IR-path-eligible computational core of the
-// std/array `avg()` overflow fix (#2687): a counted reduction that accumulates
-// i32 array elements into an i64, divides by an i64 count, and narrows the
-// truncated mean back to i32. The three elements sum to 2.4e9 — which overflows
-// i32 (> 2^31-1) and would wrap to a NEGATIVE mean under i32 accumulation — so
-// the program returns 7 ONLY if the i64 accumulation / division / narrowing all
-// lower correctly. This pins that the self-hosted IR path (the lowering's
-// `as i64` widening of an i32 array element, i64 `+`, i64 `/`, `as i32`
-// narrowing) handles the shape the stdlib fix relies on, on every backend.
-//
-// The reduction returns a bare i32 rather than avg()'s Option[i32], so the i64
-// arithmetic is what the exit code observes.
 const i64MeanReduceProgram = `function imean(arr: i32[]): i32 {
     let n: i32 = arr.len();
     if (n == 0) { return 0; }
@@ -34,22 +22,16 @@ function main(): i32 {
     return 0;
 }`
 
-// TestSelfHostI64MeanReduceIRPathX86_64 first probes (via asm_pathprobe_run)
-// that the program is fully IR-eligible — so a future change that silently
-// kicked it off the IR path would fail here —
-// then runs it through the self-hosted x86-64 driver and asserts exit 7.
 func TestSelfHostI64MeanReduceIRPathX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "drivers/asm_run.fern", "drivers/asm_pathprobe_run.fern")
 
-	// Probe: the module must route through the IR path.
 	probeBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_pathprobe_run.fern", "pathprobe")
 	if got := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, []byte(i64MeanReduceProgram)))); got != "ir" {
 		t.Fatalf("i64 mean reduction routed through %q path, want \"ir\"", got)
 	}
 
-	// Run: the self-host x86-64 driver must emit a binary that returns 7.
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 	asm := runCapture(t, gcc, runner, driverBin, []byte(i64MeanReduceProgram))
 	if len(asm) == 0 {
@@ -68,9 +50,6 @@ func TestSelfHostI64MeanReduceIRPathX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostI64MeanReduceIRWasm runs the same reduction through the wasm IR
-// backend (wasm_ir_run): the i64 accumulation / division
-// / narrowing must produce the same answer on the stack-machine backend.
 func TestSelfHostI64MeanReduceIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host i64-mean wasm IR e2e")

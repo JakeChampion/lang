@@ -8,14 +8,8 @@ import (
 	"testing"
 )
 
-// asyncFeatures are the wasmtime flags a component with a stackful async lift
-// needs to load at all.
 var asyncFeatures = []string{"-W", "component-model-async,component-model-async-stackful"}
 
-// TestSelfHostWasmAsyncExport pins the self-host's async-lifted exports: each
-// `async function` with a body becomes a top-level `async func` of the
-// wasi:cli/run component, its result delivered through task.return, beside
-// the run entry, which still runs main.
 func TestSelfHostWasmAsyncExport(t *testing.T) {
 	requireWasmTools(t)
 	cli := buildSelfHostCLI(t)
@@ -56,8 +50,6 @@ function main(): i32 { print("main ran"); return 0; }
 	}
 }
 
-// buildAsyncComponent compiles src to a wasi:cli/run component, validates it
-// with the async features on and returns its path and printed text.
 func buildAsyncComponent(t *testing.T, cli *selfHostCLI, dir, src string) (string, string) {
 	t.Helper()
 	srcPath, comp := filepath.Join(dir, "main.fern"), filepath.Join(dir, "main.wasm")
@@ -79,9 +71,6 @@ func buildAsyncComponent(t *testing.T, cli *selfHostCLI, dir, src string) (strin
 	return comp, string(printed)
 }
 
-// TestSelfHostWasmAsyncExportRefusals pins what an async export cannot lift
-// yet, and that wasm32-wasi-http, whose proxy world exports only the handler,
-// refuses one rather than dropping it.
 func TestSelfHostWasmAsyncExportRefusals(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()

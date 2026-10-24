@@ -11,9 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/envflag"
 )
 
-// childFailure renders a failed exec.Command with the child's stderr, which
-// exec.Cmd.Output stores on ExitError.Stderr and `%v` alone discards — leaving
-// "exit status 1" as the whole report of a compiler diagnostic (#8885).
 func childFailure(err error) string {
 	var ee *exec.ExitError
 	if errors.As(err, &ee) && len(ee.Stderr) > 0 {
@@ -22,37 +19,6 @@ func childFailure(err error) string {
 	return err.Error()
 }
 
-// TestSelfHostStage2FixpointArm64 is the arm64 stage-2 fixpoint (#6327).
-//
-//	stage 0  the x86-64 compiler builds `asm_load_run.fern` into `mmc`, an
-//	         x86 host binary that emits aarch64 (the cross-compiler-on-host
-//	         pattern).
-//	stage 1  `mmc` emits aarch64 asm for `asm_load_run.fern` — ITSELF — and
-//	         the aarch64 cross-gcc links that into `mmc-arm64`.
-//	stage 2  `mmc-arm64` runs under qemu-aarch64 over the same inputs as
-//	         `mmc`, and the emitted aarch64 asm must be byte-identical.
-//
-// Two properties in one comparison: the emit does not depend on the HOST
-// architecture, and it is a fixed point under self-recompilation — the
-// compiler the self-host built reproduces the self-host's own output.
-//
-// Why arm64 is the leg worth having it on: `-target arm64-linux` is the only path
-// where the self-host produces the finished binary itself, emit + assemble +
-// link in-process, so it is the only gate on `arm64_native.fern`. Generation 2
-// runs THROUGH the assembler's own output, which is what separates "the
-// emitter is wrong" from "the assembler is wrong" — three arm64 assembler bugs
-// (numeric local labels, the missing `.text` symbol case, an i32 literal pool)
-// were each mis-attributed to codegen first.
-//
-// `asm_load_run.fern` emits aarch64 behind `-target arm64-linux` (#4398), so
-// one driver serves both stages.
-//
-// COST. Stage 1 is the expensive half and it runs NATIVELY (~3 min for 35 MB of
-// asm); the aarch64 link is ~5 s. Stage 2 is qemu, and the per-case cost is
-// dominated by stdlib LOADING rather than emit, so each case loads the stdlib
-// and costs up to ~55 s. The `self` case — gen2
-// recompiling the whole compiler under qemu — is far heavier again and is gated
-// behind FERN_STAGE2_SELF=1 rather than paid on every run.
 func TestSelfHostStage2FixpointArm64(t *testing.T) {
 	armgcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -69,10 +35,6 @@ func TestSelfHostStage2FixpointArm64(t *testing.T) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	// stage 1: the driver emits aarch64 for its own source, and that asm
-	// becomes a real aarch64 compiler. Reading the STAGED copy rather than
-	// compiler keeps the two generations on identical bytes. The
-	// compiler imports core/map, which only the stdlib root resolves.
 	stage1Asm, err := exec.Command(mmc, driverSrc, stdlibRoot, "-target", "arm64-linux").Output()
 	if err != nil {
 		t.Fatalf("stage 1: mmc could not emit aarch64 for its own source: %s", childFailure(err))
@@ -83,11 +45,6 @@ func TestSelfHostStage2FixpointArm64(t *testing.T) {
 	t.Logf("stage 1: self-hosted arm64 compiler asm = %d bytes", len(stage1Asm))
 	mmcArm64 := buildBinArm64(t, armgcc, dir, "mmc_arm64_stage2", string(stage1Asm))
 
-	// A span, not a sample. `lexer.fern` is a compiler module (cheap, and the
-	// shape gen1 itself is made of) that imports std/utf8; the three test
-	// suites are the survivors of the deleted test's four inputs and carry
-	// stdlib transitive imports, floats and process/string helpers between
-	// them.
 	cases := []struct {
 		name    string
 		src     string
@@ -98,9 +55,6 @@ func TestSelfHostStage2FixpointArm64(t *testing.T) {
 		{name: "sort_wider", src: "tests/stdlib/sort_wider_test.fern", stdlib: true},
 		{name: "float_math", src: "tests/stdlib/float_math_test.fern", stdlib: true},
 		{name: "process_assertions", src: "tests/stdlib/process_assertions_test.fern", stdlib: true},
-		// The heavyweight: gen2 compiling the whole compiler under qemu. It is
-		// the strongest form of the property, but not worth its wall-clock on
-		// every run, so it is gated by an env var.
 		{name: "self", src: "compiler/drivers/asm_load_run.fern", stdlib: true, selfEnv: true},
 	}
 	for _, tc := range cases {

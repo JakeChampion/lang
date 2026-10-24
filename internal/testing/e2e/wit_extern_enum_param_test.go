@@ -12,17 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternEnumParamCustomProvider is the P4c WIT-`enum` parameter gate
-// (docs/WIT-BRING-YOUR-OWN.md): a Fern "plain" enum (all variants payloadless,
-// i.e. C-style) passed to an `@import` extern whose WIT takes an `enum`. A WIT
-// enum flattens to a single i32 discriminant; a Fern payloadless enum value is a
-// pointer to a 4-byte sentinel `[tag:i32 @0]`, so the wrapper reads
-// `i32.load(ptr)` and pushes the tag. The Fern variant order must match the WIT
-// enum case order (no remap).
-//
-// The provider exports `pick: func(c: color) -> s32` over `enum color { red,
-// green, blue }`, returning disc + 100. The Fern side passes Green (tag 1) and
-// expects 101 — distinguishing a correct disc read from garbage.
 func TestExternEnumParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -49,8 +38,6 @@ func TestExternEnumParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// pick receives the enum flattened to a single i32 discriminant and returns
-	// disc + 100.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (func (export "local:test/sink@0.1.0#pick") (param $c i32) (result i32)

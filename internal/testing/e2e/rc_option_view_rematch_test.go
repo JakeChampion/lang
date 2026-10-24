@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// A string-slice Option matched twice: the first match's payload read only
-// borrows, since the Option lives on to the second, whose read takes the
-// payload before the box is released alone. The certifier counted the first
-// read as the release's taken payload too and refused the program (#12189).
-// `end` picks the slice so each early return is taken in turn; the code is
-// printed, since a wasm core module hands main's result back on stdout.
 func optionViewRematchSrc(end int) string {
 	return fmt.Sprintf(`import "std/i32";
 

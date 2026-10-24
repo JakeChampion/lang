@@ -9,35 +9,15 @@ import (
 	"syscall"
 )
 
-// caught holds the channel signal_catch registered for each signal. Its one
-// slot IS the flag the compiled handler sets: os/signal never blocks on a
-// send, so arrivals past the first coalesce into it, and signal_taken's
-// non-blocking receive reads and clears it in one step.
-//
-// Delivery here is asynchronous where a compiled program's is not: a signal
-// a program sends itself reaches the channel through the Go runtime's own
-// signal goroutine, so it may be taken one poll later than kill(2) returning
-// would suggest. A program that polls — the only contract signal_taken
-// offers — sees it either way.
 var caught = struct {
 	sync.Mutex
 	m map[syscall.Signal]chan os.Signal
 }{m: map[syscall.Signal]chan os.Signal{}}
 
-// builtinSignalCatch installs the flag-raising disposition for one signal.
-// The interpreter shares its process with the Go runtime, which already
-// resumes an interrupted system call, so SA_RESTART needs no counterpart.
 func builtinSignalCatch(_ *Interp, args []Value) (Value, error) {
 	return catchSignal("signal_catch", args, false)
 }
 
-// builtinSignalCatchInterrupting is signal_catch whose arrival also ends a
-// blocking read with EINTR, as a handler installed without SA_RESTART does
-// for a compiled program. The Go runtime restarts every call its own handler
-// interrupts, so the interruption is made here instead: each arrival reaches
-// the wake pipe, which a read on a pipe, terminal or socket waits on beside
-// its own descriptor (waitReadable). A read of a regular file never blocks,
-// so a compiled program's is not interrupted either.
 func builtinSignalCatchInterrupting(_ *Interp, args []Value) (Value, error) {
 	return catchSignal("signal_catch_interrupting", args, true)
 }
@@ -48,7 +28,7 @@ func catchSignal(name string, args []Value, interrupting bool) (Value, error) {
 		return nil, err
 	}
 	if !ok {
-		return Number(-22), nil // -EINVAL, as the kernel answers
+		return Number(-22), nil
 	}
 	caught.Lock()
 	defer caught.Unlock()
@@ -69,10 +49,6 @@ func catchSignal(name string, args []Value, interrupting bool) (Value, error) {
 	return Number(0), nil
 }
 
-// wake is the pipe the interrupting catches write a byte to on each arrival,
-// and the os/signal channel each one is delivered on. A forwarding goroutine
-// raises the signal's flag BEFORE it writes the byte, so a read the byte
-// wakes finds the signal taken.
 var wake = struct {
 	sync.Mutex
 	r, w *os.File
@@ -107,7 +83,6 @@ func wakeOn(sig syscall.Signal, flag chan os.Signal) error {
 	return nil
 }
 
-// wakeOff stops `sig` reaching the wake pipe.
 func wakeOff(sig syscall.Signal) {
 	wake.Lock()
 	defer wake.Unlock()
@@ -118,10 +93,6 @@ func wakeOff(sig syscall.Signal) {
 	}
 }
 
-// waitReadable blocks until `f` has something to read, or answers EINTR once
-// an interrupting catch's signal has arrived since the last answer. With no
-// interrupting catch held, or a descriptor no read of would block, it
-// answers at once and the read itself waits.
 func waitReadable(f *os.File) error {
 	wake.Lock()
 	armed := len(wake.m) > 0
@@ -158,8 +129,6 @@ func waitReadable(f *os.File) error {
 	return nil
 }
 
-// interruptible is a reader whose Read first waits in waitReadable, so a
-// blocking read can end with EINTR.
 type interruptible struct{ f *os.File }
 
 func (r interruptible) Read(p []byte) (int, error) {
@@ -169,7 +138,6 @@ func (r interruptible) Read(p []byte) (int, error) {
 	return r.f.Read(p)
 }
 
-// interruptibleReader wraps `r` when it is a descriptor.
 func interruptibleReader(r io.Reader) io.Reader {
 	if f, ok := r.(*os.File); ok {
 		return interruptible{f}
@@ -177,9 +145,6 @@ func interruptibleReader(r io.Reader) io.Reader {
 	return r
 }
 
-// builtinSignalRaise mirrors the native `signal_raise(sig)`: kill(2) of this
-// process, 0 or a negative errno. Signal 0 is kill's existence check and
-// answers 0; a number past the last signal is EINVAL, as the kernel says.
 func builtinSignalRaise(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("signal_raise: expected 1 arg, got %d", len(args))
@@ -200,9 +165,6 @@ func builtinSignalRaise(_ *Interp, args []Value) (Value, error) {
 	return Number(0), nil
 }
 
-// builtinSignalTaken reports whether `sig` arrived since the last poll, and
-// clears it. A signal nothing caught, or a number out of range, was never
-// taken.
 func builtinSignalTaken(_ *Interp, args []Value) (Value, error) {
 	sig, ok, err := signalArg("signal_taken", args)
 	if err != nil {
@@ -225,8 +187,6 @@ func builtinSignalTaken(_ *Interp, args []Value) (Value, error) {
 	}
 }
 
-// uncatch forgets the catch on `sig`, which signal.Ignore and signal.Reset
-// have already dropped from os/signal's own table.
 func uncatch(sig syscall.Signal) {
 	wakeOff(sig)
 	caught.Lock()
@@ -234,7 +194,6 @@ func uncatch(sig syscall.Signal) {
 	caught.Unlock()
 }
 
-// isCaught reports whether signal_catch holds `sig`.
 func isCaught(sig syscall.Signal) bool {
 	caught.Lock()
 	defer caught.Unlock()

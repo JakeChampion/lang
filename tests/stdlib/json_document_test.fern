@@ -5,11 +5,6 @@ import "std/i64";
 import "std/f64";
 import "std/option";
 
-// tests/stdlib/json_document_test.fern — std/json's Document: one parse into a
-// flat tape over the source text, navigated by node index. Parsing must accept
-// and reject exactly what json_parse_result does, at the same offset, and
-// to_value must rebuild the JsonValue json_parse builds.
-
 function doc(text: string): json.Document {
   match (json.parse_document(text)) {
     Ok(d) => {

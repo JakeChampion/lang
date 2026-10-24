@@ -7,11 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostPerModuleUnitOwners pins that the asm and wasm per-module drivers
-// cut the typed lowering into the same units: both call ircore.split_units, so
-// -per-module-func-counts agrees line for line. The leaf declares a method on
-// `str`, which the lowering spells `string`; only main calls it, so matching
-// the declaration on the unerased spelling would hand it to the entry.
 func TestSelfHostPerModuleUnitOwners(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -62,7 +57,6 @@ function main(): i32 {
 		}
 		return strings.Join(strings.Fields(string(out)), " ")
 	}
-	// leaf: shout, pick, scaled and its lifted closure; the entry: main.
 	const want = "4 1"
 	for _, bin := range []string{asmBin, wasmBin} {
 		if got := counts(bin); got != want {

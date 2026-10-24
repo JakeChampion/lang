@@ -2,15 +2,6 @@ import "std/test";
 import "std/fetch";
 import "std/async";
 
-// tests/stdlib/fetch_pool_test.fern — the pool's table of connections a
-// serve loop keeps watched between a task's reads (`Idle.armed`), pure:
-// a plain pool's reads wait as readable; a loop's pool (`idle_shared`)
-// asks for `async.KEEP` on a connection's first read and `async.WATCHED`
-// after, and `disarm` makes the next read ask again. No socket is opened:
-// `disarm` closes only a connection the pool holds idle, and none is.
-//
-// Run:  fern -interp tests/stdlib/fetch_pool_test.fern
-
 function test_plain_pool_reads_as_readable(): test.TestOutcome {
   let p: fetch.Idle = fetch.idle();
   if (p.read_interest(7) != 1 || p.read_interest(7) != 1) {

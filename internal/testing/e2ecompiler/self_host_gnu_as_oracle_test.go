@@ -13,28 +13,16 @@ import (
 	"testing"
 )
 
-// The self-host assemblers' encoding tests take GNU as as their oracle: the
-// assembler whose dialect the emitters write, and the one a hand-written
-// encoding is checked against. gnuAsOracle assembles a batch of cases in one
-// run, each under a label of its own, and reads each case's bytes back from
-// between its label and the next.
-
-// gnuAsOracle is GNU as and the binutils that read its output, for one ISA.
 type gnuAsOracle struct {
 	as, objcopy, nm, ld string
 	asArgs              []string
 }
 
-// gnuX86Oracle is GNU as for x86-64, or skips the test.
 func gnuX86Oracle(t *testing.T) gnuAsOracle {
 	t.Helper()
 	return gnuOracle(t, []string{"as"}, "", []string{"--64"}, "\tretq\n")
 }
 
-// gnuArm64Oracle is GNU as for aarch64: the cross assembler, or the host's on
-// an arm64 host, at the target's baseline (ARMv8.2-A with the crypto
-// extensions) rather than GNU as's default ARMv8.0, which refuses the LSE
-// atomics. Skips the test when neither is present.
 func gnuArm64Oracle(t *testing.T) gnuAsOracle {
 	t.Helper()
 	names := []string{"aarch64-linux-gnu-as"}
@@ -83,7 +71,6 @@ func gnuOracle(t *testing.T, names []string, prefix string, asArgs []string, pro
 	return o
 }
 
-// gnuCase is one case's result: its bytes, or why GNU as rejected it.
 type gnuCase struct {
 	bytes    []byte
 	rejected string
@@ -91,8 +78,6 @@ type gnuCase struct {
 
 var gasErrLine = regexp.MustCompile(`(?m)^[^:\n]*\.s:(\d+): Error: (.*)$`)
 
-// assemble runs every case through GNU as. A case may span lines. A rejected
-// case is reported as such and the rest are assembled without it.
 func (o gnuAsOracle) assemble(t *testing.T, lines []string) []gnuCase {
 	t.Helper()
 	out := make([]gnuCase, len(lines))
@@ -107,7 +92,7 @@ func (o gnuAsOracle) assemble(t *testing.T, lines []string) []gnuCase {
 		}
 		var src strings.Builder
 		src.WriteString("\t.text\n")
-		lineOf := map[int]int{} // .s line → case
+		lineOf := map[int]int{}
 		n := 2
 		for i := range lines {
 			if !live[i] {
@@ -174,7 +159,6 @@ func (o gnuAsOracle) assemble(t *testing.T, lines []string) []gnuCase {
 	}
 }
 
-// text assembles src as one program and returns its .text bytes.
 func (o gnuAsOracle) text(t *testing.T, src string) []byte {
 	t.Helper()
 	b, rejected := o.program(t, src)
@@ -184,14 +168,11 @@ func (o gnuAsOracle) text(t *testing.T, src string) []byte {
 	return b
 }
 
-// program assembles src as one program and returns its .text bytes, or GNU
-// as's diagnostics when it rejects src.
 func (o gnuAsOracle) program(t *testing.T, src string) ([]byte, string) {
 	t.Helper()
 	return o.build(t, src, false, ".text")
 }
 
-// data assembles src as one program and returns its .data bytes.
 func (o gnuAsOracle) data(t *testing.T, src string) []byte {
 	t.Helper()
 	b, rejected := o.build(t, src, false, ".data")
@@ -201,9 +182,6 @@ func (o gnuAsOracle) data(t *testing.T, src string) []byte {
 	return b
 }
 
-// linkedText assembles src and links it as a static executable entered at
-// _start, so calls between its functions are resolved, and returns the
-// linked .text bytes.
 func (o gnuAsOracle) linkedText(t *testing.T, src string) []byte {
 	t.Helper()
 	b, rejected := o.build(t, src, true, ".text")
@@ -240,7 +218,6 @@ func (o gnuAsOracle) build(t *testing.T, src string, link bool, section string) 
 	return b, ""
 }
 
-// arm64Words splits little-endian arm64 text into instruction words.
 func arm64Words(text []byte) []uint32 {
 	var out []uint32
 	for i := 0; i+4 <= len(text); i += 4 {

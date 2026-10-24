@@ -2,10 +2,6 @@ package checker
 
 import "testing"
 
-// A written type argument that is itself an instantiation (`pass[W[Q]](x)`)
-// parses as an index, as a lone name does, and is retagged once the callee is
-// known to be generic (#10711). A value array indexed the same way stays an
-// index call.
 func TestNestedTypeArgIsRetagged(t *testing.T) {
 	src := `struct Q { v: i32 }
 struct W[T] { t: T }

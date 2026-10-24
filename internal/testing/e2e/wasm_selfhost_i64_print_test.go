@@ -7,11 +7,6 @@ import (
 	"testing"
 )
 
-// TestWasmSelfHostI64Print is a CI-runnable regression guard for i64 values on
-// the self-host wasm IR path: arithmetic, returns, parameters and a loop
-// accumulator, each printed through the Fern print_i64 the harness supplies.
-// Like the arr_push / random guards it is named TestWasm* so the
-// wasmtime-enabled test-e2e-wasm workflow runs it.
 func TestWasmSelfHostI64Print(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wasm i64-print e2e")
@@ -22,8 +17,6 @@ func TestWasmSelfHostI64Print(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	// Each prints a > 2^32 i64 value whose decimal text would be wrong (or the
-	// module invalid) if the i64 were truncated to i32.
 	cases := []struct {
 		name   string
 		source string

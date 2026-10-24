@@ -1,4 +1,4 @@
-// Calling a function with an argument of the wrong type.
+
 function takes_int(n: i32): i32 {
     return n;
 }

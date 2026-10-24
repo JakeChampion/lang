@@ -1,19 +1,3 @@
-// uname.fern — GNU-compatible `uname`.
-//
-//   uname [-asnrvmpioA]   print system information
-//
-// The five fields come out of `uname(2)` in the order the record holds
-// them, and are printed in that order, space separated, with a single
-// trailing newline. Two more are computed rather than read — `-p` the
-// processor and `-i` the hardware platform (see `processor` below) — and
-// `-o` is the operating system the build targets.
-//
-// `-a` is not "every bit set": GNU's `-a` is a distinct value that the
-// omission rule tests, so `-a` DROPS a processor or hardware platform it
-// could not determine while `-s -n -r -v -m -p -i -o` prints `unknown`
-// for the same field. `all` below is that distinction. `-A` selects the
-// same set and labels each field on its own line; it and `-a` overwrite
-// each other, so the last of the two decides whether labels appear.
 import "./lib/gnu";
 import "./lib/sys";
 
@@ -79,10 +63,6 @@ function opt_all_labeled(): i32 {
   return 10;
 }
 
-// `Selection` — which elements to print. `all` is `-a` or `-A`, which
-// select everything AND enable the omission rule below; `labeled` is the
-// `-A` half of that pair; the eight booleans are the individually named
-// options.
 struct Selection { all: boolean, labeled: boolean, kernel_name: boolean, nodename: boolean, kernel_release: boolean, kernel_version: boolean, machine: boolean, processor: boolean, hardware_platform: boolean, operating_system: boolean }
 
 function empty_selection(): Selection {
@@ -93,11 +73,6 @@ function nothing_selected(s: Selection): boolean {
   return !s.all && !s.kernel_name && !s.nodename && !s.kernel_release && !s.kernel_version && !s.machine && !s.processor && !s.hardware_platform && !s.operating_system;
 }
 
-// `Element` — one printable field and whether the system could say what
-// it is. An element whose value could not be determined reads `unknown`
-// and is dropped from `-a`; that is the only thing `known` decides, and
-// it is not the same test as the text, since a machine legitimately
-// named `unknown` would still print under `-a`.
 struct Element { text: string, known: boolean }
 
 function known(text: string): Element {
@@ -108,11 +83,6 @@ function unknown(): Element {
   return Element { text: "unknown", known: false };
 }
 
-// `-p`, the processor type. GNU can answer it only where a Solaris
-// `sysinfo(2)` or a BSD `sysctl` supplies it, and glibc has neither, so
-// Linux gets `unknown` and `-a` drops it. Darwin answers with the CPU
-// FAMILY rather than the machine, so an Apple-silicon box says `arm`
-// where `-m` says `arm64`.
 function processor(): Element {
   if (target_os() == "darwin") {
     return known("arm");
@@ -120,8 +90,6 @@ function processor(): Element {
   return unknown();
 }
 
-// `-o`, the operating system: the name of the whole system rather than
-// the kernel, which is what makes it differ from `-s` on Linux.
 function operating_system(): Element {
   if (target_os() == "darwin") {
     return known("Darwin");
@@ -129,10 +97,6 @@ function operating_system(): Element {
   return known("GNU/Linux");
 }
 
-// One element appended to the output. Under `-a` / `-A` an element
-// nobody could determine is dropped rather than printed as `unknown`;
-// under `-A` each one is a labelled line of its own rather than a
-// space-separated field.
 function append_element(out: string, first: boolean, e: Element, s: Selection, label: string): (string, boolean) {
   if (s.all && !e.known) {
     return (out, first);
@@ -151,9 +115,6 @@ function scan(argv: string[]): Selection {
   opts = opts.append(gnu.flag("a", "all", opt_all()));
   opts = opts.append(gnu.flag("A", "all-labeled", opt_all_labeled()));
   opts = opts.append(gnu.flag("s", "kernel-name", opt_kernel_name()));
-  // `--sysname` and `--release` are obsolescent aliases GNU still
-  // declares. They are what makes `--s` and `--r` unambiguous while
-  // `--k` lists three possibilities.
   opts = opts.append(gnu.flag("s", "sysname", opt_kernel_name()));
   opts = opts.append(gnu.flag("n", "nodename", opt_nodename()));
   opts = opts.append(gnu.flag("r", "kernel-release", opt_kernel_release()));
@@ -205,29 +166,6 @@ function scan(argv: string[]): Selection {
   return s;
 }
 
-// `from_env(value, name)` — GNU's `print_element_env`, which is where the
-// UNAME_* overrides live and is APPLE-ONLY upstream:
-//
-//     print_element_env (char const *element, MAYBE_UNUSED char const *envvar)
-//     {
-//     #ifdef __APPLE__
-//       if (envvar)
-//         {
-//           char const *val = getenv (envvar);
-//           if (val)
-//             element = val;
-//         }
-//     #endif
-//       print_element (element);
-//     }
-//
-// So the five utsname fields answer to UNAME_SYSNAME, UNAME_NODENAME,
-// UNAME_RELEASE, UNAME_VERSION and UNAME_MACHINE on Darwin and ignore them
-// everywhere else. `-p`, `-i` and `-o` do NOT go through it and so are never
-// overridable on any platform.
-//
-// An EMPTY value still overrides: only the pointer is tested, never the
-// string, so `UNAME_MACHINE=` prints an empty element.
 function from_env(value: string, name: string): string {
   if (target_os() != "darwin") {
     return value;
@@ -264,7 +202,6 @@ function line_for(s: Selection): string {
   if (s.all || s.processor) {
     step = append_element(step.0, step.1, processor(), s, "Processor");
   }
-  // `-i` has no answer on any target Fern builds for.
   if (s.all || s.hardware_platform) {
     step = append_element(step.0, step.1, unknown(), s, "Hardware platform");
   }

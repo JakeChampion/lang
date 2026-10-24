@@ -2,14 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// #8644: an alias of a struct local and a rebind of the source share one box.
-// The alias took a box-only release and the source the deep one, a pairing that
-// assumes the source outlives the alias. In a loop the source is rebound while
-// the alias still holds the old box, so the rebind's shared arm handed the deep
-// work to an alias that never does it, and every field the old box owned was
-// stranded, one buffer per iteration. Both owners now take the rc-gated walk,
-// and the alias's own loop rebind releases the box it held through the gated
-// field reclaim. The other rows pin the shapes the old pairing did get right.
 var structAliasRebindCases = []struct{ name, src string }{
 	{"loop-alias-array-override", `struct S { ops: i32[], n: i32 }
 function run(x: i32): i32 {
@@ -35,8 +27,6 @@ function run(x: i32): i32 {
     return s.n;
 }
 function main(): i32 { let t: i32 = 0; let k: i32 = 0; while (k < 100) { t = t + run(k); k = k + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 100; }`},
-	// The alias is read after the rebind, so the old box's fields must survive
-	// until the alias's release.
 	{"alias-read-after-rebind", `struct P { xs: i32[], n: i32 }
 function f(k: i32): i32 {
     let t: P = P { xs: [k, k + 1], n: k };

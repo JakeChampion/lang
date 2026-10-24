@@ -1,5 +1,3 @@
-// A trailing slash on stat and lstat resolves a symlink and names a
-// directory, else ENOTDIR — POSIX, which Linux enforces and XNU does not.
 package e2e
 
 import (
@@ -59,7 +57,6 @@ function main(): i32 {
 }
 `
 
-// statSlashTree is a file, a directory, and a symlink to each.
 func statSlashTree(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, "f"), []byte("x"), 0o644); err != nil {
@@ -101,7 +98,6 @@ func buildStatSlash(t *testing.T, target string) (bin, dir string) {
 	return bin, dir
 }
 
-// The arm64-darwin runtime corrects XNU, so Apple Silicon must agree.
 func TestArm64DarwinStatTrailingSlash(t *testing.T) {
 	bin, dir := buildStatSlash(t, "arm64-darwin")
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
@@ -116,7 +112,6 @@ func TestStatTrailingSlashX86_64(t *testing.T) {
 	runStatSlash(t, append(append([]string{}, runner...), bin), dir)
 }
 
-// The interpreter holds the same rule on whatever host it runs on.
 func TestStatTrailingSlashInterp(t *testing.T) {
 	fern := buildLangBinForInterp(t)
 	dir := t.TempDir()

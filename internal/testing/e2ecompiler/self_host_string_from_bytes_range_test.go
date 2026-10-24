@@ -9,10 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// string_from_bytes_range_unchecked through the self-host compiler on every
-// target and its interpreter: the copies match string_from_bytes_unchecked's,
-// the source is not shared, x86-64 frees what it allocates, and a backwards
-// range traps. The Go compiler's twin is TestStringFromBytesRange.
 func TestSelfHostStringFromBytesRange(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()

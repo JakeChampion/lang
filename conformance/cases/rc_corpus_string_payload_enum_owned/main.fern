@@ -1,8 +1,8 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A string-carrying enum is owned by default: the rebuilt value and
-// a snapshot both read back right.
+
+
+
+
+
 enum S { A(string, i32), Z }
 function bump(s: S, tag: string): S {
     match (s) {

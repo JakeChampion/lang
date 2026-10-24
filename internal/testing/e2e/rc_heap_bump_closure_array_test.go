@@ -4,30 +4,6 @@ import (
 	"testing"
 )
 
-// closure[] element reclamation (RC-Perceus). A `(() => i32)[]` array holds
-// closure-PAIR pointers whose env blocks (the captures) leaked: an array
-// element typed `(() => i32)` can't name WHICH closure it holds (distinct
-// closures share a signature but have distinct capture layouts +
-// per-closure __closure_drop_<name> thunks), so an array drop could only
-// call the generic __fern_closure_drop per element — which by design freed
-// only the closure PAIR block and leaked the env. The fix (option B from
-// docs/RC-PERCEUS-PLAN.md) makes the closure box carry a drop-fn POINTER:
-// the pair grows to {fn_ptr, env_ptr, drop_fn, env_ptr} and a generic
-// __drop_arr_closure loop derefs the embedded drop-fn (via OpCallIndirect on
-// the duplicated {drop_fn, env_ptr} sub-pair) to free each element's env
-// generically, then frees the pair block + buffer.
-//
-// The wasm e2e is the over-release arbiter (natives' bump probe is
-// insensitive to small-block reclaim — their segregated freelist arena
-// isn't measured by __heap_bump_bytes, so the leak does not show there. The
-// natives do NOT elide these closures — the IR is identical on all backends,
-// see the plan's closure[] bullet). On wasm an unreclaimed closure array
-// grows unbounded (3264 -> 320064 across 100x N); reclaimed, the high-water
-// plateaus (freelist warmup, like rc string concat) and is flat across 10x
-// N. The adversarial aliased / shared-closure cases pin 0 over-releases on
-// every backend.
-
-// scalarCapClosureArrSrc: a `(() => i32)[]` of scalar-capture closures.
 func scalarCapClosureArrSrc(n string) string {
 	return `function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
@@ -43,9 +19,6 @@ func scalarCapClosureArrSrc(n string) string {
 }`
 }
 
-// ptrCapClosureArrSrc: a `(() => i32)[]` whose closures each capture a
-// POINTER (an i32[]) — the env's deep-drop (its __closure_drop_<name> thunk
-// reclaims the captured array) is exercised through the drop-fn pointer.
 func ptrCapClosureArrSrc(n string) string {
 	return `function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
@@ -61,9 +34,6 @@ func ptrCapClosureArrSrc(n string) string {
 }`
 }
 
-// aliasClosureArrSrc: the closure array is aliased (`let gs = fs` → rc>1), so
-// the per-element env free must NOT fire while another holder is live.
-// Returns 0 iff value-correct AND 0 over-releases.
 const aliasClosureArrSrc = `function main(): i32 {
     let i: i32 = 0;
     let acc: i32 = 0;
@@ -79,10 +49,6 @@ const aliasClosureArrSrc = `function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// sharedElemClosureArrSrc: the SAME closure value appears twice in the array
-// (`[f, f]` → the pair's rc is 2) AND is still live as `f` after. The
-// per-element is_unique gate must skip the env free until the genuine last
-// reference. Returns 0 iff value-correct AND 0 over-releases.
 const sharedElemClosureArrSrc = `function main(): i32 {
     let i: i32 = 0;
     let acc: i32 = 0;
@@ -137,10 +103,6 @@ func TestArm64ClosureArrayReclaim(t *testing.T) {
 }
 
 func TestWASMClosureArrayReclaim(t *testing.T) {
-	// wasm is the over-release arbiter: it heap-allocates the pairs + envs
-	// and __heap_bump_bytes measures the leak directly. Pre-fix this loop
-	// ramped unbounded (320064 at N=5000); post-fix it plateaus (freelist
-	// warmup) and is flat across 10x N.
 	small := runWasm(t, scalarCapClosureArrSrc("5000"))
 	large := runWasm(t, scalarCapClosureArrSrc("50000"))
 	if small != large {

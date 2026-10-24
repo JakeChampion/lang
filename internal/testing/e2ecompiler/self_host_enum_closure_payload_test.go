@@ -6,9 +6,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestSelfHostEnumClosurePayloadIsReleased is the self-host twin of
-// internal/testing/e2e's TestEnumClosurePayloadIsReleased: the self-host released
-// an enum-held closure before native did (#11349), and this keeps it so.
 func TestSelfHostEnumClosurePayloadIsReleased(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {

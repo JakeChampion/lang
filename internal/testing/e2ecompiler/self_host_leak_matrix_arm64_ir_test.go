@@ -1,3 +1,4 @@
+// CI-DARK: FERN_LEAK_MATRIX_DUMP — This flag regenerates the reference data.
 package e2ecompiler
 
 import (
@@ -10,24 +11,6 @@ import (
 
 	"github.com/jakechampion/lang/internal/envflag"
 )
-
-// --- The leak matrix, arm64 leg ----------------------------------------------
-//
-// The same generated cells as TestSelfHostLeakMatrixX86_64, compiled by both
-// compilers for arm64-linux and run under qemu — the leg the arm64 census port
-// (#5362) unlocked. The comparison stays between COMPILERS on one target:
-// native-arm64's verdict against self-host-arm64's, pinned per cell in
-// testdata/selfhost-leak-matrix-arm64.txt. A verdict differing from the x86-64
-// file's row is a backend-specific reclaim divergence and gets its own note.
-//
-// No sanitize sub-leg here: the arm64 backends have no over-release trap or
-// quarantine yet (docs/rc-log/2026-08-23-arm64-leakcheck-port.md), so the
-// underflow guard (exit 99, fatal on either side) and the exit-match rule are
-// the fault detectors, exactly as the x86 leg ran before its sanitize leg.
-//
-// FERN_LEAK_MATRIX_DUMP=1 prints measured matrix-file lines instead of
-// comparing, for (re)generating the pin after a deliberate change — the same
-// regeneration tool as the x86 leg (CI-DARK there, CI-DARK here).
 
 func nativeLeakVerdictArm64(t *testing.T, cli, qemu, dir, name, src string) (leakVerdict, int) {
 	t.Helper()
@@ -74,8 +57,6 @@ func selfHostLeakVerdictArm64(t *testing.T, arm64gcc, qemu string, x86runner []s
 
 func loadLeakMatrixArm64(t *testing.T) map[string][2]leakVerdict {
 	t.Helper()
-	// Same format and loader rules as the x86 file; separate file because the
-	// two legs may legitimately pin different rows.
 	path := filepath.Join("testdata", "selfhost-leak-matrix-arm64.txt")
 	f, err := os.Open(path)
 	if err != nil {
@@ -107,9 +88,6 @@ func readAll(t *testing.T, f *os.File) string {
 }
 
 func TestSelfHostLeakMatrixIRArm64(t *testing.T) {
-	// CI-DARK: FERN_LEAK_MATRIX_DUMP — a regeneration tool, not coverage: it
-	// prints measured matrix-file lines INSTEAD of comparing, so a lane setting
-	// it would disable this gate. The compare path below is the CI behaviour.
 	dump := envflag.On("FERN_LEAK_MATRIX_DUMP")
 	var known map[string][2]leakVerdict
 	if !dump {

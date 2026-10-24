@@ -1,53 +1,3 @@
-// seq.fern — GNU-compatible `seq`.
-//
-//   seq LAST                       1, 2, … LAST
-//   seq FIRST LAST                 step 1
-//   seq FIRST INCREMENT LAST
-//   -f, --format=FORMAT            a printf float conversion for each number
-//   -s, --separator=STRING         what goes between them (default a newline)
-//   -w, --equal-width              pad with leading zeros to a common width
-//
-// THREE engines, because GNU has three and they do not agree with each
-// other. Which one runs is observable — it decides both the digits and
-// where the sequence stops — so the tests below are GNU's tests, measured
-// against the reference binary rather than guessed at.
-//
-// 1. DIGITS (`seq_fast`). Exact decimal-string arithmetic, unbounded, so
-//    `seq 99999999999999999999 100000000000000000001` counts through 10^20
-//    digit by digit. GNU takes it only when every operand is a plain run
-//    of digits, the increment is at most 200, the separator is one byte,
-//    and neither -w nor -f is in play (`use_fast`).
-//
-// 2. LONG DOUBLE (`print_numbers`, lib/ld.fern). Terms are `first +
-//    i*step`, never accumulated, and the comparison against LAST is exact
-//    — with one documented exception, `prints_as_last`: a term that lands
-//    past LAST is still printed when what the conversion prints reads
-//    back AS LAST, which is why `seq 0 0.3 0.9` ends on 0.9 though 3 x
-//    0.3 is an ulp beyond it. Numbers are printed with a format derived
-//    from how the operands were WRITTEN, not from their values: `1.0`
-//    asks for one decimal, `1e-3` for three, `10e-1` for one, and a hex
-//    operand anywhere asks for none of it (`%Lg`, which is why -w
-//    silently stops padding for `seq -w 0x1p4 1000`). `scan_arg` is that
-//    derivation.
-//
-// 3. SCALED DECIMAL (`dec_seq`). Not a behaviour of its own: when every
-//    operand is a fixed-point decimal exact at the printed precision P,
-//    every value fits a 64-bit integer once scaled by 10^P, and the long
-//    double holds those integers exactly, the whole sequence is integer
-//    arithmetic and the terms are the same bytes engine 2 would print, so
-//    `seq -w 1 1000000` runs without touching a float.
-//
-// Engines 1 and 3 count in decimal digits (`digit_seq`), and a step
-// that divides 1000 is written by the block: a template of one block's
-// terms in which only the leading digits are patched from block to
-// block, so `seq 1 1000000` costs about one byte store per term.
-//
-// The long double is the TARGET's, and it is not one format: x87 80-bit
-// extended on x86-64, IEEE binary128 on arm64 and wasm32, binary64 on
-// Darwin. `lib/ld.fern` picks it, and everything sized off it — how many
-// decimal digits round trip, which whole numbers are exact, where the
-// subnormals begin — is read off that `Format` rather than written down
-// here.
 import "std/string";
 import "std/array";
 import "std/i64";
@@ -55,24 +5,16 @@ import "std/io_buffered";
 import "./lib/gnu";
 import "./lib/ld";
 
-// `Operand` — one scanned FIRST / INCREMENT / LAST: its value, and the
-// width and precision its SPELLING asks the default format for.
-// `precision` is `auto_prec()` when the spelling asks for nothing, which
-// is what sends the whole sequence to `%Lg`.
 struct Operand { v: ld.LD, width: i32, prec: i32 }
 
-// The `INT_MAX` GNU stores in `precision` for "no precision of its own":
-// a hex operand, or a non-finite one.
 function auto_prec(): i32 {
   return 2147483647;
 }
 
-// The largest increment GNU still runs the exact decimal engine for.
 function fast_step_limit(): u64 {
   return 200 as u64;
 }
 
-// Bytes buffered before a write(2); also the bound on one output block.
 function block_bytes(): i32 {
   return 4096;
 }
@@ -109,8 +51,6 @@ function is_digit(b: i32): boolean {
   return b >= 48 && b <= 57;
 }
 
-// gnulib's all_digits_p: a non-empty run of decimal digits and nothing
-// else — no sign, no point, no exponent. The gate on the exact engine.
 function all_digits(s: string): boolean {
   if (s.len() == 0) {
     return false;
@@ -136,23 +76,8 @@ function contains(s: string, byte: i32): boolean {
   return false;
 }
 
-// ---- scanning an operand ---------------------------------------------------
-//
-// The value is strtold's; the width and precision come from the spelling.
-// For a decimal spelling: precision is the digits after the point, moved
-// by the exponent (a negative exponent adds, a positive one cancels
-// fraction digits first), and width is the mantissa's length adjusted the
-// same way — a point that survives is counted, one that does not is
-// dropped, and a leading `.` counts the `0` that will be printed before it.
-// A hex spelling asks for nothing: `0x1f` is an integer (precision 0),
-// anything with a `.` or a lowercase `p` is `auto_prec`. `inf` is neither
-// — it is measured like any other run of bytes, and asks for precision 0.
 function scan_arg(f: ld.Format, s: string): Operand {
   let r: ld.Parse = f.strtold(s);
-  // An out-of-range value is rejected only when it OVERFLOWED: 9.5 made
-  // gnulib's xstrtod read an ERANGE below one as gradual underflow and
-  // hand the subnormal back, so `seq 4e-4951 1` counts from a subnormal
-  // where it used to be refused.
   if (r.end == 0 || r.end < s.len() || r.erange && r.v.abs_ge_one()) {
     gnu.die_usage("invalid floating point argument: " + gnu.quote(s), 1);
   }
@@ -206,8 +131,6 @@ function width_and_precision(arg: string): (i32, i32) {
   return (width, prec);
 }
 
-// GNU skips the bytes it will not print — leading blanks and `+` — before
-// measuring the width.
 function skip_blanks_and_plus(s: string): string {
   let i: i32 = 0;
   while (i < s.len()) {
@@ -221,8 +144,6 @@ function skip_blanks_and_plus(s: string): string {
   return slice_unchecked(s, i, s.len()) + "";
 }
 
-// Where the mantissa stops: the `e` / `E` that starts a well-formed
-// exponent, else the end.
 function mantissa_end(s: string): i32 {
   let i: i32 = 0;
   while (i < s.len()) {
@@ -241,7 +162,6 @@ function mantissa_end(s: string): i32 {
   return s.len();
 }
 
-// The exponent after `mant`, saturated well past any usable magnitude.
 function exponent_value(s: string, mant: i32): i32 {
   if (mant >= s.len()) {
     return 0;
@@ -284,15 +204,6 @@ function digit_run(s: string, from: i32, limit: i32): i32 {
   return i - from;
 }
 
-// ---- the output format -----------------------------------------------------
-//
-// `Spec` — one parsed `%` directive; `width` and `prec` are -1 when
-// absent. printf(1) parses the same thing from a much larger grammar and
-// writes its field straight to the stream; seq needs the field as a
-// STRING, because `prints_as_last` reads a term back through strtold and
-// compares it with the one before to decide where the sequence ends. So
-// the two carry their own conversion plumbing and share the bodies
-// lib/ld builds.
 struct Spec { minus: boolean, plus: boolean, space: boolean, hash: boolean, zero: boolean, width: i64, prec: i64, conv: i32 }
 
 function spec(conv: i32): Spec {
@@ -303,14 +214,8 @@ function none(): i64 {
   return 0 as i64 - 1 as i64;
 }
 
-// `Fmt` is that spec, the literal text around it, and the target's long
-// double, which every term is computed in and printed from. The default
-// format has no literal text; a -f format keeps whatever the user wrote,
-// with `%%` already reduced to `%`.
 struct Fmt { pre: string, spec: Spec, post: string, ldbl: ld.Format }
 
-// glibc parses a width or precision as an `int`; one that does not fit is
-// EOVERFLOW before a byte is written.
 function int_max(): i64 {
   return 2147483647 as i64;
 }
@@ -319,12 +224,6 @@ function fmt_overflows(f: Fmt): boolean {
   return f.spec.width > int_max() || f.spec.prec > int_max();
 }
 
-// `default_format(ldbl, first, step, last, equal_width)` — gnulib's
-// get_default_format. The precision is the widest FIRST or INCREMENT asks
-// for — LAST's is deliberately not in that maximum, so `seq 1 1 1.5`
-// counts in whole numbers. Any of the THREE asking for `auto_prec` sends
-// everything to `%Lg` though, LAST included: `seq 1 0.5 0x1p2` counts
-// 1 1.5 2 rather than 1.0 1.5 2.0. Only then does -w get a width.
 function default_format(ldbl: ld.Format, first: Operand, step: Operand, last: Operand, equal_width: boolean): Fmt {
   let prec: i32 = first.prec;
   if (step.prec > prec) {
@@ -333,10 +232,6 @@ function default_format(ldbl: ld.Format, first: Operand, step: Operand, last: Op
   if (prec == auto_prec() || last.prec == auto_prec()) {
     return Fmt { pre: "", spec: spec(103), post: "", ldbl: ldbl };
   }
-  // A width needs a LAST to measure: an endless sequence has none, so
-  // `seq -w 5 1 inf` counts unpadded where `seq -w 1 inf 100` — whose
-  // LAST is finite and whose infinite INCREMENT never reaches it — pads
-  // to that LAST's three columns.
   if (equal_width && last.v.is_finite()) {
     let first_width: i32 = rewidth(first, prec);
     let last_width: i32 = rewidth(last, prec);
@@ -351,14 +246,6 @@ function default_format(ldbl: ld.Format, first: Operand, step: Operand, last: Op
   return Fmt { pre: "", spec: Spec { ...f, prec: prec as i64 }, post: "", ldbl: ldbl };
 }
 
-// `parse_format(ldbl, f)` — gnulib's long_double_format: the one
-// conversion the format is allowed, with `%%` literals either side of it.
-// Every fault is fatal and, unlike a usage error, prints no `Try …` line.
-// An operand's width once the sequence prints at precision `prec`: its
-// integer digits, plus a point and `prec` digits when there are any. The
-// operand's own fraction is dropped or extended to match, so `1.5` in a
-// whole-number sequence is one column and `10` in a one-decimal one is
-// four.
 function rewidth(op: Operand, prec: i32): i32 {
   let int_digits: i32 = op.width;
   if (op.prec > 0) {
@@ -411,7 +298,6 @@ function parse_format(ldbl: ld.Format, f: string): Fmt {
   return Fmt { pre: literal(slice_unchecked(f, 0, start) + ""), spec: Spec { ...sp, conv: conv }, post: literal(slice_unchecked(f, i + 1, f.len()) + ""), ldbl: ldbl };
 }
 
-// The next `%` that is not `%%`, from `from`; -1 when there is none.
 function find_directive(f: string, from: i32): i32 {
   let i: i32 = from;
   while (i < f.len()) {
@@ -427,7 +313,6 @@ function find_directive(f: string, from: i32): i32 {
   return 0 - 1;
 }
 
-// `%%` in the text either side of the conversion is one `%`.
 function literal(s: string): string {
   if (!contains(s, 37)) {
     return s;
@@ -480,8 +365,6 @@ function one_byte(b: i32): string {
   return string_from_bytes_unchecked([b as u8]);
 }
 
-// A literal width or precision, saturating past the int glibc parses it
-// into so an oversized one is still recognisably oversized.
 function read_number(s: string, i: i32): (i64, i32) {
   let j: i32 = i;
   let v: i64 = 0 as i64;
@@ -494,27 +377,12 @@ function read_number(s: string, i: i32): (i64, i32) {
   return (v, j);
 }
 
-// ---- buffered output -------------------------------------------------------
-//
-// The digit engines push each term's pieces straight into the writer's
-// builder and settle it between terms, so a term is never split across
-// a failed write; a block of templated terms is handed to the writer
-// whole.
-//
-// The long double engine fills one fixed byte array in place instead,
-// a `Block` with `n` the bytes used. A term is reserved before it is
-// written, so it lands whole and the block is drained afterwards; a
-// term longer than the whole buffer — the least subnormal in `%f` runs
-// to thousands of decimals — grows it.
 struct Block { buf: u8[], n: i32 }
 
-// Room past the block threshold for the term that crosses it.
 function slack_bytes(): i32 {
   return 4096;
 }
 
-// `put_bytes(o, buf, n)` — hand `buf[0:n]` to the writer; dies on the
-// first failed write.
 function put_bytes(o: io_buffered.BufWriter, buf: u8[], n: i32): io_buffered.BufWriter {
   if (n == 0) {
     return o;
@@ -522,7 +390,6 @@ function put_bytes(o: io_buffered.BufWriter, buf: u8[], n: i32): io_buffered.Buf
   return gnu.put(o, slice_unchecked(string_from_bytes_unchecked(buf), 0, n));
 }
 
-// `reserve(b, k)` — room for a term of `k` bytes.
 function reserve(b: Block, k: i32): Block {
   if (b.n + k <= b.buf.len()) {
     return b;
@@ -555,12 +422,6 @@ function push_str(b: Block, s: string): Block {
   return out;
 }
 
-// Hand a full block to the writer. Called between terms, never inside
-// one, so a term is never split across a failed write.
-//
-// The writer is a separate value rather than a field: a BufWriter holds
-// a string, so keeping one inside the block would put a refcounted field
-// in every `Block { ...b, … }` the long double engine builds.
 function drain(o: io_buffered.BufWriter, b: Block): (io_buffered.BufWriter, Block) {
   if (b.n < block_bytes()) {
     return (o, b);
@@ -572,9 +433,6 @@ function flush_block(o: io_buffered.BufWriter, b: Block): (io_buffered.BufWriter
   return (put_bytes(o, b.buf, b.n), Block { ...b, n: 0 });
 }
 
-// A sequence that printed anything ends with a newline, whatever the
-// separator between its numbers was: `seq -s, 3` is `1,2,3` and then a
-// newline. A sequence with no numbers ends with nothing at all.
 function terminate(b: Block, written: boolean): Block {
   if (!written) {
     return b;
@@ -586,12 +444,6 @@ function block_finish(o: io_buffered.BufWriter, b: Block): void {
   gnu.finish(flush_block(o, b).0);
 }
 
-// ---- decimal counters ------------------------------------------------------
-//
-// A magnitude as ASCII digits, most significant first, no leading zeros;
-// zero is the one digit `0`. Stepping it is a carry from the low end,
-// in place, which touches 1.1 digits per unit step on average.
-// `digits_of(v)` — `v` as digits.
 function digits_of(v: u64): u8[] {
   let n: i32 = 1;
   let x: u64 = v;
@@ -617,8 +469,6 @@ function abs_i64(v: i64): u64 {
   return v as u64;
 }
 
-// `add_digits(d, n)` — `d + n`, carried in place from the low end. A
-// carry out of the top digit widens it.
 function add_digits(own d: u8[], n: u64): u8[] {
   let carry: u64 = n;
   let i: i32 = d.len() - 1;
@@ -644,8 +494,6 @@ function add_digits(own d: u8[], n: u64): u8[] {
   return concat_digits(digits_of(carry), d);
 }
 
-// `sub_digits(d, n)` — `d - n` for `d >= n`, borrowed in place from the
-// low end. Leading zeros the subtraction leaves are dropped.
 function sub_digits(own d: u8[], n: u64): u8[] {
   let borrow: u64 = n;
   let i: i32 = d.len() - 1;
@@ -715,7 +563,6 @@ function zero_digits(n: i32): u8[] {
   return out;
 }
 
-// `inc_fixed(d)` — `d + 1` at a fixed width: all nines wrap to all zeros.
 function inc_fixed(own d: u8[]): u8[] {
   let i: i32 = d.len() - 1;
   while (i >= 0) {
@@ -749,7 +596,6 @@ function cmp_digits(a: u8[], b: u8[]): i32 {
   return 0;
 }
 
-// A digit string with its leading zeros dropped; zero is one `0`.
 function trim_zeros(s: string): u8[] {
   let i: i32 = 0;
   while (i + 1 < s.len() && s[i] as i32 == 48) {
@@ -777,14 +623,6 @@ function digits_to_u64(d: u8[]): Option[u64] {
   return Some(v);
 }
 
-// ---- fixed-point terms -----------------------------------------------------
-//
-// One term as `%0<width>.<prec>Lf` prints it: the magnitude's digits with
-// the point `prec` places from the right, zero-extended leftwards to
-// reach the point and then to `width`, after the sign. The digit engine
-// is the case `prec` 0, `width` 0.
-// How many digits the term prints, padding included, for a non-negative
-// magnitude of `mag_len` digits.
 function fixed_digits(mag_len: i32, prec: i32, width: i32): i32 {
   let digits: i32 = mag_len;
   if (digits < prec + 1) {
@@ -800,8 +638,6 @@ function fixed_digits(mag_len: i32, prec: i32, width: i32): i32 {
   return digits;
 }
 
-// The byte offset within a term of digit `i` (from the left, of `digits`
-// in all): past the point once the fraction starts.
 function digit_col(i: i32, digits: i32, prec: i32): i32 {
   if (prec > 0 && i >= digits - prec) {
     return i + 1;
@@ -809,10 +645,6 @@ function digit_col(i: i32, digits: i32, prec: i32): i32 {
   return i;
 }
 
-// `emit_fixed(h, mag, neg, prec, width)` — the term, pushed into the
-// builder `h` as at most five pieces: sign, leading zeros and digits
-// before the point, the point, zeros and digits after it. A magnitude
-// of up to seven digits is a string without an allocation.
 function emit_fixed(h: usize, mag: u8[], neg: boolean, prec: i32, width: i32): void {
   let w: i32 = width;
   if (neg) {
@@ -857,19 +689,6 @@ function zeros(): string {
   return "0000000000000000000000000000000000000000000000000000000000000000";
 }
 
-// ---- the digit engine ------------------------------------------------------
-//
-// Non-negative terms counted in decimal digits, unbounded in size, at
-// any positive step. A step that divides 1000 is written by the BLOCK:
-// the terms in `[q000, q999]` all have the same low three digits from one
-// block to the next, so a template of those records — each followed by
-// the separator — serves every block, and only the digits of `q` change
-// in it. Counting `q` up in place touches 1.1 columns of the template
-// per block on average, and a block is one write(2). Terms before the
-// first block, after the last, and at any other step go one at a time.
-// `bound` empty means no upper bound at all, which is what an infinite
-// LAST asks for. `lead` says a separator precedes the first term.
-// The low digits a block holds fixed, and the terms they span.
 function block_digits(): i32 {
   return 3;
 }
@@ -878,8 +697,6 @@ function block_span(): i32 {
   return 1000;
 }
 
-// Whether the block writer takes `step`: it must divide the span, and
-// leave a block at least 100 terms so a write carries its cost.
 function block_step(step: u64): boolean {
   return step <= 10 as u64 && block_span() as u64 % step == 0 as u64;
 }
@@ -890,8 +707,6 @@ function digit_seq(o: io_buffered.BufWriter, first: u8[], step: u64, bound: Opti
   let cur: u8[] = first;
   let sep_first: boolean = lead;
   let blocked: boolean = block_step(step);
-  // The residue every term leaves modulo the step, which is the low
-  // digits of a block's first term.
   let r: i32 = 0;
   if (blocked) {
     r = low_value(first) % (step as i32);
@@ -928,7 +743,6 @@ function digit_seq(o: io_buffered.BufWriter, first: u8[], step: u64, bound: Opti
   return w;
 }
 
-// The value of `cur`'s low digits: `cur` modulo the span.
 function low_value(cur: u8[]): i32 {
   let i: i32 = cur.len() - block_digits();
   if (i < 0) {
@@ -942,9 +756,6 @@ function low_value(cur: u8[]): i32 {
   return v;
 }
 
-// The block index a block stops short of, `floor((LAST - r) / 1000)`:
-// a block is only written when the next block's first term is in
-// range, which is what lets every record end with the separator.
 function block_bound(bound: Option[u8[]], r: i32): Option[u8[]] {
   match (bound) {
     Some(hi) => {
@@ -958,7 +769,6 @@ function block_bound(bound: Option[u8[]], r: i32): Option[u8[]] {
   }
 }
 
-// `cur` with its low digits dropped: the block it lies in.
 function block_index(cur: u8[]): u8[] {
   if (cur.len() <= block_digits()) {
     return zero_digits(1);
@@ -966,11 +776,6 @@ function block_index(cur: u8[]): u8[] {
   return slice_digits(cur, 0, cur.len() - block_digits());
 }
 
-// Whether the block starting at `cur` can be written from a template:
-// `cur` is its block's first term, the next block's first term is in
-// range, and the block's terms are all the same length — which only
-// block 0 can fail, when neither the precision nor the width reaches
-// three digits.
 function block_ok(cur: u8[], r: i32, qmax: Option[u8[]], prec: i32, width: i32): boolean {
   if (low_value(cur) != r) {
     return false;
@@ -985,8 +790,6 @@ function block_ok(cur: u8[], r: i32, qmax: Option[u8[]], prec: i32, width: i32):
   return true;
 }
 
-// Whether block `q[z:]` — `q` read past `z` leading zeros — lies below
-// `qmax`.
 function block_fits(q: u8[], z: i32, qmax: Option[u8[]]): boolean {
   match (qmax) {
     Some(hi) => {
@@ -1009,14 +812,6 @@ function block_fits(q: u8[], z: i32, qmax: Option[u8[]]): boolean {
   }
 }
 
-// `blocks(o, q, r, step, qmax, prec, width, sep)` — every block from `q`
-// up to the bound, and the digits of the term that follows the last.
-//
-// The template's `prefix` is `q` zero-padded to the digits the term
-// leaves in front of the block's own three. Counting it up in place
-// carries through those zeros, so a term that gains a digit only
-// changes the template's layout — and rebuilds it — once the prefix has
-// no zero left to carry into.
 function blocks(o: io_buffered.BufWriter, q: u8[], r: i32, step: i32, qmax: Option[u8[]], prec: i32, width: i32, sep: string): (io_buffered.BufWriter, u8[]) {
   let w: io_buffered.BufWriter = o;
   let k: i32 = block_digits();
@@ -1038,8 +833,6 @@ function blocks(o: io_buffered.BufWriter, q: u8[], r: i32, step: i32, qmax: Opti
     while (true) {
       w = gnu.put(w, string_from_bytes_unchecked(t));
       prefix = inc_fixed(prefix);
-      // The digits that carried are now zeros; the one before them took
-      // the increment. Both are patched into every record.
       let i: i32 = p - 1;
       while (i >= 0 && prefix[i] as i32 == 48) {
         t = patch(t, digit_col(i, digits, prec), rec, m, 48 as u8);
@@ -1065,14 +858,12 @@ function blocks(o: io_buffered.BufWriter, q: u8[], r: i32, step: i32, qmax: Opti
   }
 }
 
-// The first term of block `q`: `q000 + r`.
 function first_term(q: u8[], r: i32): u8[] {
   let start: u8[] = concat_digits(q, zero_digits(block_digits()));
   start = add_digits(start, r as u64);
   return start;
 }
 
-// `q` zero-padded to `p` digits; block 0's prefix is all zeros.
 function pad_digits(q: u8[], p: i32): u8[] {
   if (q.len() == 1 && q[0] as i32 == 48) {
     return zero_digits(p);
@@ -1080,9 +871,6 @@ function pad_digits(q: u8[], p: i32): u8[] {
   return concat_digits(zero_digits(p - q.len()), q);
 }
 
-// `template(prefix, r, step, prec, sep, rec)` — the block's records
-// `prefix` + low digits `r`, `r + step`, … below the span, each
-// followed by `sep` and `rec` bytes long, with the point in place.
 function template(prefix: u8[], r: i32, step: i32, prec: i32, sep: string, rec: i32): u8[] {
   let k: i32 = block_digits();
   let p: i32 = prefix.len();
@@ -1129,7 +917,6 @@ function power_of_ten(n: i32): i32 {
   return v;
 }
 
-// `patch(t, col, rec, m, v)` — byte `col` of each of the `m` records.
 function patch(own t: u8[], col: i32, rec: i32, m: i32, v: u8): u8[] {
   let pos: i32 = col;
   let i: i32 = 0;
@@ -1141,8 +928,6 @@ function patch(own t: u8[], col: i32, rec: i32, m: i32, v: u8): u8[] {
   return t;
 }
 
-// Operands that are plain digit runs, counted in decimal rather than in
-// long double.
 function seq_fast(o: io_buffered.BufWriter, first: u8[], step: u64, bound: Option[u8[]], sep: string): io_buffered.BufWriter {
   match (bound) {
     Some(hi) => {
@@ -1155,12 +940,6 @@ function seq_fast(o: io_buffered.BufWriter, first: u8[], step: u64, bound: Optio
   return gnu.put(digit_seq(o, first, step, bound, 0, 0, sep, false), "\n");
 }
 
-// ---- the long double engine ------------------------------------------------
-//
-// `render(ldbl, spec, v)` — the conversion `spec` names as glibc writes
-// it, or None for a field glibc refuses outright (see `write_overflow`).
-// lib/ld builds the body; the sign, the radix and the padding around it
-// are printf's rules rather than the format's, so they are here.
 function render(ldbl: ld.Format, spec: Spec, v: ld.LD): Option[string] {
   let conv: i32 = spec.conv;
   let upper: boolean = conv == 70 || conv == 69 || conv == 71 || conv == 65;
@@ -1201,9 +980,6 @@ function field(spec: Spec, prefix: string, b: ld.Body): Option[string] {
   return pad(spec, prefix, b.text(), true);
 }
 
-// %a: the significand in hex from lib/ld's model of the target's long
-// double. The refusal check is here because the length it bounds counts
-// the sign and the `0x` this function adds.
 function hex_field(ldbl: ld.Format, spec: Spec, v: ld.LD, prefix: string, upper: boolean): Option[string] {
   if (spec.prec >= 0 as i64 && spec.prec + 10 as i64 + prefix.len() as i64 >= ld.overflow_len()) {
     return None;
@@ -1217,10 +993,6 @@ function hex_field(ldbl: ld.Format, spec: Spec, v: ld.LD, prefix: string, upper:
   return pad(spec, prefix + radix, body, true);
 }
 
-// `pad(spec, prefix, body, zero_ok)` — one conversion's text: the
-// sign/radix prefix, zero padding between prefix and body when the `0`
-// flag applies, else space padding on the side `-` selects. None is a
-// field glibc could not produce.
 function pad(spec: Spec, prefix: string, body: string, zero_ok: boolean): Option[string] {
   let len: i64 = (prefix.len() + body.len()) as i64;
   let total: i64 = len;
@@ -1263,8 +1035,6 @@ function lower(b: i32): i32 {
   return b;
 }
 
-// `first + i*step` per term, exactly as GNU computes it, so the last term
-// is GNU's last term. `i` counts in long double there and here.
 function print_numbers(o: io_buffered.BufWriter, b: Block, f: Fmt, first: ld.LD, step: ld.LD, last: ld.LD, sep: string): (io_buffered.BufWriter, Block) {
   if (out_of_range(first, step, last)) {
     return (o, b);
@@ -1275,9 +1045,6 @@ function print_numbers(o: io_buffered.BufWriter, b: Block, f: Fmt, first: ld.LD,
   while (true) {
     let x: ld.LD = f.ldbl.add(first, f.ldbl.mul(f.ldbl.from_i64(i), step));
     if (out_of_range(x, step, last)) {
-      // The term just printed, which for the very first one is FIRST
-      // itself: `first + 0*step` is a plain zero and would lose the sign
-      // of a negative one.
       let prev: ld.LD = first;
       if (i > 1 as i64) {
         prev = f.ldbl.add(first, f.ldbl.mul(f.ldbl.from_i64(i - 1 as i64), step));
@@ -1298,26 +1065,6 @@ function print_numbers(o: io_buffered.BufWriter, b: Block, f: Fmt, first: ld.LD,
   return (w, out);
 }
 
-// The last term of `seq 0 0.3 0.9` is 0.9 even though 3 x 0.3 lands one
-// ulp beyond it: a term past LAST is still printed when what the
-// conversion PRINTS is LAST's own value written differently from the
-// term before it. Both halves are exact, and neither is "inside the
-// range":
-//
-//   - the field has to READ BACK AS LAST, not merely into the range.
-//     `seq -f %.1f 0 0.36 0.71` stops at 0.4 though its 0.72 prints as
-//     `0.7`, which is well short of 0.71. It also has to read back
-//     whole, so a left-justified field loses the term on its trailing
-//     blanks: `seq -f %-8.1f 0 0.3 0.9` stops at 0.6 where
-//     `seq -f %5.1f 0 0.3 0.9` does not. No hex conversion ever prints
-//     this term — at full precision it reads back as the out-of-range
-//     value itself, and cut short it lands under LAST.
-//
-//   - the field has to DIFFER FROM the one just printed, as text rather
-//     than as a value: `seq -f %.0f 0.71 0.35000005 5` prints its last
-//     two terms as `5` and `5` and stops rather than printing a third,
-//     while `seq -f %.1f 0 -1e-18 0` follows `0.0` with `-0.0`, whose
-//     value is the same zero.
 function prints_as_last(f: Fmt, x: ld.LD, prev: ld.LD, last: ld.LD): boolean {
   match (render(f.ldbl, f.spec, x)) {
     Some(s) => {
@@ -1333,8 +1080,6 @@ function prints_as_last(f: Fmt, x: ld.LD, prev: ld.LD, last: ld.LD): boolean {
   }
 }
 
-// The field a term printed, empty for one the conversion refused — which
-// cannot be the term just printed, since the program exits on that.
 function printed(f: Fmt, v: ld.LD): string {
   match (render(f.ldbl, f.spec, v)) {
     Some(s) => {
@@ -1366,28 +1111,12 @@ function emit_term(o: io_buffered.BufWriter, b: Block, f: Fmt, v: ld.LD): Block 
   return push_str(out, f.post);
 }
 
-// glibc's EOVERFLOW: a conversion whose field cannot be counted in an
-// int. Reported once, with the strerror text GNU prints.
 function write_overflow(o: io_buffered.BufWriter): void {
   gnu.finish(o);
   gnu.error("write error: " + gnu.eoverflow_text());
   exit(1);
 }
 
-// ---- the scaled decimal engine ---------------------------------------------
-//
-// Every value held as an integer number of 10^-P units. Exact, so the
-// sequence ends where the decimals say it ends rather than where the
-// binary approximation does, and each term is emitted as digits with a
-// point pushed in — no formatting, no allocation. A unit step over
-// non-negative terms is the digit engine's block writer.
-// `scaled(arg, p, limit)` — `arg`'s value times 10^p as an integer, or
-// None when the spelling needs more than `p` fraction digits, is not a
-// plain decimal (hex, inf, nan), does not fit an i64, or lands past
-// `limit`, the largest whole number the target's long double holds
-// exactly: past that the terms are no longer the ones engine 2 would
-// print, because GNU's are rounded to the format at every step. Signed:
-// `-0` keeps nothing, so the caller carries that sign itself.
 function scaled(arg: string, p: i32, limit: u64): Option[i64] {
   let s: string = skip_blanks_and_plus(arg);
   let i: i32 = 0;
@@ -1449,18 +1178,6 @@ function scaled(arg: string, p: i32, limit: u64): Option[i64] {
   return Some(v);
 }
 
-// Whether `f` prints a fixed-point number and nothing else, which is
-// what the scaled engine can produce: the format `default_format`
-// derives, and equally a `-f %.Nf` that asks for the same thing. Any
-// flag, any width, any text around it, and the long double engine takes
-// it instead — the scaled one has no way to pad or to sign.
-//
-// The zero flag is the exception, because that IS the derived
-// equal-width format, whose padding `emit_fixed` and the block template write.
-//
-// The precision cap is the format's LDBL_DIG — 18 in x87, 33 in
-// binary128, 15 in binary64 — because a decimal wider than that does not
-// survive the round trip through the long double GNU prints it from.
 function is_fixed_point(f: Fmt, has_format: boolean): boolean {
   if (f.spec.conv != 102 || f.spec.prec < 0 as i64 || f.spec.prec > f.ldbl.dig() as i64) {
     return false;
@@ -1477,14 +1194,6 @@ function is_fixed_point(f: Fmt, has_format: boolean): boolean {
   return true;
 }
 
-// Whether the term whose scaled value is zero is a NEGATIVE zero. Exact
-// decimal arithmetic cannot answer that: `seq -w -0 1` opens with `-0`
-// because FIRST was written that way, and `seq -f %.1f 0.9 -0.3 0` ends
-// with `-0.0` because 3 x 0.3 rounds to a hair above 0.9 and the term is
-// a hair below zero. Both are the long double's sign, so it is the long
-// double that is asked — once, for the one index where the scaled value
-// is zero. Term 0 is FIRST itself rather than `first + 0*step`, which
-// would lose the sign of a negative zero.
 function zero_term_neg(f: ld.Format, first: ld.LD, step: ld.LD, fi: i64, si: i64): boolean {
   if (fi % si != 0 as i64) {
     return false;
@@ -1499,12 +1208,6 @@ function zero_term_neg(f: ld.Format, first: ld.LD, step: ld.LD, fi: i64, si: i64
   return f.add(first, f.mul(f.from_i64(k), step)).neg;
 }
 
-// `zero_neg` is the sign a term of zero carries, which the scaling
-// cannot hold: it is the long double's sign, not the decimal's.
-//
-// Terms below zero — and a zero that prints as `-0` — go one at a time,
-// as does a descending sequence; an ascending run of non-negative terms
-// is the digit engine's, blocks included.
 function dec_seq(o: io_buffered.BufWriter, first: i64, step: i64, last: i64, prec: i32, width: i32, sep: string, zero_neg: boolean): io_buffered.BufWriter {
   if (step > 0 as i64 && first > last || step < 0 as i64 && first < last) {
     return o;
@@ -1524,7 +1227,6 @@ function dec_seq(o: io_buffered.BufWriter, first: i64, step: i64, last: i64, pre
     if (last < stop) {
       stop = last;
     }
-    // The last term at or below `stop`.
     stop = first + (stop - first) / step * step;
     w = dec_terms(w, first, stop, step, prec, width, sep, zero_neg, false);
     start = stop + step;
@@ -1536,10 +1238,6 @@ function dec_seq(o: io_buffered.BufWriter, first: i64, step: i64, last: i64, pre
   return gnu.put(w, "\n");
 }
 
-// `dec_terms(o, first, last, step, …)` — every term from `first` to
-// `last`, one at a time, the magnitude stepped in place as digits. Only
-// a step across zero, where the magnitude turns around, starts over
-// from the value.
 function dec_terms(o: io_buffered.BufWriter, first: i64, last: i64, step: i64, prec: i32, width: i32, sep: string, zero_neg: boolean, lead: boolean): io_buffered.BufWriter {
   let w: io_buffered.BufWriter = o;
   let h: usize = w.handle();
@@ -1567,8 +1265,6 @@ function dec_terms(o: io_buffered.BufWriter, first: i64, last: i64, step: i64, p
   return w;
 }
 
-// `|y|` from `|x|`, where `y` is `x + step`: added to or taken from the
-// digits in place while the sign holds, recounted once it flips.
 function step_mag(own mag: u8[], x: i64, y: i64, step: i64): u8[] {
   let up: u64 = abs_i64(step);
   if (x >= 0 as i64 && step > 0 as i64 || x <= 0 as i64 && step < 0 as i64) {
@@ -1580,8 +1276,6 @@ function step_mag(own mag: u8[], x: i64, y: i64, step: i64): u8[] {
   return digits_of(abs_i64(y));
 }
 
-// ---- main ------------------------------------------------------------------
-// `Args` — what the option scan produced.
 struct Args { format: string, has_format: boolean, sep: string, equal_width: boolean, operands: string[] }
 
 function parse_args(argv: string[]): Args {
@@ -1617,24 +1311,8 @@ function parse_args(argv: string[]): Args {
   return Args { format: format, has_format: has_format, sep: sep, equal_width: equal_width, operands: g.operands() };
 }
 
-// ---- choosing the digit engine ---------------------------------------------
-//
-// Operands that are already plain runs of digits are counted AS WRITTEN,
-// which is what keeps `seq 99999999999999999999 100000000000000000001`
-// exact through 10^20. One operand spelled any other way — a `+`, an
-// exponent, hex — and GNU counts the values as a whole-number format
-// would PRINT them instead, which is both why `seq 0X1P-1 1 3` (a first
-// of 0.5) counts 0 1 2 3 and why `seq +99999999999999999999 1
-// 100000000000000000001` prints a single term: rendered, its three
-// operands are all 10^20. A rendering that is not a run of digits — a
-// first of -0.5 — leaves the digit engine altogether, and the long
-// double engine prints -0 0 2 2.
-// `Fast` — what the digit engine needs: FIRST's digits, the increment,
-// and the bound (None for an infinite LAST).
 struct Fast { first: u8[], step: u64, bound: Option[u8[]] }
 
-// FIRST as the digit engine takes it: the operand as typed when that is
-// a run of digits, and otherwise what `%.0Lf` would print.
 function first_digits(ldbl: ld.Format, v: ld.LD, text: string): Option[u8[]] {
   if (all_digits(text)) {
     return Some(trim_zeros(text));
@@ -1642,7 +1320,6 @@ function first_digits(ldbl: ld.Format, v: ld.LD, text: string): Option[u8[]] {
   return whole_digits(ldbl, v);
 }
 
-// FIRST as `%.0Lf` would print it, when that is a run of digits.
 function whole_digits(ldbl: ld.Format, v: ld.LD): Option[u8[]] {
   let s0: Spec = spec(102);
   match (render(ldbl, Spec { ...s0, prec: 0 as i64 }, v)) {
@@ -1658,8 +1335,6 @@ function whole_digits(ldbl: ld.Format, v: ld.LD): Option[u8[]] {
   }
 }
 
-// LAST's integer part, which is the real bound on a whole-number
-// sequence: `seq 1 1 3.5` ends at 3.
 function bound_digits(v: ld.LD): Option[Option[u8[]]] {
   if (v.is_inf()) {
     if (v.neg) {
@@ -1684,7 +1359,6 @@ function bound_digits(v: ld.LD): Option[Option[u8[]]] {
   return Some(Some(trim_zeros(slice_unchecked(d.digits, 0, n) + "")));
 }
 
-// Whether GNU runs the digit engine, and with what.
 function use_fast(a: Args, f: Fmt, first: Operand, step: Operand, last: Operand, first_str: string, step_str: string, last_str: string): Option[Fast] {
   if (a.has_format || a.equal_width || a.sep.len() != 1) {
     return None;
@@ -1695,10 +1369,6 @@ function use_fast(a: Args, f: Fmt, first: Operand, step: Operand, last: Operand,
   if (all_digits(first_str) && all_digits(step_str) && all_digits(last_str)) {
     let lo: u8[] = trim_zeros(first_str);
     let hi: u8[] = trim_zeros(last_str);
-    // A range that runs backwards is this engine's too: it compares the
-    // DIGITS, prints nothing and exits, where the values rounded to the
-    // format would still meet — `seq 100000000000000000001 1
-    // 99999999999999999999` prints nothing, not the one term at 10^20.
     match (digits_to_u64(trim_zeros(step_str))) {
       Some(sv) => {
         if (sv > fast_step_limit()) {
@@ -1714,10 +1384,6 @@ function use_fast(a: Args, f: Fmt, first: Operand, step: Operand, last: Operand,
   return use_fast_rendered(f.ldbl, first.v, step.v, last.v, first_str);
 }
 
-// The second attempt, for integers spelled in a way the digits engine
-// could not read — `1e1`, `+1`, `inf`. FIRST keeps its original digits
-// when it has them, so an operand too long for the format is printed as
-// it was typed rather than as the value it rounded to.
 function use_fast_rendered(ldbl: ld.Format, first: ld.LD, step: ld.LD, last: ld.LD, first_str: string): Option[Fast] {
   match (whole_digits(ldbl, step)) {
     Some(sd) => {

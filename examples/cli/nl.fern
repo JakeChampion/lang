@@ -1,28 +1,7 @@
-// nl.fern — number lines of input, like `nl(1)`.
-//
-// More configurable than `cat -n`:
-//
-//   -b a    number all lines       (default for nl is `t`)
-//   -b t    number only non-empty lines (default)
-//   -b n    number no lines
-//   -w N    number field width      (default 6)
-//   -s STR  separator between number and text (default a tab)
-//   -v N    starting line number     (default 1)
-//   -i N    line-number increment    (default 1)
-//
-//   $ printf 'a\n\nb\n' | ./nl
-//        1\ta
-//          \t
-//        2\tb
-//
-// Showcases: multiple option arguments, right-aligned numeric
-// formatting via `pad_start`.
 import "std/string";
 import "std/i32";
 import "std/io";
 
-// `body` selects which lines get numbered: "a" all, "t" non-empty
-// (default), "n" none.
 struct Opts { body: string, width: i32, sep: string, start: i32, incr: i32 }
 
 function slurp(path: string): string {

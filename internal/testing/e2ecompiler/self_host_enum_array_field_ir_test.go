@@ -9,45 +9,27 @@ import (
 	"testing"
 )
 
-// enumArrayFieldIRCases exercise ENUM-ARRAY (`E[]`) struct-literal field VALUES
-// through the self-host IR path, in the three non-literal construction shapes
-// an array-of-struct field also takes —
-//   - a bare-ident enum-array local       (`S { items: one }`)
-//   - a `.append` on a borrowed param      (`S { items: items.append(B(v)) }`)
-//   - a field-access copy                   (`S { items: a.items }`)
-//
-// Enum-array struct fields take the same is_unique-gated deep drop as
-// struct-array fields, so the same alias-inc / no-inc decisions apply at
-// construction.
-//
-// Each program builds an enum array into a struct field and sums it back, so a
-// botched alias-inc (over-release → wrong/garbage element) is caught by the exit
-// code, and a module the IR declines is an error from the driver.
 var enumArrayFieldIRCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// Array-literal field value (already broadly supported; the baseline).
 	{"literal", `enum N { A(i32), B(i32) }
 struct S { items: N[], k: i32 }
 function sum_n(xs: N[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { match (xs[i]) { A(x) => { s = s + x; }, B(x) => { s = s + x; } } i = i + 1; } return s; }
 function main(): i32 { let s: S = S { items: [A(3), B(4)], k: 2 }; return sum_n(s.items) + s.k; }`, 9},
 
-	// Bare-ident enum-array local as the field value (`S { items: one }`).
 	{"bare-ident", `enum N { A(i32), B(i32) }
 struct S { items: N[], k: i32 }
 function sum_n(xs: N[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { match (xs[i]) { A(x) => { s = s + x; }, B(x) => { s = s + x; } } i = i + 1; } return s; }
 function main(): i32 { let one: N[] = [A(5), B(1)]; let s: S = S { items: one, k: 1 }; return sum_n(s.items) + s.k; }`, 7},
 
-	// `.append` on a borrowed param as the field value (`S { items: items.append(B(v)) }`).
 	{"append-param", `enum N { A(i32), B(i32) }
 struct S { items: N[], k: i32 }
 function sum_n(xs: N[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { match (xs[i]) { A(x) => { s = s + x; }, B(x) => { s = s + x; } } i = i + 1; } return s; }
 function build(items: N[], v: i32): S { return S { items: items.append(B(v)), k: items.len() }; }
 function main(): i32 { let st: N[] = [A(2)]; let s: S = build(st, 5); return sum_n(s.items) + s.k; }`, 8},
 
-	// Field-access copy as the field value (`S { items: a.items }`) — the er.actions shape.
 	{"field-copy", `enum N { A(i32), B(i32) }
 struct S { items: N[], k: i32 }
 function sum_n(xs: N[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { match (xs[i]) { A(x) => { s = s + x; }, B(x) => { s = s + x; } } i = i + 1; } return s; }
@@ -55,8 +37,6 @@ function cp(a: S): S { return S { items: a.items, k: a.k }; }
 function main(): i32 { let s0: S = S { items: [A(6), B(0)], k: 3 }; let s1: S = cp(s0); return sum_n(s1.items) + s1.k; }`, 9},
 }
 
-// TestSelfHostEnumArrayFieldIRX86_64 routes each case through the x86-64 IR
-// driver (asm_run: the typed lowering, then asm_ir).
 func TestSelfHostEnumArrayFieldIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -89,13 +69,6 @@ func TestSelfHostEnumArrayFieldIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostEnumArrayFieldIRArm64 runs the same cases through the arm64 IR
-// backend (asm_ir_run -target arm64-linux → asm_arm64_ir.emit_module_or_error_sub →
-// asm_arm64_ir.emit_body, sharing the enum-array-field lowering). This is
-// the essential arm64 check: an enum-array struct field's deep-drop goes through
-// arm64's heap-element reclamation, so an over-release here surfaces as a wrong
-// exit code / crash under qemu. IR routing is
-// pinned by the arm64 IR emitter's `.Lssa_` label marker.
 func TestSelfHostEnumArrayFieldIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -110,9 +83,6 @@ func TestSelfHostEnumArrayFieldIRArm64(t *testing.T) {
 			if err != nil || len(asm) == 0 {
 				t.Fatalf("%s: driver failed (%d bytes, err %v)", tc.name, len(asm), err)
 			}
-			// `.Lssa_` is the arm64 IR emitter's per-function label prefix
-			// (asm_arm64_ir); its presence proves the module routed through the
-			// IR path.
 			if !strings.Contains(string(asm), ".Lssa_") {
 				t.Fatalf("%s: arm64 asm has no .Lssa_ marker — module did not lower through the IR", tc.name)
 			}

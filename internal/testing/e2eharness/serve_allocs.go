@@ -13,45 +13,19 @@ import (
 	"time"
 )
 
-// The serve loop's own allocations per request, #9853 exit criterion A's
-// count half: a hello handler served on one keep-alive connection, with
-// /count answering __heap_alloc_count(). The framing gate counts the parse
-// and the serialize alone; this one counts everything the loop does between
-// two requests (the reactor wait, the read, the handler's task, the reply,
-// the buffer's compaction), and the handler's own response.
-
-// ServeAllocsRounds is how many hello requests the count spans on a host
-// running the server natively; ServeAllocsRoundsEmulated is the count under
-// qemu or wasmtime, where a request costs about a millisecond.
 const ServeAllocsRounds = 100000
 const ServeAllocsRoundsEmulated = 10000
 
-// serveAllocsWarm is how many requests run before the first count, so the
-// connection's buffers and the loop's tables have reached their size.
 const serveAllocsWarm = 2000
 
-// serveAllocsH2Drift is how far under its ceiling the HTTP/2 mean may sit
-// before the ceiling is lowered. Runs of one build on one machine agree to
-// within one allocation, but the mean moves with how the client's frames
-// coalesce into the server's reads, and so with the machine: a build that
-// read 98.7 to 99.3 here read 95.4 on the CI runner.
 const serveAllocsH2Drift = 8
 
-// serveAllocsSlackPerSecond is how far the total may sit from a whole
-// number per request, per second the rounds took and two more: the loop
-// reformats its Date once a second, about thirty allocations each time.
 const serveAllocsSlackPerSecond = 40
 
-// ServeAllocsServerSource is a server answering "hello" to every
-// path but /count, which answers the allocator's call count. It serves the
-// listener it inherits, or `port` where it inherits none, for `rounds`
-// requests and the warm-up on one connection.
 func ServeAllocsServerSource(port, rounds int) string {
 	return serveAllocsSource(port, rounds, "serve.config()")
 }
 
-// ServeAllocsH2ServerSource is ServeAllocsServerSource under `with_h2()`,
-// for the requests to arrive on one HTTP/2 connection.
 func ServeAllocsH2ServerSource(port, rounds int) string {
 	return serveAllocsSource(port, rounds, "serve.config().with_h2()")
 }
@@ -72,11 +46,6 @@ function main(): i32 {
 `, port, config, serveAllocsWarm+rounds+8)
 }
 
-// CheckServeAllocs drives ServeAllocsServerSource at addr for rounds hello
-// requests and holds the allocations per request to want. Two counts back
-// to back give what a count request costs, which is taken off the count
-// around the rounds. The pin is a ratchet: above it is a regression, below
-// it lowers the pin.
 func CheckServeAllocs(t *testing.T, addr string, want int64, rounds int) {
 	t.Helper()
 	total, seconds := serveAllocsRounds(t, KeepAliveGET(t, addr), rounds)
@@ -90,8 +59,6 @@ func CheckServeAllocs(t *testing.T, addr string, want int64, rounds int) {
 	}
 }
 
-// KeepAliveGET opens one keep-alive HTTP/1.1 connection to the server
-// at addr, closed when the test ends, and answers a GET's body over it.
 func KeepAliveGET(t *testing.T, addr string) func(path string) string {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -119,11 +86,6 @@ func KeepAliveGET(t *testing.T, addr string) func(path string) string {
 	}
 }
 
-// ServeFetchAllocsServerSource is ServeAllocsServerSource with a handler
-// that makes two requests through `plat.http` before it answers "hello",
-// the nightly two-fetch profile (scripts/net-bench.d/twofetch.fern). The
-// origin is reached through the forward proxy `http_proxy` names, since a
-// handler's fetch refuses a loopback address.
 func ServeFetchAllocsServerSource(port, rounds int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -146,24 +108,12 @@ function main(): i32 {
 `, port, serveAllocsWarm+rounds+8)
 }
 
-// CheckServeFetchAllocs drives ServeFetchAllocsServerSource at addr for
-// rounds requests over one keep-alive connection and bounds the mean
-// allocations per request by `ceiling`, as CheckServeAllocsH2 does: what
-// the two fetches cost moves with the fetch client, so a ceiling rather
-// than a pin.
 func CheckServeFetchAllocs(t *testing.T, addr string, ceiling int64, rounds int) {
 	t.Helper()
 	total, seconds := serveAllocsRounds(t, KeepAliveGET(t, addr), rounds)
 	checkAllocsCeiling(t, "two-fetch", total, seconds, rounds, ceiling)
 }
 
-// CheckServeAllocsH2 is CheckServeAllocs over one prior-knowledge HTTP/2
-// connection (H2CClient), against ServeAllocsH2ServerSource. The count
-// per request varies there, with the blocks the connection's frames,
-// header blocks and stream slots take and give back and with how the
-// client's frames coalesce into reads, so `ceiling` bounds the mean: above
-// it is a regression, and a mean serveAllocsH2Drift or more under it
-// lowers the ceiling.
 func CheckServeAllocsH2(t *testing.T, addr string, ceiling int64, rounds int) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -184,9 +134,6 @@ func CheckServeAllocsH2(t *testing.T, addr string, ceiling int64, rounds int) {
 	checkAllocsCeiling(t, "HTTP/2 hello", total, seconds, rounds, ceiling)
 }
 
-// checkAllocsCeiling holds `total` allocations over `rounds` requests of
-// kind `what` under `ceiling` per request, and less than
-// serveAllocsH2Drift under it, so a gain lowers the ceiling.
 func checkAllocsCeiling(t *testing.T, what string, total, seconds int64, rounds int, ceiling int64) {
 	t.Helper()
 	mean := float64(total) / float64(rounds)
@@ -198,10 +145,6 @@ func checkAllocsCeiling(t *testing.T, what string, total, seconds int64, rounds 
 	}
 }
 
-// serveAllocsRounds warms the connection `get` speaks over and counts
-// around `rounds` hello requests: the allocations they cost, with what the
-// count requests themselves cost taken off, and the seconds they took plus
-// two, the loop's Date reformatting about thirty allocations once a second.
 func serveAllocsRounds(t *testing.T, get func(path string) string, rounds int) (total, seconds int64) {
 	t.Helper()
 	count := func() int64 {
@@ -229,10 +172,6 @@ func serveAllocsRounds(t *testing.T, get func(path string) string, rounds int) (
 	return total, seconds
 }
 
-// ServeAllocsH3ServerSource is ServeAllocsServerSource under TLS and
-// `with_h3()`, for the requests to arrive on one HTTP/3 connection. The
-// identity is the Ed25519 leaf tests/stdlib/http_h3q_test.fern uses, so no
-// file is written.
 func ServeAllocsH3ServerSource(port, rounds int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
@@ -255,10 +194,6 @@ function main(): i32 {
 `, serveAllocsH3Identity, port, serveAllocsWarm+rounds+8)
 }
 
-// serveAllocsH3ClientCommon is the shared head of the HTTP/3 allocation
-// clients: the imports, the test identity, and the helpers the serial
-// driver (ServeAllocsH3ClientSource) and the multiplexed one
-// (ServeAllocsH3MuxClientSource) both build on.
 const serveAllocsH3ClientCommon = `import "std/net";
 import "std/quic/conn";
 import "std/http/h3";
@@ -340,10 +275,6 @@ function count(k: Cli): (Cli, i64) {
 }
 `
 
-// ServeAllocsH3ClientSource drives the server serially: one HTTP/3
-// connection to 127.0.0.1 on the port in its first argument, the warm-up,
-// then its second argument's rounds of hello requests one at a time,
-// counted as serveAllocsRounds counts them. It prints `allocs TOTAL SECONDS`.
 var ServeAllocsH3ClientSource = serveAllocsH3ClientCommon + `
 function main(): i32 {
   let argv: string[] = args();
@@ -415,12 +346,6 @@ function main(): i32 {
 }
 `
 
-// ServeAllocsH3MuxClientSource is ServeAllocsH3ClientSource with up to its
-// third argument's requests in flight on the one connection at a time
-// (`drive`), the multiplexed path the 1x256 nightly row exercises. It
-// prints `allocs TOTAL SECONDS peak PEAK`, peak the most it held at once:
-// the server grants 100 request streams, so a higher argument tops out
-// there.
 var ServeAllocsH3MuxClientSource = serveAllocsH3ClientCommon + `
 // drive keeps up to m hello requests in flight until rounds are answered,
 // pumping the socket between top-ups, and returns the peak held at once and
@@ -534,10 +459,6 @@ function main(): i32 {
 }
 `
 
-// CheckServeAllocsH3 runs `client`, a ServeAllocsH3ClientSource build with
-// its arguments set, and holds the mean it reports under `ceiling` as
-// CheckServeAllocsH2 does: above it is a regression, and a mean
-// serveAllocsH2Drift or more under it lowers the ceiling.
 func CheckServeAllocsH3(t *testing.T, addr string, client *exec.Cmd, ceiling int64, rounds int) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -559,11 +480,6 @@ func CheckServeAllocsH3(t *testing.T, addr string, client *exec.Cmd, ceiling int
 	}
 }
 
-// CheckServeAllocsH3Mux runs `client`, a ServeAllocsH3MuxClientSource build,
-// and bounds the mean it reports under `ceiling` as CheckServeAllocsH3 does.
-// It also holds the peak it reports at or above `minPeak`, so a client that
-// quietly fell back to one stream in flight — which would measure the
-// serial path, not the multiplexed one — fails rather than passing.
 func CheckServeAllocsH3Mux(t *testing.T, addr string, client *exec.Cmd, ceiling int64, rounds int, minPeak int) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -589,9 +505,6 @@ func CheckServeAllocsH3Mux(t *testing.T, addr string, client *exec.Cmd, ceiling 
 	}
 }
 
-// serveAllocsH3Identity is the test root, the Ed25519 leaf for tls.example
-// it signed, and the leaf's key, as tests/stdlib/http_h3q_test.fern holds
-// them.
 const serveAllocsH3Identity = `const ROOT: string = "3082011c3081cfa00302010202020201300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30243122302006035504030c194665726e20544c5320536572766572205465737420526f6f74302a300506032b6570032100d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300506032b65700341007353a91b5ad2e713d51d2fa08f3e800b99afa9e5725cfd746269d03210b1faadccfc942258bb8151da41be07943a4e8a14bd615e96692c8b896872460e827c0a";
 const ED_LEAF: string = "3082013e3081f1a00302010202020204300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b746c732e6578616d706c65302a300506032b6570032100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0a3533051300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301c0603551d1104153013820b746c732e6578616d706c658704c0000207300506032b6570034100bdd423797a497344c22bf704b418f31b7b6d0d884b517a57d1421c064fa68de8266518e0ddedfbdf189a71a2bb5bd2ffb7ca885f2a7f9ac0e96cb6d07d83e802";
 const ED_PKCS8: string = "-----BEGIN PRIVATE KEY-----\n" + "MC4CAQAwBQYDK2VwBCIEICIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIi\n" + "-----END PRIVATE KEY-----\n";

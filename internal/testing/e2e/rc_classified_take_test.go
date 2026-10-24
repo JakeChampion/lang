@@ -5,14 +5,6 @@ import (
 	"testing"
 )
 
-// A donor whose payloads a block takes and which dies in the same block reads
-// its uniqueness once, at its first take, and its death follows that answer:
-// a unique donor's taken slots are the frame's, and only its other fields are
-// released. Each shape below runs on a unique donor and on one a snapshot
-// still holds, so both arms of the one test are exercised: `ins` holds its
-// donor's token for a construction in a later block, `fold` drops its donor,
-// `joined` releases the rest of a record inline and `first` through the
-// record's drop helper.
 const classifiedTakeSrc = `import "std/i32";
 import "std/string";
 
@@ -172,8 +164,6 @@ func TestInterpClassifiedTakeValues(t *testing.T) {
 	}
 }
 
-// checkClassifiedTake runs the program on one target: main's result is the exit
-// code natively and stdout's one line on wasm, and the census is balanced.
 func checkClassifiedTake(t *testing.T, run censusRun) {
 	t.Helper()
 	stdout, stderr, exit := run(t, classifiedTakeSrc)

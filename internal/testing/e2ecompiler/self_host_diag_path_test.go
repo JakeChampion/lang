@@ -6,11 +6,6 @@ import (
 	"testing"
 )
 
-// A diagnostic in the entry module names the file as the command line did,
-// `path:line:col: error[…]`, the way native's does (#11407): a checker error
-// and a target-capability refusal (E066) alike. An editor or a script reading
-// the position needs the file it is in. A program read from stdin is
-// `<stdin>`, as native spells it and as the `todo` warning already did.
 func TestSelfHostDiagnosticsNameTheEntryFile(t *testing.T) {
 	cli := newStrictCLI(t)
 	t.Run("stdin", func(t *testing.T) {
@@ -30,8 +25,6 @@ func TestSelfHostDiagnosticsNameTheEntryFile(t *testing.T) {
 		{"capability", "wasm32-wasi", "function main(): i32 {\n    return unix_listen(\"/tmp/x\", 4);\n}\n", "/main.fern:2:23: error[E066]: "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// tryEmit writes the program to <dir>/main.fern and names that
-			// absolute path on the command line.
 			_, diags, err := cli.tryEmit(t, tc.target, tc.src)
 			if err == nil {
 				t.Fatalf("compile accepted a program that must be refused; diagnostics:\n%s", diags)

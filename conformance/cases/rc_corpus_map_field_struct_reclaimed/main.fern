@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// #7914 item 2, the field shape. A Map moved into a struct field
-// reached dropStructField's partial chain — value column + buf +
-// handle, no string-KEY column — so every key strand-ed (20/12,
-// 512 B on one round of 8 inserts) while the same map as a bare
-// local balanced. The shared appendMapDropChain walks both
-// columns from every drop site.
+
+
+
+
+
+
+
+
+
 import "core/map";
 import "std/i32";
 

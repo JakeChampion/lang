@@ -8,34 +8,10 @@ import (
 	"testing"
 )
 
-// --- A MIXED rc tuple — one bare ident, one fresh literal (#7281) ------------
-//
-// `let t: (i32[], i32[]) = (xs, [i + 2, i + 3])` releases both buffers and the
-// tuple box. The tuple construction rc_inc's an element naming an rc-container
-// local (#4350 / #7226), so the tuple holds a COUNTED REFERENCE to every
-// position and its drop gives each one back, while the local's own release
-// spends its own reference. Missed, it released NOTHING:
-//
-//	100 rounds   allocs=300 frees=0    live_bytes=12000
-//	200 rounds   allocs=600 frees=0    live_bytes=24000
-//	400 rounds   allocs=1200 frees=0   live_bytes=48000
-//
-// 120 B/round, unbounded, while the answers agreed and `__rc_underflow_count()`
-// was 0, so nothing but the byte count disagreed. Make either position rc-free
-// and it balances; only the mix fell through.
-//
-// The rebind and discarded-literal sites owe the same give-back — `rebound`,
-// `loop_scoped` and `discarded_literal` are those.
-//
-// Every want was confirmed against bin/fern -interp, never read off the
-// self-host run under test.
-
 type tupMixedRcCase struct {
-	name string
-	src  string
-	want int
-	// balance asserts allocs == frees at live_bytes 0. False only for the row
-	// that is deliberately still refused.
+	name    string
+	src     string
+	want    int
 	balance bool
 }
 
@@ -46,7 +22,6 @@ const tupMixedRcMain = "\nfunction main(): i32 { let x: i32 = 0; let r: i32 = 0;
 func tupMixedRcCases() []tupMixedRcCase {
 	return []tupMixedRcCase{
 		{
-			// The issue's repro. Base: allocs=300 frees=0 live_bytes=12000.
 			name: "mixed_sweep",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -56,8 +31,6 @@ func tupMixedRcCases() []tupMixedRcCase {
 			want: 74, balance: true,
 		},
 		{
-			// Position order is not what decides it — the literal first leaks the
-			// same 12000. A fix that only looked at position 0 would pass one.
 			name: "mixed_literal_first",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -67,9 +40,6 @@ func tupMixedRcCases() []tupMixedRcCase {
 			want: 74, balance: true,
 		},
 		{
-			// CONTROL, already correct: every position a bare ident. This is the
-			// "TUP:" + "TUPELEM:" class (#7226) and must stay in it — a fix that
-			// worked by pulling shapes into "TUPRCS:" would move this one.
 			name: "all_ident",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -80,8 +50,6 @@ func tupMixedRcCases() []tupMixedRcCase {
 			want: 25, balance: true,
 		},
 		{
-			// CONTROL, already correct: the strict all-fresh "TUPRCS:" shape the
-			// widened admission must still admit unchanged.
 			name: "all_fresh",
 			src: `function round(i: i32): i32 {
     let t: (i32[], i32[]) = ([i, i + 1], [i + 2, i + 3]);
@@ -90,7 +58,6 @@ func tupMixedRcCases() []tupMixedRcCase {
 			want: 74, balance: true,
 		},
 		{
-			// CONTROL, already correct: a scalar beside a bare ident is "TUP:".
 			name: "scalar_ident",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -100,9 +67,6 @@ func tupMixedRcCases() []tupMixedRcCase {
 			want: 40, balance: true,
 		},
 		{
-			// CONTROL, already correct: the SAME ident twice. Two retains, and the
-			// release has to spend both — a walk that deduplicated positions would
-			// leak one buffer per round here.
 			name: "dup_ident",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -112,10 +76,6 @@ func tupMixedRcCases() []tupMixedRcCase {
 			want: 40, balance: true,
 		},
 		{
-			// The ident is a PARAM, not a local: the caller still owns the buffer
-			// after the callee's dec, so this is the row that would report an
-			// over-release rather than a leak if the give-back were a free.
-			// Base: allocs=201 frees=0 live_bytes=8040.
 			name: "param_element",
 			src: `function round(base: i32[], i: i32): i32 {
     let t: (i32[], i32[]) = (base, [i + 2, i + 3]);
@@ -125,11 +85,6 @@ function main(): i32 { let b: i32[] = [7, 8]; let x: i32 = 0; let r: i32 = 0; wh
 			want: 57, balance: true,
 		},
 		{
-			// THE OVER-RELEASE GUARD. Two same-named `v` in sibling `if` arms, one
-			// mixed and one all-ident, so they are in different classes. The tuple
-			// family has been site-keyed since #7272; without that this widening
-			// would hand one binding the other's credit and free a live buffer,
-			// which no byte count would show. Base: allocs=151 frees=50 live=4040.
 			name: "sibling_alias",
 			src: `function round(base: i32[], i: i32): i32 {
     let t: i32 = 0;
@@ -141,9 +96,6 @@ function main(): i32 { let b: i32[] = [7, 8]; let t: i32 = 0; let i: i32 = 0; wh
 			want: 28, balance: true,
 		},
 		{
-			// The mix one level down: the admission recurses into a nested tuple
-			// position, so an inner mixed tuple is admitted with the outer one.
-			// Base: allocs=400 frees=0 live_bytes=16000.
 			name: "nested_mixed",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -153,9 +105,6 @@ function main(): i32 { let b: i32[] = [7, 8]; let t: i32 = 0; let i: i32 = 0; wh
 			want: 74, balance: true,
 		},
 		{
-			// The ident's own binding carries no annotation — the retain is decided
-			// from the SLOT, not the declaration, so this must behave identically.
-			// Base: allocs=300 frees=0 live_bytes=12000.
 			name: "unannotated_source",
 			src: `function mk(i: i32): i32[] { return [i, i + 1]; }
 function round(i: i32): i32 {
@@ -166,9 +115,6 @@ function round(i: i32): i32 {
 			want: 74, balance: true,
 		},
 		{
-			// A block-scoped mixed tuple rebound once per iteration: the sweep half
-			// and the rebind-store half both have to fire, and each on its own
-			// leaves a different remainder. Base: allocs=700 frees=400 live=12000.
 			name: "loop_scoped",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -180,10 +126,6 @@ function round(i: i32): i32 {
 			want: 44, balance: true,
 		},
 		{
-			// A REASSIGNED mixed tuple: each superseded box must give back its
-			// bare-ident element's retain as well as release its fresh one.
-			// Missed: allocs=900 frees=600 live_bytes=12000 — the n-of-n signature
-			// with the fresh half already released and the ident half stranded.
 			name: "rebound",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -195,8 +137,6 @@ function round(i: i32): i32 {
 			want: 74, balance: true,
 		},
 		{
-			// The discarded-literal statement site, which frees the box outright
-			// and owes the same give-back. Missed: allocs=300 frees=200 live=4000.
 			name: "discarded_literal",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -206,12 +146,6 @@ function round(i: i32): i32 {
 			want: 53, balance: true,
 		},
 		{
-			// DELIBERATELY still refused, and asserted on the exit code alone.
-			// `let keep: i32[] = t.0` extracts an owned pointer element, so the
-			// tuple is not released and this keeps its 12000 — the safe
-			// direction. What the row pins is that it must not start
-			// OVER-releasing, which is where a careless widening of the escape
-			// rules would take it.
 			name: "elem_escapes_still_leaks",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -224,14 +158,6 @@ function round(i: i32): i32 {
 	}
 }
 
-// TestSelfHostTupleMixedRcElemX86_64 — a tuple mixing a bare-ident and a fresh
-// rc element releases both positions and its box, exactly once each.
-//
-// Both assertions carry signal and they catch opposite failures. The exit code is
-// the over-release detector: a doubly-released block goes straight back to the
-// freelist, so `live_bytes` stays 0 through a double free and only
-// `__rc_underflow_count()` disagrees. The byte balance is the leak detector, which
-// the exit code cannot see.
 func TestSelfHostTupleMixedRcElemX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -266,9 +192,6 @@ func TestSelfHostTupleMixedRcElemX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleMixedRcElemWasmIR — the wasm sibling. Exit codes only: a leak
-// moves no exit code and an over-release moves no byte count, so what this leg
-// adds is that the new releases do not free a LIVE box on wasm.
 func TestSelfHostTupleMixedRcElemWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping mixed rc tuple element wasm IR e2e")
@@ -307,7 +230,6 @@ func TestSelfHostTupleMixedRcElemWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleMixedRcElemIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostTupleMixedRcElemIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

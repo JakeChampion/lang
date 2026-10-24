@@ -11,11 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The self-host twin of internal/testing/e2e's TestSocketCtl*: tcp_listen_with,
-// tcp_socket_ctl and the datagram sockets compiled by the production self-host driver on every
-// target it serves here, with complete semantic lowering required. The
-// native legs report exit 42; the wasm leg is a wasi:cli/run component,
-// which reports only 0 or 1, so there the verdict is the probe's stdout.
 func TestSelfHostSocketCtl(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires Linux native targets")
@@ -121,10 +116,6 @@ func checkSelfHostSocketProbe(t *testing.T, driver, stdlib, target, probe string
 	}
 }
 
-// composeSelfHostWat turns the self-host driver's WAT into a wasi:cli/run
-// component the way the wasm-IR socket twins do (embed the vendored WIT
-// world, adapt preview 1) and returns the networked wasmtime command for
-// it. The preview-1 adapter comes from FERN_WASI_ADAPTER.
 func composeSelfHostWat(t *testing.T, watPath string) *exec.Cmd {
 	t.Helper()
 	adapter := os.Getenv("FERN_WASI_ADAPTER")
@@ -153,10 +144,6 @@ func composeSelfHostWat(t *testing.T, watPath string) *exec.Cmd {
 	return exec.Command("wasmtime", "run", "-S", "inherit-network", comp)
 }
 
-// The self-host twin of internal/testing/e2e's TestUnixSocket*: the Unix-domain
-// sockets compiled by the production self-host driver on the native targets
-// it serves here. There is no wasm leg: the unix capability refuses the
-// builtins there on both compilers.
 func TestSelfHostUnixSocket(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires Linux native targets")

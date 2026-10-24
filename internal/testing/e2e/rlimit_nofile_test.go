@@ -1,16 +1,3 @@
-// `rlimit_nofile` (#8819) end to end on every backend that provides it.
-//
-// The probe cannot assert a fixed number — the limit is whatever the runner
-// was started with — so it asserts the limit the test process ITSELF reads
-// through Go, which is the same process ancestry and therefore the same
-// ceiling. That is the discriminating check: the ways the helper can be wrong all
-// produce a plausible-looking number. Reading `rlim_max` instead of `rlim_cur`
-// gives a larger one, reading the second word of a struct laid out backwards
-// gives another, and letting Linux's all-ones RLIM_INFINITY through unclamped
-// gives -1.
-//
-// wasm has no leg: neither preview has resource limits, so the `rlimit`
-// capability withholds the builtin and the program is refused at check time.
 package e2e
 
 import (
@@ -23,8 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// softNofile is the soft RLIMIT_NOFILE of the test process, normalised the
-// way the builtin normalises it.
 func softNofile(t *testing.T) int64 {
 	t.Helper()
 	var lim syscall.Rlimit
@@ -37,9 +22,6 @@ func softNofile(t *testing.T) int64 {
 	return int64(lim.Cur)
 }
 
-// rlimitSource returns 0 when the builtin agrees with the limit the harness
-// read, and a code naming the disagreement otherwise. `want` is the answer,
-// compared exactly — a soft limit does not drift under a running process.
 func rlimitSource(want int64) string {
 	return fmt.Sprintf(`function main(): i32 {
     let n: i64 = rlimit_nofile();
@@ -72,9 +54,6 @@ func TestInterpRlimitNofile(t *testing.T) {
 	}
 }
 
-// Both wasm worlds refuse it, and the refusal has to come from the capability
-// scan rather than from the emitter: "this target has no resource limits" is
-// a different statement from "the backend forgot one".
 func TestWASMRlimitNofileRefused(t *testing.T) {
 	prog, err := parser.Parse(rlimitSource(1024))
 	if err != nil {

@@ -1,110 +1,23 @@
-// std/format — human-readable formatting helpers.
-//
-// `format(fmt, args)` — runtime template substitution with `{}`
-// placeholders and Rust-style `{:fill|align|width.precision}`
-// format specs. `format_values(fmt, args)` and
-// `format1(fmt, a)` … `format4(fmt, a, b, c, d)` are the same
-// substitution over args that are NOT pre-stringified — each is
-// rendered through its own `cmp.Display` impl.
-// `format_bytes(n)` / `format_duration_ms(ms)` — pre-canned shapes
-// for byte sizes and elapsed durations.
-//
-// No prelude: callers now `import "std/format";` explicitly
-// (docs/PRELUDE-TO-MODULES.md, Phase 5).
+// This module formats values as text.
 
-// std/format's bodies dispatch `.to_string()` on i64 (format_bytes,
-// format_duration_ms). Declare it so the method registers under no-prelude.
 import "std/i64";
-// `.slice_snap` for precision truncation, `utf8_decode_at` for the
-// (possibly multibyte) fill character in a format spec.
 import "std/string";
 import "std/utf8" as utf8;
-// The `Display` bound on format_values / format1..format4, and the
-// primitive impls that let an i32 / f64 / boolean be passed raw.
 import "core/cmp" as cmp;
 
-// `format(fmt, args)` — runtime template substitution. Walks
-// fmt byte-by-byte, replacing each `{}` / `{:spec}` placeholder
-// with the next element of args. Extra args (more args than
-// placeholders) are silently dropped; missing args (more
-// placeholders than args) emit the placeholder unchanged.
-// Mirrors Python's `str.format()` / Rust's `format!()` minimal
-// subset.
-//
-// Format specs (the bit after the `:`) follow Rust's
-// `[[fill]align][sign]['0'][width][.precision]` grammar, applied
-// to the already-stringified arg:
-//   - align: `<` left, `>` right, `^` center (default left).
-//   - fill: any char immediately before an align char, e.g.
-//     `{:*>8}` pads with `*`. Defaults to a space.
-//   - sign: `+` forces a leading `+` on a value that looks like a
-//     non-negative number (first byte a digit); `-` is the default
-//     no-op. A value that already carries a `-`/`+` is left as-is,
-//     and a non-numeric value never gets a sign — so `{:+}` of "42"
-//     is "+42", of "-42" stays "-42", of "ok" stays "ok".
-//   - `0`: sign-aware zero-padding. A leading `0` before the width
-//     digits pads with `0` instead of the fill char, inserting the
-//     zeros *after* any leading sign and counting the sign toward
-//     the width — so `{:05}` of "-42" is "-0042" and `{:+06}` of
-//     "42" is "+00042". The `0` flag overrides fill/align (matching
-//     Rust), so `{:<05}` of "42" is still "00042".
-//   - width: minimum field width; the value is padded (never
-//     truncated) up to it.
-//   - precision: `.N` on a decimal numeral (`-3.5`, `42`) is a
-//     count of FRACTIONAL DIGITS — the value is rounded
-//     half-away-from-zero and zero-padded to exactly N of them, so
-//     `{:.2}` of 3.14159 is "3.14", of 3.999 is "4.00", and of 3 is
-//     "3.00" (`{:.0}` of 3.7 is "4", no trailing dot). On anything
-//     else `.N` truncates to at most N bytes (Rust's
-//     string-precision semantics), so `{:>8.3}` of "hello" is
-//     "     hel". Precision is applied before padding.
-// A spec whose content doesn't start with `:` (e.g. `{abc}`) is
-// not a placeholder and renders literally, so JSON-ish braces
-// pass through untouched.
-//
-// Use cases the f-string sugar doesn't cover:
-//   - Dynamic templates (read from a config file, locale
-//     table, error catalogue, etc.).
-//   - Programs that build their own diagnostic strings —
-//     a checker emitting "expected {}, got {}" where the
-//     template lives in a const-table rather than at every
-//     call site.
-//   - Column-aligned CLI / table output via width + fill.
-//
-// This is the pre-stringified form and the one every other entry point
-// delegates to. To pass values raw, reach for `format_values` (one
-// element type) or `format1`..`format4` (mixed) below.
 pub function format(fmt: string, args: string[]): string {
   let n: i32 = fmt.len();
-  // Accumulate into a growable u8[] and materialise once (#4379): the old
-  // `out = out + …` appended each literal byte / spec result onto an immutable
-  // string, recopying the whole growing result every step — O(output²) on the
-  // hot formatting path. `out` is a LOCAL, so `out = out.append(byte)` grows
-  // the buffer in place (amortized O(1), the rc-gated self-push); the byte
-  // copies are inlined rather than routed through a helper precisely so they
-  // stay on the local (a borrowed-param `buf.append` would copy the whole
-  // buffer per call, reintroducing the quadratic). Byte indexing (`fmt[i]`)
-  // and single-byte appends preserve the byte-for-byte (UTF-8-agnostic)
-  // behaviour of the old 1-byte `fmt[i:i+1]` slices.
   let out: u8[] = [];
   let i: i32 = 0;
   let argi: i32 = 0;
   while (i < n) {
-    // Escaped braces: `{{` -> literal `{`, `}}` -> literal `}` (the
-    // Python str.format() / Rust format!() convention this mirrors). Checked
-    // before the `{}` placeholder so `{{}}` renders the literal "{}" rather
-    // than consuming an arg, and `{{{}}}` renders "{<arg>}".
     if (i + 1 < n && fmt[i] == 123 && fmt[i + 1] == 123) {
-      out = out.append(123 as u8);  // '{'
+      out = out.append(123 as u8);
       i = i + 2;
     } else if (i + 1 < n && fmt[i] == 125 && fmt[i + 1] == 125) {
-      out = out.append(125 as u8);  // '}'
+      out = out.append(125 as u8);
       i = i + 2;
     } else if (fmt[i] == 123) {
-      // Opening brace: scan for the matching `}` and decide whether the
-      // run is a placeholder. The content is a placeholder spec only when
-      // it is empty (`{}`) or starts with `:` (`{:>8}`); anything else
-      // (`{abc}`, JSON `{"k":1}`) renders literally and consumes no arg.
       let j: i32 = i + 1;
       while (j < n && fmt[j] != 125) {
         j = j + 1;
@@ -130,16 +43,14 @@ pub function format(fmt: string, args: string[]): string {
           }
           argi = argi + 1;
         } else {
-          // Missing arg — emit the placeholder verbatim so callers
-          // can spot the underflow at runtime.
-          out = out.append(123 as u8);  // '{'
+          out = out.append(123 as u8);
           let sl: i32 = spec.len();
           let sk: i32 = 0;
           while (sk < sl) {
             out = out.append(spec[sk] as u8);
             sk = sk + 1;
           }
-          out = out.append(125 as u8);  // '}'
+          out = out.append(125 as u8);
         }
         i = j + 1;
       } else {
@@ -154,18 +65,6 @@ pub function format(fmt: string, args: string[]): string {
   return string_from_bytes_unchecked(out);
 }
 
-// `format_values(fmt, args)` — `format` over args that are NOT
-// pre-stringified. Every element goes through its own `cmp.Display` impl,
-// so any type with one (`@derive(cmp.Display)` included) is a legal arg:
-//
-//     format_values("{} + {} = {}", [40, 2, 42])   // "40 + 2 = 42"
-//
-// The bound is monomorphised, so there is no boxing and no dispatch at
-// run time — but for the same reason the element type is uniform. Mixed
-// args want `format1`..`format4`.
-//
-// An empty literal cannot infer `T` (`format_values("hi", [])` is E040);
-// that call is just `format("hi", [])`.
 pub function format_values[T: cmp.Display](fmt: string, args: T[]): string {
   let strs: string[] = [];
   let i: i32 = 0;
@@ -176,15 +75,6 @@ pub function format_values[T: cmp.Display](fmt: string, args: T[]): string {
   return format(fmt, strs);
 }
 
-// `format1`..`format4` — `format` over a fixed number of args of
-// INDEPENDENT types, each rendered through its own `cmp.Display` impl:
-//
-//     format3("{} {} {}", 3, "cats", true)   // "3 cats true"
-//
-// One function per arity because Fern has no variadics; each type
-// parameter is separately bound, which is what makes the args
-// heterogeneous. Beyond four args, stringify into a `string[]` and call
-// `format` directly.
 pub function format1[A: cmp.Display](fmt: string, a: A): string {
   return format(fmt, [a.to_string()]);
 }
@@ -201,23 +91,15 @@ pub function format4[A: cmp.Display, B: cmp.Display, C: cmp.Display, D: cmp.Disp
   return format(fmt, [a.to_string(), b.to_string(), c.to_string(), d.to_string()]);
 }
 
-// __format_apply_spec applies a `:`-prefixed format spec to an
-// already-stringified value. `spec` is either "" (plain `{}`,
-// returned unchanged) or starts with ':' followed by the
-// `[[fill]align][sign]['0'][width][.precision]` grammar. Precision
-// truncates first, then width pads — matching Rust's ordering.
 function __format_apply_spec(s: string, spec: string): string {
   if (spec.len() == 0) {
     return s;
   }
   let m: i32 = spec.len();
-  let p: i32 = 1;  // skip the leading ':'
-  // [fill]align — a fill char (a whole code point, possibly multibyte)
-  // only counts when an align char (`<>^`) follows it; a bare align
-  // char takes the default space fill.
+  let p: i32 = 1;
   let fill: str = " ";
-  let align: i32 = 1;  // 1=left, 2=right, 3=center; strings default left.
-  let fw: i32 = 1;  // byte width of the candidate fill char
+  let align: i32 = 1;
+  let fw: i32 = 1;
   match (utf8.utf8_decode_at(spec, p)) {
     Some(pair) => {
       fw = pair.1;
@@ -225,42 +107,30 @@ function __format_apply_spec(s: string, spec: string): string {
     None => {}
   }
   if (p + fw < m && __is_align(spec[p + fw] as i32)) {
-    fill = slice_unchecked(spec, p, p + fw);  // bounds from utf8_decode_at
+    fill = slice_unchecked(spec, p, p + fw);
     align = __align_code(spec[p + fw] as i32);
     p = p + fw + 1;
   } else if (p < m && __is_align(spec[p] as i32)) {
     align = __align_code(spec[p] as i32);
     p = p + 1;
   }
-  // sign — `+` forces a leading `+` on non-negative numbers; `-`
-  // is the default and a no-op. Consumed here so it precedes the
-  // `0` flag and width, per Rust's `[sign]['0'][width]` order.
   let plus: boolean = false;
-  if (p < m && spec[p] == 43) {  // '+'
+  if (p < m && spec[p] == 43) {
     plus = true;
     p = p + 1;
-  } else if (p < m && spec[p] == 45) {  // '-'
+  } else if (p < m && spec[p] == 45) {
     p = p + 1;
   }
-  // `0` flag — a leading `0` before the width digits selects
-  // sign-aware zero-padding (overriding fill/align). The flag is
-  // consumed here; any further digits are the width.
   let zero: boolean = false;
-  if (p < m && spec[p] == 48) {  // '0'
+  if (p < m && spec[p] == 48) {
     zero = true;
     p = p + 1;
   }
-  // width — run of decimal digits.
   let width: i32 = 0;
   while (p < m && spec[p] >= 48 && spec[p] <= 57) {
     width = width * 10 + (spec[p] as i32 - 48);
     p = p + 1;
   }
-  // .precision — fractional digits on a decimal numeral, max byte length
-  // (snapped back to a char boundary, so a code point is never split) on
-  // anything else. Same "does it look like a number" split the sign flag
-  // below uses: `format` sees only the stringified value, so the shape of
-  // the digits is the only signal for which meaning was intended.
   let val: string = s;
   if (p < m && spec[p] == 46) {
     p = p + 1;
@@ -269,27 +139,20 @@ function __format_apply_spec(s: string, spec: string): string {
       prec = prec * 10 + (spec[p] as i32 - 48);
       p = p + 1;
     }
-    // slice_snap: at most `prec` bytes, never a split code point.
     if (__is_decimal_numeral(val)) {
       val = __round_to_places(val, prec);
     } else if (val.len() > prec) {
       val = val.slice_snap(0, prec).to_owned();
     }
   }
-  // sign flag — prefix `+` on a value that looks like a non-negative
-  // number (first byte a digit). A value already carrying `-`/`+`,
-  // or a non-numeric one, is left untouched.
   if (plus && val.len() > 0 && val[0] >= 48 && val[0] <= 57) {
     val = "+" + val;
   }
-  // width padding — never truncates.
   let vlen: i32 = val.len();
   if (vlen >= width) {
     return val;
   }
   let pad: i32 = width - vlen;
-  // zero-pad — sign-aware: zeros go after a leading sign char, and
-  // the sign counts toward the width. Overrides fill/align.
   if (zero) {
     if (val.len() > 0 && (val[0] == 45 || val[0] == 43)) {
       return slice_unchecked(val, 0, 1) + __repeat_char("0", pad) + slice_unchecked(val, 1, val.len());
@@ -306,10 +169,6 @@ function __format_apply_spec(s: string, spec: string): string {
   return val + __repeat_char(fill, pad);
 }
 
-// __is_decimal_numeral reports whether `s` is `[+-]?digits[.digits]` —
-// the shape `.N` reads as a fractional-digit count. A trailing bare dot
-// ("3.") and an exponent form ("1e30") are not numerals here, so they keep
-// the byte-truncation meaning.
 function __is_decimal_numeral(s: string): boolean {
   let n: i32 = s.len();
   let i: i32 = 0;
@@ -339,10 +198,6 @@ function __is_decimal_numeral(s: string): boolean {
   return i == n && frac > 0;
 }
 
-// __round_to_places renders the decimal numeral `s` with EXACTLY `places`
-// fractional digits, rounding half-away-from-zero. It works on the digit
-// bytes rather than round-tripping through f64, so a numeral with more
-// significant digits than a double can hold keeps the ones it arrived with.
 function __round_to_places(s: string, places: i32): string {
   let n: i32 = s.len();
   let i: i32 = 0;
@@ -358,9 +213,6 @@ function __round_to_places(s: string, places: i32): string {
     dot = dot + 1;
   }
   let intLen: i32 = dot - i;
-  // One digit run: the integer digits followed by exactly `places`
-  // fractional ones, zero-filled where the value has fewer. Carry then
-  // propagates right-to-left across the whole run in one pass.
   let digits: u8[] = [];
   let k: i32 = i;
   while (k < dot) {
@@ -372,13 +224,13 @@ function __round_to_places(s: string, places: i32): string {
     let src: i32 = dot + 1 + f;
     if (src < n) {
       digits = digits.append(s[src] as u8);
-    } else {  // '0'
+    } else {
       digits = digits.append(48 as u8);
     }
     f = f + 1;
   }
   let next: i32 = dot + 1 + places;
-  if (next < n && s[next] >= 53) {  // first dropped digit >= '5'
+  if (next < n && s[next] >= 53) {
     let c: i32 = digits.len() - 1;
     let carry: boolean = true;
     while (carry && c >= 0) {
@@ -391,10 +243,8 @@ function __round_to_places(s: string, places: i32): string {
         carry = false;
       }
     }
-    // Carry out of the leading digit widens the integer part: 9.9 at
-    // `.0` is "10", not "0".
     if (carry) {
-      let grown: u8[] = [49 as u8];  // '1'
+      let grown: u8[] = [49 as u8];
       let g: i32 = 0;
       while (g < digits.len()) {
         grown = grown.append(digits[g]);
@@ -423,17 +273,17 @@ function __round_to_places(s: string, places: i32): string {
 }
 
 function __is_align(c: i32): boolean {
-  return c == 60 || c == 62 || c == 94;  // '<' '>' '^'
+  return c == 60 || c == 62 || c == 94;
 }
 
 function __align_code(c: i32): i32 {
-  if (c == 60) {  // '<' left
+  if (c == 60) {
     return 1;
   }
-  if (c == 62) {  // '>' right
+  if (c == 62) {
     return 2;
   }
-  return 3;  // '^' center
+  return 3;
 }
 
 function __repeat_char(s: string, count: i32): string {
@@ -444,10 +294,6 @@ function __repeat_char(s: string, count: i32): string {
   if (sl == 0) {
     return "";
   }
-  // Fill one exact-size (sl·count) buffer instead of `out = out + s`,
-  // which recopied the growing prefix on every step (O((sl·count)²) — #4379).
-  // Same two-pass idiom as std/string's `repeat`; keeps every padded/aligned
-  // format spec off the quadratic path.
   let buf: u8[] = __alloc_u8(sl * count);
   let pos: i32 = 0;
   let k: i32 = 0;
@@ -463,12 +309,6 @@ function __repeat_char(s: string, count: i32): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `format_bytes(n)` — render a byte count as "N B" / "N KiB" / "N MiB" /
-// "N GiB" / "N TiB" using binary (1024-based) prefixes, truncating: for
-// "1.5 KiB" the caller divides by 1024 and pads. Negative input is rendered
-// with a leading "-" ("-512 B"). The count is i64, as `FileStat.size` is.
-// The quotient keeps n's sign rather than negating n, which i64's minimum
-// cannot survive.
 pub function format_bytes(n: i64): string {
   let units: string[] = ["B", "KiB", "MiB", "GiB", "TiB"];
   let u: i32 = 0;
@@ -480,10 +320,6 @@ pub function format_bytes(n: i64): string {
   return (n / scale).to_string() + " " + units[u];
 }
 
-// `format_duration_ms(ms)` — human-readable duration like
-// "1h 23m 45s" / "500ms". Components are emitted only when
-// non-zero, separated by spaces; "0" alone returns "0ms".
-// Negative ms gets a leading "-" before the magnitude.
 pub function format_duration_ms(ms: i64): string {
   if (ms == 0) {
     return "0ms";
@@ -528,19 +364,13 @@ pub function format_duration_ms(ms: i64): string {
   return sign + out;
 }
 
-// `parse_duration_ms(s)` — the inverse of `format_duration_ms`: parse a
-// duration string into milliseconds. The input is a sequence of
-// `<integer><unit>` parts (optionally space-separated), with units
-// `ms` / `s` / `m` / `h` / `d`; e.g. `"500ms"`, `"1h30m"`, `"1h 30m"`,
-// `"2d12h"`. Returns `None` on empty input, a missing/unknown unit, or a
-// part with no number.
 pub function parse_duration_ms(s: string): Option[i64] {
   let n: i32 = s.len();
   let i: i32 = 0;
   let total: i64 = 0;
   let saw: boolean = false;
   while (i < n) {
-    if (s[i] == 32) {  // skip spaces
+    if (s[i] == 32) {
       i = i + 1;
       continue;
     }
@@ -550,27 +380,27 @@ pub function parse_duration_ms(s: string): Option[i64] {
       num = num * (10 as i64) + (s[i] - 48) as i64;
       i = i + 1;
     }
-    if (i == start) {  // expected a number
+    if (i == start) {
       return None;
     }
     let unit_ms: i64 = 0;
-    if (i + 1 < n && s[i] == 109 && s[i + 1] == 115) {  // "ms"
+    if (i + 1 < n && s[i] == 109 && s[i + 1] == 115) {
       unit_ms = 1;
       i = i + 2;
-    } else if (i < n && s[i] == 115) {  // "s"
+    } else if (i < n && s[i] == 115) {
       unit_ms = 1000;
       i = i + 1;
-    } else if (i < n && s[i] == 109) {  // "m"
+    } else if (i < n && s[i] == 109) {
       unit_ms = 60000;
       i = i + 1;
-    } else if (i < n && s[i] == 104) {  // "h"
+    } else if (i < n && s[i] == 104) {
       unit_ms = 3600000;
       i = i + 1;
-    } else if (i < n && s[i] == 100) {  // "d"
+    } else if (i < n && s[i] == 100) {
       unit_ms = 86400000;
       i = i + 1;
     } else {
-      return None;  // missing/unknown unit
+      return None;
     }
     total = total + num * unit_ms;
     saw = true;

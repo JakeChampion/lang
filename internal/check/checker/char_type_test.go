@@ -7,11 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// `char` (#5629) is a distinct type from every integer. That distinctness IS
-// the feature: sharing `i32` between a byte and a code point gives
-// `s[i].to_upper()` (an ASCII byte fold) and `to_upper_char(cp)` (a Unicode
-// mapping) identical signatures. Every implicit conversion must be
-// rejected in both directions; only an explicit cast crosses.
 func TestCharRejectsImplicitConversion(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{
 		{"return char as i32",
@@ -50,9 +45,6 @@ func TestCharRejectsImplicitConversion(t *testing.T) {
 	}
 }
 
-// The explicit cast is the only crossing, and it works in both directions,
-// including for a polymorphic literal (which must settle at i32 rather than
-// be handed a non-numeric target).
 func TestCharExplicitCasts(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"literal to char", `function main(): i32 { let c: char = 97 as char; return c as i32; }`},
@@ -74,9 +66,6 @@ func TestCharExplicitCasts(t *testing.T) {
 	}
 }
 
-// `char` is contextual, not a lexer keyword — same treatment as `str`. A
-// local, a parameter, a field and a method named `char` must keep working;
-// only type position is claimed.
 func TestCharIsContextualNotReserved(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"local named char", `function main(): i32 { let char: i32 = 7; return char; }`},
@@ -97,11 +86,6 @@ func TestCharIsContextualNotReserved(t *testing.T) {
 	}
 }
 
-// A LITERAL cast to `char` is range-checked (#5629 slice 5). `char`'s domain
-// is the Unicode scalar values — 0..0x10FFFF minus the UTF-16 surrogates
-// 0xD800..0xDFFF — and a constant outside it is a typo, not a decision, so it
-// is rejected at compile time rather than producing a `char` that no encoder
-// can represent.
 func TestCharCastRejectsInvalidLiteral(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"above max", `function main(): i32 { let c: char = 1114112 as char; return 0; }`},
@@ -126,9 +110,6 @@ func TestCharCastRejectsInvalidLiteral(t *testing.T) {
 	}
 }
 
-// The boundaries themselves are scalar values and must stay accepted — an
-// off-by-one in either bound would show up here rather than as a mysteriously
-// rejected emoji.
 func TestCharCastAcceptsValidLiteral(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"zero", `function main(): i32 { let c: char = 0 as char; return 0; }`},
@@ -151,11 +132,6 @@ func TestCharCastAcceptsValidLiteral(t *testing.T) {
 	}
 }
 
-// `'x'` is a `char` and `b'x'` a `u8`, and neither is polymorphic: the
-// literal forms inherit the whole discipline above rather than settling to
-// whatever context asks for. This is what the byte literal exists for —
-// `s[i] == b'['` compares two bytes, and every crossing of the three types
-// still needs a written cast.
 func TestCharAndByteLiteralsDoNotInterconvert(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{
 		{"i32 let from char literal",
@@ -213,9 +189,6 @@ func TestCharAndByteLiteralsDoNotInterconvert(t *testing.T) {
 	}
 }
 
-// The other half: every use the literals are FOR must check, including the
-// byte-level comparison the 342 decimal-constant sites in the self-host
-// compiler are written as today (#6991).
 func TestCharAndByteLiteralsAccepted(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"byte literal against a string index",
@@ -250,10 +223,6 @@ func TestCharAndByteLiteralsAccepted(t *testing.T) {
 	}
 }
 
-// A NON-literal cast stays unchecked on purpose: `as char` is the reinterpret
-// hatch std/unicode uses on values its tables have already proven are scalars,
-// and re-validating them on every lookup would be pure cost. The checked path
-// for a runtime integer is utf8.char_from_i32, which returns Option[char].
 func TestCharCastFromRuntimeValueUnchecked(t *testing.T) {
 	src := `function main(): i32 { let n: i32 = 1114112; let c: char = n as char; return 0; }`
 	prog, err := parser.Parse(src)

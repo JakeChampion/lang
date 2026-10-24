@@ -2,23 +2,6 @@ package parser
 
 import "testing"
 
-// Trailing commas are legal in EVERY comma-separated element list, and the
-// rule is enforced in one place (`moreElems`) rather than re-decided per
-// list. Before that helper, five of the eleven list loops spelled the
-// separator as a bare `accept(",")` and rejected a trailing comma while the
-// other six accepted one — so `P { x: 1, }` compiled and `[1, ]` did not,
-// with a diagnostic that pointed at the closing bracket rather than at the
-// comma.
-//
-// Worse, the two compilers disagreed about WHICH half was which:
-// `function f(a: i32,)` parsed under the self-host compiler and was rejected
-// natively. The self-host mirror lives in `compiler/parser.fern`
-// (`(p: Par) more_elems`); this table and the self-host leg must stay in
-// step, because a difference here decides a program's legality by which
-// compiler reads it.
-//
-// A case per list position. Adding a new comma-separated list to the
-// grammar means adding a row here.
 func TestTrailingCommaAcceptedInEveryListPosition(t *testing.T) {
 	cases := []struct {
 		name string
@@ -80,9 +63,6 @@ function main(): i32 { return f((1, 2)); }`},
 	}
 }
 
-// The map-foreach binder shares its `(` with the C-style `for`, and the
-// trailing comma is what tells them apart one token later. Widening that
-// lookahead must not let a C-style head be read as a binder.
 func TestCStyleForStillParses(t *testing.T) {
 	cases := []string{
 		`function main(): i32 { let t: i32 = 0; for (let i: i32 = 0; i < 3; i = i + 1) { t = t + i; } return t; }`,
@@ -96,9 +76,6 @@ func TestCStyleForStillParses(t *testing.T) {
 	}
 }
 
-// The empty forms must not be broken by this: `moreElems` is only reached
-// after an element has been parsed, so `[]` / `f()` / `()` still take the
-// zero-element path.
 func TestEmptyListsStillParse(t *testing.T) {
 	cases := []struct {
 		name string
@@ -122,9 +99,6 @@ function main(): i32 { let p: P = P { }; return 0; }`},
 	}
 }
 
-// A trailing comma is one comma after an ELEMENT. A leading comma, a doubled
-// comma, or a comma alone is still a parse error — accepting a trailing one
-// must not degrade into skipping commas entirely.
 func TestStrayCommasStillRejected(t *testing.T) {
 	cases := []struct {
 		name string

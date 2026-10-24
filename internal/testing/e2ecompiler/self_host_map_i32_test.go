@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// mapI32Cases exercise i32-keyed maps (Map[i32, V]). The Map runtime
-// compares keys with __fern_str_eq for string keys; for i32 keys the
-// dispatch passes a key-kind flag and the runtime takes an integer
-// (`==`) compare path instead. Covers set/update/has/len and the
-// Option-returning get. Exit codes cross-checked vs the Go backend.
 var mapI32Cases = []struct {
 	name string
 	src  string
@@ -21,8 +16,6 @@ var mapI32Cases = []struct {
 	{"i32-to-string-val", "import \"core/map\"; function main(): i32 { let m: Map[i32, string] = map_new(4); m = m.insert(1, \"hello\"); match (m.get(1)) { Some(s) => { return s.len(); }, None => { return 0; } } }", 5},
 }
 
-// TestSelfHostMapI32X86_64 — i32-keyed maps with the self-hosted
-// x86-64 compiler.
 func TestSelfHostMapI32X86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	l := newStdlibLoader(t)
@@ -49,7 +42,6 @@ func TestSelfHostMapI32X86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMapI32Arm64 — CI-gated arm64 counterpart.
 func TestSelfHostMapI32Arm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range mapI32Cases {

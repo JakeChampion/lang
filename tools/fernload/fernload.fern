@@ -1,28 +1,3 @@
-// fernload — an open-loop HTTP/1.1 load generator
-// (docs/NET-P5-FRAMEWORK-PLAN.md §8, #9859).
-//
-// Requests go out at a fixed rate over a set of kept connections, and each
-// request's latency is measured from the moment the rate said it was due,
-// not from when a connection came free: a server that stalls shows the
-// queueing a real client would have seen, where a closed-loop tool waits
-// for it and records nothing (wrk2's correction for coordinated omission).
-// The same latency from the send is reported beside it.
-//
-// Usage: fernload [--rate N] [--connections C] [--duration S] URL
-//
-//   --rate N         requests per second over all connections (default 100)
-//   --connections C  connections kept open (default 16)
-//   --duration S     how long to send, in seconds (default 10)
-//   URL              http://HOST:PORT/PATH; HOST an IP literal or localhost
-//
-// Output: `metric<TAB>value` rows, the format scripts/perf-history
-// records. load/sent is what the rate scheduled and the tool sent,
-// load/behind what it scheduled and could not send by the end (every
-// connection busy), load/requests the responses read, load/errors the
-// requests a reset, a close or a malformed response lost, load/rps the
-// responses per second of sending, load/p50_us through load/max_us the
-// corrected latency, load/raw_p99_us the latency from the send. Exits 1
-// when a request erred or the server could not be reached.
 import "std/cli";
 import "std/http";
 import "std/net";
@@ -37,28 +12,18 @@ const IDLE: i32 = 1;
 
 const BUSY: i32 = 2;
 
-// The histogram: values under 64 µs in their own bucket, then 32 buckets
-// per power of two, so a percentile is read to within 3%.
 const DIRECT: i32 = 64;
 
 const PER_EXPONENT: i32 = 32;
 
 const BUCKETS: i32 = 1888;
 
-// Responses still owed after the sending ends are waited for this long.
 const DRAIN_NS: i64 = 2000000000;
 
-// One connection: its socket, whether it is connecting, idle or carrying a
-// request, when the request in flight was due and sent, and the response
-// bytes read so far.
 struct Conn { fd: i32, state: i32, due_ns: i64, sent_ns: i64, buf: u8[] }
 
-// The run: where to connect, the request bytes, and the rate's terms.
 struct Plan { addr: net.SocketAddr, request: u8[], rate: i64, connections: i32, duration_ns: i64 }
 
-// What the run counted: requests sent, responses read, requests lost, the
-// corrected and the raw latency histograms, and the longest corrected
-// latency.
 struct Tally { sent: i64, done: i64, errors: i64, corrected: i64[], raw: i64[], max_us: i64 }
 
 function main(): i32 {
@@ -85,7 +50,6 @@ function main(): i32 {
   return 2;
 }
 
-// plan reads the URL and the options into the run's terms.
 function plan(raw: string, parsed: cli.CliArgs): Result[Plan, string] {
   let Some(u) = url.url_parse(raw) else {
     return Err("not a URL: " + raw);
@@ -118,7 +82,6 @@ function plan(raw: string, parsed: cli.CliArgs): Result[Plan, string] {
   return Ok(Plan { addr: net.socket_addr(ip, port), request: request.bytes(), rate: rate, connections: connections as i32, duration_ns: duration * 1000000000 });
 }
 
-// option_i64 is the option as a positive count, or `fallback` when absent.
 function option_i64(parsed: cli.CliArgs, name: string, fallback: i64): Result[i64, string] {
   match (parsed.value(name)) {
     Some(text) => {
@@ -141,8 +104,6 @@ function option_i64(parsed: cli.CliArgs, name: string, fallback: i64): Result[i6
   return Ok(fallback);
 }
 
-// run sends for the planned duration, drains the responses still owed,
-// prints the report and says whether every request was answered.
 function run(p: Plan): i32 {
   let drv: async.RealDriver = async.real_driver();
   let conns: Conn[] = [];
@@ -207,10 +168,6 @@ function run(p: Plan): i32 {
   return 0;
 }
 
-// millis_until is the wait that ends at `until`, rounded down: the last
-// part of a millisecond is spent polling, so a request goes out at its
-// time rather than up to a millisecond late and that lateness counted
-// against the server.
 function millis_until(now: i64, until: i64): i32 {
   if (until <= now) {
     return 0;
@@ -222,8 +179,6 @@ function millis_until(now: i64, until: i64): i32 {
   return ms as i32;
 }
 
-// open starts a connection and watches its socket for the connect to end;
-// a connect that cannot start leaves a closed connection the loop reopens.
 function open(drv: async.RealDriver, p: Plan): Conn {
   let none: u8[] = [];
   match (net.connect_start(p.addr)) {
@@ -238,7 +193,6 @@ function open(drv: async.RealDriver, p: Plan): Conn {
   return Conn { fd: 0 - 1, state: CONNECTING, due_ns: 0, sent_ns: 0, buf: none };
 }
 
-// reopen closes a connection and opens another in its place.
 function reopen(drv: async.RealDriver, p: Plan, c: Conn): Conn {
   if (c.fd >= 0) {
     drv.unwatch(c.fd);
@@ -279,18 +233,12 @@ function conn_of(conns: Conn[], fd: i32): i32 {
   return 0 - 1;
 }
 
-// send writes the request on an idle connection, due at `due` and sent
-// at `now`.
 function send(c: Conn, p: Plan, due: i64, now: i64): Conn {
-  // A write the socket does not take whole leaves the connection dead,
-  // and the read side reports the request as the lost one it is.
   let sent: Result[i32, net.NetError] = net.write(c.fd, p.request);
   let none: u8[] = [];
   return Conn { ...c, state: BUSY, due_ns: due, sent_ns: now, buf: none };
 }
 
-// step handles one readiness report on a connection: the end of its
-// connect, or bytes of the response it is owed.
 function step(drv: async.RealDriver, p: Plan, c: Conn, readiness: i32, t: Tally): (Conn, Tally) {
   if (c.state == CONNECTING) {
     return (connected(drv, p, c, t), t);
@@ -298,8 +246,6 @@ function step(drv: async.RealDriver, p: Plan, c: Conn, readiness: i32, t: Tally)
   return read(drv, p, c, t);
 }
 
-// connected moves a connection whose connect ended to idle, or reopens one
-// whose connect failed.
 function connected(drv: async.RealDriver, p: Plan, c: Conn, t: Tally): Conn {
   match (net.connect_result(c.fd)) {
     Ok(_) => {
@@ -320,9 +266,6 @@ function connected(drv: async.RealDriver, p: Plan, c: Conn, t: Tally): Conn {
   return c;
 }
 
-// read takes what the socket has, and when a whole response has arrived
-// records its latency and frees the connection; a close or a malformed
-// response loses the request in flight.
 function read(drv: async.RealDriver, p: Plan, c: Conn, t: Tally): (Conn, Tally) {
   let conn: Conn = c;
   let tally: Tally = t;
@@ -341,8 +284,6 @@ function read(drv: async.RealDriver, p: Plan, c: Conn, t: Tally): (Conn, Tally) 
     __arr_set_len(scratch, n);
     conn = Conn { ...conn, buf: conn.buf.concat(scratch) };
     if (conn.state != BUSY) {
-      // Bytes with no request out: not a response, so not a connection
-      // to keep.
       return (reopen(drv, p, conn), tally);
     }
     match (http.http_parse_response_framed(conn.buf, "GET", false, http.http_limits())) {
@@ -353,7 +294,6 @@ function read(drv: async.RealDriver, p: Plan, c: Conn, t: Tally): (Conn, Tally) 
           return (reopen(drv, p, conn), tally);
         }
         if (f.len < conn.buf.len()) {
-          // Bytes past the one response owed: not a connection to trust.
           return (reopen(drv, p, conn), tally);
         }
         let none: u8[] = [];
@@ -369,8 +309,6 @@ function read(drv: async.RealDriver, p: Plan, c: Conn, t: Tally): (Conn, Tally) 
   return (conn, tally);
 }
 
-// eagain is EAGAIN as this host numbers it: what a non-blocking read
-// answers when nothing is queued.
 function eagain(): i32 {
   if (target_os() == "darwin") {
     return 35;
@@ -388,7 +326,6 @@ function zeros(): i64[] {
   return out;
 }
 
-// recorded counts one response: its corrected and raw latency, in µs.
 function recorded(t: Tally, corrected_us: i64, raw_us: i64): Tally {
   let max_us: i64 = t.max_us;
   if (corrected_us > max_us) {
@@ -399,7 +336,6 @@ function recorded(t: Tally, corrected_us: i64, raw_us: i64): Tally {
   return Tally { ...t, done: t.done + 1, corrected: t.corrected.with(ci, t.corrected[ci] + 1), raw: t.raw.with(ri, t.raw[ri] + 1), max_us: max_us };
 }
 
-// bucket is the histogram index of a latency in µs.
 function bucket(us: i64): i32 {
   if (us < DIRECT as i64) {
     if (us < 0) {
@@ -421,7 +357,6 @@ function bucket(us: i64): i32 {
   return index;
 }
 
-// floor_of is the smallest latency a bucket holds, in µs.
 function floor_of(index: i32): i64 {
   if (index < DIRECT) {
     return index as i64;
@@ -431,8 +366,6 @@ function floor_of(index: i32): i64 {
   return (PER_EXPONENT + sub) as i64 * (1 as i64 << e - 6);
 }
 
-// percentile is the latency `per_mille` thousandths of the responses came
-// under, read off the histogram.
 function percentile(h: i64[], total: i64, per_mille: i64): i64 {
   if (total == 0) {
     return 0;

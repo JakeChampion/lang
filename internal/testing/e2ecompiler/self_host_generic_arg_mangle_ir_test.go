@@ -7,27 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostGenericArgMangleIR pins a loader rule: a module-local type used
-// as a GENERIC ARGUMENT is mangled like any other use of it.
-//
-// flatten's rewrite_type_name splits a bracketed spelling into base + suffix,
-// so the suffix's arguments need mangling too: `find(): Option[Flag]` has to
-// follow the struct declaration to `lib__Flag`, or nothing resolves the payload
-// type of the match binder, `f.<field>` on it cannot lower, and the whole
-// module bails. The tuple case — `(string, Box)` keeping an unmangled `Box`,
-// which dispatched a non-existent `Box.method` — is the same defect, so this is
-// a loader correctness rule in its own right, not only an IR-routing one.
-//
-// std/cli's `parse` reaches the shape through
-// `match (__cli_find_short(...)) { Some(f) => f.takes_value }`, which is what
-// TestSelfHostStdTestE2E/cli compiles.
-//
-// The program covers the shapes that share the code path: the Option payload
-// (the reported case), a Result Ok payload, a nested `Option[Flag][]` (array
-// depth is encoded alongside the arguments), and a `Map`-style two-argument generic
-// where only the second argument is module-local. Every result is CONSUMED at
-// its own type, so a half-recovered spelling shows up as a wrong exit code
-// rather than as a bail.
 func TestSelfHostGenericArgMangleIR(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 

@@ -1,4 +1,4 @@
-// Calling a non-function value.
+
 function main(): i32 {
     let x: i32 = 5;
     return x();

@@ -11,13 +11,6 @@ import (
 	"testing"
 )
 
-// The wit_decode / wit_compose tests compile a driver program that imports the
-// modules themselves — `import "./wit_decode";` next to a copy of the sources —
-// through the self-host CLI, the way fern.fern links them, and run the result
-// under wasmtime. The drivers are written unqualified (`wit_section_body(…)`);
-// witQualify prefixes each module's pub names, so a driver reads as the plain
-// call sequence it tests.
-
 var (
 	witCLIOnce   sync.Once
 	witCLIBin    string
@@ -26,8 +19,6 @@ var (
 	witCLISkip   string
 )
 
-// witSelfHostCLI builds compiler/fern.fern once per test binary as a
-// binary this host runs directly, and returns it with the stdlib root.
 func witSelfHostCLI(t *testing.T) (string, string) {
 	t.Helper()
 	witCLIOnce.Do(func() {
@@ -68,11 +59,8 @@ func witSelfHostCLI(t *testing.T) (string, string) {
 	return witCLIBin, witCLIStdlib
 }
 
-// witModules are the self-host modules a wit driver may import, in the order
-// their import lines are written.
 var witModules = []string{"watbin", "wit_decode", "wit_compose", "wit_proxy_world"}
 
-// witPubNames returns the pub function and struct names of a self-host module.
 func witPubNames(t *testing.T, module string) []string {
 	t.Helper()
 	src, err := os.ReadFile(filepath.Join("..", "..", "..", "compiler", module+".fern"))
@@ -86,8 +74,6 @@ func witPubNames(t *testing.T, module string) []string {
 	return names
 }
 
-// witQualify prefixes every use of a wit module's pub name in driver with the
-// module, and returns the import lines the driver needs.
 func witQualify(t *testing.T, driver string) (string, string) {
 	t.Helper()
 	var imports strings.Builder
@@ -107,9 +93,6 @@ func witQualify(t *testing.T, driver string) (string, string) {
 	return imports.String(), driver
 }
 
-// witCompileToWat writes driver (unqualified) as name.fern in dir beside a copy
-// of the wit modules, compiles it with the self-host CLI to a preview-1 WAT
-// module, and returns that module's path.
 func witCompileToWat(t *testing.T, dir, name, driver string) string {
 	t.Helper()
 	cli, stdlib := witSelfHostCLI(t)

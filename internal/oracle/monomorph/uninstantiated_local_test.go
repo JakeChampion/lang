@@ -8,11 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// `let v = None;` leaves Option's T uninstantiated. The checker accepts it,
-// and the re-check monomorphisation runs over a function with a generic call
-// must accept it too: it used to read the checker's stamped `Option` back as
-// an annotation and fail with "enum Option takes 1 type argument but was
-// given 0", at no source position. Found by TestDifferential_CheckerMutants.
 func TestUninstantiatedEnumLocalSurvivesRecheck(t *testing.T) {
 	for _, src := range []string{
 		"function id[T](x: T): T { return x; }\nfunction main(): i32 { let v = None; return id(0); }\n",
@@ -32,10 +27,6 @@ func TestUninstantiatedEnumLocalSurvivesRecheck(t *testing.T) {
 	}
 }
 
-// A generic enum annotated without type arguments is the bare form in every
-// position, and the re-check reads the bare form the first check stamped back
-// as the same annotation. It used to fail its arity there, so the program
-// checked alone and was refused once anything generic was called (#12804).
 func TestBareEnumAnnotationSurvivesRecheck(t *testing.T) {
 	const decls = "enum Shape[T] { Circle(i32), Blank }\n" +
 		"enum Nest[T] { Wrap(Shape), Hole(T) }\n" +
@@ -62,7 +53,6 @@ func TestBareEnumAnnotationSurvivesRecheck(t *testing.T) {
 	}
 }
 
-// A bare recursive enum keeps its uninhabited parameters beside concrete instances.
 func TestBareRecursiveEnumSurvivesOtherInstantiations(t *testing.T) {
 	const decls = "enum Tree[T] { Leaf, Node(Tree[T], T, Tree[T]) }\n" +
 		"function id[T](x: T): T { return x; }\n"

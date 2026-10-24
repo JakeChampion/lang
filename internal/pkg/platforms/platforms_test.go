@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// Every listed target names an environment that exists, so ForTarget
-// composes rather than panicking. This is the invariant that replaces
-// "every target spells out its own capability list".
 func TestEveryTargetComposes(t *testing.T) {
 	for _, name := range Targets() {
 		entry, ok := table[name]
@@ -25,14 +22,6 @@ func TestEveryTargetComposes(t *testing.T) {
 	}
 }
 
-// No two capability PROFILES may carry the same set. Two that do are one
-// profile under two names — the state the four native targets were in
-// before they were collapsed, where adding a capability meant editing
-// the identical list four times and missing one was silent.
-//
-// Environments are deliberately NOT covered: linux and android share the
-// hosted-linux profile on purpose, because they differ in object format
-// and syscall vector rather than in what the host grants.
 func TestCapabilityProfilesAreDistinct(t *testing.T) {
 	seen := map[string]string{}
 	for name, caps := range capabilityProfiles {
@@ -44,9 +33,6 @@ func TestCapabilityProfilesAreDistinct(t *testing.T) {
 	}
 }
 
-// Every target's two halves are spelled in its name, so the name cannot
-// drift from what the descriptor says, and every environment names a
-// profile that exists.
 func TestTargetNameMatchesItsHalves(t *testing.T) {
 	for _, name := range Targets() {
 		d := ForTarget(name)
@@ -59,12 +45,6 @@ func TestTargetNameMatchesItsHalves(t *testing.T) {
 	}
 }
 
-// TestForTargetCoversEveryCanonicalTarget — every -target=
-// value cmd/fern accepts must have a Descriptor entry. The
-// canonical-set list is duplicated here as a sentinel; adding
-// a new target to cmd/fern's flag dispatch without also
-// landing a descriptor here surfaces immediately rather than
-// at the user-visible "platform has no capabilities" surface.
 func TestForTargetCoversEveryCanonicalTarget(t *testing.T) {
 	canonical := []string{"arm64-linux", "arm64-android", "arm64-darwin", "x86-64-linux", "wasm32-wasi", "wasm32-wasi-http"}
 	for _, name := range canonical {
@@ -86,10 +66,6 @@ func TestForTargetCoversEveryCanonicalTarget(t *testing.T) {
 	}
 }
 
-// TestForTargetUnknownReturnsNil — the lookup is the canonical
-// "is this a real target?" check. Tests / driver code that
-// passes a typo or stale name relies on the nil return to
-// reject cleanly.
 func TestForTargetUnknownReturnsNil(t *testing.T) {
 	if d := ForTarget("mars"); d != nil {
 		t.Errorf("ForTarget(\"mars\") = %v, want nil", d)
@@ -99,9 +75,6 @@ func TestForTargetUnknownReturnsNil(t *testing.T) {
 	}
 }
 
-// TestTargetsIsStable — sort order is part of the contract:
-// `fern -targets` and any LSP-side completion of -target needs
-// reproducible output across runs.
 func TestTargetsIsStable(t *testing.T) {
 	a := Targets()
 	b := Targets()
@@ -118,28 +91,21 @@ func TestTargetsIsStable(t *testing.T) {
 	}
 }
 
-// TestHasCapabilityHonoursDescriptor — `now` is everywhere
-// (every target has clock access); `fetch` only lands on
-// wasi-http; `kv` is on nothing yet.
 func TestHasCapabilityHonoursDescriptor(t *testing.T) {
 	cases := []struct {
 		target string
 		cap    string
 		want   bool
 	}{
-		// Universal capabilities.
 		{"arm64-linux", "now", true},
 		{"x86-64-linux", "now", true},
 		{"wasm32-wasi-http", "now", true},
 		{"wasm32-wasi", "now", true},
-		// `fetch` is wasi-http-only today.
 		{"wasm32-wasi-http", "fetch", true},
 		{"arm64-linux", "fetch", false},
 		{"wasm32-wasi", "fetch", false},
-		// `kv` doesn't exist anywhere yet.
 		{"wasm32-wasi-http", "kv", false},
 		{"arm64-linux", "kv", false},
-		// Unknown target returns false (not panic).
 		{"mars", "log", false},
 	}
 	for _, tc := range cases {
@@ -150,9 +116,6 @@ func TestHasCapabilityHonoursDescriptor(t *testing.T) {
 	}
 }
 
-// TestDescriptorStringIsHumanReadable — `fern -targets`
-// surfaces this; pin the shape so accidental reformatting
-// surfaces here rather than as a UX change.
 func TestDescriptorStringIsHumanReadable(t *testing.T) {
 	d := ForTarget("wasm32-wasi-http")
 	if d == nil {
@@ -165,13 +128,6 @@ func TestDescriptorStringIsHumanReadable(t *testing.T) {
 	}
 }
 
-// TestEveryTargetDeclaresAnEntryShape — the entry shape drives whether
-// the native backends emit `_start` and the argc/argv/envp capture
-// (#6510), so an environment that forgets to declare one would silently
-// get the zero value. OrDefault resolves that to EntryProcess, which is
-// the right fallback for a hosted target and exactly the wrong one for a
-// hostless target: it would emit an entry point that reads a process
-// stack no kernel populated. Fail here instead.
 func TestEveryTargetDeclaresAnEntryShape(t *testing.T) {
 	valid := map[EntryShape]bool{EntryProcess: true, EntryExports: true, EntryReset: true}
 	for _, name := range Targets() {
@@ -184,18 +140,12 @@ func TestEveryTargetDeclaresAnEntryShape(t *testing.T) {
 	}
 }
 
-// TestFreestandingIsEnteredByNobody pins the guest shape as freestanding's
-// answer today. EntryReset — the artifact owning the machine — is the
-// second value the descriptor is shaped to hold rather than a rewrite;
-// docs/BARE-METAL-PLAN.md.
 func TestFreestandingIsEnteredByNobody(t *testing.T) {
 	if got := ForTarget("arm64-freestanding").Entry; got != EntryExports {
 		t.Errorf("freestanding entry = %q, want %q: nothing enters it, its embedder calls in", got, EntryExports)
 	}
 }
 
-// TestEntryShapeOrDefault pins the zero-value resolution the codegen
-// Options rely on, so an `Options{}` literal keeps emitting `_start`.
 func TestEntryShapeOrDefault(t *testing.T) {
 	if got := EntryShape("").OrDefault(); got != EntryProcess {
 		t.Errorf("zero EntryShape resolved to %q, want %q", got, EntryProcess)
@@ -207,18 +157,6 @@ func TestEntryShapeOrDefault(t *testing.T) {
 	}
 }
 
-// TestNoTargetMissesLogCapability — `log` is the absolute
-// minimum capability every HOSTED target needs to surface
-// error output. Tests that we don't accidentally ship a
-// target with an empty Capabilities list.
-//
-// A freestanding target is the deliberate exception, and the
-// only one: it has no host to log to, and an empty capability
-// set is its entire point (#6509). Keying the exemption on
-// NoBackend rather than the name means the day something
-// emits for it, this invariant applies again — at which point
-// "where does a freestanding artifact put a panic message?"
-// is a question with a real answer instead of an omission.
 func TestNoTargetMissesLogCapability(t *testing.T) {
 	for _, name := range Targets() {
 		d := ForTarget(name)

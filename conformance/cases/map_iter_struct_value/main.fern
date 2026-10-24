@@ -1,8 +1,8 @@
-// `it.value().field` over a `Map[K, Struct]`. expr_struct_type had a struct
-// recovery for the `get_or` receiver and none for the iterator's, so the field
-// read had no struct type and bailed the function — even with the MapIter
-// annotated. `map_struct_value_field` covers this alongside get_or; this pins
-// the iterator half on its own, including the unannotated binding.
+
+
+
+
+
 import "core/map";
 import "core/cmp";
 
@@ -16,7 +16,7 @@ function main(): i32 {
     m = m.insert(1, Item { qty: 10, name: "a" });
     m = m.insert(2, Item { qty: 20, name: "bb" });
 
-    // Unannotated iterator + a struct field read off value().
+
     let it = m.iter();
     let qty: i32 = 0;
     let chars: i32 = 0;
@@ -28,7 +28,7 @@ function main(): i32 {
     if (qty != 30) { return 1; }
     if (chars != 3) { return 2; }
 
-    // Annotated form of the same thing, and binding the struct out first.
+
     let it2: MapIter[i32, Item] = m.iter();
     let viaBind: i32 = 0;
     while (it2.has_next()) {
@@ -38,15 +38,15 @@ function main(): i32 {
     }
     if (viaBind != 30) { return 3; }
 
-    // The get_or sibling recovery still resolves the same V.
+
     if (m.get_or(1, Item { qty: 0, name: "" }).qty != 10) { return 4; }
 
-    // `it.key().field` is the KEY-side sibling, and needs a struct-keyed map
-    // to exercise. It was left out when value() landed on the mistaken
-    // grounds that no native-valid struct-keyed program existed to check it
-    // against — the probes that "proved" that named their structs `K` and
-    // `V`, which collides with core/map's own type parameters (#6118). With
-    // any other name it checks clean, so the recovery is gated normally.
+
+
+
+
+
+
     let byKey: Map[Sku, Item] = map_new(8);
     byKey = byKey.insert(Sku { code: 5 }, Item { qty: 7, name: "z" });
     let it3 = byKey.iter();

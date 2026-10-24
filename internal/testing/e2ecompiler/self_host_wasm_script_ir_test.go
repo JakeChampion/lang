@@ -8,14 +8,6 @@ import (
 	"testing"
 )
 
-// SCRIPT-shaped modules on the wasm IR path.
-//
-// A script is top-level statements with no `main` — `return 42;` is the smallest.
-// asmcore.synth_script_main desugars these into `function main(): i32 { … }`
-// (ircore.script_normalized), and wasm_ir.route_normalized applies it for BOTH
-// the emitter and the `-decide` probe, so the probe cannot report a verdict for
-// a module the emitter does not judge. Each case asserts the route as well as
-// the answer.
 func TestSelfHostWasmScriptRoutesIR(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -31,18 +23,10 @@ func TestSelfHostWasmScriptRoutesIR(t *testing.T) {
 		src  string
 		exit int
 	}{
-		// The smallest script there is.
 		{"bare-return", "return 42;\n", 42},
-		// Top-level locals + a call, then a return: the shape synth_script_main
-		// moves wholesale into the synthesized main.
 		{"locals-and-call", "let x: i32 = 8;\nlet y: i32 = 34;\nprint_int(x + y);\nreturn x + y;\n", 42},
-		// No trailing return: synth_script_main appends `return 0;`.
 		{"no-trailing-return", "let x: i32 = 1;\nprint_int(x);\n", 0},
-		// A script that defines functions AND has top-level statements — still
-		// script-shaped, because none of them is `main`.
 		{"funcs-plus-toplevel", "function double(n: i32): i32 { return n * 2; }\nlet v: i32 = double(21);\nreturn v;\n", 42},
-		// Control: a module that already has `main` is NOT a script, and must be
-		// untouched by the normalisation.
 		{"has-main-control", "function main(): i32 { return 7; }\n", 7},
 	}
 

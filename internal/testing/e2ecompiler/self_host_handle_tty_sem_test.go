@@ -8,18 +8,6 @@ import (
 	"testing"
 )
 
-// The four Reader terminal methods through the SEMANTIC lowering, on a real
-// pseudo-terminal: `window_size`, `set_window_size`, `termios_get` and
-// `termios_set` reached as methods rather than as the free ops.
-//
-// The IR legs beside this one (TestSelfHostHandleTtyIR) run the same source and
-// check only its answer. This leg also reads the typed path's production tally
-// (FERN_SEM_IR_REPORT) and requires EVERY declaration, which is what makes it
-// notice a missing contract.
-//
-// It also runs the binary, because a contract alone is not the lowering: a
-// method whose contract exists but whose call reaches no op arrives at the
-// backend as a call to a symbol no runtime defines.
 func TestSelfHostSemanticHandleTty(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

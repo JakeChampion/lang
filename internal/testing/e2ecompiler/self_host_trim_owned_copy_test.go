@@ -8,23 +8,6 @@ import (
 	"testing"
 )
 
-// --- `.trim()` returns an owned copy (#7393) ---------------------------------
-//
-// rt_src_str_trim returns `s[start:end] + ""` — an owned copy, the
-// interpreter's semantics (docs/STR-VIEW-CONTRACT.md step 1) — so a trim
-// result is an ordinary fresh string. A zero-copy view instead would be a
-// wrong-answer UAF once it crossed its frame on the register backends: the
-// producer's exit sweep frees the backing buffer, and a recycling allocation
-// between the free and the read hands the view the recycler's bytes. The
-// memory instruments cannot see that — leakcheck sees only the 24-byte
-// view-box floor and the underflow counter never moves — so these cases read
-// the result back by value.
-//
-// Every want was confirmed against `bin/fern -interp`; counts are the
-// self-host build's own, measured through this harness (the CLI const-folds
-// literal-literal concats, so probe strings route through a call). A heap
-// string is ONE block (#7351).
-
 type trimOwnedCase struct {
 	name   string
 	src    string
@@ -36,9 +19,6 @@ type trimOwnedCase struct {
 func trimOwnedCases() []trimOwnedCase {
 	return []trimOwnedCase{
 		{
-			// THE REPRO (#7393): the view crossed its frame, a later allocation
-			// recycled the freed buffer, and v[0] read the recycler's bytes —
-			// self-host exit differed from the oracles by 'p'-'Z'.
 			name: "returned_across_frame_with_recycler",
 			src: `import "std/string";
 function mk(a: string): string { return a + "abcdefghijklmnopqrstuvwxyz0123456789"; }
@@ -52,8 +32,6 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 			want: 17, allocs: 400, frees: 400,
 		},
 		{
-			// The control: no recycler, one call. Used to read 0 — the freed
-			// block's zeroed byte — where the oracles read 'p'%101 = 11.
 			name: "returned_across_frame_control",
 			src: `import "std/string";
 function mk(a: string): string { return a + "abcdefghijklmnopqrstuvwxyz0123456789"; }
@@ -66,9 +44,6 @@ function main(): i32 {
 			want: 11, allocs: 3, frees: 3,
 		},
 		{
-			// Same-frame trim + receiver used after — the shape that was
-			// already CORRECT under the view (the receiver outlived the view)
-			// and must stay correct and balanced under the copy.
 			name: "same_frame_receiver_after",
 			src: `import "std/string";
 function mk(a: string): string { return a + "abcdefghijklmnopqrstuvwxyz0123456789"; }
@@ -83,8 +58,6 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 	}
 }
 
-// TestSelfHostTrimOwnedCopyX86_64 — a returned trim is an owned copy: right
-// answers under recycling pressure, balanced census, underflow 0.
 func TestSelfHostTrimOwnedCopyX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -115,8 +88,6 @@ func TestSelfHostTrimOwnedCopyX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTrimOwnedCopyWasmIR — wasm already copied at the slice op, so
-// this leg pins that the added concat kept the answers identical.
 func TestSelfHostTrimOwnedCopyWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping trim owned-copy wasm IR e2e")
@@ -155,8 +126,6 @@ func TestSelfHostTrimOwnedCopyWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostTrimOwnedCopyIRArm64 — the other register backend had the same
-// dangling view, so its exit codes carry the crash-class signal too.
 func TestSelfHostTrimOwnedCopyIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

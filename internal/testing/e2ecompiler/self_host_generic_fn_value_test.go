@@ -9,8 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The self-host twin of TestGenericFnValue: the monomorphiser clones a generic
-// named as a value for the callable it is wanted at.
 func TestSelfHostGenericFnValue(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
@@ -23,9 +21,6 @@ func TestSelfHostGenericFnValue(t *testing.T) {
 	}
 }
 
-// `-check` types every statement without lowering anything, so a generic
-// named as a value has to settle to the callable it is wanted at there too,
-// or a program the compiler accepts is one the checker refuses.
 func TestSelfHostGenericFnValueChecks(t *testing.T) {
 	driver, runner := selfHostCheckDriver(t)
 	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))

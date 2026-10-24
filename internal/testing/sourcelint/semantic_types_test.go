@@ -9,8 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// The semantic type model must be usable by both checked syntax and pre-RC IR.
-// Importing the checker here would create a cycle as soon as AST carries Type.
 func TestSelfHostSemanticTypeBoundary(t *testing.T) {
 	src, err := os.ReadFile("../../../compiler/typeinfo.fern")
 	if err != nil {
@@ -23,8 +21,6 @@ func TestSelfHostSemanticTypeBoundary(t *testing.T) {
 	if len(p.Imports) != 0 || len(p.PubUses) != 0 {
 		t.Fatal("semantic types must not depend on AST, checker, parser or physical lowering")
 	}
-	// Preserve the existing discriminants and complete recursive field types.
-	// An intentional model extension must update this contract and its consumers.
 	wantNames := []string{"TypeI32", "TypeBool", "TypeString", "TypeFloat", "TypeLanes", "TypeArray", "TypeStruct", "TypeTuple", "TypeFunc", "TypeMap", "TypeUnion", "TypeDyn", "TypeHandle", "TypeVoid", "TypeUnknown", "TypeErased", "TypeNever"}
 	wantFields := [][]string{
 		{"is_char:boolean", "width:i32", "unsigned:boolean", "polymorphic:boolean"},
@@ -64,7 +60,6 @@ func TestSelfHostSemanticTypeBoundary(t *testing.T) {
 			t.Error("checker duplicates the shared Type union")
 		}
 	}
-	// A real production record must carry the shared type, not a copied model.
 	found := false
 	for _, d := range checker.Structs {
 		if d.Name != "CheckResult" {

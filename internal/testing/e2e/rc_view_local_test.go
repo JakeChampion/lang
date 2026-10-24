@@ -4,19 +4,6 @@ import (
 	"testing"
 )
 
-// #8535 — a `[T]` view bound to a LOCAL never released its header.
-//
-// #8502 gave the header an owner where it is materialised as a call argument:
-// dead once the call returns. A header bound to a local has the binding's
-// lifetime instead, and nothing released it — 16 bytes per binding on the
-// natives, 8 on wasm.
-//
-// The header is an rc1 block since #8406, so the binding's own release is the
-// exit sweep's and `let t = s` retains: both names are counted and the block
-// goes at the second release, not the first. The aliased control below pins
-// that — it was written when a bespoke last-use free had to REFUSE an aliased
-// header, and it holds for the stronger reason now.
-
 const viewLocalSrc = `function mk(n: i32): i32[] {
     let a: i32[] = [];
     let i: i32 = 0;
@@ -36,12 +23,6 @@ function main(): i32 {
     return 0;
 }`
 
-// The header must NOT be freed while a second name still holds it. `t` aliases
-// `s`'s block — no new `__slice_make` — and `t` is read AFTER `s`'s last use,
-// which is where a release keyed to the materialising binding alone would fire.
-// The `mk(4)` between them recycles the freed block through the freelist, so
-// the read lands on reused memory rather than on stale-but-intact bytes: the
-// difference between a test that fails and one that happens to pass.
 const viewLocalAliasedSrc = `function mk(n: i32): i32[] {
     let a: i32[] = [];
     let i: i32 = 0;
@@ -66,8 +47,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// A view over a PARAMETER may leave the frame — E063 only forbids a view of
-// function-LOCAL storage — so the header goes with it and must survive.
 const viewLocalEscapeSrc = `function mk(n: i32): i32[] {
     let a: i32[] = [];
     let i: i32 = 0;

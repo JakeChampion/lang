@@ -1,16 +1,4 @@
-// std/crypto/x25519 — the X25519 Diffie-Hellman function of RFC 7748.
-//
-//   let public: u8[] = x25519.public_key(secret)?;
-//   let shared: u8[] = x25519.x25519(secret, peer_public)?;
-//
-// A secret and a public key are 32 bytes. `x25519` refuses a peer key that
-// takes the shared secret to all zeros (`LowOrder`), as TLS 1.3 requires.
-//
-// Constant time by construction: the field arithmetic
-// (`std/crypto/field25519`) is straight-line code over four 64-bit limbs,
-// its carries taken from the top bits; the ladder swaps with a mask, never a
-// branch; and the inversion's exponent is a public constant. The valgrind gate
-// (`__ct_secret`, docs/TEST-GATES.md) checks this.
+// This module implements the X25519 Diffie-Hellman function under RFC 7748.
 
 import "core/int";
 import "std/crypto/ed25519";
@@ -18,8 +6,6 @@ import "std/crypto/field25519" as fe;
 import "std/error";
 import "core/cmp";
 
-// X25519Error — a scalar or a point of the wrong length (the length it had),
-// or a peer key whose shared secret is all zeros.
 pub enum X25519Error {
   ScalarLength(i32),
   PointLength(i32),
@@ -49,8 +35,6 @@ pub function (e: X25519Error) message(): string {
   return "";
 }
 
-// __ladder is the u-coordinate of k times the point with u-coordinate u,
-// k clamped as RFC 7748 §5 sets out.
 function __ladder(k: [u8], u: fe.Fe): fe.Fe {
   let x2: fe.Fe = fe.from_i64(1);
   let z2: fe.Fe = fe.from_i64(0);
@@ -95,8 +79,6 @@ function __ladder(k: [u8], u: fe.Fe): fe.Fe {
   return fe.mul(xs.0, fe.invert(zs.0));
 }
 
-// x25519(scalar, point) — the shared secret of a 32-byte secret scalar and
-// a peer's 32-byte public key, refused as `LowOrder` when it is all zeros.
 pub function x25519(scalar: [u8], point: [u8]): Result[u8[], X25519Error] {
   if (scalar.len() != 32) {
     return Err(ScalarLength(scalar.len()));
@@ -111,8 +93,6 @@ pub function x25519(scalar: [u8], point: [u8]): Result[u8[], X25519Error] {
     any = any | out[i];
     i = i + 1;
   }
-  // Whether the secret is all zeros is the one secret-derived value allowed
-  // to steer a branch.
   let verdict: u8[] = __alloc_u8(1);
   verdict = verdict.with(0, any);
   __ct_public(verdict);
@@ -122,9 +102,6 @@ pub function x25519(scalar: [u8], point: [u8]): Result[u8[], X25519Error] {
   return Ok(out);
 }
 
-// public_key(scalar) — the public key of a 32-byte secret: the scalar,
-// clamped, times the base point u = 9, taken from Ed25519's fixed-base table
-// rather than the ladder.
 pub function public_key(scalar: [u8]): Result[u8[], X25519Error] {
   if (scalar.len() != 32) {
     return Err(ScalarLength(scalar.len()));

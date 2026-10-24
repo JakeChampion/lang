@@ -1,14 +1,14 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The same callee with a LIVE caller local at the position: the
-// #4873 bracket holds the local at rc 2 across the call, so the
-// callee's return-position append copies and the caller's buffer —
-// which has spare capacity and would otherwise grow in place — is
-// unchanged. The result is therefore fresh and its binding is
-// credited; the local is not a temp and is not released at the
-// call. Value semantics are the check: `g` stays at three elements
-// after two appends through the callee.
+
+
+
+
+
+
+
+
+
+
+
 @noinline
 function acc_i(xs: i32[], s: i32): i32[] { return xs.append(s); }
 @noinline

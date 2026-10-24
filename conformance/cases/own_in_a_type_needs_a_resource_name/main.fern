@@ -1,6 +1,6 @@
-// `own` in a type opens a resource handle, so a resource name must follow it.
-// A consuming parameter is written `own xs: i32[]`; `xs: own i32[]` is a parse
-// error that says so (#12655).
-function total(xs: own i32[]): i32 { return xs.len(); }   // error[P001]
+
+
+
+function total(xs: own i32[]): i32 { return xs.len(); }
 
 function main(): i32 { return total([1]); }

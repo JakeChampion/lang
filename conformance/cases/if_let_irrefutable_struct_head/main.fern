@@ -1,7 +1,7 @@
-// `if let` reads the shared pattern grammar (#5356): every pattern form a
-// `match` accepts works in its head.
-//
-// An irrefutable head leaves the desugar's synthetic else arm unreachable;
-// that arm is not the programmer's, so it must not draw E026 / E030.
+
+
+
+
+
 struct P { x: i32, y: i32 }
 function main(): i32 { let p: P = P { x: 1, y: 2 }; if let P { x, y } = p { return x + y; } else { return 0; } return 0; }

@@ -42,7 +42,6 @@ function term_ids(own ids: i32[], term: ssa.STerm): i32[] {
   if (used >= 0) {
     ids = ids.with(used, 0);
   }
-  // The certifier's use counts also read an inactive value field.
   if (term.value >= 0 && term.value < ids.len()) {
     ids = ids.with(term.value, 0);
   }
@@ -88,8 +87,6 @@ function marked(f: ssa.SFunc): i32[] {
   return ids;
 }
 
-// Preserve numeric ordering, parameters and undefined operands. Only unused
-// slots disappear; even an unused allocation must remain a possible leak.
 pub function compact(f: ssa.SFunc): Dense {
   if (!worthwhile(f)) {
     return Dense { f: f, original: [] };

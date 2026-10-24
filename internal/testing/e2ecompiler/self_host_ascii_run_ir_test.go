@@ -9,32 +9,6 @@ import (
 	"testing"
 )
 
-// `__ascii_run(s, from)` on the self-host IR path — the second fused SIMD
-// kernel of docs/ATLAS-PLATFORM-PLAN.md §3, completed across the three
-// self-host backends.
-//
-// Same §3.4 ordering as __memchr's sibling suite, and now at the same place:
-// every backend answers the same question and all seven answer it 16 bytes at a
-// time, so all of them are held to one expectation. What differs is that this op
-// was made TOTAL BEFORE any caller adopted it, rather than after — __memchr was
-// adopted with one backend still missing an entry, and CI reported
-// it as a link error.
-//
-// The contract difference worth stating once more, because it is what a reader
-// porting the op to an eighth backend gets wrong: a miss returns the LENGTH,
-// not -1. `i = __ascii_run(s, i)` is meant to be a branch-free skip.
-
-// asciiRunIRProg is SELF-CHECKING: it carries a Fern reference implementation
-// and compares `__ascii_run` against it, so the corpus sweeps exhaustively with
-// no Go-side expectation list to keep in step.
-//
-// The sweep runs length 0..72 with the high byte at every position and the scan
-// starting before / at / after it — two full 32-byte vector blocks, a 16-byte
-// one and a partial tail, so every hand-over a vector body can get wrong is
-// swept on every backend.
-//
-// A failure returns a small distinct code rather than a count, so the exit
-// status says WHICH shape disagreed. 42 means every comparison matched.
 const asciiRunIRProg = `function ref(s: string, from: i32): i32 {
     let i: i32 = from;
     if (i < 0) { i = 0; }
@@ -81,8 +55,6 @@ function main(): i32 {
 }
 `
 
-// runAsciiRunIR compiles asciiRunIRProg with the self-host modload driver for
-// the given register target and returns the exit code.
 func runAsciiRunIR(t *testing.T, target string) int {
 	t.Helper()
 	var runner, runPrefix, extra []string
@@ -127,15 +99,6 @@ func TestSelfHostAsciiRunIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostAsciiRunIRWasm runs the same program through the self-hosted wasm
-// IR driver. The self-host wasm string is a single `[len@0][bytes@4]` block —
-// not the native wasm backend's two-word SSO pair — so the byte address is
-// unconditional and there is no inline-string branch to get wrong. That
-// difference is why this leg is not redundant with the two above.
-//
-// The helper's presence in the emitted text is asserted, so a module that
-// silently stopped needing it would fail rather than pass by exercising
-// nothing.
 func TestSelfHostAsciiRunIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host ascii_run wasm IR e2e")

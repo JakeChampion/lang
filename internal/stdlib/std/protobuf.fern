@@ -1,14 +1,7 @@
-// std/protobuf — the protocol buffers wire format (protobuf.dev/programming-guides/encoding):
-// a message as the fields it carries, each a tag of field number and wire
-// type, then a varint, a fixed 32- or 64-bit word, or length-delimited
-// bytes. No schema: a caller reads the fields it knows by number and
-// writes them with the field functions, as a server of a small service
-// does; unknown fields are kept and may be skipped. Groups, deprecated
-// since proto2, are refused.
+// This module reads and writes Protocol Buffers fields without a schema.
 
 import "std/string";
 
-// Wire types (encoding §"Message Structure").
 pub const VARINT: i32 = 0;
 
 pub const FIXED64: i32 = 1;
@@ -17,15 +10,8 @@ pub const BYTES: i32 = 2;
 
 pub const FIXED32: i32 = 5;
 
-// `Field` — one field read off a message: its number and wire type, the
-// value as a varint or fixed word (`word`, the fixed words little-endian
-// as the wire has them, the varint as decoded), or its bytes.
 pub struct Field { number: i32, wire: i32, word: i64, bytes: u8[] }
 
-// `decode(bytes)` — the fields of a message in order, repeated fields
-// appearing once per occurrence; Err names the fault: a tag or varint cut
-// short or over 10 bytes, a length past the end, a field number of 0, a
-// group.
 pub function decode(bytes: u8[]): Result[Field[], string] {
   let out: Field[] = [];
   let at: i32 = 0;
@@ -56,7 +42,6 @@ pub function decode(bytes: u8[]): Result[Field[], string] {
   return Ok(out);
 }
 
-// __value reads the field after its tag: `(field, next)`.
 function __value(bytes: u8[], at: i32, number: i32, wire: i32): Result[(Field, i32), string] {
   if (wire == VARINT) {
     match (__varint(bytes, at)) {
@@ -81,7 +66,6 @@ function __value(bytes: u8[], at: i32, number: i32, wire: i32): Result[(Field, i
   return Err("field " + number.to_string() + " has wire type " + wire.to_string());
 }
 
-// __fixed reads a 32- or 64-bit word, little-endian on the wire.
 function __fixed(bytes: u8[], at: i32, number: i32, wire: i32): Result[(Field, i32), string] {
   let n: i32 = 8;
   if (wire == FIXED32) {
@@ -100,8 +84,6 @@ function __fixed(bytes: u8[], at: i32, number: i32, wire: i32): Result[(Field, i
   return Ok((Field { number: number, wire: wire, word: word, bytes: none }, at + n));
 }
 
-// __delimited reads a length-delimited field: its length as a varint,
-// then that many bytes.
 function __delimited(bytes: u8[], at: i32, number: i32): Result[(Field, i32), string] {
   match (__varint(bytes, at)) {
     Ok(len) => {
@@ -124,7 +106,6 @@ function __delimited(bytes: u8[], at: i32, number: i32): Result[(Field, i32), st
   return Err("unreachable");
 }
 
-// __varint reads a varint at `at`: `(value, next)`, up to ten bytes.
 function __varint(bytes: u8[], at: i32): Result[(i64, i32), string] {
   let value: i64 = 0 as i64;
   let shift: i32 = 0;
@@ -144,8 +125,6 @@ function __varint(bytes: u8[], at: i32): Result[(i64, i32), string] {
   return Err("varint cut short at byte " + at.to_string());
 }
 
-// `varint(fields, number)` — the last varint field `number` carries, None
-// when the message has none (proto3's default).
 pub function varint(fields: Field[], number: i32): Option[i64] {
   let out: Option[i64] = None;
   for f in fields {
@@ -156,8 +135,6 @@ pub function varint(fields: Field[], number: i32): Option[i64] {
   return out;
 }
 
-// `bytes(fields, number)` — the last length-delimited field `number`
-// carries: a string, bytes, or an embedded message to `decode`.
 pub function bytes(fields: Field[], number: i32): Option[u8[]] {
   let out: Option[u8[]] = None;
   for f in fields {
@@ -168,8 +145,6 @@ pub function bytes(fields: Field[], number: i32): Option[u8[]] {
   return out;
 }
 
-// `repeated(fields, number)` — every length-delimited field `number`
-// carries, in order: a repeated message or string field.
 pub function repeated(fields: Field[], number: i32): u8[][] {
   let out: u8[][] = [];
   for f in fields {
@@ -180,25 +155,18 @@ pub function repeated(fields: Field[], number: i32): u8[][] {
   return out;
 }
 
-// `varint_field(number, value)` — a varint field, `value` as the wire
-// carries it (zigzag coding is the caller's, `zigzag` below).
 pub function varint_field(number: i32, value: i64): u8[] {
   return encode_varint(number as i64 << 3 | VARINT as i64).concat(encode_varint(value));
 }
 
-// `bytes_field(number, value)` — a length-delimited field: bytes, a
-// string's bytes, or an embedded message.
 pub function bytes_field(number: i32, value: u8[]): u8[] {
   return encode_varint(number as i64 << 3 | BYTES as i64).concat(encode_varint(value.len() as i64)).concat(value);
 }
 
-// `string_field(number, value)` — `bytes_field` of a string.
 pub function string_field(number: i32, value: string): u8[] {
   return bytes_field(number, value.bytes());
 }
 
-// `encode_varint(value)` — a varint, ten bytes for a negative value as
-// the wire has it (an int32 or int64 field below zero).
 pub function encode_varint(value: i64): u8[] {
   let out: u8[] = [];
   let v: i64 = value;
@@ -216,8 +184,6 @@ pub function encode_varint(value: i64): u8[] {
   return out;
 }
 
-// `zigzag(n)` and `unzigzag(z)` — the sint32 and sint64 coding, a signed
-// value as the varint the wire carries and back.
 pub function zigzag(n: i64): i64 {
   return n << 1 ^ n >> 63;
 }

@@ -6,13 +6,6 @@ import (
 	"testing"
 )
 
-// A string local the exit sweep cannot prove it owns, but whose every store
-// was counted, is released without being freed, as every other ineligible type
-// is; and a parameter stored into such a local is a counted store, so the
-// caller keeps its own release (#10117). One bound without a retain holds
-// nothing to release. Each shape
-// builds its strings by concatenation so they are heap blocks, and runs
-// several calls so a per-call leak shows as a count.
 func TestIneligibleStringLocalReleasesItsReference(t *testing.T) {
 	const mk = `function mkstr(a: string): string { return a + "!"; }
 `
@@ -67,9 +60,6 @@ function main(): i32 {
     }
     return acc - 50;
 }`, 52},
-		// `s` is bound to the block's tail value with no retain, so it holds
-		// no reference of its own: releasing it at exit is a use-after-free
-		// once `joined` has freed the buffer.
 		{"bound-to-a-block-tail", mk + `function tail(i: i32): i32 {
     let a: string = mkstr("a string long enough to live on the heap");
     let s: string = if (i >= 0) { let joined = a + "?"; joined } else { "" };

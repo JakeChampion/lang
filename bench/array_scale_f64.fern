@@ -1,16 +1,5 @@
 import "std/array" as array;
 
-// array_scale_f64 — the elementwise multiply kernel, the first array kernel
-// of the fused set (docs/ATLAS-PLATFORM-PLAN.md §3.4, docs/ARRAY-SHAPES.md
-// §9): every element of a 4,096-element f64[] (32 KiB, the same footprint as
-// the string kernels' haystack) multiplied by one scalar into a fresh array.
-//
-// There is no early exit and nothing data-dependent in the body: the whole
-// input is read and the whole output written on every call, so this measures
-// the per-element cost of the loop and the one allocation the result needs,
-// nothing else. The factor cycles through five values and the checksum reads
-// a different element each round, so a hoisted call or a result computed once
-// and reused shows up as a checksum that stops depending on the rounds.
 function vector(): f64[] {
   let xs: f64[] = [];
   let i: i32 = 0;

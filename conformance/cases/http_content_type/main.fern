@@ -1,11 +1,11 @@
 import "std/http";
 import "std/string";
 
-// #4385: the plain http.ok / http.text builders never set Content-Type,
-// so a JSON API response could be sniffed as text. The typed builders
-// (json / html / plain / json_status) and the with_content_type method
-// set the media type up front. This pins that each media type reaches
-// the serialized wire output. Returns 42 only if every check holds.
+
+
+
+
+
 function main(): i32 {
     let j: string = http.http_serialize_response(http.json("{}"));
     if (!j.contains("Content-Type: application/json")) { return 1; }
@@ -16,17 +16,17 @@ function main(): i32 {
     let p: string = http.http_serialize_response(http.plain("x"));
     if (!p.contains("Content-Type: text/plain; charset=utf-8")) { return 3; }
 
-    // Explicit status flows through with the JSON media type.
+
     let c: string = http.http_serialize_response(http.json_status(201, "{}"));
     if (!c.contains("HTTP/1.1 201 Created")) { return 4; }
     if (!c.contains("Content-Type: application/json")) { return 5; }
 
-    // with_content_type overrides on top of a plain builder.
+
     let csv: string = http.http_serialize_response(
         http.ok("a,b").with_content_type("text/csv"));
     if (!csv.contains("Content-Type: text/csv")) { return 6; }
 
-    // A plain builder still emits no Content-Type (unchanged behaviour).
+
     let ok: string = http.http_serialize_response(http.ok("hi"));
     if (ok.contains("Content-Type")) { return 7; }
 

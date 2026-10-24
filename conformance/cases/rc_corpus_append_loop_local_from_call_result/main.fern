@@ -1,8 +1,8 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Control: `.append` is not a consuming receiver, so nothing is
-// transferred and the re-init drop is the only release.
+
+
+
+
+
 struct P { a: i32, b: i32 }
 function mk_arr(): P[] { return [P{a:0,b:0}, P{a:1,b:1}]; }
 function f(n: i32): i32 {

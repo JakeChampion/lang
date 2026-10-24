@@ -1,13 +1,3 @@
-// Package tv is translation validation for the self-hosted compiler's op-list
-// passes (#5543): instead of sampling inputs, it proves with an SMT solver that
-// a pass's output computes what its input did, for every input.
-//
-// The compiler writes a pass's input and output op lists to stderr when
-// FERN_TV_DUMP names the pass (ir.fern's tv_dump). Parse reads them back, Split
-// pairs up the straight-line runs that differ, Encode states each pair's
-// equivalence as an SMT-LIB query, and Prove hands the queries to Z3: unsat is
-// a proof, sat a counterexample. docs/TRANSLATION-VALIDATION.md has the model
-// and what it leaves out.
 package tv
 
 import (
@@ -17,8 +7,6 @@ import (
 	"strings"
 )
 
-// Op is one dumped op. Line is the dump's line, which spells every field, so
-// two ops are the same op exactly when their lines are equal.
 type Op struct {
 	Name     string
 	Kind     int
@@ -30,8 +18,6 @@ type Op struct {
 	Line     string
 }
 
-// Rewrite is one run of a pass over one op list: what it read and what it
-// wrote.
 type Rewrite struct {
 	Pass          string
 	Before, After []Op
@@ -39,8 +25,6 @@ type Rewrite struct {
 
 const prefix = "fern-tv "
 
-// Parse reads every rewrite out of a compiler's stderr. Lines outside a
-// rewrite's block are the compiler's other output and are skipped.
 func Parse(stderr string) ([]Rewrite, error) {
 	lines := strings.Split(stderr, "\n")
 	var out []Rewrite
@@ -65,8 +49,6 @@ func Parse(stderr string) ([]Rewrite, error) {
 	return out, nil
 }
 
-// parseSide reads the `fern-tv <side> N` header at lines[at] and its N ops,
-// returning them and the index of the last line read.
 func parseSide(lines []string, at int, side string) ([]Op, int, error) {
 	head := prefix + side + " "
 	if at >= len(lines) || !strings.HasPrefix(lines[at], head) {
@@ -85,7 +67,6 @@ func parseSide(lines []string, at int, side string) ([]Op, int, error) {
 	return ops, at + n, nil
 }
 
-// parseOp reads `name kind i32 i64 f64bits width unsigned decl :hexstr`.
 func parseOp(line string) (Op, error) {
 	f := strings.Fields(line)
 	if len(f) != 9 || !strings.HasPrefix(f[8], ":") {
@@ -109,7 +90,6 @@ func parseOp(line string) (Op, error) {
 	}, nil
 }
 
-// String renders the op as a reader wants it in a report.
 func (o Op) String() string {
 	switch {
 	case o.Kind == kConstI32 || o.Kind == kLoadLocal || o.Kind == kStoreLocal || o.Kind == kTeeLocal:
@@ -124,7 +104,6 @@ func (o Op) String() string {
 	return o.Name
 }
 
-// Render joins ops the way the compiler's drivers print an op list.
 func Render(ops []Op) string {
 	parts := make([]string, len(ops))
 	for i, o := range ops {

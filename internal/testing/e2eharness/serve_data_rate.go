@@ -11,20 +11,8 @@ import (
 	"time"
 )
 
-// The minimum data rate on the write side (#9854): a response the peer
-// drains below `response_min_data_rate` after `response_data_rate_grace`
-// is cut off, and one drained above it goes out whole however long that
-// takes. The request body's rate is left at its default, so a drain judged
-// by it instead would get its 5 s grace and the stalled reader its body.
-
-// DataRateResponseBytes is the response body's length: larger than the
-// loopback socket buffers can hold between them, so the write is short
-// and the drain is the peer's to pace.
 const DataRateResponseBytes = 8 << 20
 
-// DataRateServerSource is a server answering
-// DataRateResponseBytes of body under a 100 KB/s minimum response data
-// rate with a 300 ms grace.
 func DataRateServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/string";
@@ -41,8 +29,6 @@ function main(): i32 {
 `, DataRateResponseBytes)
 }
 
-// dialSmallWindow connects with a 64 KiB receive buffer, so the peer's
-// send is short and what the client reads paces the drain.
 func dialSmallWindow(t *testing.T, addr string) net.Conn {
 	t.Helper()
 	d := net.Dialer{Timeout: 5 * time.Second, Control: func(network, address string, c syscall.RawConn) error {
@@ -66,9 +52,6 @@ func dialSmallWindow(t *testing.T, addr string) net.Conn {
 	return conn
 }
 
-// CheckResponseRateCutsStalledReader asks for the response and reads
-// nothing for 2 s: the server, owed progress within the grace, closes
-// the connection, so the read that follows ends short of the body.
 func CheckResponseRateCutsStalledReader(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -87,10 +70,6 @@ func CheckResponseRateCutsStalledReader(t *testing.T, addr string) {
 	}
 }
 
-// CheckResponseRateKeepsSteadyReader reads the response 64 KiB at a
-// time with a 40 ms pause between reads, about 1.6 MB/s against the
-// 100 KB/s minimum, and must get every byte: a drain above the rate is
-// never cut, however long the whole takes.
 func CheckResponseRateKeepsSteadyReader(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -112,7 +91,6 @@ func CheckResponseRateKeepsSteadyReader(t *testing.T, addr string) {
 		}
 		time.Sleep(40 * time.Millisecond)
 	}
-	// The headers are the rest of the bytes; the body must be whole.
 	if total < DataRateResponseBytes {
 		t.Fatalf("the steady reader got %d bytes, want the whole %d-byte body and its headers", total, DataRateResponseBytes)
 	}

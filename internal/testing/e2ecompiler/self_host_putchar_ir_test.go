@@ -8,16 +8,6 @@ import (
 	"testing"
 )
 
-// putcharIRCases exercise the `putchar(c)` byte-output builtin on the IR path.
-// It lowers to a putchar IR op (not a call_direct, so it sidesteps the call
-// eligibility gate). On x86-64 and arm64 the op calls __fn___fern_putchar, the
-// Fern-source runtime helper (asmcore.rt_src_putchar, #2649) lowered through the
-// same IR pipeline as user code; wasm keeps its own helper and inlines a scratch
-// iovec + fd_write instead. stdout pins the exact bytes: putchar writes the one
-// byte it is given and appends nothing.
-//
-// putchar(200) writes the raw byte 0xC8, not its UTF-8 encoding — all three
-// backends agree. (`fern -interp` writes 0xC3 0x88 for the same program.)
 var putcharIRCases = []struct {
 	name, src, want string
 }{
@@ -29,9 +19,6 @@ var putcharIRCases = []struct {
 	{"computed", `function main(): i32 { let c: i32 = 60; putchar(c + 5); return 0; }`, "A"},
 }
 
-// The wasm backend emits no putchar symbol, so pin the inlined sequence: stash
-// the byte at scratch address 16, point the iovec (base@0, len@4) at it, write
-// fd 1.
 const wasmPutcharSeq = "    i32.store8\n" +
 	"    i32.const 0\n    i32.const 16\n    i32.store\n" +
 	"    i32.const 4\n    i32.const 1\n    i32.store\n" +

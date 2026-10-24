@@ -8,7 +8,6 @@ import "./series";
 
 struct Escape { steps: i32, magnitude: f64 }
 
-// This oracle has no SIMD, batching, interior tests, or cycle detection.
 function scalar(real: f64, imaginary: f64, limit: i32): Escape {
   let zr: f64 = 0.0;
   let zi: f64 = 0.0;
@@ -56,7 +55,6 @@ function test_refill(): test.TestOutcome {
 }
 
 function test_prefix(): test.TestOutcome {
-  // Check both a bounded orbit through zero and an escaping orbit.
   for real in [0.0, -0.75] {
     let imaginary: f64 = 0.0;
     if (real < 0.0) {
@@ -89,7 +87,6 @@ function test_prefix(): test.TestOutcome {
       }
     }
   }
-  // Disable the polynomial to exercise composed linear blocks separately.
   let ref: linear.Reference = linear.reference(-0.75, 0.1, 1e-15, 256, 1e-8);
   let linear_only: linear.Reference = linear.Reference { ...ref, series: series.Model { ...ref.series, steps: 0 } };
   let start: linear.Start = linear.prefix(linear_only, -0.75, 0.1, 256);

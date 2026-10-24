@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// Use raw IR drivers deliberately: loader annotation already supplies these
-// result types. The binding must also preserve the lowerer's typed result slot
-// after lexical retirement, without relying on leaked pattern-binding names.
 func TestSelfHostValueBlockResultTypesIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)

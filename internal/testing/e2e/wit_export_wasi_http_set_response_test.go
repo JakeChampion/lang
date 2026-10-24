@@ -17,14 +17,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// httpHandlerSetResponseProg is a bring-your-own wasi:http handler that builds
-// a 200 response and hands it to response-outparam.set. The set extern is
-// declared with its canonical flattened params — result<own<outgoing-response>,
-// error-code> + the outparam handle flatten to 9 core values
-// [i32 i32 i32 i32 i64 i32 i32 i32 i32] (slot 4 is i64, widened by error-code's
-// option<u64> arm) — and the call passes Ok (disc 0, the response handle, the
-// rest zero). The composer lowers set as a gMem trampoline (error-code carries
-// heap → KindMem) using the core import's own 9-param signature.
 const httpHandlerSetResponseProg = `@import("wasi:http/types@0.2.0", "incoming-request")
 resource IncomingRequest;
 @import("wasi:http/types@0.2.0", "response-outparam")
@@ -49,11 +41,6 @@ function on_request(request: own IncomingRequest, response_out: own ResponseOutp
 	return;
 }`
 
-// minimalHttpProxyWorld writes a WIT dir (the real wasi deps + a world that
-// imports only wasi:http/types and exports wasi:http/incoming-handler) and
-// returns the decoded world. Importing only http/types pulls in exactly the
-// transitive proxy imports (io / clocks) — NOT filesystem/sockets — so the
-// composed component matches what `wasmtime serve` links.
 func minimalHttpProxyWorld(t *testing.T, dir string) *componenttype.World {
 	t.Helper()
 	wasmtools, err := exec.LookPath("wasm-tools")
@@ -94,12 +81,6 @@ world handler {
 	return w
 }
 
-// TestExportWasiHttpHandlerSetResponseComposes is the next step toward a running
-// handler (docs/WIT-BRING-YOUR-OWN.md): a bring-your-own wasi:http handler that
-// actually CALLS response-outparam.set to hand back a 200 response, composed
-// against the real wasi:http WIT. Proves the gMem trampoline lowers the
-// 9-flattened-value set import. (A wasmtime-serve run gate follows once this
-// composes.)
 func TestExportWasiHttpHandlerSetResponseComposes(t *testing.T) {
 	wasmtools, err := exec.LookPath("wasm-tools")
 	if err != nil {
@@ -135,20 +116,12 @@ func TestExportWasiHttpHandlerSetResponseComposes(t *testing.T) {
 	}
 }
 
-// TestExportWasiHttpHandlerServes is the running-server final gate
-// (docs/WIT-BRING-YOUR-OWN.md): the bring-your-own wasi:http handler composed
-// above is served by `wasmtime serve` and answers a real HTTP request with the
-// 200 it set via response-outparam.set — end-to-end proof that a Fern program
-// implements wasi:http/incoming-handler from a user-supplied WIT, no embedded
-// HTTP world. This is what P6 Slice 6 was for.
 func TestExportWasiHttpHandlerServes(t *testing.T) {
 	if got := serveHttpHandlerStatus(t, httpHandlerSetResponseProg); got != http.StatusOK {
 		t.Fatalf("status = %d; want 200", got)
 	}
 }
 
-// buildHttpHandlerComponent compiles a bring-your-own wasi:http handler program
-// and composes it against the minimal proxy world, returning the component path.
 func buildHttpHandlerComponent(t *testing.T, dir, prog string) string {
 	t.Helper()
 	w := minimalHttpProxyWorld(t, dir)
@@ -168,24 +141,18 @@ func buildHttpHandlerComponent(t *testing.T, dir, prog string) string {
 	return out
 }
 
-// serveHttpHandlerStatus builds + composes `prog`, serves it under `wasmtime
-// serve`, makes a single `GET /`, and returns the response status.
 func serveHttpHandlerStatus(t *testing.T, prog string) int {
 	t.Helper()
 	status, _ := serveHttpHandler(t, prog)
 	return status
 }
 
-// serveHttpHandlerBody is serveHttpHandlerStatus but returns the response body.
 func serveHttpHandlerBody(t *testing.T, prog string) string {
 	t.Helper()
 	_, body := serveHttpHandler(t, prog)
 	return body
 }
 
-// serveHttpHandler builds + composes `prog`, serves the component under
-// `wasmtime serve` on a free port, makes a single `GET /`, and returns the
-// response status + body. Skips if wasmtime is absent.
 func serveHttpHandler(t *testing.T, prog string) (int, string) {
 	t.Helper()
 	wasmtime, err := exec.LookPath("wasmtime")

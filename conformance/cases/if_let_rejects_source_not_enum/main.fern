@@ -1,3 +1,3 @@
-// `if let` reads the shared pattern grammar (#5356): every pattern form a
-// `match` accepts works in its head.
+
+
 function main(): i32 { let n: i32 = 5; if let Has(v) = n { return 0; } return 0; }

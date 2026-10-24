@@ -1,36 +1,8 @@
-// join.fern — GNU-compatible `join`.
-//
-//   join [OPTION]... FILE1 FILE2
-//
-// The two files are read in step and every pair of lines whose join
-// field matches is written as one line. Both files must already be
-// sorted on that field; what happens when they are not is the subtlest
-// part of the program and is described at `needs_order_check` below.
-//
-// Two shapes of this are older than the option syntax and decide how
-// the command line is read:
-//
-//   - `-o` takes its field specs as SEPARATE arguments as well as one
-//     comma-separated one, and `-j1` / `-j2` take their field number
-//     from the next argument. So a bare word after either of them is
-//     ambiguous: an option argument, or one of the two files.
-//   - The ambiguity is settled by counting backwards. A candidate is
-//     taken as the option's argument, and at the end of the scan any
-//     shortfall in the two file operands is made up by giving the LAST
-//     candidates back — which is why `join -o 1.1 f1 f2` joins two
-//     files while `join -o 1.1 f1 f2 f3` reads `f1` as a field spec.
-//     Nothing about the token decides it; only how many follow.
-//
-// Unpairable lines are printed by -a and are the only output under -v.
-// -o names the output fields; -e fills a field a line does not have,
-// which only -o and `-o auto` can ask for.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
 import "./lib/gnu";
 
-// Option ids. The declaration order below is GNU's, because the
-// ambiguity list prints candidates in it (`join --=x`).
 function opt_a(): i32 {
   return 1;
 }
@@ -125,22 +97,13 @@ function help_text(): string {
   return out;
 }
 
-// SIZE_MAX: the value an out-of-range field number saturates to, and
-// the "not given yet" marker for the two join fields.
 function unset(): u64 {
   return 18446744073709551615 as u64;
 }
 
-// `field_number(s)` — gnulib's string_to_join_field: xstrtoumax, zero
-// refused, out of range saturating to SIZE_MAX, and the whole operand
-// consumed. Returns the 0-based field, or dies.
 function field_number(s: string): u64 {
   let r: (u64, i32) = gnu.parse_number(s);
   if (gnu.count_overflow(r.1)) {
-    // Out of range saturates to SIZE_MAX, one past the "not given"
-    // marker, so a field number that overflowed is not read back as
-    // an unset one. Trailing junk is a different refusal, and one
-    // GNU reports rather than saturates.
     return unset() - 1 as u64;
   }
   if (r.1 != 0 || r.0 == 0 as u64) {
@@ -150,7 +113,6 @@ function field_number(s: string): u64 {
   return r.0 - 1 as u64;
 }
 
-// `file_number(s)` — the 1-or-2 a -a or -v takes.
 function file_number(s: string): i32 {
   let r: (u64, i32) = gnu.parse_number(s);
   if (r.1 != 0 || r.0 == 0 as u64 || r.0 > 2 as u64) {
@@ -160,16 +122,10 @@ function file_number(s: string): i32 {
   return r.0 as i32;
 }
 
-// ---- output fields ----------------------------------------------------------
-// `Spec` — one -o item: `file` 0 for the join field, 1 or 2 for that
-// file's `field`.
 struct Spec { file: i32, field: u64 }
 
-// ---- settings ---------------------------------------------------------------
 struct Opts { jf1: u64, jf2: u64, tab: i32, eol: i32, filler: string, ignore_case: boolean, pairs: boolean, unpair1: boolean, unpair2: boolean, specs: Spec[], autofmt: boolean, check: i32, header: boolean, seps: u8[] }
 
-// check: 0 the default (report a disorder only once a line has proved
-// unpairable), 1 --check-order (report and die), 2 --nocheck-order.
 function check_default(): i32 {
   return 0;
 }
@@ -182,19 +138,6 @@ function check_off(): i32 {
   return 2;
 }
 
-// ---- lines ------------------------------------------------------------------
-// `Line` — one input line without its terminator, its field bounds as
-// start/end pairs, and the join field's bounds. The key is held as a
-// RANGE rather than a string: a line is compared with its neighbour and
-// with the other file's, and slicing it out for that would allocate
-// once per line for nothing.
-// A line is a byte range `[lo, hi)` of the block it was read from,
-// never a string of its own: the block stays alive for as long as a
-// line refers to it. `k0, k1` bound the join field, `nf` counts the
-// fields; the other fields are walked again when the line is printed,
-// which costs a byte scan of a short line and no allocation at all.
-// The first four fields' bounds are carried too, so a line that has no
-// more than that is printed without a second walk.
 struct Line { text: u8[], lo: i32, hi: i32, k0: i32, k1: i32, nf: i32, s0: i32, e0: i32, s1: i32, e1: i32, s2: i32, e2: i32, s3: i32, e3: i32 }
 
 function blank_line(): Line {
@@ -235,15 +178,10 @@ function nfields(l: Line): u64 {
   return l.nf as u64;
 }
 
-// A field separator in the default mode. A newline joins the blanks
-// because -z lets one appear inside a line, where it separates fields
-// exactly as it separates lines everywhere else.
 function is_sep(c: i32): boolean {
   return c == 32 || c == 9 || c == 10;
 }
 
-// The bytes that end a default-mode field, for `__scan_set`: the three
-// blanks, and the line terminator so a scan stops at the line's end.
 function sep_table(eol: i32): u8[] {
   let t: u8[] = __alloc_u8(256);
   t = t.with(32, 1 as u8);
@@ -252,14 +190,6 @@ function sep_table(eol: i32): u8[] {
   return t.with(eol, 1 as u8);
 }
 
-// gnulib's xfields, walked once for the field count and the join
-// field's bounds. An empty line has no fields at all; a `-t` line
-// always has one more field than it has separators, so a leading
-// separator makes the first field empty; in the default mode blanks at
-// either end are skipped and add no field. `-t ''` sets the separator to
-// a newline, which no line can contain, so the whole line is one field.
-// A join field the line does not have is the empty range at `lo`.
-// `seps` is sep_table's set, which ends a default-mode field.
 function make_line(text: u8[], lo: i32, hi: i32, tab: i32, jf: u64, seps: u8[]): Line {
   let k0: i32 = lo;
   let k1: i32 = lo;
@@ -300,8 +230,6 @@ function make_line(text: u8[], lo: i32, hi: i32, tab: i32, jf: u64, seps: u8[]):
         k1 = hi;
       }
     }
-    // One field per turn: `[f, i)` is the field, and the turn ends with
-    // `i` at the next field's start or `more` false.
     while (more) {
       f = i;
       let j: i32 = hi;
@@ -341,8 +269,6 @@ function make_line(text: u8[], lo: i32, hi: i32, tab: i32, jf: u64, seps: u8[]):
         while (i < hi && is_sep(text[i] as i32)) {
           i = i + 1;
         }
-        // Trailing blanks end the line rather than opening an empty
-        // field after them. GNU <= 9.11 extracted one there.
         if (i >= hi) {
           more = false;
         }
@@ -359,8 +285,6 @@ function fold(c: i32): i32 {
   return c;
 }
 
-// gnulib's keycmp: memcmp in the C locale, memcasecmp under -i, with a
-// shorter key that is a prefix sorting first. Only the sign is used.
 function keycmp(a: Line, b: Line, ic: boolean): i32 {
   return range_cmp(a.text, a.k0, a.k1, b.text, b.k0, b.k1, ic);
 }
@@ -402,35 +326,14 @@ function range_cmp(at: u8[], a0: i32, a1: i32, bt: u8[], b0: i32, b1: i32, ic: b
   return 1;
 }
 
-// ---- input ------------------------------------------------------------------
-// `In` — one file: its reader, the unread tail of the last block, and
-// the order-check state (the previous line's key, whether this file has
-// already been warned about).
-// `have` and `line` are the last `next_line` answer; `msg` is a
-// disorder the caller still has to report, so the cursor comes back
-// alone rather than in a tuple with the writer and the run state.
 struct In { r: Reader, is_stdin: boolean, buf: u8[], pos: i32, eof: boolean, name: string, no: u64, hasprev: boolean, warned: boolean, which: i32, have: boolean, line: Line, msg: u8[] }
 
 function read_size(): i32 {
   return 65536;
 }
 
-// `Run` — the two facts the order check reads and writes across both
-// files: whether any line has proved unpairable yet, and whether a
-// disorder has been reported.
 struct Run { unpairable: boolean, disorder: boolean }
 
-// gnulib's check_order, split in two: `needs_order_check` is the cheap
-// half `next_line` asks on every line, and `report` is the diagnostic
-// the caller issues when a line came back with `msg` set.
-//
-// The default is deliberately weak: a file may be out of order as long
-// as every line still pairs, which is a GNU extension over POSIX, so
-// the disorder is reported only once a line HAS proved unpairable —
-// and `seen_unpairable` is set AFTER the next line has been read, so
-// the very line that follows the first unpairable one is still exempt.
-// --check-order drops all of that and dies on the first disorder.
-// Either way a file is warned about once.
 function needs_order_check(inp: In, o: Opts, unpairable: boolean): boolean {
   if (o.check == check_off() || inp.warned) {
     return false;
@@ -438,7 +341,6 @@ function needs_order_check(inp: In, o: Opts, unpairable: boolean): boolean {
   return o.check == check_on() || unpairable;
 }
 
-// `report(inp, o, run, w)` — the disorder `next_line` left in `inp.msg`.
 function report(inp: In, o: Opts, run: Run, w: io_buffered.BufWriter): (In, Run, io_buffered.BufWriter) {
   let out: io_buffered.BufWriter = gnu.error_out_bytes(w, inp.msg);
   if (o.check == check_on()) {
@@ -447,10 +349,6 @@ function report(inp: In, o: Opts, run: Run, w: io_buffered.BufWriter): (In, Run,
   return (In { ...inp, warned: true, msg: [] }, Run { ...run, disorder: true }, out);
 }
 
-// `next_line(...)` — gnulib's get_line: one line, split into fields,
-// checked against the one before it; `inp.have` says whether one was
-// read. The line is a range of the block it sits in; a block that ends
-// mid-line is carried in front of the next read.
 function next_line(inp: In, o: Opts, unpairable: boolean, w: io_buffered.BufWriter): In {
   let jf: u64 = o.jf1;
   if (inp.which == 2) {
@@ -527,9 +425,6 @@ function next_line(inp: In, o: Opts, unpairable: boolean, w: io_buffered.BufWrit
   return In { ...cur, pos: npos, no: cur.no + 1 as u64, hasprev: true, have: true, line: l, msg: msg };
 }
 
-// ---- output -----------------------------------------------------------------
-// Every piece of an output line is pushed straight into stdout's
-// builder: a field is a range of its line's block, a separator one byte.
 function sep_byte(o: Opts): i32 {
   if (o.tab >= 0) {
     return o.tab;
@@ -537,10 +432,6 @@ function sep_byte(o: Opts): i32 {
   return 32;
 }
 
-// gnulib's prfield: the field's bytes, or -e's filler when there are
-// none — a field the line is too short to have and one that is present
-// but empty are both filled. Only -o and `-o auto` can reach past a
-// line's own fields, which is why -e usually needs one of them.
 function push_range_or_filler(h: usize, l: Line, f0: i32, f1: i32, o: Opts): void {
   if (f1 > f0) {
     buf_push_bytes_range(h, l.text, f0, f1);
@@ -549,9 +440,6 @@ function push_range_or_filler(h: usize, l: Line, f0: i32, f1: i32, o: Opts): voi
   buf_push(h, o.filler);
 }
 
-// `push_field(h, l, n, o)` — field `n` of `l`, walked to from the
-// line's start. Only the -o specs reach here, so the walk is short and
-// rare; the default output walks every field once in `push_fields`.
 function push_field(h: usize, l: Line, n: u64, o: Opts): void {
   if (n >= nfields(l)) {
     buf_push(h, o.filler);
@@ -607,10 +495,6 @@ function push_field(h: usize, l: Line, n: u64, o: Opts): void {
   }
 }
 
-// gnulib's prfields: every field but the join field, each preceded by
-// the separator, walked once. `count` is the line's own field count, or
-// the autoformat width when `-o auto` fixed one; fields past the line's
-// own are the filler.
 function push_fields(h: usize, l: Line, jf: u64, count: u64, o: Opts): void {
   let sep: i32 = sep_byte(o);
   let skip: i32 = jf as i32;
@@ -674,7 +558,6 @@ function push_fields(h: usize, l: Line, jf: u64, count: u64, o: Opts): void {
           i = i + 1;
         }
         if (i >= hi) {
-          // The trailing separator's empty field.
           if (n < stop && n != skip) {
             buf_push_byte(h, sep);
             buf_push(h, o.filler);
@@ -694,9 +577,6 @@ function push_fields(h: usize, l: Line, jf: u64, count: u64, o: Opts): void {
   }
 }
 
-// `push_join(h, l1, l2, b1, ...)` — one output line. `b1` says the
-// first line is the placeholder, which is what makes `-o 0` print the
-// OTHER file's join field on a line only file 2 has.
 function push_join(h: usize, l1: Line, l2: Line, b1: boolean, o: Opts, ac1: u64, ac2: u64): void {
   let sep: i32 = sep_byte(o);
   if (o.specs.len() > 0) {
@@ -738,9 +618,6 @@ function push_join(h: usize, l1: Line, l2: Line, b1: boolean, o: Opts, ac1: u64,
   buf_push_byte(h, o.eol);
 }
 
-// ---- the -o field list ------------------------------------------------------
-// gnulib's add_field_list: comma- or blank-separated `FILENUM.FIELD`
-// items, plus the bare `0` that names the join field.
 function add_field_list(specs: Spec[], str: string): Spec[] {
   let out: Spec[] = specs;
   let i: i32 = 0;
@@ -754,9 +631,6 @@ function add_field_list(specs: Spec[], str: string): Spec[] {
     if (item == "0") {
       out = out.append(Spec { file: 0, field: 0 as u64 });
     } else {
-      // The two faults are separate and in this order: a leading zero
-      // or a missing dot is the SPECIFIER's shape, anything else in the
-      // first byte is the file number.
       if (item.len() > 0 && item[0] as i32 == 48) {
         die_spec("invalid field specifier: ", item);
       }
@@ -785,16 +659,6 @@ function die_spec(what: string, item: string): void {
   exit(1);
 }
 
-// ---- the command line -------------------------------------------------------
-// `Tok` — one thing the command line said, in the order it said it.
-// Kind 0 is a file operand and 1-3 are the bare words that stood where
-// an option argument was expected — an -o field spec, a -j1 field, a
-// -j2 field — which are only CANDIDATES until the scan ends: a
-// shortfall in the two file operands is made up from the END of the
-// list. Kinds 4-8 are the values that came glued to their option and
-// are never in doubt; they are recorded rather than acted on so that
-// the whole line is applied in ONE ordered pass, which is what decides
-// which of two conflicting join fields a diagnostic names first.
 struct Tok { text: string, kind: i32 }
 
 function tok_file(): i32 {
@@ -821,7 +685,6 @@ function tok_auto(): i32 {
   return 8;
 }
 
-// `Scan` — the option scan's running state.
 struct Scan { o: Opts, toks: Tok[], nfiles: i32, pending: i32 }
 
 function set_field_1(o: Opts, v: u64): Opts {
@@ -877,7 +740,6 @@ pub function main(): i32 {
       break;
     }
     if (r.0 == 2) {
-      // A bare word: the argument of the option just seen, or a file.
       if (s.pending != 0 && !g.after_dashdash()) {
         s = Scan { ...s, toks: s.toks.append(Tok { text: r.1.value, kind: s.pending }) };
         if (s.pending != 1) {
@@ -907,8 +769,6 @@ pub function main(): i32 {
     } else if (m.id == opt_ignore()) {
       s = Scan { ...s, o: Opts { ...s.o, ignore_case: true } };
     } else if (m.id == opt_j()) {
-      // `-j1` / `-j2` GLUED are the obsolete forms, which take their
-      // field from the next argument; `-j 1` is the field itself.
       if (m.value == "1" && glued(argv, g, m.value)) {
         next_pending = 2;
       } else if (m.value == "2" && glued(argv, g, m.value)) {
@@ -941,9 +801,6 @@ pub function main(): i32 {
     s = Scan { ...s, pending: next_pending };
   }
 
-  // The shortfall in the file operands is made up from the END of the
-  // candidate list, so the earliest candidates stay option arguments
-  // and the files keep their command-line order.
   let toks: Tok[] = s.toks;
   let want: i32 = 2 - s.nfiles;
   let k: i32 = toks.len() - 1;
@@ -1002,8 +859,6 @@ pub function main(): i32 {
   let w: io_buffered.BufWriter = gnu.out_new();
   let run: Run = Run { unpairable: false, disorder: false };
 
-  // The first line of a file has nothing before it, so neither read
-  // can leave a disorder to report.
   in1 = next_line(in1, o, run.unpairable, w);
   let have1: boolean = in1.have;
   let l1: Line = in1.line;
@@ -1031,7 +886,6 @@ pub function main(): i32 {
     }
     push_join(w.handle(), h1, h2, !have1, o, ac1, ac2);
     w = gnu.settle(w);
-    // A header is not compared with the line after it.
     in1 = In { ...in1, hasprev: false };
     in2 = In { ...in2, hasprev: false };
     if (have1) {
@@ -1059,7 +913,6 @@ pub function main(): i32 {
   }
 
   let blank: Line = blank_line();
-  // A key's group once a second line with it turns up: `[]` allocates.
   let g1: Line[] = [];
   let g2: Line[] = [];
   while (have1 && have2) {
@@ -1078,8 +931,6 @@ pub function main(): i32 {
       }
       have1 = in1.have;
       l1 = in1.line;
-      // Set only AFTER the next line has been read: the line that
-      // follows the first unpairable one is still exempt.
       run = Run { ...run, unpairable: true };
       continue;
     }
@@ -1100,10 +951,6 @@ pub function main(): i32 {
       run = Run { ...run, unpairable: true };
       continue;
     }
-    // Equal keys. Both sides are read forward to the first line with a
-    // different key and the cross product of the two groups is printed.
-    // One line on each side is the overwhelmingly common shape and never
-    // touches g1 or g2.
     let head1: Line = l1;
     let head2: Line = l2;
     let many1: boolean = false;
@@ -1171,8 +1018,6 @@ pub function main(): i32 {
     }
   }
 
-  // Both files are read to the end whether or not anything is printed
-  // from them: the order check only sees the lines it reads.
   while (have1) {
     if (o.unpair1) {
       push_join(w.handle(), l1, blank, false, o, ac1, ac2);
@@ -1219,9 +1064,6 @@ pub function main(): i32 {
   return 0;
 }
 
-// `set_tab(o, arg)` — -t. An empty argument means the whole line is
-// one field, which GNU spells as a newline separator; `\0` names NUL;
-// two different -t characters are refused.
 function set_tab(o: Opts, arg: string): Opts {
   let t: i32 = 10;
   if (arg.len() > 0) {
@@ -1242,10 +1084,6 @@ function set_tab(o: Opts, arg: string): Opts {
   return Opts { ...o, tab: t };
 }
 
-// `glued(argv, g, digit)` — whether the `-j` just matched was written
-// `-jN` rather than `-j N`. Only the glued spelling is the obsolete
-// form, so `join -j 1 f1 f2` joins on field 1 while `join -j1 2 f1 f2`
-// joins file 1 on field 2.
 function glued(argv: string[], g: gnu.Getopt, value: string): boolean {
   let i: i32 = g.index() - 1;
   if (i < 0 || i >= argv.len()) {

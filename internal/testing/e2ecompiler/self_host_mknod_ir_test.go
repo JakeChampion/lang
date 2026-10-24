@@ -10,43 +10,19 @@ import (
 	"testing"
 )
 
-// `mknod` through the SELF-HOST IR path, on the two backends that provide
-// it. Neither WASI preview can create an entry that is neither a file nor
-// a directory, so the wasm leg is the capability refusal rather than a
-// probe — `fsnode` is granted by no wasi profile.
-//
-// Nothing here can be proved by compiling. A `mknod` that lowered to
-// nothing, swapped its operands, or packed the dev_t with the legacy 8+8
-// layout still links and still returns Ok — and the last of those is
-// invisible for every minor below 256, which is why the probe creates a
-// (1, 256) node and the Go side reads its raw `st_rdev` back through its
-// own Lstat.
-//
-// `internal/testing/e2ecompiler` is PRIMARY for a self-host lowering change
-// (docs/TEST-GATES.md): the fixpoint is self-referential and nothing in
-// the compiler makes a FIFO.
-
 const (
-	shMknodFifo = 0o010666
-	shMknodChr  = 0o020600
-	shMknodMaj  = 1
-	shMknodMin  = 256
-	// Every bit of both fields: the only pair here that exercises the
-	// major above 8 bits, which a legacy packing would narrow it to.
+	shMknodFifo    = 0o010666
+	shMknodChr     = 0o020600
+	shMknodMaj     = 1
+	shMknodMin     = 256
 	shMknodWideMaj = 4095
 	shMknodWideMin = 1048575
 )
 
-// shLinuxRdev is Linux's dev_t packing, measured by creating nodes with
-// mknod(1) and reading st_rdev back: minor[7:0], major[11:0] from bit 8,
-// minor[19:8] from bit 20.
 func shLinuxRdev(major, minor uint64) uint64 {
 	return minor&0xff | (major&0xfff)<<8 | (minor&0xfff00)<<12
 }
 
-// selfHostMknodSource is the probe. `withDev` says whether the harness
-// established that this process may create a device node; when false the
-// probe asserts the REFUSAL rather than dropping the case.
 func selfHostMknodSource(dir string, withDev bool) string {
 	p := func(name string) string { return filepath.Join(dir, name) }
 	src := fmt.Sprintf(`function main(): i32 {
@@ -95,8 +71,6 @@ func selfHostMknodSource(dir string, withDev bool) string {
 	return src
 }
 
-// selfHostMknodTree reads the tree back through Go's own Lstat — the kind
-// bits and the raw st_rdev — rather than through the compiler's `stat`.
 func selfHostMknodTree(t *testing.T, dir string, withDev bool) {
 	t.Helper()
 	var fifo syscall.Stat_t
@@ -137,9 +111,6 @@ func selfHostMknodTree(t *testing.T, dir string, withDev bool) {
 	}
 }
 
-// selfHostMknodDevAllowed measures whether THIS process may create a
-// device node in `dir`, by creating one, so neither arm of the probe is
-// an assumption.
 func selfHostMknodDevAllowed(t *testing.T, dir string) bool {
 	t.Helper()
 	probe := filepath.Join(dir, ".devprobe")
@@ -158,7 +129,6 @@ func selfHostMknodDevAllowed(t *testing.T, dir string) bool {
 	return false
 }
 
-// TestSelfHostMknodIR is the x86-64 leg.
 func TestSelfHostMknodIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -188,9 +158,6 @@ func TestSelfHostMknodIR(t *testing.T) {
 	selfHostMknodTree(t, work, dev)
 }
 
-// TestSelfHostMknodIRArm64 is the same probe through the arm64 IR backend
-// under qemu: a different syscall number and a second hand-written
-// operand reversal and dev_t packing.
 func TestSelfHostMknodIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

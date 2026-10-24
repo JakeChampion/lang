@@ -1,25 +1,3 @@
-// groups.fern — GNU-compatible `groups`.
-//
-//   groups              the group names of the CURRENT process
-//   groups USERNAME...  `USERNAME : g1 g2 ...` per operand
-//
-// The two forms answer different questions, which is why the header of
-// GNU's own help says the process form "may differ if the groups
-// database has changed": with no operand the set comes from
-// getgroups(2) — what the kernel will actually check — while an operand
-// is looked up in the group database as it stands now.
-//
-// Three details are observable and easy to get wrong:
-//
-//   - An operand is looked up by NAME only. `groups 0` is
-//     `'0': no such user` where `id 0` is root, because groups(1) calls
-//     getpwnam and stops.
-//   - A failed operand does not end the run: the diagnostic goes out,
-//     the exit status turns 1, and the remaining operands are printed.
-//   - A gid no group entry claims is not silently skipped and not
-//     printed as a name: the diagnostic `cannot find name for group ID
-//     N` goes to stderr, the NUMBER is printed in the name's place, and
-//     the exit status turns 1.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
@@ -37,9 +15,6 @@ function help_text(): string {
   return out;
 }
 
-// One line of group names, space-separated. An unnamed gid costs a
-// diagnostic and prints as its number; `ok` says whether every one of
-// them had a name.
 pub struct Line { out: io_buffered.BufWriter, text: string, ok: boolean }
 
 function names_of(o: io_buffered.BufWriter, gids: i64[]): Line {
@@ -57,9 +32,6 @@ function names_of(o: io_buffered.BufWriter, gids: i64[]): Line {
         text = text + n;
       },
       None => {
-        // The diagnostic goes out with what is buffered ahead of it, so
-        // a shared pipe sees the names before the complaint about the
-        // one that follows them.
         w = gnu.put(w, text);
         text = "";
         w = gnu.error_out(w, "cannot find name for group ID " + gids[i].to_string());

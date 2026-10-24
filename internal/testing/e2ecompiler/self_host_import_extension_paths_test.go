@@ -8,7 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Suffixed imports resolve local, dependency, and selected standard modules.
 func TestSelfHostImportExtensionX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	oracle := buildLangBinForInterp(t)

@@ -3,15 +3,6 @@ import "std/hex";
 import "std/crypto";
 import "std/tls/keyshare";
 
-// tests/stdlib/tls_keyshare_test.fern — std/tls/keyshare: X25519 against
-// RFC 8448 §3's key shares and shared secret, X25519MLKEM768 against
-// answers from Go's crypto/mlkem (mlkemtest.Encapsulate768 for the
-// server's deterministic encapsulation) and crypto/ecdh, composed in the
-// order Go's crypto/tls uses, and secp256r1 against RFC 5903 §8.1's
-// exchange and points Python's cryptography derives. The client's hybrid
-// entropy is the bytes 0x00..0x1f then 0x40..0x7f, the server's 0x80..0x9f
-// then 0xa0..0xbf.
-
 function pattern(start: i32, n: i32): u8[] {
   let out: u8[] = __alloc_u8(n);
   let i: i32 = 0;
@@ -134,10 +125,6 @@ function test_groups(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// SecP256r1MLKEM768 with RFC 5903's P-256 keys and the X25519MLKEM768
-// vectors' ML-KEM seeds: the P-256 part comes first in both shares and the
-// secret, the ML-KEM part is byte for byte the other hybrid's, and the
-// secret is RFC 5903's x then ML-KEM's.
 function test_p256_mlkem_exchange(): test.TestOutcome {
   let client_draw: u8[] = cat(p256_draw("c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433"), pattern(0x40, 64));
   let server_draw: u8[] = cat(p256_draw("c6ef9c5d78ae012a011164acb397ce2088685d8f06bf9be0b283ab46476bee53"), pattern(0xa0, 32));
@@ -181,8 +168,6 @@ function test_p256_mlkem_exchange(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// The X25519MLKEM768 client share made from the same ML-KEM seeds, for the
-// ciphertext comparison.
 function p256_hybrid_client_public(): u8[] {
   match (keyshare.client_share(keyshare.X25519MlKem768, hybrid_client_entropy())) {
     Ok(c) => {
@@ -195,7 +180,6 @@ function p256_hybrid_client_public(): u8[] {
   return [];
 }
 
-// A 40-byte draw whose high eight bytes are zero: the scalar itself.
 function p256_draw(scalar: string): u8[] {
   return cat(__alloc_u8(8), hex.hex_decode(scalar));
 }
@@ -204,7 +188,6 @@ function p256_client(draw: u8[]): Result[keyshare.ClientShare, keyshare.KeyShare
   return keyshare.client_share(keyshare.Secp256r1, draw);
 }
 
-// RFC 5903 §8.1: the initiator's and responder's keys and the shared x.
 function rfc5903_gi(): string {
   return "04dad0b65394221cf9b051e1feca5787d098dfe637fc90b9ef945d0c37725811805271a0461cdb8252d61f1c456fa3e59ab1f45b33accf5f58389e0577b8990bb3";
 }
@@ -245,9 +228,6 @@ function test_p256_rfc5903(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// The draw is reduced modulo the order: forty 0xff bytes and a draw with
-// a nonzero high part, against cryptography's points for the reduced
-// scalars.
 function test_p256_reduction(): test.TestOutcome {
   let ff: u8[] = [];
   let i: i32 = 0;
@@ -300,8 +280,6 @@ function test_p256_refusals(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// RFC 8448 §3: the client's and the server's ephemeral keys, and the IKM of
-// the handshake secret.
 function test_x25519_trace(): test.TestOutcome {
   match (keyshare.client_share(keyshare.X25519, hex.hex_decode("49af42ba7f7994852d713ef2784bcbcaa7911de26adc5642cb634540e7ea5005"))) {
     Ok(c) => {
@@ -373,8 +351,6 @@ function test_hybrid_exchange(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// A ciphertext that does not re-encrypt is rejected implicitly: ML-KEM
-// answers a pseudorandom secret, so the exchange disagrees without an error.
 function test_hybrid_tampered_ciphertext(): test.TestOutcome {
   match (keyshare.client_share(keyshare.X25519MlKem768, hybrid_client_entropy())) {
     Ok(c) => {
@@ -386,7 +362,6 @@ function test_hybrid_tampered_ciphertext(): test.TestOutcome {
               if (got.len() != 64 || hex.hex_encode(got) == hybrid_shared()) {
                 return test.fail(hex.hex_encode(got));
               }
-              // The X25519 half still agrees.
               return test.assert_eq(hex.hex_encode(cat(got[32:64], [])), hex.hex_encode(cat(s.shared_secret[32:64], [])));
             },
             Err(e) => {
@@ -427,8 +402,6 @@ function test_lengths(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// The all-zero point is of low order on either side, alone or as the
-// hybrid's X25519 half.
 function test_low_order(): test.TestOutcome {
   let zero: u8[] = __alloc_u8(32);
   if (server_refusal(keyshare.server_share(keyshare.X25519, zero, pattern(0x80, 32))) != "tls keyshare: the peer's X25519 key is of low order") {
@@ -448,7 +421,6 @@ function test_low_order(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-// An encapsulation key whose first coefficient is 0xfff, not below q.
 function test_bad_encapsulation_key(): test.TestOutcome {
   match (keyshare.client_share(keyshare.X25519MlKem768, hybrid_client_entropy())) {
     Ok(c) => {

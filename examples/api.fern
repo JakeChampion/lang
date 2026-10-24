@@ -1,5 +1,3 @@
-// api.fern — a routed JSON API: a user looked up at an upstream directory,
-// every request logged, and the server draining its requests on SIGTERM.
 import "std/http";
 import "std/http/router";
 import "std/http/accesslog";

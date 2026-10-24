@@ -1,15 +1,9 @@
-// Allocator initialization instruction DATA only. No syscall, mapping,
-// permissions, success, terminal or allocator invariant is certified here.
 import "./ssacapacityisa" as isa;
 import "./ssadecrementtext" as text;
 import "./ssainlineuniqueisa" as registers;
 import "./util";
 import "std/string";
 
-// Reuses existing operand records without narrowing a wide literal into the
-// i32 immediate field. Kind36: movabs, canonical signed-i64 decimal in symbol,
-// width64 and destination. Kind37: exact syscall. Kind38: self-XOR32, source
-// and destination identical. A machine must independently interpret these.
 function decode(line: string, unknown: isa.Op): isa.Op {
   if (line == "syscall") {
     return isa.Op { ...unknown, kind: 37 };
@@ -49,10 +43,6 @@ function self_xor(name: string, a: string, b: string, unknown: isa.Op): isa.Op {
   return if (name == "xorl" && src >= 0 && src == dst) { isa.Op { ...unknown, kind: 38, width: 32, source: src, destination: dst } } else { unknown };
 }
 
-// Derive BOTH selections internally from the same complete output. Existing
-// allocator_program and all other decoder APIs retain their syntax policies.
-// Old resolved/unbound branches, calls and unknown operations keep positions
-// and fields. Initialization operations remain data even on reachable paths.
 pub function program(output: string): isa.Program {
   let selected = text.allocator(output);
   let old = isa.allocator_program(output);

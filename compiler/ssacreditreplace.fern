@@ -1,6 +1,3 @@
-// Independent fresh-parent replacement fragment. No production compile gate.
-// The caller establishes consuming Parent/Child ABI modes, a nominal two-word
-// Parent containing exactly one flat Child, and no finalizers on either type.
 import "./ssa";
 import "./ssacredithelper" as helper;
 import "./util";
@@ -9,9 +6,6 @@ function refused(f: ssa.SFunc, why: string): helper.Proof {
   return helper.Proof { ok: false, function_name: f.name, message: why };
 }
 
-// The incoming child's local credit is independent of the old parent's slot
-// credit, including when the two refer to the same allocation. This fragment
-// never reads that slot or assumes that the old parent is runtime-unique.
 pub function check(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape_name: string): helper.Proof {
   if (shape_name == "" || f.name == "" || util.str_has_prefix(f.name, "__fern_") || f.name == drop.name || f.name == release.name) {
     return refused(f, "invalid replacement identity");
@@ -27,8 +21,6 @@ pub function check(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape_name
   if (b.id < 0 || b.id != f.entry || b.preds.len() != 0 || b.term.kind_tag != 1 || f.nvals < 2 || f.nvals > b.insts.len()) {
     return refused(f, "unsupported replacement graph");
   }
-  // Value kinds: undefined=-1, scalar=0, old parent=1, incoming child=2,
-  // fresh parent=3, exact shape address=4. A store has no readable result.
   let values: i32[] = [];
   let defined: boolean[] = [];
   let i: i32 = 0;

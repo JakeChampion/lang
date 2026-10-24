@@ -7,22 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructStrLiteralFieldReclaimIRX86_64 pins the #6127 string-LITERAL
-// struct-field reclaim.
-//
-// A string literal evaluates to a fresh rc=1 heap box over its interned
-// `.rodata` bytes on every evaluation, so a struct field holding one must
-// release that box with the struct. Retained as if it were static, it stays at
-// rc=2 and leaks on a PLAIN SINGLE BIND, no loop and no rebind involved.
-//
-// Freeing it is safe because `__fern_str_free` heap-range-guards the data
-// pointer: the box is released and the `.rodata` bytes are left alone.
-//
-// The escape cases below are the essential half: a type whose string field is
-// read into a call argument or a container store must have that box neither
-// retained nor freed. That is the exact hazard class that made the sibling
-// nested-struct release a use-after-free (an uncounted `items.append(p.node)`
-// alias), so it is pinned here rather than assumed.
 func TestSelfHostStructStrLiteralFieldReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -54,9 +38,6 @@ func TestSelfHostStructStrLiteralFieldReclaimIRX86_64(t *testing.T) {
 		}
 	}
 
-	// SINGLE BIND, no rebind: the shape the leak was measured on. Each round
-	// allocates the struct box plus the literal's string box; both must be
-	// reclaimed, so the churn stays flat.
 	run(t, `struct B { name: string, n: i32 }
 function round(i: i32): i32 { let b: B = B { name: "abc", n: i }; return b.n; }
 function main(): i32 {
@@ -73,7 +54,6 @@ function main(): i32 {
     return 0;
 }`, "str-literal-field-single-bind-flat", 0)
 
-	// LOOP REBIND: the replaced literal box is released at the rebind.
 	run(t, `struct B { name: string, n: i32 }
 function step(b: B): B { return B { name: "xy", n: b.n + 1 }; }
 function main(): i32 {
@@ -90,8 +70,6 @@ function main(): i32 {
     return 0;
 }`, "str-literal-field-rebind-flat", 0)
 
-	// CARRIED field: `B { ...b, n: v }` keeps the literal's box pointer, so the
-	// cow guard must skip it and the value stay readable across 2000 rebinds.
 	run(t, `struct B { name: string, n: i32 }
 function bump(b: B): B { return B { ...b, n: b.n + 1 }; }
 function main(): i32 {
@@ -104,9 +82,6 @@ function main(): i32 {
     return 0;
 }`, "str-literal-field-carried-safe", 0)
 
-	// ALIASED READ: `let t = b.name` is a direct var-init, which the scan treats
-	// as safe because the read-side alias-inc retains it. It must stay readable
-	// after the rebind releases the replaced literal box.
 	run(t, `struct B { name: string, n: i32 }
 function main(): i32 {
     let bad: i32 = 0;
@@ -124,10 +99,6 @@ function main(): i32 {
     return 0;
 }`, "str-literal-field-aliased-read-safe", 0)
 
-	// ESCAPE — CONTAINER STORE. `acc.append(b.name)` hands the field's box to an
-	// array with no counted reference. The whole-program scan must exclude B, so
-	// the box is neither retained nor freed and every stored string stays
-	// readable. This is the shape that made the nested-struct sibling a UAF.
 	run(t, `struct B { name: string, n: i32 }
 function mk(i: i32): B { return B { name: "leaf", n: i }; }
 function main(): i32 {
@@ -142,8 +113,6 @@ function main(): i32 {
     return 0;
 }`, "str-literal-field-container-escape-safe", 0)
 
-	// ESCAPE — CALL ARGUMENT, across a rebind. Same exclusion, the other
-	// escaping position.
 	run(t, `struct B { name: string, n: i32 }
 function take(s: string): i32 { return s.len(); }
 function main(): i32 {
@@ -161,9 +130,6 @@ function main(): i32 {
     return 0;
 }`, "str-literal-field-call-escape-safe", 0)
 
-	// MIXED producers: a literal field and a concat field on the same admitted
-	// type. Both are sole-owned and reclaimed, so the churn stays flat and the
-	// two arms do not double-free each other's box.
 	run(t, `struct S { xs: i32[], a: string, b: string, n: i32 }
 function step(s: S): S { return S { xs: [s.n], a: "lit", b: s.b + "x", n: s.n + 1 }; }
 function main(): i32 {

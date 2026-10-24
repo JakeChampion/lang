@@ -12,8 +12,6 @@ var componentAssemblerCache struct {
 	wat []byte
 }
 
-// The composer runs as Wasm and connects each import the emitted core declares.
-// Fixed binary templates have separate tests with fixed input cores.
 func worldComponentAssemblerWAT(t *testing.T) []byte {
 	t.Helper()
 	componentAssemblerCache.Lock()

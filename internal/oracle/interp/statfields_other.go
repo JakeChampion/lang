@@ -4,18 +4,10 @@ package interp
 
 import "os"
 
-// statFields on a platform whose `syscall.Stat_t` this package does not
-// project. Only the portable half of the mode word is recoverable from
-// `os.FileMode`, so the type bits and permission bits are rebuilt from it
-// and everything else stays zero — the same "not reported reads zero"
-// contract the WASI backends carry.
 func statFields(info os.FileInfo, _ statOrigin) rawStat {
 	return rawStat{mode: posixModeBits(info.Mode())}
 }
 
-// posixModeBits rebuilds an `st_mode` word from Go's portable
-// `os.FileMode`: the permission bits are already POSIX, and the kind is
-// mapped back onto its S_IFMT value.
 func posixModeBits(m os.FileMode) uint32 {
 	out := uint32(m.Perm())
 	switch {

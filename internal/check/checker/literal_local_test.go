@@ -9,7 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// errCodes joins the codes of a checker error's diagnostics in report order.
 func errCodes(err error) string {
 	es, _ := err.(diag.Errors)
 	var codes []string
@@ -21,16 +20,11 @@ func errCodes(err error) string {
 	return strings.Join(codes, ",")
 }
 
-// An unannotated local seeded by an untyped integer takes ONE integer type,
-// decided by its first width-fixing use and i32 when no use fixes one (#10123).
-// Before, native kept the local polymorphic and let every use settle it
-// separately, so one slot could be read at two widths and the backends each
-// picked their own.
 func TestLiteralLocalTakesOneType(t *testing.T) {
 	cases := []struct {
 		name string
 		body string
-		code string // "" = accepted
+		code string
 	}{
 		{"widens to i64", "let x = 5; let y: i64 = x;", ""},
 		{"narrows to u8", "let x = 5; let y: u8 = x;", ""},
@@ -74,8 +68,6 @@ func TestLiteralLocalTakesOneType(t *testing.T) {
 	}
 }
 
-// The program from #10123's second comment: one local read as i32 and as i64.
-// The interpreter answered 2, x86-64 answered 1, and wasm refused the module.
 func TestLiteralLocalTwoWidthsIsRejected(t *testing.T) {
 	err := checkSource(t, `function main(): i32 {
     let x = 2147483647;
@@ -92,9 +84,6 @@ func TestLiteralLocalTwoWidthsIsRejected(t *testing.T) {
 	}
 }
 
-// The checker hands the lowering a settled local: the declaration, its
-// initialiser, and every expression over it carry the one width, so no backend
-// is left to pick a slot width of its own.
 func TestLiteralLocalSettlesEveryRead(t *testing.T) {
 	prog, err := parser.Parse(`function main(): i32 {
     let t: i64 = 0 as i64;

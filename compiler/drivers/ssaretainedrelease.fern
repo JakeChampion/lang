@@ -71,7 +71,6 @@ function shortcut(rows: ssaprepare.Emitted[], row: ssaprepare.Emitted, arch: str
   require(p.error == "mismatched proved release entry Drop" && p.rows.len() == 0, 85);
   let derived = bound.release_selected(rest.append(changed), row.label_name, "__sem_drop_Parent", arch);
   require(derived.error == p.error && derived.rows.len() == 0, 225);
-  // With no register entry, production uses the SAME proved original body.
   context = ssaprepare.Context { ...row.context, reg_entries: irtables.sig_reg_of([]) };
   entry = ircore.release_entry(row.body.lowered, arch, context.rc_free_debug, context.reg_entries);
   check(rest.append(ssaprepare.Emitted { ...row, context: context, release_entry: entry }), arch, parent, true);
@@ -99,7 +98,6 @@ function controls(rows: ssaprepare.Emitted[], arch: string, parent: typeinfo.Typ
         check(rest.append(ssaprepare.Emitted { ...row, context: ssaprepare.Context { ...row.context, rc_free_debug: !row.context.rc_free_debug } }), arch, parent, false);
         shortcut(rows, row, arch, parent);
       }
-      // Each helper's metadata lives at local index zero, without contracts.
       let m = selected.metadata(row);
       pair = pair.append(metadata(row, physicalbody.Metadata { ...m, contracts: [] }));
     }

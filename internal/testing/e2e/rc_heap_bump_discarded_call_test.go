@@ -6,26 +6,6 @@ import (
 	"testing"
 )
 
-// Discarded owned call-result reclamation (statement-temp follow-up). A bare
-// `mk(i);` whose user-function result is a fresh struct / array / string /
-// enum left that allocation unreclaimed — nothing dec'd it, so a factory
-// call in a loop leaked every result (wasm: struct 800→80000, array
-// 1600→160000). Stage (a) excluded calls because a method call can alias its
-// receiver; this slice reclaims the result of a USER function (in FuncSigs,
-// not a `__`-prefixed builtin / mutator, not a variant constructor, not
-// pair-form, not indirect) via the is_unique-gated emitOwnedTempStackDrop.
-//
-// Soundness: the dec only FREES a uniquely-owned (rc==1) result. A function
-// that hands back an aliased value (its param / a field) carries the
-// return-transfer inc, so the result is rc>=2 and the is_unique gate merely
-// decs it — never frees a value the caller's source still owns. The excluded
-// `__method_*` mutators (push / set) are the ones that return an UNCOUNTED
-// rc==1 receiver alias the gate couldn't distinguish. Mirrors the shipped
-// `let t = call(); /* t unused */` exit-sweep dec.
-
-// `mk` is kept out of line: spliced into the loop, its construction would
-// be read by nothing and semdead would not build it at all, which is not the
-// reclaim under test.
 func discardedCallStructBump(n string) string {
 	return `import "std/i32";
 struct P { x: i32, y: i32, values: i32[] }
@@ -40,9 +20,6 @@ function main(): i32 {
 }`
 }
 
-// Scalar-only call results no longer have a box to reclaim. Keep that case
-// separate from the reference-containing record above, whose parent and child
-// must both be reclaimed. @noinline keeps the factory calls out of the loop.
 func discardedCallScalarStructBump(n string) string {
 	return `import "std/i32";
 struct P { x: i32, y: i32 }
@@ -70,10 +47,6 @@ function main(): i32 {
 }`
 }
 
-// CRITICAL soundness check: pass(arr) returns its param (aliased; the
-// return-transfer inc makes the result rc>=2). Discarding it must only DEC
-// (is_unique false), never free, so `arr` stays valid and readable. A wrong
-// free shows up as a wrong sum (999) or a non-zero underflow count.
 const discardedCallAliasedSafe = `@noinline function pass(p: i32[]): i32[] { return p; }
 function main(): i32 {
     let i: i32 = 0; let acc: i32 = 0;
@@ -87,8 +60,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// Fresh result discarded, then a real one built + read: confirms the
-// reclaim is value-neutral and over-release-free.
 const discardedCallFreshSafe = `struct P { x: i32, y: i32 }
 function mk(n: i32): P { return P { x: n, y: n + 1 }; }
 function main(): i32 {
@@ -123,7 +94,6 @@ func TestArm64DiscardedCallReclaim(t *testing.T) {
 }
 
 func TestWASMDiscardedCallReclaim(t *testing.T) {
-	// Capture the complete high-water count instead of an exit status's low byte.
 	bump := func(src string) int {
 		t.Helper()
 		output := strings.TrimSpace(runWasmCapturingStdout(t, src))

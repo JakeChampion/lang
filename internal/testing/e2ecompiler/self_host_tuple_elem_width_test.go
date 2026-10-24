@@ -8,25 +8,6 @@ import (
 	"testing"
 )
 
-// A tuple element's WIDTH is decided from its type tag, and every lowering that
-// could not resolve one used to fall through to the untyped 4-byte
-// `op_tuple_get`. That guess is invisible on the register backends (the value
-// lands in a 64-bit register either way) and fatal on wasm, whose validator is
-// the only thing in the project that reports the class at all — so these rows
-// run on BOTH, and assert printed VALUES rather than that the module loads.
-//
-// Covered:
-//   - #8458 `let (a, b, c) = <source>` over an (i64, f64, string) tuple, from
-//     every source shape. The field / nested-field / receiver-field rows read
-//     the f64 element as its low 32 bits and truncated the i64 before the fix.
-//   - #8459 `p.ts[i].N` over a `(i32, f64)[]`, from every array shape.
-//   - #8460 unary minus on a 64-bit operand, which lowered as a 32-bit
-//     `0 - x` and made the self-host wasm emitter produce an invalid module.
-//
-// Nothing here imports the stdlib: the IR drivers read one module from stdin
-// and resolve no imports, so each program carries its own decimal formatter.
-// `df` renders an f64 in hundredths, which is exact for these values and
-// nothing like the integer a mis-read bit pattern produces.
 const tupleElemWidthPrelude = `function dig(n: i64): string {
 	if (n == 0) { return "0"; }
 	if (n == 1) { return "1"; }
@@ -62,9 +43,6 @@ var tupleElemWidthCases = []struct {
 	src  string
 	want string
 }{
-	// --- #8458: destructure source shapes, elements i64 / f64 / string. ---
-	// The literal's i64 element needs the suffix: an unsuffixed literal in an
-	// unannotated tuple literal is an i32 on both compilers.
 	{"destructure-literal", `function main(): i32 { let (a, b, c) = (5000000000i64, 1.5, "lit"); print("v: " + show(a, b, c)); return 0; }`,
 		"v: 5000000000|150|lit\n"},
 	{"destructure-local", `function main(): i32 { let t: (i64, f64, string) = (5000000001, 2.5, "loc"); let (a, b, c) = t; print("v: " + show(a, b, c)); return 0; }`,
@@ -87,12 +65,6 @@ function (p: P) via(): string { let (a, b, c) = p.t; return show(a, b, c); }
 function main(): i32 { let p: P = P { t: (5000000006, 7.5, "rcv") }; print("v: " + p.via()); return 0; }`,
 		"v: 5000000006|750|rcv\n"},
 
-	// --- #8656: the payload of a user enum's variant. A tuple sub-pattern in
-	// the payload slot (`Pr((a, b, c))`) desugars to a temp bound to the payload
-	// and a destructure of that temp, so the binding must carry the element
-	// tags the enum declares — without them the destructure has no width to
-	// read at, which is the #8458 bail. The flat sibling (`Pr(p)` then `p.N`)
-	// reads through the same tags, and the nested tuple destructures twice. ---
 	{"destructure-variant-payload", `enum T { Pr((i64, f64, string)), Non }
 function pick(t: T): string {
 	match (t) {
@@ -125,7 +97,6 @@ function main(): i32 {
 	return 0;
 }`, "d: 3|5000000009|150\nr: r\n"},
 
-	// --- #8459: `.N` on an element of a `(i32, f64)[]`, every array shape. ---
 	{"tuple-array-elem", `struct P { ts: (i32, f64)[] }
 function mk(): (i32, f64)[] { return [(1, 3.5)]; }
 function getp(): P { return P { ts: [(2, 4.5)] }; }
@@ -141,14 +112,6 @@ function main(): i32 {
 	return 0;
 }`, "local: 350 1\ncall: 350 1\nfield: 450 2\ncallfield: 450 2\nbind: 450\n"},
 
-	// --- #8745: the same array-of-tuples read whose base is a PARAMETER. The
-	// four rows above cover a local, a call, a struct field and a call
-	// result's field; a parameter had no route at all, because the param-slot
-	// seeding recorded an element spelling only for a `T[][]` depth-2 array.
-	// Every `(tuple)[]` parameter therefore answered "unknown", which #8458's
-	// bail turned from a silent 4-byte read into a refusal of the whole
-	// module — `std/url`'s `query_encode` is the shape that surfaced it, and
-	// the destructure row is written the way that function reads its pairs. ---
 	{"tuple-array-param", `function elems(ps: (i32, f64)[]): string { return df(ps[0].1) + " " + d32(ps[0].0); }
 function destr(ps: (i32, f64)[]): string {
 	let (k, v) = ps[0];
@@ -172,13 +135,6 @@ function main(): i32 {
 	return 0;
 }`, "read: 450 2\ndestr: 450 2\nloop: 450 2;550 3;\n"},
 
-	// --- Same class, found while closing it: three shapes whose element
-	// TYPES the lowering dropped, each of which read an f64 element as four
-	// bytes of its bit pattern. A non-move tuple alias inherited the release
-	// role but not the element tags; an array literal recorded an element tuple
-	// tag only for an inline tuple LITERAL, not a tuple local; and a tuple
-	// local used as an element of another tuple fell through to the "i32"
-	// default. ---
 	{"tuple-alias-and-containers", `function main(): i32 {
 	let t = (3, 4.5);
 	let u = t;
@@ -191,10 +147,6 @@ function main(): i32 {
 	return 0;
 }`, "alias: 450 450\narrlit: 650 5\nintuple: 650 99\n"},
 
-	// --- #8460: unary minus at each width. ---
-	// `i64-as-f64` and `i64-div` are the two shapes that actually reach the
-	// 32-bit unary lowering: a plain `-b` in an i64-typed context is lowered by
-	// lower_i64, which was already width-correct.
 	{"unary-neg", `function main(): i32 {
 	let b: i64 = 5000000000;
 	print("i64: " + d64(-b));
@@ -214,10 +166,6 @@ function main(): i32 {
 }`, "i64: -5000000000\nu64: -5000000000\ni32: -12345\nf64: -250\ni64-as-f64: -500000\ni64-div: -1666666666\nu64-div: 4611686017177387904\n"},
 }
 
-// TestSelfHostTupleElemWidthX86_64 runs each program through the self-hosted
-// x86-64 IR driver under FERN_STRICT_IR=1 — the answer alone would not say the
-// shape stayed on the IR path, and a bail can reach the same answer by another
-// route.
 func TestSelfHostTupleElemWidthX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -237,10 +185,6 @@ func TestSelfHostTupleElemWidthX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleElemWidthWasmIR is the same corpus on the wasm IR backend —
-// the only backend in the project whose validator reports a wrong element
-// width, since the register backends compute the right answer from a 64-bit
-// register regardless of the load they emitted.
 func TestSelfHostTupleElemWidthWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host tuple-element-width wasm IR e2e")
@@ -269,11 +213,6 @@ func TestSelfHostTupleElemWidthWasmIR(t *testing.T) {
 	}
 }
 
-// untypedTupleElemCases are destructures whose element types no annotation
-// in the driver's module records: a two-deep tuple array, and an erased
-// generic's tuple array. Binding them with a 4-byte read would truncate an i64
-// and return the low half of an f64 (#8458). The typed lowering types both from
-// the declarations, so each compiles and matches bin/fern -interp.
 var untypedTupleElemCases = []struct {
 	name string
 	src  string
@@ -301,13 +240,6 @@ func TestSelfHostUntypedTupleElemBailsX86_64(t *testing.T) {
 	}
 }
 
-// tupleFieldTypeLabelCases pin the type STRING the self-host checker renders
-// for a struct field whose declared type is a tuple, a generic instantiation or
-// a Map — against native, word for word. The self-host resolvers used to model
-// only scalars, `Elem[]` and bare names in a field position, so `(i32, f64)[]`
-// resolved to `unknown[]` and the unknown widened into every consumer of the
-// field's type; the divergence is visible in an E003 message, which pins it
-// cheaply (#8459).
 var tupleFieldTypeLabelCases = []struct {
 	name  string
 	field string
@@ -343,8 +275,6 @@ func TestSelfHostTupleFieldTypeLabelParity(t *testing.T) {
 			if len(got) != 1 || got[0].code != "E003" || got[0].msg != want {
 				t.Errorf("%s: self-host diagnostics = %v, want one E003 %q", tc.name, got, want)
 			}
-			// Differential: native must say the same thing, so the row cannot
-			// decay into pinning a spelling only the self-host uses.
 			goDiags := goCheckerDiags(t, dir, src)
 			if len(goDiags) != 1 || goDiags[0].code != "E003" || goDiags[0].msg != want {
 				t.Errorf("%s: native diagnostics = %v, want one E003 %q", tc.name, goDiags, want)

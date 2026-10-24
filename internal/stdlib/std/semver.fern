@@ -1,26 +1,7 @@
-// std/semver — Semantic Versioning 2.0.0 (https://semver.org).
-//
-// Parse a version string into its parts and compare two versions by
-// SemVer precedence (§11). `SemVer` is a plain struct of scalars +
-// strings, so it copies by value with no aliasing surprises.
-//
-//   let a: SemVer = ...;   // via semver.parse("1.2.3-rc.1")
-//   a.compare(b);          // -1 / 0 / 1
-//   a.to_string();         // "1.2.3-rc.1"
-//
-// Precedence, per §11:
-//   - major, minor, patch compared numerically;
-//   - a version WITH a prerelease has LOWER precedence than the same
-//     version without one (1.0.0-rc.1 < 1.0.0);
-//   - prerelease identifiers compare left-to-right: numeric identifiers
-//     numerically, alphanumeric lexically (ASCII), numeric < alphanumeric,
-//     and a larger set of identifiers outranks a strict prefix;
-//   - BUILD METADATA IS IGNORED for precedence (1.0.0+a == 1.0.0+b).
+// This module implements the `Semantic Versioning 2.0.0` rules.
 
 import "std/string";
 
-// major.minor.patch plus optional prerelease / build (each "" when
-// absent). Construct via `parse`, not a raw literal, so validation runs.
 pub struct SemVer {
   major: i32,
   minor: i32,
@@ -29,7 +10,6 @@ pub struct SemVer {
   build: string,
 }
 
-// __sv_all_digits reports whether `s` is non-empty and all ASCII digits.
 function __sv_all_digits(s: string): boolean {
   if (s.len() == 0) {
     return false;
@@ -44,20 +24,16 @@ function __sv_all_digits(s: string): boolean {
   return true;
 }
 
-// __sv_num parses a numeric version core field: all-digits, and no
-// leading zero unless the value is exactly "0" (§2). None otherwise.
 function __sv_num(s: string): Option[i32] {
   if (!__sv_all_digits(s)) {
     return None;
   }
-  if (s.len() > 1 && s[0] == 48) {  // leading zero
+  if (s.len() > 1 && s[0] == 48) {
     return None;
   }
   return s.parse_int();
 }
 
-// __sv_slice returns the bytes [start, end) of `s` as a fresh string
-// (byte-indexed — SemVer syntax is ASCII, so byte offsets are fine).
 function __sv_slice(s: string, start: i32, end: i32): string {
   let b: u8[] = [];
   let i: i32 = start;
@@ -68,7 +44,6 @@ function __sv_slice(s: string, start: i32, end: i32): string {
   return string_from_bytes_unchecked(b);
 }
 
-// __sv_str_cmp compares two strings by ASCII byte order: -1 / 0 / 1.
 function __sv_str_cmp(a: string, b: string): i32 {
   let n: i32 = a.len();
   if (b.len() < n) {
@@ -93,9 +68,6 @@ function __sv_str_cmp(a: string, b: string): i32 {
   return 0;
 }
 
-// __sv_significant_digits drops leading zeros from an all-digit
-// identifier, so its length is the magnitude of the value it names
-// ("" for a run of zeros, which compares equal to "0").
 function __sv_significant_digits(s: string): string {
   let i: i32 = 0;
   while (i < s.len() && s[i] == 48) {
@@ -104,11 +76,6 @@ function __sv_significant_digits(s: string): string {
   return __sv_slice(s, i, s.len());
 }
 
-// __sv_cmp_numeric compares two all-digit identifiers as unbounded
-// integers: after leading zeros, the shorter run is the smaller value
-// and equal lengths settle lexically. §11 puts no upper bound on a
-// numeric prerelease identifier, so parsing one into a machine integer
-// wraps — `1.0.0-99999999999` then sorts below `1.0.0-1`.
 function __sv_cmp_numeric(x: string, y: string): i32 {
   let xs: string = __sv_significant_digits(x);
   let ys: string = __sv_significant_digits(y);
@@ -121,8 +88,6 @@ function __sv_cmp_numeric(x: string, y: string): i32 {
   return __sv_str_cmp(xs, ys);
 }
 
-// __sv_cmp_ident compares two prerelease identifiers (§11): numeric vs
-// numeric numerically, numeric < alphanumeric, else lexical.
 function __sv_cmp_ident(x: string, y: string): i32 {
   let xn: boolean = __sv_all_digits(x);
   let yn: boolean = __sv_all_digits(y);
@@ -138,13 +103,7 @@ function __sv_cmp_ident(x: string, y: string): i32 {
   return __sv_str_cmp(x, y);
 }
 
-// `parse(s)` — parse a SemVer string, `None` if malformed. Requires
-// exactly `major.minor.patch` (each a valid numeric identifier); an
-// optional `-prerelease` and `+build` follow. Prerelease / build
-// identifiers must be non-empty; a numeric prerelease identifier may not
-// have a leading zero.
 pub function parse(s: string): Option[SemVer] {
-  // Split off build metadata at the first '+'.
   let core_pre: string = s;
   let build: string = "";
   if let Some(plus) = s.index_of("+") {
@@ -154,7 +113,6 @@ pub function parse(s: string): Option[SemVer] {
       return None;
     }
   }
-  // Split off prerelease at the first '-'.
   let core: string = core_pre;
   let pre: string = "";
   if let Some(dash) = core_pre.index_of("-") {
@@ -186,8 +144,6 @@ pub function parse(s: string): Option[SemVer] {
               return None;
             },
             Some(pt) => {
-              // Validate each prerelease identifier: non-empty; a
-              // purely-numeric one has no leading zero.
               if (pre.len() > 0) {
                 let ids: string[] = pre.split(".");
                 let i: i32 = 0;
@@ -211,8 +167,6 @@ pub function parse(s: string): Option[SemVer] {
   }
 }
 
-// `(a).compare(b)` — SemVer precedence: -1 if a < b, 0 if equal, 1 if
-// a > b. Build metadata is ignored.
 pub function (a: SemVer) compare(b: SemVer): i32 {
   if (a.major != b.major) {
     if (a.major < b.major) {
@@ -232,7 +186,6 @@ pub function (a: SemVer) compare(b: SemVer): i32 {
     }
     return 1;
   }
-  // Equal core: a version with a prerelease ranks below one without.
   let ap: boolean = a.prerelease.len() > 0;
   let bp: boolean = b.prerelease.len() > 0;
   if (!ap && !bp) {
@@ -258,7 +211,6 @@ pub function (a: SemVer) compare(b: SemVer): i32 {
     }
     i = i + 1;
   }
-  // All shared identifiers equal: more identifiers wins.
   if (ai.len() < bi.len()) {
     return 0 - 1;
   }
@@ -268,8 +220,6 @@ pub function (a: SemVer) compare(b: SemVer): i32 {
   return 0;
 }
 
-// `(a).eq(b)` / `(a).lt(b)` / `(a).gt(b)` — precedence convenience
-// predicates. `eq` follows precedence (build metadata does not count).
 pub function (a: SemVer) eq(b: SemVer): boolean {
   return a.compare(b) == 0;
 }
@@ -282,7 +232,6 @@ pub function (a: SemVer) gt(b: SemVer): boolean {
   return a.compare(b) > 0;
 }
 
-// `(v).to_string()` — the canonical `major.minor.patch[-pre][+build]`.
 pub function (v: SemVer) to_string(): string {
   let out: string = v.major.to_string() + "." + v.minor.to_string() + "." + v.patch.to_string();
   if (v.prerelease.len() > 0) {

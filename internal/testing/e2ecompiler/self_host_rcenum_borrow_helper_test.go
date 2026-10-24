@@ -5,21 +5,6 @@ import (
 	"testing"
 )
 
-// A fresh rc-payload enum LOOP-LOCAL with no consuming match in its own block —
-// passed to a helper that only matches on it, or never used at all — is reclaimed
-// (#6606). A `match (param)` scrutinee reads the tag and the payload and retains
-// neither, so the helper borrows its argument and the caller keeps the release.
-//
-// A compiler that reclaims NOTHING satisfies a value-and-underflow assertion
-// perfectly; only the byte counts move.
-//
-// EACH ROW IS COMPILED AT TWO ROUND COUNTS, so a per-iteration leak shows up as a
-// residue that doubles with the rounds rather than as a single number needing a
-// magic constant.
-//
-// The rows also pin `allocs == frees` outright: the scaling property alone cannot
-// see a constant tail, such as an unreleased final value.
-
 const rcenumBorrowedSrc = `import "core/int";
 enum Box { Val(i32[]), Empty }
 function head(b: Box): i32 {
@@ -41,8 +26,6 @@ function main(): i32 {
 }
 `
 
-// The reduction: no match, no helper, no use at all. It leaked identically, which
-// is what showed the missing credit was the whole cause and the helper incidental.
 const rcenumNeverUsedSrc = `import "core/int";
 enum Box { Val(i32[]), Empty }
 function main(): i32 {
@@ -61,9 +44,6 @@ function main(): i32 {
 }
 `
 
-// The control that always worked — the consuming match written inline. It must
-// stay at an exact balance, and must not gain a second credit now that the
-// no-match branch exists beside it.
 const rcenumInlineMatchSrc = `import "core/int";
 enum Box { Val(i32[]), Empty }
 function main(): i32 {
@@ -82,11 +62,6 @@ function main(): i32 {
 }
 `
 
-// A returned projection now acquires a separate count. The typed callee
-// contract keeps its enum parameter borrowed, allowing the caller to release
-// the parent and its field unit while the returned child remains live.
-// Both round counts require exact heap balance. Separate lifetime regressions
-// remove the return retain and require a post-frame underflow failure.
 const rcenumPayloadEscapesSrc = `import "core/int";
 enum Box { Val(i32[]), Empty }
 function take(b: Box): i32[] {
@@ -120,9 +95,6 @@ func TestSelfHostRcEnumBorrowHelperX86_64(t *testing.T) {
 	counts := func(t *testing.T, name, src string, rounds string) (int64, int64, int64) {
 		t.Helper()
 		src = strings.ReplaceAll(src, "ROUNDS", rounds)
-		// These return a value, so `fern -interp` IS the oracle: releasing a
-		// payload the callee handed out shows up as a wrong answer or a crash,
-		// and that matters more than any byte count below.
 		want := interpExit(t, interpBin, src)
 		asm := hevCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1"})
 		progBin := buildBin(t, gcc, dir, name+rounds, asm)
@@ -150,14 +122,10 @@ func TestSelfHostRcEnumBorrowHelperX86_64(t *testing.T) {
 		return allocs, frees, live
 	}
 
-	// Doubling the rounds must double the allocations and the frees, and every
-	// allocation must be freed at both counts. Before the borrow fix this shape was
-	// 2.00x per doubling with frees=0; before the sweep credit it balanced except
-	// for the final value of each block.
 	for _, tc := range []struct {
 		name      string
 		src       string
-		wantStuck int64 // allocs - frees, at BOTH round counts
+		wantStuck int64
 	}{
 		{"helper_borrows_the_enum", rcenumBorrowedSrc, 0},
 		{"never_used", rcenumNeverUsedSrc, 0},
@@ -188,8 +156,6 @@ func TestSelfHostRcEnumBorrowHelperX86_64(t *testing.T) {
 		})
 	}
 
-	// The typed contract proves that take borrows the enum root and returns a
-	// separately counted array. Both parent and child must now be reclaimed.
 	t.Run("callee_returns_the_payload", func(t *testing.T) {
 		a1, f1, l1 := counts(t, "callee_returns_the_payload", rcenumPayloadEscapesSrc, "100")
 		a2, f2, l2 := counts(t, "callee_returns_the_payload", rcenumPayloadEscapesSrc, "200")

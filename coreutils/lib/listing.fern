@@ -1,61 +1,3 @@
-// coreutils/lib/listing.fern — the whole of `ls`, and with it the two
-// programs that ARE ls with different option defaults: `dir` is
-// `ls -C -b` and `vdir` is `ls -l -b`. Three files, one implementation;
-// `run(defaults)` is the entry point and the caller names nothing else.
-//
-// Five of its rules are not in any man page and were measured from the
-// reference binary.
-//
-// **The column layout is not a uniform grid.** Each column is sized to
-// the longest name IN THAT COLUMN plus a two-space separator, the last
-// column getting no separator, and every column has a FLOOR of three
-// characters. The column count is the largest whose total is STRICTLY
-// less than the width — a listing that exactly fills the line is
-// refused, which is the spare cell a terminal needs so that the cursor
-// landing past the last column does not wrap.
-//
-// **The padding is tab-aware and that is byte-visible.** Moving from
-// column `f` to column `t` emits a tab exactly while
-// `t / tabsize > (f + 1) / tabsize`, and spaces otherwise — so a name
-// ending at 7 with the next column at 11 gets four SPACES under the
-// default tab size of 8, while one ending at 3 gets a tab and three
-// spaces. `-T 0` turns tabs off.
-//
-// **A width of zero means unlimited**, and it does not mean "one very
-// wide grid": the whole listing goes on ONE line with entries joined by
-// two spaces, which is the same code path `-m` takes with a comma.
-//
-// **The six-month window is a fixed number of SECONDS, not a calendar
-// offset.** The average Gregorian year is 31556952 seconds and the
-// window is half of it, 15778476 — so the boundary lands on the
-// 182.62-day mark and not on the same day six months back. Any FUTURE
-// timestamp takes the year format with no grace at all.
-//
-// **`-q` substitutes after quoting, and only for three styles.** It
-// replaces every non-printable byte of the ALREADY QUOTED name with
-// `?`, which is why `-q -b` is just `-b` (the escape style leaves no
-// non-printable byte to replace) and why `-q --quoting-style=shell`
-// leaves a control-byte name UNQUOTED: the quoting decision was taken
-// before the `?` went in.
-//
-// The two `-l` time formats are one `--time-style` value with a
-// newline in it, line 1 for a non-recent time and line 2 for a recent
-// one, so the C-locale default is `%b %e  %Y` and `%b %e %H:%M` — the
-// alignment is the format's own (two spaces before the year, `%e`
-// space-padded), not a separate pass. `iso` works the same way with a
-// TRAILING space on its non-recent line.
-//
-// What it leans on rather than reinvents: `lib/gnu.fern` for the option
-// scan, the ten quoting styles and ARGMATCH; `lib/timefmt.fern` for
-// nstrftime and the broken-down local time; `lib/blocks.fern` for
-// `--block-size` and the `-h` / `--si` rendering; `lib/pwdb.fern` for
-// the owner and group columns; `lib/tabs.fern`'s tab-stop arithmetic is
-// NOT used — `indent` above is its own rule and a stop table cannot
-// express it; `lib/filetype.fern` for the mode string and the kinds.
-//
-// `-Z`'s context is `lib/selinux.fern`'s `file_context`, the reading
-// `stat %C` shares. Like GNU there is no is_selinux_enabled() gate: the
-// attribute is the answer, and a file without one prints `?`.
 import "std/string";
 import "std/array";
 import "std/i64";
@@ -73,9 +15,6 @@ import "std/tz";
 import "./selinux";
 import "./vercmp";
 
-// ---- option identifiers -----------------------------------------------------
-// The long options are declared in GNU's order, because the ambiguity
-// list prints its candidates in it: `ls --=x` names all 44.
 function op_all(): i32 {
   return 1;
 }
@@ -244,7 +183,6 @@ function op_author(): i32 {
   return 42;
 }
 
-// The short options with no long form.
 function op_long(): i32 {
   return 50;
 }
@@ -309,8 +247,6 @@ function op_slash(): i32 {
   return 65;
 }
 
-// ---- enumerated settings ----------------------------------------------------
-// The five output formats, numbered as `--format` lists its values.
 function fmt_long(): i32 {
   return 0;
 }
@@ -375,8 +311,6 @@ function time_birth(): i32 {
   return 3;
 }
 
-// Which dot entries a listing drops. `-a` and `-A` are one setting and
-// the LAST one typed wins, so `ls -a -A` is `-A`.
 function ignore_default(): i32 {
   return 0;
 }
@@ -405,9 +339,6 @@ function ind_classify(): i32 {
   return 3;
 }
 
-// How far a symbolic link is followed. `none` is lstat everywhere;
-// `cmd` follows a command-line operand; `cmd_dir` follows one only when
-// it resolves to a directory; `all` follows every entry.
 function deref_none(): i32 {
   return 0;
 }
@@ -436,7 +367,6 @@ function when_auto(): i32 {
   return 2;
 }
 
-// `ls` exits 2 for a usage error and 1 for a file it could not reach.
 function status_usage(): i32 {
   return 2;
 }
@@ -445,43 +375,20 @@ function status_minor(): i32 {
   return 1;
 }
 
-// The smallest a column may be, whatever its contents.
 function min_column_width(): i32 {
   return 3;
 }
 
-// Half the average Gregorian year, in seconds: the whole of the
-// recent / non-recent test.
 function six_months(): i64 {
   return 15778476 as i64;
 }
 
-// ---- configuration ----------------------------------------------------------
-// `Cfg` is the whole of what the option scan decides, and the only
-// thing the rest of the file reads.
-//
-// Two block sizes, not one, because `-k` moves only one of them:
-// `fsize` renders the SIZE column and `bsize` the `total` line and the
-// `-s` block counts, so `ls -lk` still prints a file size in bytes
-// while its total is in kibibytes. `--block-size` and `-h` set both.
 pub struct Cfg { format: i32, ignore_mode: i32, sort_key: i32, reverse: boolean, time_type: i32, deref: i32, immediate_dirs: boolean, recursive: boolean, inode: boolean, show_blocks: boolean, indicator: i32, qstyle: i32, qmark: boolean, qmark_newline: boolean, show_owner: boolean, show_group: boolean, show_author: boolean, numeric_ids: boolean, show_context: boolean, width: i64, tabsize: i64, ignores: string[], hides: string[], ignore_backups: boolean, dirs_first: boolean, dired: boolean, hyperlink: boolean, color: boolean, zero: boolean, fsize: blocks.Unit, bsize: blocks.Unit, nonrecent_fmt: timefmt.Format, recent_fmt: timefmt.Format, zone: tz.Zone, now: i64, colors: Palette }
 
-// `defaults(format, qstyle, qmark)` — the starting configuration the
-// three programs differ in and nothing else: off a terminal `ls` is
-// one-per-line, literal and control-characters-as-written, `dir` is
-// vertical columns and escape, `vdir` is long and escape. On a terminal
-// `ls` starts from three different answers; see `ls()`.
 pub function defaults(format: i32, qstyle: i32, qmark: boolean): Cfg {
   return Cfg { format: format, ignore_mode: ignore_default(), sort_key: sort_name(), reverse: false, time_type: time_mtime(), deref: deref_none(), immediate_dirs: false, recursive: false, inode: false, show_blocks: false, indicator: ind_none(), qstyle: qstyle, qmark: qmark, qmark_newline: false, show_owner: true, show_group: true, show_author: false, numeric_ids: false, show_context: false, width: 80 as i64, tabsize: 8 as i64, ignores: [], hides: [], ignore_backups: false, dirs_first: false, dired: false, hyperlink: false, color: false, zero: false, fsize: blocks.plain_unit(1 as u64), bsize: blocks.default_unit(), nonrecent_fmt: timefmt.compile("%b %e  %Y"), recent_fmt: timefmt.compile("%b %e %H:%M"), zone: tz.utc_zone(), now: 0 as i64, colors: palette_off() };
 }
 
-// ---- output -----------------------------------------------------------------
-// The byte position matters because `--dired` reports the byte OFFSET
-// of every name it wrote, so the writer carries one. `names` and `subs`
-// collect the `//DIRED//` and `//SUBDIRED//` pairs.
-// `status` is the exit status so far: 1 for a file that could not be
-// reached, 2 for a command-line operand that could not be, and the
-// larger of the two wins.
 struct Out { w: io_buffered.BufWriter, pos: i64, names: i64[], subs: i64[], status: i32 }
 
 function out_new(): Out {
@@ -489,9 +396,6 @@ function out_new(): Out {
 }
 
 function put(o: Out, s: string): Out {
-  // An empty write is not free — it rebuilds the writer and drops it
-  // again — and most entries have three of them: no frills, no
-  // indicator, no colour.
   if (s.len() == 0) {
     return o;
   }
@@ -505,7 +409,6 @@ function put_bytes(o: Out, bytes: u8[]): Out {
   return Out { ...o, w: gnu.put_bytes_with(o.w, bytes, status_usage()), pos: o.pos + bytes.len() as i64 };
 }
 
-// A name written with its byte range recorded, for `--dired`.
 function put_name(c: Cfg, o: Out, s: string): Out {
   let start: i64 = o.pos;
   let next: Out = put(o, s);
@@ -524,8 +427,6 @@ function put_subdir(c: Cfg, o: Out, s: string): Out {
   return Out { ...next, subs: next.subs.append(start).append(next.pos) };
 }
 
-// `--dired` indents every long-format line by two spaces, the offsets
-// above counting them.
 function dired_indent(c: Cfg, o: Out): Out {
   if (c.dired) {
     return put(o, "  ");
@@ -541,10 +442,6 @@ function fail(o: Out, msg: string, status: i32): Out {
   return Out { ...o, w: gnu.error_out(o.w, msg), status: worst };
 }
 
-// ---- small helpers ----------------------------------------------------------
-// A run of `n` spaces in ONE allocation, sliced out of a literal.
-// Prepending a byte at a time allocated a string per byte of padding,
-// and a long listing pads six fields per line.
 function spaces(n: i32): string {
   if (n <= 0) {
     return "";
@@ -570,9 +467,6 @@ function pad_right(s: string, w: i32): string {
   return s + spaces(w - s.len());
 }
 
-// The padding between two columns: a tab while the target tab stop is
-// strictly beyond the one the next character would reach, spaces after
-// that. `size` of zero is `-T 0` and never emits a tab.
 function indent(from: i32, to: i32, size: i32): string {
   let bs: u8[] = [];
   let f: i32 = from;
@@ -592,12 +486,6 @@ function digits_u64(n: u64): i32 {
   return n.to_string().len();
 }
 
-// ---- colour -----------------------------------------------------------------
-// The capability slots, in the order the two-letter names below declare
-// them. `no` is the "normal text" colour, `fi` a plain file, `mi` a
-// missing link target and `or` an orphaned link; `cl` is the
-// clear-to-end-of-line sequence, accepted and never emitted because
-// nothing here writes a partial line it has to erase.
 function cap_names(): string[] {
   return ["no", "fi", "di", "ln", "pi", "so", "bd", "cd", "mi", "or", "ex", "do", "su", "sg", "st", "ow", "tw", "ca", "mh", "cl", "lc", "rc", "ec", "rs"];
 }
@@ -678,17 +566,8 @@ function cap_count(): i32 {
   return 20;
 }
 
-// `Palette` is LS_COLORS as the renderer needs it: the wrapper strings,
-// one code per capability with a flag for "named at all" (an unset
-// capability and one set to the empty string are different things), and
-// the filename suffixes.
-//
-// `link_target` is the `ln=target` spelling, which is not a colour: it
-// says to colour a symlink as whatever it points AT.
 pub struct Palette { on: boolean, link_target: boolean, lc: string, rc: string, rs: string, ec: string, has_ec: boolean, code: string[], set: boolean[], suffix: string[], suffix_code: string[] }
 
-// Every slot is present even with colour off, so that a caller can ask
-// about a capability without first asking whether colour is on.
 function empty_caps(): string[] {
   let out: string[] = [];
   let i: i32 = 0;
@@ -713,10 +592,6 @@ pub function palette_off(): Palette {
   return Palette { on: false, link_target: false, lc: "", rc: "", rs: "", ec: "", has_ec: false, code: empty_caps(), set: unset_caps(), suffix: [], suffix_code: [] };
 }
 
-// The built-in table, which is what `ls --color` uses with LS_COLORS
-// unset — and it is NOT what `dircolors` writes: `mi`, `or`, `ca` and
-// `mh` are unset here where the database names them, so an orphaned
-// link takes `ln`'s bright cyan rather than a colour of its own.
 function palette_default(): Palette {
   let code: string[] = empty_caps();
   let set: boolean[] = unset_caps();
@@ -740,12 +615,6 @@ function cap_put(p: Palette, id: i32, value: string): Palette {
   return Palette { ...p, code: p.code.with(id, value), set: p.set.with(id, true) };
 }
 
-// Two different questions, and GNU answers them differently. A
-// capability that was NAMED AT ALL is emitted, so `LS_COLORS=di=`
-// wraps a directory in an empty sequence rather than leaving it bare;
-// but only one that is named and not a RESET (empty, `0` or `00`)
-// SELECTS its type over the fallbacks, which is what decides whether a
-// sticky directory takes `st` or `di`.
 function cap_set(p: Palette, id: i32): boolean {
   return p.set[id];
 }
@@ -758,10 +627,6 @@ function cap_on(p: Palette, id: i32): boolean {
   return v.len() > 0 && v != "0" && v != "00";
 }
 
-// One LS_COLORS field's worth of text with its escapes resolved: `\e`,
-// the seven named control characters, `\?` for DEL and `\_` for a
-// space, `\NNN` octal and `\xHH` hex, a backslash before anything else
-// standing for that byte, and `^X` for the control character X names.
 function unescape(s: string, start: i32, end: i32): string {
   let bs: u8[] = [];
   let i: i32 = start;
@@ -861,7 +726,6 @@ function hex_value(c: i32): i32 {
   return 0 - 1;
 }
 
-// The index of the next unescaped `b` at or after `i`, or `end`.
 function scan_to(s: string, i0: i32, end: i32, b: i32): i32 {
   let i: i32 = i0;
   while (i < end) {
@@ -878,14 +742,6 @@ function scan_to(s: string, i0: i32, end: i32, b: i32): i32 {
   return end;
 }
 
-// `parse_ls_colors(spec)` — LS_COLORS as a palette. A field is
-// `PREFIX=VALUE`; a prefix starting with `*` is a filename SUFFIX
-// (matched case-insensitively at the end of the name, not as a glob —
-// `*a?c` colours the file literally called `a?c`), anything else is one
-// of the two-letter capabilities. An unrecognized prefix and a field
-// with no `=` are both fatal to the whole variable: two diagnostics,
-// and colour is off for the run, but the listing still happens and the
-// exit status does not move.
 function parse_ls_colors(spec: string): Palette {
   let p: Palette = palette_default();
   let names: string[] = cap_names();
@@ -941,8 +797,6 @@ function parse_ls_colors(spec: string): Palette {
   return p;
 }
 
-// The reset written after a coloured name, and once before the first
-// one: `ec` outright when it was named, else the wrapper around `rs`.
 function reset_seq(p: Palette): string {
   if (p.has_ec) {
     return p.ec;
@@ -954,19 +808,6 @@ function wrap_seq(p: Palette, code: string): string {
   return p.lc + code + p.rc;
 }
 
-// ---- one entry --------------------------------------------------------------
-// `name` is what gets printed, and `ent_path` what gets stat'ed: the
-// name inside `dir`, or the name itself for a command-line operand,
-// whose `dir` is `.`. The path is joined only where it is used.
-//
-// `link_mode` is the TARGET's mode when the entry is a symlink whose
-// target could be reached. Two options need it and neither dereferences
-// the entry outright: `--group-directories-first` counts a link to a
-// directory as a directory, and `ln=target` colours a link as its
-// referent. `target` is read only for the long format, the one that
-// prints it.
-// `dkind` is the file type the directory record gave, as mode bits, 0 when
-// it gave none; an entry nothing stat'ed is judged by it.
 struct Ent { name: string, dir: string, st: FileStat, stated: boolean, followed: boolean, target: string, has_target: boolean, link_mode: u32, link_ok: boolean, owner: string, group: string, context: string, dkind: u32 }
 
 function blank_stat(): FileStat {
@@ -977,31 +818,14 @@ function ent_new(name: string, dir: string): Ent {
   return Ent { name: name, dir: dir, st: blank_stat(), stated: false, followed: false, target: "", has_target: false, link_mode: 0 as u32, link_ok: false, owner: "", group: "", context: "?", dkind: 0 as u32 };
 }
 
-// Whether the listing needs a stat(2) per entry at all. A plain `ls`
-// prints names it already has from readdir, and asking the kernel about
-// each one is the single largest cost this program can avoid — so it is
-// asked only when something on the line depends on the answer.
-//
-// `-L` is NOT on the list, and that is observable rather than a saving:
-// it says which stat to use, not that one is needed, so `ls -L` over a
-// dangling link prints the name in silence while `ls -lL` reports that
-// it cannot access it.
 function needs_stat(c: Cfg): boolean {
   return needs_record(c) || c.indicator != ind_none() || c.dirs_first || c.recursive;
 }
 
-// Whether every entry's whole record is printed or judged. The other
-// reasons for a stat need only the file type, which the directory record
-// already gave.
 function needs_record(c: Cfg): boolean {
   return c.format == fmt_long() || c.inode || c.show_blocks || c.show_context || c.color || c.sort_key == sort_time() || c.sort_key == sort_size();
 }
 
-// Whether one listed entry is stat'ed, as GNU decides it: always when the
-// record is needed or the directory record gave no type; else a link
-// under `-L`, whose type is its target's, a regular file under `-F`,
-// whose `*` is its execute bit, and a link under
-// `--group-directories-first`, which counts a link to a directory as one.
 function stat_needed(c: Cfg, e: Ent): boolean {
   if (needs_record(c) || e.dkind == 0 as u32) {
     return true;
@@ -1013,14 +837,6 @@ function stat_needed(c: Cfg, e: Ent): boolean {
   return c.indicator == ind_classify() && filetype.is_reg(e.dkind);
 }
 
-// Whether the TARGET of a symlink has to be stat'ed. GNU avoids it
-// wherever it can, and the difference is visible: `ls -l --color` over
-// a link to a directory leaves the target name UNCOLOURED, because
-// nothing asked what the target was. Four things ask — `ln=target` and
-// the `or` / `mi` capabilities, which decide the colour, and an
-// indicator style that distinguishes kinds on the ` -> target` the long
-// format prints — plus `--group-directories-first`, which counts a link
-// to a directory as one.
 function needs_link_mode(c: Cfg): boolean {
   if (c.format == fmt_long() && (c.indicator == ind_file_type() || c.indicator == ind_classify())) {
     return true;
@@ -1034,8 +850,6 @@ function needs_link_mode(c: Cfg): boolean {
   return c.colors.link_target || cap_on(c.colors, cap_or()) || cap_on(c.colors, cap_mi());
 }
 
-// `stat_entry(c, e, cmdline)` — the entry with its record filled in, and
-// under `-Z` its context.
 function stat_entry(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
   let r: (Ent, boolean, string) = stat_record(c, e, cmdline);
   if (!r.1 || !c.show_context) {
@@ -1044,9 +858,6 @@ function stat_entry(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
   return (Ent { ...r.0, context: context_of(r.0) }, true, "");
 }
 
-// `stat_record(c, e, cmdline)` — the entry's record. The link target is
-// read when the entry IS a link and the long format will print it, and
-// stat'ed when something judges it.
 function stat_record(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
   let follow: boolean = c.deref == deref_all() || cmdline && c.deref == deref_cmd();
   let out: Ent = e;
@@ -1072,9 +883,6 @@ function stat_record(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
   if (!filetype.is_link(out.st.mode)) {
     return (out, true, "");
   }
-  // `-H` on a link to a DIRECTORY, and `--dereference-command-line-
-  // symlink-to-dir`, both replace the record with the target's — but
-  // only when the target is one.
   if (cmdline && (c.deref == deref_cmd_dir() || c.deref == deref_cmd())) {
     match (stat(path)) {
       Ok(s) => {
@@ -1104,9 +912,6 @@ function stat_record(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
   return (out, true, "");
 }
 
-// The timestamp the listing prints and `-t` orders by. A birth time the
-// filesystem does not record is GNU's {-1, -1}: it prints `?` and sorts
-// before every real one.
 function ent_time(c: Cfg, e: Ent): i64 {
   if (c.time_type == time_atime()) {
     return e.st.atime;
@@ -1139,20 +944,13 @@ function ent_nsec(c: Cfg, e: Ent): i64 {
   return e.st.mtime_nsec;
 }
 
-// Whether the entry's filesystem records no birth time, which FileStat
-// reports as zero.
 function no_birth(e: Ent): boolean {
   if (target_os() == "darwin") {
-    // gnulib treats a zero second or an invalid fraction as unknown on BSD.
     return e.st.btime == 0 as i64 || e.st.btime_nsec < 0 as i64 || e.st.btime_nsec >= 1000000000 as i64;
   }
   return e.st.btime == 0 as i64 && e.st.btime_nsec == 0 as i64;
 }
 
-// The mode whose KIND is trusted even when the record is not: an entry
-// nothing could be stat'ed about still keeps the letter lstat gave, so
-// `ls -LF` marks a dangling link `@` after reporting it, and one nothing
-// stat'ed keeps the letter its directory record gave.
 function kind_mode(e: Ent): u32 {
   if (e.stated) {
     return e.st.mode;
@@ -1163,8 +961,6 @@ function kind_mode(e: Ent): u32 {
   return e.dkind;
 }
 
-// The mode that decides an indicator or a colour: the referent's when
-// the entry is a link and the palette said `ln=target`.
 function effective_mode(c: Cfg, e: Ent): u32 {
   if (c.colors.link_target && e.link_ok) {
     return e.link_mode;
@@ -1172,11 +968,6 @@ function effective_mode(c: Cfg, e: Ent): u32 {
   return e.st.mode;
 }
 
-// ---- sorting ----------------------------------------------------------------
-// The `<` / `>` operators, not a byte loop: they are one memcmp each
-// where the loop was a bounds check and two loads per byte, and this is
-// the innermost thing a listing does — 28% of a plain `ls` over four
-// thousand names went here before.
 function byte_cmp(a: string, b: string): i32 {
   if (a < b) {
     return 0 - 1;
@@ -1187,8 +978,6 @@ function byte_cmp(a: string, b: string): i32 {
   return 0;
 }
 
-// The file suffix `-X` groups by: everything from the last dot that is
-// not the first byte, or nothing at all.
 function extension(name: string): string {
   let i: i32 = name.len() - 1;
   while (i > 0) {
@@ -1210,9 +999,6 @@ function cmp_i64(a: i64, b: i64): i32 {
   return 0;
 }
 
-// The primary key, with the NAME as the tie-break in every case — so
-// `-r` reversing the whole comparison reverses the tie-break too, which
-// is why `ls -Sr` on two files of one size prints them backwards.
 function cmp_key(c: Cfg, a: Ent, b: Ent): i32 {
   if (c.sort_key == sort_name()) {
     return byte_cmp(a.name, b.name);
@@ -1245,9 +1031,6 @@ function cmp_key(c: Cfg, a: Ent, b: Ent): i32 {
     return vercmp.compare(a.name, b.name);
   }
   if (c.sort_key == sort_width()) {
-    // The DISPLAYED width, so a name carrying a control byte sorts by
-    // the cells it takes rather than the bytes it holds: `nl\nx` is 3
-    // wide and leads a listing of four-byte names.
     let w: i32 = printable_width(quoted_name(c, a.name)) - printable_width(quoted_name(c, b.name));
     if (w != 0) {
       return w;
@@ -1257,14 +1040,6 @@ function cmp_key(c: Cfg, a: Ent, b: Ent): i32 {
   return byte_cmp(a.name, b.name);
 }
 
-// `before(c, es, a, b)` — whether the entry at `a` sorts before the one
-// at `b`. A BOOLEAN rather than a three-way compare, and by INDEX
-// rather than by value, because that is all a merge asks: the name key
-// then answers with one `<` where an ordering would take two, and
-// nothing copies a record to be compared.
-//
-// `--group-directories-first` sits OUTSIDE the reversal: `-r` still
-// puts the directories first and only reverses within each group.
 function before(c: Cfg, es: Ent[], a: i32, b: i32): boolean {
   if (c.dirs_first) {
     let ad: boolean = is_dir_entry(c, es[a]);
@@ -1286,8 +1061,6 @@ function key_before(c: Cfg, es: Ent[], a: i32, b: i32): boolean {
   return cmp_key(c, es[a], es[b]) < 0;
 }
 
-// A symlink TO a directory counts as one here, unlike for `-F`, where
-// it earns `@` rather than `/`.
 function is_dir_entry(c: Cfg, e: Ent): boolean {
   if (filetype.is_dir(kind_mode(e))) {
     return true;
@@ -1295,8 +1068,6 @@ function is_dir_entry(c: Cfg, e: Ent): boolean {
   return e.link_ok && filetype.is_dir(e.link_mode);
 }
 
-// A merge sort over the indices, so the comparator can take `c`
-// without a closure.
 function sort_entries(c: Cfg, es: Ent[]): Ent[] {
   let n: i32 = es.len();
   if (n < 2 || c.sort_key == sort_none()) {
@@ -1361,14 +1132,6 @@ function sort_entries(c: Cfg, es: Ent[]): Ent[] {
   return out;
 }
 
-// ---- the name as it prints --------------------------------------------------
-// `-q` replaces every non-printable byte of the ALREADY QUOTED name
-// with `?`, and only for the three styles that can leave one there.
-// `-b`'s escape style and `-Q`'s C style have already turned every such
-// byte into printable text, so `-q` with either is a no-op — and a
-// quoting decision taken BEFORE the substitution is not revisited,
-// which is why `-q --quoting-style=shell` leaves a control-byte name
-// bare while the same name with a newline in it comes out quoted.
 function qmark_applies(style: i32): boolean {
   return style == 0 || style == 1 || style == 2;
 }
@@ -1388,10 +1151,6 @@ function qmark(s: string): string {
   return string_from_bytes_unchecked(bs);
 }
 
-// A SPACE joins the escaped set under the escape style, and only
-// there: `ls -b` writes `sp\ ace` where the same style reached through
-// `stat`'s QUOTING_STYLE leaves the space alone. It is ls's own
-// addition to the table, not the style's.
 function quoted_name(c: Cfg, name: string): string {
   let extra: string = "";
   if (c.qstyle == 7) {
@@ -1401,19 +1160,12 @@ function quoted_name(c: Cfg, name: string): string {
   if (c.qmark && qmark_applies(c.qstyle)) {
     return qmark(out);
   }
-  // A NEWLINE is `?` even without -q, under the same styles -q applies
-  // to — the ones that do not spell a control byte out — in the layouts
-  // `qmark_newline` names. Only the newline: a tab, a DEL or a \x01
-  // still go out raw, and `--quoting-style=c` or `escape` write `\n`
-  // rather than `?`. Never under `--dired`, whose byte offsets are
-  // measured over the name as it stands.
   if (qmark_applies(c.qstyle) && c.qmark_newline && !c.dired) {
     return newline_qmark(out);
   }
   return out;
 }
 
-// `?` for the newline and nothing else.
 function newline_qmark(s: string): string {
   let bs: u8[] = [];
   let i: i32 = 0;
@@ -1428,11 +1180,6 @@ function newline_qmark(s: string): string {
   return string_from_bytes_unchecked(bs);
 }
 
-// A directory header is quoted in the same style with a COLON in the
-// escaped set instead — the `:` that follows the name would otherwise
-// be impossible to tell from one inside it. The space is NOT in this
-// set, so `ls -bR` writes the entry `sp\ ace` and the header
-// `./sp ace:`.
 function quoted_header(c: Cfg, name: string): string {
   let out: string = gnu.quote_style_with(name, c.qstyle, ":");
   if (c.qmark && qmark_applies(c.qstyle)) {
@@ -1441,9 +1188,6 @@ function quoted_header(c: Cfg, name: string): string {
   return out;
 }
 
-// The one-character suffix `-F` / `-p` / `--indicator-style` adds. A
-// symlink earns `@` whatever it points at, broken ones included, which
-// is the opposite of what `--group-directories-first` does with one.
 function indicator(c: Cfg, e: Ent): string {
   if (c.indicator == ind_none()) {
     return "";
@@ -1470,12 +1214,6 @@ function indicator(c: Cfg, e: Ent): string {
   return "";
 }
 
-// The capability a file's mode selects, or -1 for "no colour". The
-// order inside each kind is the measured one: for a directory
-// sticky-and-other-writable, then other-writable, then sticky; for a
-// regular file setuid, setgid, capabilities, executable, then more than
-// one hard link — and the filename suffixes are consulted only for a
-// regular file that none of those claimed.
 function color_slot(c: Cfg, e: Ent): i32 {
   let p: Palette = c.colors;
   if (filetype.is_link(e.st.mode)) {
@@ -1531,9 +1269,6 @@ function color_slot(c: Cfg, e: Ent): i32 {
   return cap_fi();
 }
 
-// The code a name is wrapped in, "" for none. A suffix rule reaches
-// only the plain-regular-file case, and the LAST matching suffix in
-// LS_COLORS wins.
 function color_code(c: Cfg, e: Ent): (string, boolean) {
   if (!c.color) {
     return ("", false);
@@ -1555,8 +1290,6 @@ function color_code(c: Cfg, e: Ent): (string, boolean) {
   return (p.code[slot], true);
 }
 
-// The suffix comparison LS_COLORS patterns use: a literal tail, case
-// folded. `*a?c` is the file called `a?c` and not a glob.
 function ends_with_fold(name: string, suffix: string): boolean {
   if (suffix.len() > name.len()) {
     return false;
@@ -1580,15 +1313,10 @@ function ends_with_fold(name: string, suffix: string): boolean {
   return true;
 }
 
-// What ends an OSC 8 sequence. 9.5 moved from BEL to ST — `ESC \` —
-// which is the terminator the OSC 8 specification names and the one
-// more terminals understand.
 function osc_end(): string {
   return "\x1b\\";
 }
 
-// `--hyperlink` wraps the name in OSC 8 with a `file://HOST/ABS-PATH`
-// URI, every byte outside the unreserved set percent-encoded.
 function uri_encode(s: string): string {
   let bs: u8[] = [];
   let i: i32 = 0;
@@ -1614,10 +1342,6 @@ function hex_digit_byte(v: i32): u8 {
   return (87 + v) as u8;
 }
 
-// The URI a hyperlink carries is the CANONICAL path, links resolved:
-// `--hyperlink` over a symbolic link points at what the link points
-// at, and over a BROKEN one at the name the link names, since nothing
-// along the way has to exist.
 function canonical(path: string): string {
   match (canon.canonicalize(path, canon.missing(), false)) {
     Ok(p) => {
@@ -1639,22 +1363,12 @@ function canonical(path: string): string {
   }
 }
 
-// ---- the long format --------------------------------------------------------
-// Every numeric column is sized over the WHOLE listing, which is why
-// the entries are all gathered before the first line is written.
-//
-// Which way each pads is not uniform and was measured: the link count
-// and the size are RIGHT-aligned, the owner and group names LEFT — and
-// `-n`'s numeric ids go right, the opposite of the name form they
-// replace.
 struct Widths { inode: i32, blocks: i32, nlink: i32, owner: i32, group: i32, author: i32, context: i32, size: i32, major: i32, minor: i32, time: i32, pad: boolean }
 
 function widths_new(): Widths {
   return Widths { inode: 0, blocks: 0, nlink: 0, owner: 0, group: 0, author: 0, context: 0, size: 0, major: 0, minor: 0, time: 0, pad: false };
 }
 
-// Darwin packs an 8-bit major above a 24-bit minor; Linux splits both
-// components across its 64-bit device number.
 pub function dev_major(dev: u64): u64 {
   if (target_os() == "darwin") {
     return dev >> 24 as u64 & 0xff as u64;
@@ -1662,8 +1376,6 @@ pub function dev_major(dev: u64): u64 {
   return linux_dev_major(dev);
 }
 
-// Listing selects the platform at its rendering sites so the Linux scalar
-// leaves still inline before target-dependent branches are eliminated.
 function linux_dev_major(dev: u64): u64 {
   return dev >> 8 as u64 & 0xfff as u64 | dev >> 32 as u64 & 0xfffff000 as u64;
 }
@@ -1683,9 +1395,6 @@ function is_device(e: Ent): boolean {
   return filetype.is_blk(e.st.mode) || filetype.is_chr(e.st.mode);
 }
 
-// The owner and group columns come from one `pwdb.Names`: the two
-// databases read once, every id remembered. Built only when a name is
-// going to be printed; `-n` renders the number and reads nothing.
 function id_names_new(c: Cfg): pwdb.Names {
   if (c.format != fmt_long() || c.numeric_ids) {
     return pwdb.names_new(false, false);
@@ -1693,8 +1402,6 @@ function id_names_new(c: Cfg): pwdb.Names {
   return pwdb.names_new(c.show_owner || c.show_author, c.show_group);
 }
 
-// The two columns an entry prints, resolved once at gather time so that
-// the width pass and the line pass read a string rather than ask again.
 function resolve_ids(c: Cfg, n: pwdb.Names, e: Ent): (Ent, pwdb.Names) {
   if (c.format != fmt_long() || !e.stated) {
     return (e, n);
@@ -1718,11 +1425,6 @@ function resolve_ids(c: Cfg, n: pwdb.Names, e: Ent): (Ent, pwdb.Names) {
   return (Ent { ...e, owner: owner, group: group }, names);
 }
 
-// `-Z`'s column: the file's context, asked of the same name the record
-// was — getfilecon where it was stat'ed, lgetfilecon where lstat'ed. GNU
-// prints `?` for a file it cannot get one for, and only reports an errno
-// other than ENOTSUP and ENODATA; neither reaches a kernel whose files
-// carry labels.
 function context_of(e: Ent): string {
   match (selinux.file_context(ent_path(e), e.followed)) {
     Ok(ctx) => {
@@ -1734,8 +1436,6 @@ function context_of(e: Ent): string {
   }
 }
 
-// A unit letter is printed only when the SPEC named one with no count:
-// `--block-size=K` is `4K` where `--block-size=1K` is `4`.
 function unit_suffix(u: blocks.Unit): string {
   if (!u.show_suffix) {
     return "";
@@ -1755,10 +1455,6 @@ function block_text(c: Cfg, e: Ent): string {
   return render(c.bsize, (e.st.blocks * (512 as i64)) as u64);
 }
 
-// The width a rendered time takes, which is the ONLY thing it is used
-// for: an unknown time is a `?` right-aligned in it. A real timestamp
-// is written as the format rendered it, since the format carries its
-// own alignment.
 function time_width(c: Cfg): i32 {
   let a: i32 = timefmt.format_bytes(c.nonrecent_fmt, c.zone, c.now, 0 as i64).len();
   let b: i32 = timefmt.format_bytes(c.recent_fmt, c.zone, c.now, 0 as i64).len();
@@ -1852,14 +1548,10 @@ function max_i32(a: i32, b: i32): i32 {
   return b;
 }
 
-// The mode column of an entry nothing could be learned about: the kind
-// letter lstat still gave, and a `?` for every permission bit.
 function unknown_mode_string(e: Ent): string {
   return filetype.type_letter(kind_mode(e)) + "?????????";
 }
 
-// The size half of one long line: `major, minor` for a device, in the
-// two widths measured over the listing, and the file size otherwise.
 function size_field(c: Cfg, w: Widths, e: Ent): string {
   if (!e.stated) {
     return pad_left("?", w.size);
@@ -1873,8 +1565,6 @@ function size_field(c: Cfg, w: Widths, e: Ent): string {
   return pad_left(size_text(c, e), w.size);
 }
 
-// The columns `-i` and `-s` put in FRONT of everything, in that order,
-// in every format and not only the long one.
 function frills(c: Cfg, w: Widths, e: Ent): string {
   let out: string = "";
   if (c.inode) {
@@ -1897,11 +1587,6 @@ function frills(c: Cfg, w: Widths, e: Ent): string {
   return out;
 }
 
-// Everything on a long line before the name, built in a
-// capacity-carrying buffer: a dozen `+` allocated and copied a growing
-// string a dozen times per line, and a dozen writes threaded and
-// rebuilt the writer a dozen times, where one buffer appends in place
-// and hands the result over without a copy.
 function long_prefix(c: Cfg, w: Widths, e: Ent): u8[] {
   let h: usize = buf_new(96);
   buf_push(h, frills(c, w, e));
@@ -1961,8 +1646,6 @@ function push_right(h: usize, s: string, w: i32): void {
   push_pad(h, w - s.len());
 }
 
-// An id pads to the RIGHT as a name and to the LEFT as a number, which
-// is the whole of the difference `-n` makes to the two columns.
 function push_field(c: Cfg, h: usize, s: string, w: i32): void {
   if (c.numeric_ids) {
     push_left(h, s, w);
@@ -1971,19 +1654,12 @@ function push_field(c: Cfg, h: usize, s: string, w: i32): void {
   }
 }
 
-// ---- writing a name ---------------------------------------------------------
-// The one-time reset before the FIRST coloured name of the run: GNU
-// emits it lazily, so `ls --color=always` over a listing with nothing
-// to colour writes no escape at all.
 struct Paint { started: boolean, used: boolean }
 
 function paint_new(): Paint {
   return Paint { started: false, used: false };
 }
 
-// `write_name(c, o, p, e, code, text)` — the name with its colour, its
-// hyperlink and its byte range recorded for `--dired`. `code` is the
-// colour to wrap it in, "" for none; `text` is the already-quoted name.
 function write_name(c: Cfg, o: Out, p: Paint, e: Ent, colour: (string, boolean), text: string, record: boolean, hoist: boolean): (Out, Paint) {
   let out: Out = o;
   let paint: Paint = p;
@@ -2002,13 +1678,6 @@ function write_name(c: Cfg, o: Out, p: Paint, e: Ent, colour: (string, boolean),
       out = put(out, wrap_seq(pal, colour.0));
     }
   }
-  // A hyperlinked name that wears outer quotes leaves them OUTSIDE the
-  // link, under the same padding regime that gives the bare names their
-  // leading space: the quote is what the space lines up with, so it
-  // belongs to the column and not to the link. Measured — `ls -C
-  // --hyperlink=always --quoting-style=shell-escape` puts the quote
-  // before the OSC 8 and after its terminator, and `-m` and `-1`, which
-  // pad nothing, keep both inside. The colour still wraps the lot.
   let body: string = text;
   if (hoist) {
     out = put(out, slice_unchecked(text, 0, 1) + "");
@@ -2034,10 +1703,6 @@ function write_name(c: Cfg, o: Out, p: Paint, e: Ent, colour: (string, boolean),
   return (out, paint);
 }
 
-// GNU emits the `no` colour at the start of the LINE rather than
-// before the name, so with `no` set a long listing has its mode column
-// and its inode inside the sequence too — and the type colour that
-// follows the prefix is introduced by a bare reset.
 function start_entry(c: Cfg, o: Out, p: Paint): (Out, Paint) {
   if (!c.color || !cap_on(c.colors, cap_no())) {
     return (o, p);
@@ -2051,16 +1716,6 @@ function start_entry(c: Cfg, o: Out, p: Paint): (Out, Paint) {
   return (put(out, wrap_seq(c.colors, c.colors.code[cap_no()])), paint);
 }
 
-// Whether the whole listing pads the unquoted names by one space so
-// that the first character of every name lines up with the first
-// character INSIDE the quotes of the quoted ones. gnulib calls it
-// align_variable_outer_quotes, and both halves are needed: a format
-// whose names line up at all (the long one, or a column one with a
-// width), and a quoting style that quotes only SOME names.
-//
-// `-q` satisfies the style half and never the other, because the
-// literal style it leaves in place quotes nothing — so `ls -q -C` pads
-// nothing while `ls --quoting-style=shell -C` pads every bare name.
 function aligns_quotes(c: Cfg): boolean {
   let laid_out: boolean = c.format == fmt_long() || (c.format == fmt_vertical() || c.format == fmt_across()) && c.width != 0 as i64;
   if (!laid_out) {
@@ -2069,15 +1724,10 @@ function aligns_quotes(c: Cfg): boolean {
   return c.qmark || c.qstyle == 1 || c.qstyle == 3 || c.qstyle == 6;
 }
 
-// Whether a quoted name came out wearing outer quotes. Under the three
-// variable styles nothing unquoted can begin with either quote byte,
-// which is what makes the first byte the whole of the test.
 function wears_quotes(text: string): boolean {
   return text.len() > 0 && (text[0] as i32 == 39 || text[0] as i32 == 34);
 }
 
-// Whether any entry of this listing wears them, which is what makes the
-// padding apply to the rest.
 function some_quoted(c: Cfg, es: Ent[]): boolean {
   if (!aligns_quotes(c)) {
     return false;
@@ -2092,9 +1742,6 @@ function some_quoted(c: Cfg, es: Ent[]): boolean {
   return false;
 }
 
-// The name and everything attached to it: the colour, the indicator
-// and, on a long line, the ` -> target` of a symlink — whose target is
-// coloured in its own right, by the TARGET's kind.
 function emit_name(c: Cfg, o: Out, p: Paint, e: Ent, long: boolean, pad: boolean): (Out, Paint) {
   let text: string = quoted_name(c, e.name);
   let lead: Out = o;
@@ -2105,10 +1752,6 @@ function emit_name(c: Cfg, o: Out, p: Paint, e: Ent, long: boolean, pad: boolean
   let r: (Out, Paint) = write_name(c, lead, p, e, color_code(c, e), text, true, c.hyperlink && pad && quoted);
   let out: Out = r.0;
   let paint: Paint = r.1;
-  // In the long format an entry that IS a symbolic link never carries
-  // an indicator of its own: it carries ` -> target` when the target
-  // was read, and nothing at all when it was not, which is what
-  // `vdir -LF` over a dangling link prints.
   if (!long || !filetype.is_link(kind_mode(e))) {
     out = put(out, indicator(c, e));
   }
@@ -2118,16 +1761,10 @@ function emit_name(c: Cfg, o: Out, p: Paint, e: Ent, long: boolean, pad: boolean
     if (e.link_ok) {
       target = Ent { ...target, st: FileStat { ...e.st, mode: e.link_mode }, stated: true };
     }
-    // A target that could not be reached takes `mi` when the palette
-    // names it and otherwise falls through the kind switch with a mode
-    // of zero, which lands on `or` — so `LS_COLORS=or=42` colours both
-    // the link and what it points at.
     let code: (string, boolean) = color_code(c, target);
     if (!e.link_ok && cap_set(c.colors, cap_mi())) {
       code = (c.colors.code[cap_mi()], true);
     }
-    // The link TARGET is not in the column the padding lines up, so its
-    // quotes stay where the quoting put them.
     let t: (Out, Paint) = write_name(c, out, paint, target, code, quoted_name(c, e.target), false, false);
     out = t.0;
     paint = t.1;
@@ -2136,23 +1773,12 @@ function emit_name(c: Cfg, o: Out, p: Paint, e: Ent, long: boolean, pad: boolean
   return (out, paint);
 }
 
-// The displayed length of one entry, which is what the column layout
-// measures: the quoted name plus the inode / block columns in front of
-// it and the indicator behind. Colour and hyperlink escapes are not
-// counted — they take no cells.
-//
-// It counts PRINTABLE bytes, not bytes, and that is visible: a name
-// holding a control byte or a UTF-8 é lays out one cell narrower per
-// such byte than it writes, because in the C locale nothing else has a
-// width. `-q` makes the two agree by turning every one of them into a
-// `?`.
 function display_len(c: Cfg, w: Widths, e: Ent): i32 {
   let text: string = quoted_name(c, e.name);
   let pad: i32 = 0;
   if (w.pad && !wears_quotes(text)) {
     pad = 1;
   }
-  // GNU excludes unknown inode/block question marks from the layout width.
   let prefix: i32 = 0;
   if (c.inode) {
     prefix = prefix + w.inode + 1;
@@ -2185,16 +1811,8 @@ function printable_width(s: string): i32 {
   return n;
 }
 
-// ---- the column layout ------------------------------------------------------
-// The count is the largest whose total FITS the width — 9.5 made that
-// inclusive, so a layout exactly filling it is allowed — with every
-// column floored at three characters; `by_columns` is `-C`'s
-// down-then-across against `-x`'s across-then-down, and the two differ
-// only in which column an entry lands in.
 function column_count(c: Cfg, lens: i32[], by_columns: boolean, width: i32): i32 {
   let n: i32 = lens.len();
-  // The first column carries no separator, and a width below the
-  // minimum still fits one column, so a remainder buys one more.
   let max_cols: i32 = width / min_column_width();
   if (width % min_column_width() != 0) {
     max_cols = max_cols + 1;
@@ -2205,9 +1823,6 @@ function column_count(c: Cfg, lens: i32[], by_columns: boolean, width: i32): i32
   if (max_cols < 1) {
     max_cols = 1;
   }
-  // `cols[i]` is the candidate of i+1 columns: its per-column widths
-  // laid end to end at `base[i]`, its running total, and whether it
-  // still fits.
   let base: i32[] = [];
   let total: i32[] = [];
   let valid: boolean[] = [];
@@ -2269,9 +1884,6 @@ function column_count(c: Cfg, lens: i32[], by_columns: boolean, width: i32): i32
   return chosen;
 }
 
-// The per-column widths of the chosen candidate. Recomputed rather than
-// carried out of `column_count`, which holds a candidate per possible
-// count and would have to hand back a slice of one flat array.
 function column_widths(lens: i32[], cols: i32, by_columns: boolean): i32[] {
   let n: i32 = lens.len();
   let w: i32[] = [];
@@ -2313,10 +1925,6 @@ function column_start(w: i32[], col: i32): i32 {
   return s;
 }
 
-// ---- emitting a listing -----------------------------------------------------
-// `--zero` replaces the end of every ENTRY line and of the `total`
-// line, and nothing else: a directory header and the blank line
-// between two directory blocks keep their newline.
 function eol(c: Cfg): string {
   if (c.zero) {
     return "\x00";
@@ -2359,9 +1967,6 @@ function emit_long(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths): (Out, Paint)
   return (out, paint);
 }
 
-// `-m`, and the width-0 path of `-C` / `-x`: one run of entries with a
-// separator between them, breaking to a new line when the next name
-// would not fit. A width of zero never breaks.
 function emit_separated(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths, sep: string): (Out, Paint) {
   let out: Out = o;
   let paint: Paint = p;
@@ -2375,9 +1980,6 @@ function emit_separated(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths, sep: str
     }
     if (i > 0) {
       out = put(out, sep);
-      // What this entry will occupy: the two separator bytes, the name,
-      // and the comma that will follow it when it is not the last. 9.5
-      // made the comparison inclusive and started counting that comma.
       let want: i32 = pos + len + 2;
       if (sep == "," && i < es.len() - 1) {
         want = want + 1;
@@ -2407,10 +2009,6 @@ function emit_separated(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths, sep: str
 
 function emit_columns(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths, by_columns: boolean): (Out, Paint) {
   let n: i32 = es.len();
-  // A width of zero is unlimited, and GNU does not lay out one very
-  // wide grid for it: the whole listing goes on one line with the same
-  // separator writer `-m` uses, whose own separator is a space here
-  // rather than a comma — so entries are two spaces apart.
   if (c.width == 0 as i64) {
     return emit_separated(c, o, p, es, w, " ");
   }
@@ -2476,7 +2074,6 @@ function emit_measured(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths): (Out, Pa
   return emit_columns(c, o, p, es, w, c.format == fmt_vertical());
 }
 
-// The `total` line, in the block unit rather than the file-size one.
 function emit_total(c: Cfg, o: Out, es: Ent[]): Out {
   let sum: i64 = 0 as i64;
   let i: i32 = 0;
@@ -2491,13 +2088,6 @@ function emit_total(c: Cfg, o: Out, es: Ent[]): Out {
   return put(out, "total " + text + eol(c));
 }
 
-// ---- which entries a directory contributes ----------------------------------
-// `-a` shows everything including `.` and `..`, which is why it reads
-// read_dir_all: the two arrive in the directory's own order, which `-f`
-// prints and a synthesized pair at the front could not reproduce. `-A`
-// shows the dotfiles without them. `-B` drops names ending in `~`, `-I` drops what its pattern
-// matches and `--hide` does the same except that `-a` or `-A` cancels
-// it.
 function hidden(c: Cfg, name: string): boolean {
   if (c.ignore_mode != ignore_default()) {
     return false;
@@ -2529,15 +2119,6 @@ function ignored(c: Cfg, name: string): boolean {
   return false;
 }
 
-// `dir_entries(c, o, path)` — the entries of one directory, stat'ed if
-// anything on the line needs it, with a diagnostic for each one that
-// could not be reached, and whether the directory opened at all. A
-// failed stat is not a skip: the entry is still listed, with `?` where
-// the record would be.
-// gnulib's `attach`: the path of one entry of `dir`. A dirname of `.`
-// contributes NOTHING, which is why `ls -L` in a directory with a
-// dangling link says `cannot access 'link'` and not `'./link'` — while
-// the SUBDIRECTORY `-R` queues is `./adir`, joined the ordinary way.
 function attach(dir: string, name: string): string {
   if (dir == ".") {
     return name;
@@ -2602,9 +2183,6 @@ function dir_entries(c: Cfg, o: Out, path: string, seed: pwdb.Names): (Ent[], Ou
     if (!r.1) {
       let at: string = ent_path(e);
       out = fail(out, "cannot access " + gnu.quotea(at) + ": " + r.2, status_minor());
-      // lstat still answers for a link whose TARGET is what could not
-      // be reached, and its kind is the one letter the mode column
-      // keeps.
       match (lstat(at)) {
         Ok(s) => {
           e = Ent { ...e, link_mode: s.mode };
@@ -2620,19 +2198,10 @@ function dir_entries(c: Cfg, o: Out, path: string, seed: pwdb.Names): (Ent[], Ou
   return (filled, out, ids, true);
 }
 
-// ---- listing a directory ----------------------------------------------------
-// `-R`'s queue, held as a stack of paths yet to be listed. The display
-// name is the path AS WALKED, so a recursive listing of `tree` names
-// its grandchild `tree/bdir/nested` and not `nested`.
 struct Pending { path: string }
 
 struct State { out: Out, paint: Paint, wrote: boolean, queue: Pending[], names: pwdb.Names }
 
-// One directory: its header, its `total` when the format asks for one,
-// and its entries; one that does not open gets only its diagnostic,
-// as GNU opens before it writes the header. `-R` pushes each
-// subdirectory it found, in the sorted order, so the walk is depth
-// first through the listing's own order rather than readdir's.
 function list_dir(c: Cfg, st: State, p: Pending, header: boolean): State {
   let r: (Ent[], Out, pwdb.Names, boolean) = dir_entries(c, st.out, p.path, st.names);
   let es: Ent[] = r.0;
@@ -2658,10 +2227,6 @@ function list_dir(c: Cfg, st: State, p: Pending, header: boolean): State {
   if (!c.recursive) {
     return state;
   }
-  // The subdirectory's name is joined the ORDINARY way even under a
-  // parent of `.`, so a recursive listing of the current directory
-  // heads its children `./adir:` while the entries inside them are
-  // reached by `attach` above.
   let subs: Pending[] = [];
   let i: i32 = 0;
   while (i < es.len()) {
@@ -2680,11 +2245,6 @@ function list_dir(c: Cfg, st: State, p: Pending, header: boolean): State {
   return State { ...state, queue: q };
 }
 
-// ---- the whole run ----------------------------------------------------------
-// The operands split in two: the non-directories are listed first as
-// one group, then each directory in turn. A directory's name is
-// suppressed only when it is the SOLE thing being listed and the walk
-// is not recursive — the first `-R` directory keeps its header.
 function run_operands(c: Cfg, o: Out, operands: string[]): Out {
   let files: Ent[] = [];
   let every: Ent[] = [];
@@ -2711,10 +2271,6 @@ function run_operands(c: Cfg, o: Out, operands: string[]): Out {
     ids = got0.1;
     i = i + 1;
   }
-  // Sorted BEFORE the split, so `ls d2 d1` walks d1 first however the
-  // two were typed, and the widths below are measured over the
-  // directories too — a directory operand's 4096 sizes the column its
-  // own listing never uses.
   every = sort_entries(c, every);
   let operand_widths: Widths = measure(c, every);
   let k2: i32 = 0;
@@ -2728,8 +2284,6 @@ function run_operands(c: Cfg, o: Out, operands: string[]): Out {
     k2 = k2 + 1;
   }
   let state: State = State { out: out, paint: paint_new(), wrote: false, queue: dirs, names: ids };
-  // The command-line group gets no `total`: that line counts one
-  // DIRECTORY's blocks, and a list of operands is not one.
   if (files.len() > 0) {
     let fe: (Out, Paint) = emit_measured(c, state.out, state.paint, files, operand_widths);
     state = State { ...state, out: fe.0, paint: fe.1, wrote: true };
@@ -2773,15 +2327,6 @@ function dired_line(tag: string, offs: i64[]): string {
   return out + "\n";
 }
 
-// ---- --time-style -----------------------------------------------------------
-// One value carries BOTH long-format time formats, separated by a
-// newline: line 1 for a non-recent time, line 2 for a recent one. Only
-// the leading `+` of the whole value is removed, so the second line of
-// `+A\n+B` is the literal `+B`.
-//
-// `posix-` prefixed styles fall back to the locale default outside the
-// POSIX locale, and everything here runs in C, so all four are the
-// default.
 function apply_time_style(c: Cfg, spec: string, from_env: boolean): Cfg {
   if (spec.len() > 0 && spec[0] as i32 == 43) {
     let body: string = slice_unchecked(spec, 1, spec.len()) + "";
@@ -2810,15 +2355,11 @@ function apply_time_style(c: Cfg, spec: string, from_env: boolean): Cfg {
     return Cfg { ...c, nonrecent_fmt: timefmt.compile("%Y-%m-%d %H:%M"), recent_fmt: timefmt.compile("%Y-%m-%d %H:%M") };
   }
   if (name == "iso") {
-    // The trailing space is the alignment: it makes the non-recent
-    // form exactly as wide as `%m-%d %H:%M`.
     return Cfg { ...c, nonrecent_fmt: timefmt.compile("%Y-%m-%d "), recent_fmt: timefmt.compile("%m-%d %H:%M") };
   }
   if (name == "locale") {
     return c;
   }
-  // An unusable TIME_STYLE is not fatal the way an unusable option
-  // value is; an unrecognized one is, either way.
   gnu.error("invalid argument " + gnu.quote(spec) + " for 'time style'");
   eprint("Valid arguments are:");
   eprint("  - [posix-]full-iso");
@@ -2830,7 +2371,6 @@ function apply_time_style(c: Cfg, spec: string, from_env: boolean): Cfg {
   return c;
 }
 
-// ---- options ----------------------------------------------------------------
 function options(): gnu.Opt[] {
   let o: gnu.Opt[] = [];
   o = o.append(gnu.flag("a", "all", op_all()));
@@ -2850,8 +2390,6 @@ function options(): gnu.Opt[] {
   o = o.append(gnu.valued("w", "width", op_width()));
   o = o.append(gnu.flag("A", "almost-all", op_almost_all()));
   o = o.append(gnu.flag("B", "ignore-backups", op_ignore_backups()));
-  // `-F` takes no value; only `--classify[=WHEN]` does, so `-FC` is
-  // two options and not a WHEN of "C".
   o = o.append(gnu.optional_long("F", "classify", op_classify()));
   o = o.append(gnu.flag("", "file-type", op_file_type()));
   o = o.append(gnu.flag("", "si", op_si()));
@@ -2877,8 +2415,6 @@ function options(): gnu.Opt[] {
   o = o.append(gnu.valued("", "block-size", op_block_size()));
   o = o.append(gnu.flag("Z", "context", op_context()));
   o = o.append(gnu.flag("", "author", op_author()));
-  // The short options with no long spelling, after the table above so
-  // that the ambiguity list stays in GNU's order.
   o = o.append(gnu.flag("l", "", op_long()));
   o = o.append(gnu.flag("1", "", op_one()));
   o = o.append(gnu.flag("C", "", op_many()));
@@ -2906,8 +2442,6 @@ function when_values(): i32[] {
   return [when_always(), when_always(), when_always(), when_never(), when_never(), when_never(), when_auto(), when_auto(), when_auto()];
 }
 
-// `--color`, `--hyperlink` and `-F` all take the same optional WHEN,
-// and an option with no value means `always`.
 function parse_when(m: gnu.OptMatch, option: string): i32 {
   if (!m.has_value) {
     return when_always();
@@ -2953,10 +2487,6 @@ function indicator_names(): string[] {
   return ["none", "slash", "file-type", "classify"];
 }
 
-// `-w`, `-T` and COLUMNS are all `strtoul` with base ZERO, which is
-// more than a decimal count: leading blanks and a `+` are accepted,
-// `0x28` is 40 and `040` is 32. A `-` is not — `-w -0` is an invalid
-// line width.
 function parse_ulong0(spec: string): (i64, boolean) {
   let n: i32 = spec.len();
   let i: i32 = 0;
@@ -3009,7 +2539,6 @@ function parse_count(spec: string, what: string): i64 {
   return r.0;
 }
 
-// ---- help -------------------------------------------------------------------
 function help_text(): string {
   let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
@@ -3095,26 +2624,14 @@ function help_text(): string {
   return out;
 }
 
-// ---- the option scan --------------------------------------------------------
 struct Scan { c: Cfg, width_seen: boolean, hide_opt: i32, operands: string[] }
 
 function scan(argv: string[], start: Cfg): Scan {
   let c: Cfg = start;
-  // gnulib's hide_control_chars_opt: -1 for neither option given, which
-  // is not the same as `--show-control-chars`. The newline
-  // substitution asks whether that option was given, where the general
-  // one asks for the resolved answer.
   let hide_opt: i32 = 0 - 1;
   c = Cfg { ...c, qstyle: gnu.quoting_style_from_env_with(c.qstyle) };
   let g: gnu.Getopt = gnu.getopt_new(argv, options(), gnu.prog(), help_text(), status_usage());
-  // The format an option ASKED for, apart from the program's default:
-  // `-1` gives way to a long format that was TYPED and overrides one
-  // that came from being `vdir`, and `--zero` falls back to
-  // one-per-line only when nothing was typed.
   let format_opt: i32 = 0 - 1;
-  // `-c` and `-u` pick the timestamp, and when the format is NOT long
-  // and no sort was asked for they also pick the SORT: `ls -u` is
-  // ordered by access time where `ls -lu` is ordered by name.
   let sort_opt: i32 = 0 - 1;
   let explicit_time: boolean = false;
   let deref_seen: boolean = false;
@@ -3153,9 +2670,6 @@ function scan(argv: string[], start: Cfg): Scan {
         } else if (m.id == op_directory()) {
           c = Cfg { ...c, immediate_dirs: true };
         } else if (m.id == op_dired()) {
-          // 9.5 made `-D` ask for the long format and refuse
-          // hyperlinks, rather than being dropped when either did not
-          // hold: `ls --dired` alone is now a long listing.
           c = Cfg { ...c, dired: true };
           format_opt = fmt_long();
           link_when = when_never();
@@ -3236,9 +2750,6 @@ function scan(argv: string[], start: Cfg): Scan {
         } else if (m.id == op_long()) {
           format_opt = fmt_long();
         } else if (m.id == op_one()) {
-          // `-1` has no effect after a long format was typed, and
-          // `vdir -1` is one per line because vdir's long format is a
-          // default rather than something typed.
           if (format_opt != fmt_long()) {
             format_opt = fmt_single();
           }
@@ -3261,8 +2772,6 @@ function scan(argv: string[], start: Cfg): Scan {
         } else if (m.id == op_sort_ext()) {
           sort_opt = sort_ext();
         } else if (m.id == op_unsorted_all()) {
-          // 9.5 cut `-f` back to `-a -U`: it no longer turns colour,
-          // hyperlinks, `-s` or the long format off as well.
           c = Cfg { ...c, ignore_mode: ignore_minimal() };
           sort_opt = sort_none();
         } else if (m.id == op_time()) {
@@ -3278,12 +2787,6 @@ function scan(argv: string[], start: Cfg): Scan {
           time_style = m.value;
           time_style_seen = true;
         } else if (m.id == op_zero()) {
-          // `--zero` asks for one per line the way `-1` does: it
-          // gives way to a long format that was TYPED and overrides
-          // everything else, so `ls -l --zero` stays long while
-          // `ls -C --zero` is one per line.
-          // It also drops the quoting: `dir --zero` writes raw bytes
-          // where `dir` escapes them, and a `-b` after it wins.
           c = Cfg { ...c, zero: true, qmark: false, qstyle: 0 };
           if (format_opt != fmt_long()) {
             format_opt = fmt_single();
@@ -3309,28 +2812,16 @@ function scan(argv: string[], start: Cfg): Scan {
   } else if (c.format != fmt_long() && explicit_time) {
     c = Cfg { ...c, sort_key: sort_time() };
   }
-  // The default is NOT "never follow": a command-line symbolic link to
-  // a directory is followed, which is why `ls link_dir` lists the
-  // directory. The three options that turn that off are the ones for
-  // which the link ITSELF is the subject.
   if (c.deref == deref_none() && !deref_seen) {
     if (!c.immediate_dirs && c.indicator != ind_classify() && c.format != fmt_long()) {
       c = Cfg { ...c, deref: deref_cmd_dir() };
     }
   }
   if (c.dired && c.zero) {
-    // Not a `die_usage`: there is no `Try …` line under this one.
     gnu.error("--dired and --zero are incompatible");
     exit(status_usage());
   }
   c = Cfg { ...c, color: when_on(color_when), hyperlink: when_on(link_when) };
-  // `--dired` reports byte offsets into the output, and a hyperlink puts
-  // escape sequences around every name — so the offsets would name
-  // positions inside them. GNU's answer is to drop `--dired` rather than
-  // report offsets nothing can use: measured, `ls -l --dired
-  // --hyperlink=always` prints no `//DIRED//` line at all, while
-  // `--hyperlink=never` prints one, so the test is on the RESOLVED
-  // answer and not on whether the option was typed.
   if (c.hyperlink) {
     c = Cfg { ...c, dired: false };
   }
@@ -3345,11 +2836,6 @@ function scan(argv: string[], start: Cfg): Scan {
     if (spec.len() > 0) {
       c = Cfg { ...c, colors: parse_ls_colors(spec) };
     } else if (colorterm_set() || colordb.term_known(env_or_empty("TERM"))) {
-      // An empty or unset LS_COLORS falls back to the built-in table,
-      // but only for a terminal something vouches for: COLORTERM
-      // non-empty, or a $TERM the database's own TERM lines match.
-      // Otherwise `--color=always` writes no escape at all, which is
-      // what it does in an environment with neither.
       c = Cfg { ...c, colors: palette_default() };
     } else {
       c = Cfg { ...c, colors: palette_off() };
@@ -3358,15 +2844,9 @@ function scan(argv: string[], start: Cfg): Scan {
       c = Cfg { ...c, color: false };
     }
   }
-  // Colour and tab padding do not mix: an escape sequence takes no
-  // cells, so a terminal's idea of the cursor column and ls's agree
-  // only while every byte written is a character. GNU turns the tabs
-  // off rather than track it, and the padding becomes spaces.
   if (c.color) {
     c = Cfg { ...c, tabsize: 0 as i64 };
   }
-  // `--dired` is long-format only: with any other format GNU emits no
-  // `//DIRED//` lines at all.
   if (c.format != fmt_long()) {
     c = Cfg { ...c, dired: false };
   }
@@ -3382,10 +2862,6 @@ function scan(argv: string[], start: Cfg): Scan {
   if (time_style_seen) {
     c = apply_time_style(c, time_style, false);
   }
-  // The environment is consulted only when no option named a unit, and
-  // LS_BLOCK_SIZE / BLOCK_SIZE move the SIZE column with the total —
-  // which `-k` then undoes for the size column by moving only the
-  // block one, last of all.
   if (!block_spec_seen) {
     let u: blocks.Unit = blocks.env_unit(["LS_BLOCK_SIZE", "BLOCK_SIZE", "BLOCKSIZE"]);
     c = Cfg { ...c, bsize: u };
@@ -3414,9 +2890,6 @@ function colorterm_set(): boolean {
   return env_or_empty("COLORTERM").len() > 0;
 }
 
-// Whether the environment named a block size at all, which decides
-// whether it reaches the file-size column as well as the block one.
-// BLOCKSIZE is not on the list: it moves the total and nothing else.
 function env_named_block_size(): boolean {
   match (env("LS_BLOCK_SIZE")) {
     Some(_) => {
@@ -3433,15 +2906,6 @@ function env_named_block_size(): boolean {
   return false;
 }
 
-// The terminal width, which decides the column layout: `-w` if it was
-// given, else the terminal's own answer, else COLUMNS, else 80. COLUMNS
-// is read even when standard output is a PIPE, which is what makes the
-// column formats reachable without a terminal at all.
-//
-// A terminal that answers ENDS the question, so COLUMNS is not merely
-// overridden — it is never looked at. Measured: `COLUMNS=abc ls` on a
-// terminal prints no warning at all, where the same thing down a pipe
-// reports the width it could not parse.
 function resolve_width(c: Cfg, seen: boolean): Cfg {
   if (seen) {
     return c;
@@ -3461,8 +2925,6 @@ function resolve_width(c: Cfg, seen: boolean): Cfg {
         if (r.1) {
           return Cfg { ...c, width: r.0 };
         }
-        // Not fatal, and zero IS a width here: it selects the
-        // unlimited single-line layout.
         gnu.error("ignoring invalid width in environment variable COLUMNS: " + gnu.quote(v));
       }
     },
@@ -3471,15 +2933,6 @@ function resolve_width(c: Cfg, seen: boolean): Cfg {
   return c;
 }
 
-// The three programs, which differ in their starting defaults and
-// nothing else. `dir` and `vdir` carry `-b`'s escaping, so a space in a
-// name comes out `sp\ ace` from them and raw from `ls`.
-//
-// `ls` ALONE asks whether standard output is a terminal, and changes
-// three defaults together when it is: vertical columns instead of one
-// entry per line, shell-escape quoting instead of literal, and
-// nongraphic characters shown as `?`. `dir` and `vdir` ask nothing —
-// measured, each prints the same bytes to a pipe and to a terminal.
 pub function ls(): i32 {
   if (isatty(1)) {
     return run(fmt_vertical(), qstyle_shell_escape(), true);
@@ -3495,8 +2948,6 @@ pub function vdir(): i32 {
   return run(fmt_long(), qstyle_escape(), false);
 }
 
-// The three quoting styles the programs start from, by their index in
-// `gnu.quoting_style_names()`.
 function qstyle_literal(): i32 {
   return 0;
 }
@@ -3514,19 +2965,10 @@ function run(format: i32, qstyle: i32, qmark: boolean): i32 {
   let start: Cfg = defaults(format, qstyle, qmark);
   let s: Scan = scan(argv, start);
   let c: Cfg = resolve_width(s.c, s.width_seen);
-  // A NEWLINE in a name comes out `?` under the styles that do not
-  // spell a control byte out, whatever standard output is — an entry
-  // may not span two lines. 9.5 narrowed it to the layouts a newline
-  // could really be confused in: the ones that SEPARATE with a newline,
-  // and the column layouts only while a width bounds them. Not under
-  // `--show-control-chars`, which asks for the bytes as they are, and
-  // not under `--zero`, where a NUL ends each record.
   c = Cfg { ...c, qmark_newline: s.hide_opt != 0 && !c.zero && (c.width != 0 as i64 && (c.format == fmt_commas() || c.format == fmt_vertical() || c.format == fmt_across()) || c.format == fmt_single() || c.format == fmt_long()) };
   c = Cfg { ...c, zone: tz.local_zone(), now: now_unix_ms() / (1000 as i64) };
   let o: Out = run_operands(c, out_new(), s.operands);
   let status: i32 = o.status;
-  // gnulib's `exit_failure` for `ls` is 2, so a write that cannot
-  // finish exits 2 rather than 1.
   gnu.close_stdout_with(o.w, false, status_usage());
   return status;
 }

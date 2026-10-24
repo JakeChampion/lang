@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// A local binding shadows an import's qualifier and a module-level function
-// of its name, from the binding to the end of its scope, in both compilers.
-// Before the binding, and outside its scope, the module is reached as usual.
 func TestLocalShadowsImport(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	oracle := buildLangBinForInterp(t)
@@ -53,8 +50,6 @@ function main(): i32 { return f("abcd") + util.one(); }`, 5},
   if let util @ (s, n) = t { return util.0.len() + n; }
   return 0;
 }`, 4},
-		// In an imported module a call to its own `two` resolves to the
-		// function until a local of that name is bound.
 		{"own-function-before-local", `function main(): i32 { return lib.run(); }`, 7},
 	} {
 		t.Run(c.name, func(t *testing.T) {

@@ -9,11 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/tables/strerror"
 )
 
-// std/net names the errno each NetError variant stands for as a std/errno
-// constant, in variant order. This reads the module as data and pins that list
-// to the variants and to internal/tables/strerror, so a variant added without
-// its errno, or an errno the table does not carry, fails here.
-
 const netSrc = "std/net.fern"
 
 func readNet(t *testing.T) string {
@@ -34,7 +29,6 @@ func netListBody(t *testing.T, s, name string) string {
 	return m[1]
 }
 
-// The variant each errno name stands for, in the order both lists keep.
 var netVariants = map[string]string{
 	"EADDRINUSE":    "AddrInUse",
 	"EADDRNOTAVAIL": "AddrNotAvailable",
@@ -49,7 +43,6 @@ var netVariants = map[string]string{
 	"EINTR":         "Interrupted",
 }
 
-// netErrnoNames is __net_errnos's list as the errno names it spells.
 func netErrnoNames(t *testing.T, s string) []string {
 	t.Helper()
 	var out []string
@@ -72,8 +65,6 @@ func TestNetErrnosMatchStrerror(t *testing.T) {
 			t.Errorf("__net_errnos names %s, which internal/tables/strerror has no Linux number for", name)
 		}
 	}
-	// EWOULDBLOCK must be EAGAIN's number everywhere, or `WouldBlock` would
-	// miss one of the two spellings a non-blocking socket reports.
 	for _, os := range []string{strerror.Linux, strerror.Darwin, strerror.Wasi} {
 		if strerror.Number(os, "EWOULDBLOCK") != 0 && strerror.Number(os, "EWOULDBLOCK") != strerror.Number(os, "EAGAIN") {
 			t.Errorf("%s: EWOULDBLOCK (%d) is not EAGAIN (%d)", os, strerror.Number(os, "EWOULDBLOCK"), strerror.Number(os, "EAGAIN"))
@@ -107,8 +98,6 @@ func TestNetErrorVariantsFollowErrnoList(t *testing.T) {
 			t.Errorf("NetError variant %d is %s, __net_errnos[%d] is %s (%s)", i, variants[i], i, name, netVariants[name])
 		}
 	}
-	// The index ladders that map between the two must name every variant
-	// once each, in the same order.
 	for i, name := range names {
 		v, n := regexp.QuoteMeta(netVariants[name]), strconv.Itoa(i)
 		if !regexp.MustCompile(`if \(i == ` + n + `\) \{\s*return (NetError\.)?` + v + `\b`).MatchString(s) {

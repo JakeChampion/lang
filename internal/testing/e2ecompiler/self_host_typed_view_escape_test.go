@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// The diagnostic evidence comes from the same typed source-anchor walk that
-// refuses production lowering. Callers refused only because their callee was
-// refused must not acquire an independent source-escape diagnostic.
 func TestSelfHostTypedViewEscape(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)

@@ -1,11 +1,3 @@
-// x86-64 `remove_dir_all` (recursive `rm -rf`) coverage.
-//
-// std/test's TestRunner.finish() calls remove_dir_all(...) to clean up its
-// temp dirs, so any TAP program that imports std/test references the builtin
-// (#5372). A nested tree is fully removed, a missing path is a silent success
-// (matching os.RemoveAll), and a plain file is unlinked via the ENOTDIR path.
-// The interpreter is the oracle for the same shapes in interp_script_test.go;
-// here the binary must link and produce the right filesystem effect.
 package e2e
 
 import (
@@ -17,11 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// compileRunX86_64WithSetup builds `src`, runs `setup(dir)` to
-// populate the run directory, then executes the binary with its
-// cwd set to that dir (so relative paths in the program resolve
-// against it). Returns the exit code and the dir for host-side
-// assertions about what the program deleted.
 func compileRunX86_64WithSetup(t *testing.T, src string, setup func(dir string)) (int, string) {
 	t.Helper()
 	_, runner := x86_64Tooling(t)
@@ -40,9 +27,6 @@ func compileRunX86_64WithSetup(t *testing.T, src string, setup func(dir string))
 	return cmd.ProcessState.ExitCode(), dir
 }
 
-// A nested tree (files at every level) is fully removed. Each
-// child file drives a recursion that hits ENOTDIR and unlinks;
-// each emptied directory is then rmdir'd on the way back up.
 func TestX86_64RemoveDirAllNestedTree(t *testing.T) {
 	src := `function main(): i32 {
     match (remove_dir_all("tree")) {
@@ -62,8 +46,6 @@ func TestX86_64RemoveDirAllNestedTree(t *testing.T) {
 	}
 }
 
-// remove_dir_all on a missing path is a silent success (Ok(())),
-// mirroring os.RemoveAll — the ENOENT from openat maps to None.
 func TestX86_64RemoveDirAllMissing(t *testing.T) {
 	src := `function main(): i32 {
     match (remove_dir_all("no_such_dir")) {
@@ -78,9 +60,6 @@ func TestX86_64RemoveDirAllMissing(t *testing.T) {
 	}
 }
 
-// remove_dir_all on a plain file unlinks it (the ENOTDIR branch
-// from openat with O_DIRECTORY) and returns None; the file is
-// gone afterward.
 func TestX86_64RemoveDirAllFile(t *testing.T) {
 	src := `function main(): i32 {
     match (remove_dir_all("a_file.txt")) {
@@ -102,11 +81,6 @@ func TestX86_64RemoveDirAllFile(t *testing.T) {
 	}
 }
 
-// The issue's main regression pin: an unmodified tests/stdlib TAP file
-// compiles to an x86-64 binary and runs. std/test's TestRunner.finish()
-// references the builtin unconditionally via its temp-dir cleanup loop, so a
-// missing lowering fails the link. Asserts both that it runs and that the TAP
-// output reports no failures.
 func TestX86_64ArithmeticTapLinks(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	out := filepath.Join(t.TempDir(), "arith_tap")
@@ -123,9 +97,6 @@ func TestX86_64ArithmeticTapLinks(t *testing.T) {
 	}
 }
 
-// mkTree builds dir/tree with files at every level and a couple
-// of sibling subdirectories, so the removal exercises multi-entry
-// directories and several recursion depths.
 func mkTree(t *testing.T, dir string) {
 	t.Helper()
 	root := filepath.Join(dir, "tree")

@@ -8,21 +8,11 @@ import (
 	"testing"
 )
 
-// A map column whose elements are COUNTED must be snapshotted by `keys()` /
-// `values()` as a copy with a per-element retain, not handed back as a raw
-// alias of the map's own buffer — or the frame releases elements the map
-// still holds.
-//
-// The abort is invisible without the sanitizer — the freed block keeps its
-// bytes at this size, so the program answers correctly either way — so the
-// pins are absolute ones under FERN_SANITIZE=1, against the answer the
-// interpreter gives.
 var mapColumnSnapshotPrograms = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The KEY column: a struct key, compared through its derived equality.
 	{"struct-keys", `import "core/map";
 import "core/cmp";
 
@@ -39,7 +29,6 @@ function main(): i32 {
     let ks: Coord[] = m.keys();
     return m.len() + ks.len();
 }`, 24},
-	// The VALUE column, the same bug's other half: a column of record boxes.
 	{"struct-values", `import "core/map";
 
 struct Coord { x: i32, y: i32 }
@@ -54,9 +43,6 @@ function main(): i32 {
     let vs: Coord[] = m.values();
     return m.len() + vs.len();
 }`, 24},
-	// A raw CELL column must NOT take the retaining snapshot: rc-incing an i64
-	// would read its bytes as an address. Pins that the widened arm stopped at
-	// pointers.
 	{"i64-values-stay-raw", `import "core/map";
 
 function main(): i32 {
@@ -76,8 +62,6 @@ func TestSelfHostMapColumnSnapshotX86_64(t *testing.T) {
 	runMapColumnSnapshot(t, runner, "x86-64-linux")
 }
 
-// The arm64 twin. No conformance struct-key case calls keys() or values(), so
-// without this the arm64 path is never exercised end to end.
 func TestSelfHostMapColumnSnapshotArm64(t *testing.T) {
 	_, qemu := arm64Tooling(t)
 	runMapColumnSnapshot(t, []string{qemu}, "arm64-linux")

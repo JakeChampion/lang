@@ -5,19 +5,9 @@ import (
 	"testing"
 )
 
-// A tuple param the callee STORES into a struct literal it returns. Not a
-// borrow — the callee keeps a reference — but a counted one: the construction
-// retains it and the holder's field drop gives it back. The caller therefore
-// keeps its own deep free, and the two net to one owner.
-//
-// Exits confirmed against bin/fern -interp.
-
 func tupleCallargCountedCases() []tupleAliasParamCase {
 	return []tupleAliasParamCase{
 		{
-			// The matrix cell tuple_mixed__callarg__stored_struct. rc 1 ->
-			// callee's construction retain 2 -> caller's struct loop takes the
-			// box-only dec 1 -> the rc-tuple loop walks and decs 0.
 			name: "stored_struct_balances",
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function keepit(t: (i32, i32[])): Hold { return Hold { t: t, n: 1 }; }
@@ -36,8 +26,6 @@ function main(): i32 {
 			want: 70,
 		},
 		{
-			// Two holders through two calls: two retains, so the box is at 3
-			// and only the last owner walks the children.
 			name: "two_calls_balance",
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function keepit(t: (i32, i32[])): Hold { return Hold { t: t, n: 1 }; }
@@ -57,8 +45,6 @@ function main(): i32 {
 			want: 4,
 		},
 		{
-			// Reads through both owners after the call — the holder's field
-			// and the source local must see one live box.
 			name: "read_through_both_owners",
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function keepit(t: (i32, i32[])): Hold { return Hold { t: t, n: 1 }; }
@@ -77,10 +63,6 @@ function main(): i32 {
 			want: 2,
 		},
 		{
-			// THE GUARD. A second callee hands an ELEMENT out (`return
-			// t.1`), so a release of the tuple under the returned reference
-			// would free the element. The exit and the sanitize leg guard
-			// it.
 			name: "element_handout_stays_refused",
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function keepit(t: (i32, i32[])): Hold { return Hold { t: t, n: t.1.len() }; }

@@ -4,26 +4,6 @@ import (
 	"testing"
 )
 
-// --- The FIELD-READ spelling of the enum-array counted share -----------------
-//
-// `let p: P = P { f: q.f, … }` off a live sibling holder: the read yields the
-// SOURCE box's buffer, so the new box co-owns it and must retain it. Both
-// holders' releases are rc-gated, so whichever drops last finds rc 1 and walks
-// the payload. A share without the retain is a double free the census cannot
-// see — allocs == frees at live_bytes 0 — so every probe returns 99 when
-// __rc_underflow_count() fires.
-//
-//   - `respread`: `T { ...base }` copies the array pointer into a third box,
-//     which must hold its own counted share.
-//   - `blockscoped`: the holder lives in a nested block and must still drop
-//     its payload there.
-//   - `source_uaf`: the source must read back intact after the holder dies
-//     and allocation churn has had the chance to reuse anything freed early.
-//
-// `moved_ret` returns the construction, so the box takes over the local's
-// reference (#6726); it asserts the answer only, not the balance. Every want
-// was confirmed against bin/fern -interp, never read off the self-host run.
-
 const arrenumFieldReadDecl = `enum E { A(i32[]), B }
 struct P { f: E[], n: i32 }
 function mkv(i: i32): E[] { let o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
@@ -40,7 +20,6 @@ function main(): i32 {
 func arrenumFieldReadCases() []arrenumShareCase {
 	return []arrenumShareCase{
 		{
-			// The matrix cell: two live holders over one buffer.
 			name: "basic",
 			src: arrenumFieldReadDecl + `function round(i: i32): i32 {
     let q: P = P { f: mkv(i), n: i };
@@ -52,8 +31,6 @@ func arrenumFieldReadCases() []arrenumShareCase {
 			want: 70, balance: true,
 		},
 		{
-			// PRECONDITION 2. Identical to `basic` but for the braces, and that
-			// alone took it to 600/300 while `basic` was clean.
 			name: "blockscoped",
 			src: arrenumFieldReadDecl + `function round(i: i32): i32 {
     let q: P = P { f: mkv(i), n: i };
@@ -64,8 +41,6 @@ func arrenumFieldReadCases() []arrenumShareCase {
 			want: 70, balance: true,
 		},
 		{
-			// The share runs half the time, so the rounds that skip it exercise
-			// the source's walk with no co-owner at all.
 			name: "conditional",
 			src: arrenumFieldReadDecl + `function round(i: i32): i32 {
     let q: P = P { f: mkv(i), n: i };
@@ -76,8 +51,6 @@ func arrenumFieldReadCases() []arrenumShareCase {
 			want: 45, balance: true,
 		},
 		{
-			// The new holder goes to a callee that may keep it; the source finding
-			// rc > 1 simply declines its walk.
 			name: "holder_escapes",
 			src: arrenumFieldReadDecl + `function keepit(p: P): i32 { return p.f.len() + p.n; }
 function round(i: i32): i32 {
@@ -89,8 +62,6 @@ function round(i: i32): i32 {
 			want: 69, balance: true,
 		},
 		{
-			// Three holders, each link counted: rc 3, and the walks hand off down
-			// to the one that finds rc 1.
 			name: "chain",
 			src: arrenumFieldReadDecl + `function round(i: i32): i32 {
     let q: P = P { f: mkv(i), n: i };
@@ -101,8 +72,6 @@ function round(i: i32): i32 {
 			want: 66, balance: true,
 		},
 		{
-			// The spread copy is the third counted holder; when its carry was
-			// uncounted this was exit 99 at 700 allocs, 700 frees, live_bytes 0.
 			name: "respread",
 			src: arrenumFieldReadDecl + `function round(i: i32): i32 {
     let q: P = P { f: mkv(i), n: i };
@@ -113,9 +82,6 @@ function round(i: i32): i32 {
 			want: 68, balance: true,
 		},
 		{
-			// The move-elided shape (#6726): no bind, so no marker flip, and the
-			// inc goes with the move. Measures exactly as it did before the slice
-			// — still the leak it was, deliberately.
 			name: "moved_ret",
 			src: arrenumFieldReadDecl + `function hold(i: i32): P {
     let q: P = P { f: mkv(i), n: i };
@@ -125,10 +91,6 @@ function round(i: i32): i32 { let p: P = hold(i); return (p.f.len() + p.n) % 101
 			want: 70,
 		},
 		{
-			// The wrong-ANSWER probe. `p` dies at the end of the branch; `q` must
-			// still read back intact after allocation churn has had the chance to
-			// reuse anything freed early. The census is not the instrument here —
-			// it agreed with native throughout the bug this catches.
 			name: "source_uaf",
 			src: arrenumFieldReadDecl + `function churn(i: i32): i32 {
     let a: i32[] = [i, i + 1, i + 2, i + 3];
@@ -163,9 +125,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostArrEnumFieldReadShareX86_64 — a struct-literal field READ of an
-// enum-array is a counted share: the new box retains it and the payload is
-// released exactly once.
 func TestSelfHostArrEnumFieldReadShareX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

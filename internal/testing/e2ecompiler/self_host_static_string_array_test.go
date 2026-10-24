@@ -8,13 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// A string literal is a static box, so an array of string literals, or a
-// record whose string fields are literals, is one static box too:
-// `http_status_text`'s phrase table costs nothing per call. The text rides
-// the packing in hex, so a literal holding a comma, a brace, a bar or a high
-// byte reads back intact, as does the empty string. An append to such an
-// array grows a box of its own and leaves the constant as it was. x86-64's
-// leakcheck stays balanced.
 func TestSelfHostStaticStringArray(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "static_strings.fern")

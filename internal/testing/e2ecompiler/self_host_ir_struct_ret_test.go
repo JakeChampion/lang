@@ -4,12 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostIRStructReturnEligible locks in the IR-coverage widening for
-// struct-returning functions.
-// It asks the path probe (semlower.verdict, via eligBits) on
-// struct-returning programs and encodes the per-case results in the exit code.
-// Before struct returns were lowered, lower_func bailed every struct return, so
-// both cases would be ineligible (exit 0).
 func TestSelfHostIRStructReturnEligible(t *testing.T) {
 	progs := []string{
 		"struct P { x: i32, y: i32 } function mk(): P { return P { x: 3, y: 4 }; } function main(): i32 { let p = mk(); return p.x * 10 + p.y; }",

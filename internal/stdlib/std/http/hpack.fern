@@ -1,33 +1,4 @@
-// std/http/hpack — HPACK, the header compression of HTTP/2 (RFC 7541).
-//
-// A `Decoder` turns a header block into fields and a `Encoder` turns
-// fields into one, each keeping the dynamic table the other side's
-// mirrors. Both are values: a step returns the next decoder or encoder
-// with its result, so a connection carries one of each and threads it
-// through its frames.
-//
-//   let d: hpack.Decoder = hpack.decoder(4096, 65536);
-//   let got: hpack.Decoded = d.decode(block)?;      // got.fields, got.decoder
-//   let st: hpack.Decoder = d.start(block);          // or one field at a time, none kept:
-//   while (st.more()) { st = st.next(block); }        // st.has, st.name, st.value, st.sensitive; st.error
-//   d = st;
-//   let e: hpack.Encoder = hpack.encoder(4096);
-//   let out: hpack.Encoded = e.encode([hpack.field(":status", "200")]);   // out.bytes, out.encoder
-//
-// The decoder is bounded the way RFC 9113 §10.5 and the header-bomb
-// record ask: every field counts name, value and 32 against `max_list`
-// as it is decoded, a Huffman string included, so a block that would
-// expand past the cap stops before it has, and more than `max_fields`
-// fields is refused too. A dynamic table size update is taken only at the
-// start of a block and only up to the size the local settings allow. An
-// error is the connection's: HTTP/2 answers it with COMPRESSION_ERROR.
-//
-// The encoder indexes a field that the static or dynamic table holds,
-// names one the table holds the name of, adds a literal to the table
-// unless it is `sensitive` (never indexed: authorization, cookies, and
-// whatever the caller marks), and Huffman-codes a string when that is no
-// longer than its bytes. `with_max_table` queues the size update the next block must
-// start with, as §4.2 asks after a settings change.
+// This module compresses and decompresses HTTP/2 headers with HPACK.
 
 import "core/int";
 import "std/array";
@@ -36,35 +7,23 @@ import "std/string";
 import "std/error";
 import "core/cmp";
 
-// Field — one header field; `sensitive` keeps it out of both tables.
 pub struct Field { name: string, value: string, sensitive: boolean }
 
 pub function field(name: string, value: string): Field {
   return Field { name: name, value: value, sensitive: false };
 }
 
-// sensitive is a field never indexed: the peer's table never holds it, so
-// its value cannot be probed by guessing (§7.1.3).
 pub function sensitive(name: string, value: string): Field {
   return Field { name: name, value: value, sensitive: true };
 }
 
 pub enum HpackError {
-  // The block ended inside a field.
   Truncated,
-  // An index of 0, or past the tables.
   BadIndex(i32),
-  // An integer of more than 28 bits.
   BadInteger,
-  // A Huffman string with a code that is not one, EOS inside it, or
-  // padding that is not EOS's prefix of under eight bits.
   BadHuffman,
-  // A dynamic table size update above the size the settings allow, or
-  // after a field.
   BadSizeUpdate(i32),
-  // The fields decoded so far outgrow the list cap.
   TooLarge(i32),
-  // More fields than the cap.
   TooMany(i32),
 }
 
@@ -103,10 +62,6 @@ pub function (e: HpackError) message(): string {
   return "hpack: error";
 }
 
-// === the tables ============================================================
-
-// Table — a dynamic table: entries newest first, the size they take (name,
-// value and 32 each, §4.1) and the size they may take.
 pub struct Table { names: string[], values: string[], size: i32, max: i32 }
 
 pub function table(max: i32): Table {
@@ -125,8 +80,6 @@ function __entry_size(name: string, value: string): i32 {
   return name.len() + value.len() + 32;
 }
 
-// __added is `t` with the entry newest, after evicting the oldest until it
-// fits; an entry larger than the table empties it (§4.4).
 function __added(t: Table, name: string, value: string): Table {
   let need: i32 = __entry_size(name, value);
   let room: Table = __evicted(t, t.max - need);
@@ -144,8 +97,6 @@ function __added(t: Table, name: string, value: string): Table {
   return Table { names: names, values: values, size: room.size + need, max: t.max };
 }
 
-// __evicted is `t` with its oldest entries dropped until its size is at
-// most `limit`.
 function __evicted(t: Table, limit: i32): Table {
   let keep: i32 = t.names.len();
   let size: i32 = t.size;
@@ -167,7 +118,6 @@ function __evicted(t: Table, limit: i32): Table {
   return Table { names: names, values: values, size: size, max: t.max };
 }
 
-// __resized is `t` allowed `max` bytes, evicted down to it.
 function __resized(t: Table, max: i32): Table {
   let out: Table = __evicted(t, max);
   return Table { ...out, max: max };
@@ -175,8 +125,6 @@ function __resized(t: Table, max: i32): Table {
 
 const STATIC_LEN: i32 = 61;
 
-// __name_at is the name at `index` (1-based, the static table then the
-// dynamic one), empty when there is none: a literal field's indexed name.
 function __name_at(t: Table, index: i32): string {
   if (index >= 1 && index <= STATIC_LEN) {
     return STATIC_NAMES[index - 1];
@@ -188,9 +136,6 @@ function __name_at(t: Table, index: i32): string {
   return "";
 }
 
-// __find is the index of an entry with this name and value, or negated
-// the index of one with the name alone, or 0: the static table is
-// searched first, then the dynamic one newest first.
 function __find(t: Table, name: string, value: string): i32 {
   let found: i32 = __find_static(name, value);
   if (found > 0) {
@@ -212,9 +157,6 @@ function __find(t: Table, name: string, value: string): i32 {
   return 0 - name_only;
 }
 
-// __find_static is __find over the static table alone. Only the names as
-// long as `name` are compared, and a name's entries are adjacent, so its
-// values are the ones after the first.
 function __find_static(name: string, value: string): i32 {
   let n: i32 = name.len();
   if (n + 1 >= STATIC_LENGTH_FROM.len()) {
@@ -238,31 +180,8 @@ function __find_static(name: string, value: string): i32 {
   return 0;
 }
 
-// === decoding ==============================================================
-
-// Decoder — the dynamic table the peer's encoder fills, the size the
-// local settings let it have, the caps on what one block may decode to,
-// and the block being read one field at a time:
-//
-//   let st: hpack.Decoder = d.start(block);
-//   while (st.more()) {
-//     st = st.next(block);       // st.has: a field came, as st.name, st.value, st.sensitive
-//   }
-//   match (st.error) { Some(e) => ..., None => {} }
-//   d = st;
-//
-// A block's reading is the decoder's own state, so a block costs no record
-// beside it: the offset of the next representation and where the block
-// ends, the fields read so far and their size against the caps, the last
-// integer and string read (so a read hands back the decoder and nothing
-// else), the field the last `next` read, and the error that stopped the
-// block, after which `more` is false.
 pub struct Decoder { table: Table, settings_max: i32, max_list: i32, max_fields: i32, at: i32, end: i32, count: i32, total: i32, started: boolean, num: i32, text: string, has: boolean, name: string, value: string, sensitive: boolean, add: boolean, failed: boolean, error: Option[HpackError] }
 
-// decoder(max_table, max_list) — a decoder whose table may grow to
-// `max_table` (SETTINGS_HEADER_TABLE_SIZE, 4096 by default) and whose
-// blocks may decode to `max_list` bytes of fields, counted as
-// SETTINGS_MAX_HEADER_LIST_SIZE counts them, and at most 256 fields.
 pub function decoder(max_table: i32, max_list: i32): Decoder {
   return Decoder { table: table(max_table), settings_max: max_table, max_list: max_list, max_fields: 256, at: 0, end: 0, count: 0, total: 0, started: false, num: 0, text: "", has: false, name: "", value: "", sensitive: false, add: false, failed: false, error: None };
 }
@@ -271,9 +190,6 @@ pub function (d: Decoder) with_max_fields(n: i32): Decoder {
   return Decoder { ...d, max_fields: n };
 }
 
-// with_max_table is the decoder after the local settings changed the size
-// the peer's table may have: the peer's next block must start with an
-// update to at most this.
 pub function (d: Decoder) with_max_table(n: i32): Decoder {
   let t: Table = d.table;
   if (n < t.max) {
@@ -286,12 +202,8 @@ pub function (d: Decoder) table_size(): i32 {
   return d.table.size;
 }
 
-// Decoded — the fields a block held, and the decoder after it.
 pub struct Decoded { decoder: Decoder, fields: Field[] }
 
-// decode takes one whole header block (every CONTINUATION joined) and
-// answers its fields; `start`, `more` and `next` read them one at a time
-// with no field kept.
 pub function (d: Decoder) decode(block: u8[]): Result[Decoded, HpackError] {
   let st: Decoder = d.start(block);
   let fields: Field[] = [];
@@ -310,28 +222,18 @@ pub function (d: Decoder) decode(block: u8[]): Result[Decoded, HpackError] {
   return Ok(Decoded { decoder: st, fields: fields });
 }
 
-// start begins reading `block`, whole.
 pub function (d: Decoder) start(block: u8[]): Decoder {
   return d.start_in(0, block.len());
 }
 
-// start_in begins reading the block lying at [from, end) of the bytes each
-// `next` is handed, so a block is read where it arrived.
 pub function (d: Decoder) start_in(from: i32, end: i32): Decoder {
   return Decoder { ...d, at: from, end: end, count: 0, total: 0, started: false, text: "", has: false, name: "", value: "", failed: false, error: None };
 }
 
-// more is whether the block has a representation left to read and nothing
-// has failed.
 pub function (st: Decoder) more(): boolean {
   return st.at < st.end && !st.failed;
 }
 
-// next reads one representation (§6): by its first bits, an indexed
-// field, a literal added to the table, a size update, or a literal that
-// is not added, never indexed when the fourth bit is set. `has` says
-// whether a field came; a size update leaves it false. A field counts
-// against the caps as it is read.
 pub function (st: Decoder) next(block: u8[]): Decoder {
   let b: i32 = block[st.at] as i32;
   if (b >= 32 && b < 64) {
@@ -368,8 +270,6 @@ function __failed(st: Decoder, e: HpackError): Decoder {
   return Decoder { ...st, failed: true, error: Some(e) };
 }
 
-// __indexed reads an indexed field into `name` and `value`, the static
-// table's entry or the dynamic table's.
 function __indexed(st: Decoder, block: u8[]): Decoder {
   st = __integer(st, block, 7);
   if (st.failed) {
@@ -386,8 +286,6 @@ function __indexed(st: Decoder, block: u8[]): Decoder {
   return Decoder { ...st, name: st.table.names[at], value: st.table.values[at], sensitive: false, add: false };
 }
 
-// __size_update takes a dynamic table size update, allowed only before
-// the block's fields and only up to the settings.
 function __size_update(st: Decoder, block: u8[]): Decoder {
   if (st.started) {
     return __failed(st, BadSizeUpdate(0 - 1));
@@ -403,9 +301,6 @@ function __size_update(st: Decoder, block: u8[]): Decoder {
   return Decoder { ...st, table: __resized(st.table, size), has: false };
 }
 
-// __literal reads a literal field whose name is indexed by `prefix` bits
-// or follows as a string, then its value, into `name` and `value`, `add`
-// saying whether the table takes it.
 function __literal(st: Decoder, block: u8[], prefix: i32, add: boolean, sensitive: boolean): Decoder {
   st = __integer(st, block, prefix);
   if (st.failed) {
@@ -433,8 +328,6 @@ function __literal(st: Decoder, block: u8[], prefix: i32, add: boolean, sensitiv
   return Decoder { ...st, total: total, name: name, value: value, sensitive: sensitive, add: add };
 }
 
-// __integer reads an integer with an N-bit prefix (§5.1) at the decoder's
-// offset into its `num`, the offset moved past it.
 function __integer(st: Decoder, block: u8[], prefix: i32): Decoder {
   let at: i32 = st.at;
   if (at >= st.end) {
@@ -468,9 +361,6 @@ function __integer(st: Decoder, block: u8[], prefix: i32): Decoder {
   return __failed(st, BadInteger);
 }
 
-// __string reads a string literal (§5.2) at the decoder's offset into its
-// `text`, Huffman-decoded when its first bit says, within the room the
-// list size leaves.
 function __string(st: Decoder, block: u8[]): Decoder {
   if (st.at >= st.end) {
     return __failed(st, Truncated);
@@ -506,27 +396,16 @@ function __string(st: Decoder, block: u8[]): Decoder {
   return st;
 }
 
-// === encoding ==============================================================
-
-// Encoder — the dynamic table the peer's decoder mirrors, a size update
-// the next block must start with (negative for none), and whether strings
-// are Huffman-coded when that is shorter.
 pub struct Encoder { table: Table, update: i32, huffman: boolean }
 
-// encoder(max_table) — a table of `max_table` bytes, the peer's
-// SETTINGS_HEADER_TABLE_SIZE (4096 before it says).
 pub function encoder(max_table: i32): Encoder {
   return Encoder { table: table(max_table), update: 0 - 1, huffman: true };
 }
 
-// with_max_table is the encoder after the peer's settings changed its
-// table size: the table is held to `n` now and the next block announces it
-// (§4.2), whatever the previous size.
 pub function (e: Encoder) with_max_table(n: i32): Encoder {
   return Encoder { ...e, table: __resized(e.table, n), update: n };
 }
 
-// without_huffman writes every string as its bytes.
 pub function (e: Encoder) without_huffman(): Encoder {
   return Encoder { ...e, huffman: false };
 }
@@ -535,10 +414,8 @@ pub function (e: Encoder) table_size(): i32 {
   return e.table.size;
 }
 
-// Encoded — a header block, and the encoder after it.
 pub struct Encoded { encoder: Encoder, bytes: u8[] }
 
-// encode is `fields` as one header block.
 pub function (e: Encoder) encode(fields: Field[]): Encoded {
   let en: Encoding = e.begin();
   for f in fields {
@@ -547,13 +424,8 @@ pub function (e: Encoder) encode(fields: Field[]): Encoded {
   return en.finish();
 }
 
-// Encoding — a header block being written field by field: the encoder as
-// its table grows, and the bytes so far.
 pub struct Encoding { encoder: Encoder, out: u8[] }
 
-// `(e).begin()` — a header block started: the size update the encoder
-// owes, if any, goes first. `(e).begin_in(out)` writes the block behind
-// the bytes `out` already holds, for a caller framing it in place.
 pub function (e: Encoder) begin(): Encoding {
   return e.begin_in([]);
 }
@@ -565,9 +437,6 @@ pub function (e: Encoder) begin_in(own out: u8[]): Encoding {
   return Encoding { encoder: Encoder { ...e, update: 0 - 1 }, out: __put_integer(out, 32, 5, e.update) };
 }
 
-// `(en).put(name, value, sensitive)` — one field written as `encode`
-// writes it: indexed when the table has it, a literal added to the table
-// otherwise, and never indexed when `sensitive`.
 pub function (en: Encoding) put(name: string, value: string, sensitive: boolean): Encoding {
   let e: Encoder = en.encoder;
   let out: u8[] = en.out;
@@ -584,7 +453,6 @@ pub function (en: Encoding) put(name: string, value: string, sensitive: boolean)
   return Encoding { encoder: Encoder { ...e, table: __added(e.table, name, value) }, out: out };
 }
 
-// `(en).finish()` — the block's bytes and the encoder to carry on with.
 pub function (en: Encoding) finish(): Encoded {
   return Encoded { encoder: en.encoder, bytes: en.out };
 }
@@ -596,8 +464,6 @@ function __abs(n: i32): i32 {
   return n;
 }
 
-// __put_name_value writes the name when the table did not have it, then
-// the value.
 function __put_name_value(out: u8[], e: Encoder, name: string, value: string, found: i32): u8[] {
   let o: u8[] = out;
   if (found == 0) {
@@ -606,8 +472,6 @@ function __put_name_value(out: u8[], e: Encoder, name: string, value: string, fo
   return __put_string(o, e, value);
 }
 
-// __put_integer writes `value` with `prefix` bits after the `pattern`
-// bits of the first byte (§5.1).
 function __put_integer(out: u8[], pattern: i32, prefix: i32, value: i32): u8[] {
   let limit: i32 = (1 << prefix) - 1;
   if (value < limit) {
@@ -622,8 +486,6 @@ function __put_integer(out: u8[], pattern: i32, prefix: i32, value: i32): u8[] {
   return o.append(rest as u8);
 }
 
-// __put_string writes a string literal, Huffman-coded when the encoder
-// codes strings and the coding is no longer than the bytes.
 function __put_string(out: u8[], e: Encoder, s: string): u8[] {
   let bytes: u8[] = s.bytes();
   if (e.huffman) {
@@ -635,11 +497,6 @@ function __put_string(out: u8[], e: Encoder, s: string): u8[] {
   let o: u8[] = __put_integer(out, 0, 7, bytes.len());
   return o.concat(bytes);
 }
-
-// === RFC 7541's tables =====================================================
-//
-// Appendix A's static table is STATIC_NAMES and STATIC_VALUES, entry 1
-// first.
 
 const STATIC_NAMES: string[] = [
   ":authority", ":method", ":method", ":path",
@@ -660,9 +517,6 @@ const STATIC_NAMES: string[] = [
   "www-authenticate",
 ];
 
-// The first index of each distinct static name, shortest names first, and
-// where the names of each length start among them: those of length n are
-// STATIC_BY_LENGTH[STATIC_LENGTH_FROM[n]] up to STATIC_LENGTH_FROM[n + 1].
 const STATIC_BY_LENGTH: i32[] = [
   20, 59, 32, 33, 36, 37, 44, 58, 3, 21, 49, 18, 31, 34, 53, 1, 5, 7, 35, 50, 51, 38, 41, 45, 0, 54,
   57, 52, 30, 46, 17, 22, 23, 29, 40, 43, 14, 27, 15, 16, 25, 26, 28, 60, 39, 56, 47, 24, 42, 48, 55, 19,

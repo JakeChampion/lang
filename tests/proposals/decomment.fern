@@ -1,54 +1,11 @@
-// tests/proposals/decomment.fern — proposal turn, line 7:
-// "A tool that strips comments from source code in a C-like language,
-// respecting string literals."
-//
-// "Respecting string literals" is the whole problem. A comment stripper is four
-// lines of `index_of("//")` until you notice that `"// not a comment"` is data,
-// that `/* " */` does not open a string, and that `"a\\"` ends at the quote
-// while `"a\""` does not. Every one of those is a lexer-state bug that a
-// hand-written example suite finds only if the author already knew about it.
-//
-// So the oracle is BUILT, not asserted. A document is assembled from labelled
-// segments — code, literal, comment — and the expected output is the
-// concatenation of the non-comment ones. The test never asks "does this match
-// the string I typed?"; it asks "did exactly the segments marked comment
-// disappear, and did everything else survive byte-for-byte?", over hundreds of
-// generated permutations. Getting a case wrong is not possible without the
-// generator and the stripper disagreeing.
-//
-// The segment pool is adversarial by construction: literals that contain `//`
-// and `/*`, comments that contain quotes and apostrophes, char literals holding
-// a quote, a division that is not a comment, a `*/` with no opener, and the
-// two backslash cases that decide where a string ends.
-//
-// Three properties bound it from the other side, so a stripper cannot pass by
-// deleting too much:
-//
-//   - **Idempotence.** strip(strip(x)) == strip(x). A stripper that eats a `/`
-//     it should have kept fails this on the second pass.
-//   - **Subsequence.** Every character of the output appears in the input, in
-//     order. Nothing is invented or reordered — only removed.
-//   - **Unterminated input is an error.** An unclosed block comment or string
-//     is reported with its position, not silently swallowed to end-of-file,
-//     which is how a stripper quietly deletes the rest of a file.
-//
-// The app writes its report to stderr; stdout carries TAP-13 from std/test.
 import "std/test";
 import "std/i32";
 import "std/string";
 
-// ------------------------------------------------------------------ model ---
-
-// `keep` is what this segment contributes to the expected output. Stating it
-// per-segment rather than deriving it from a kind is what makes the line-comment
-// newline policy explicit: the stripper keeps the newline that ENDS a line
-// comment (dropping it would join two lines that were never joined), so the
-// segment's text is `// gone\n` and its keep is `\n`.
 struct Seg { text: string, keep: string }
 
 struct Doc { src: string, want: string }
 
-// code: 1 unterminated block comment, 2 unterminated string, 3 unterminated char
 struct Fault { at: i32, code: i32, msg: string }
 
 struct StripR { ok: boolean, out: string, err: Fault }
@@ -57,12 +14,6 @@ function no_fault(): Fault {
   return Fault { at: 0, code: 0, msg: "" };
 }
 
-// ----------------------------------------------------------------- stripper ---
-
-// A single pass with four states, which is the only way to get this right: the
-// meaning of `/` depends on whether we are inside a literal, and the meaning of
-// `"` depends on whether we are inside a comment. Tracking one without the
-// other is the bug the whole test suite is aimed at.
 function strip(src: string): StripR {
   let out: string = "";
   let n: i32 = src.len();
@@ -70,8 +21,6 @@ function strip(src: string): StripR {
   while (i < n) {
     let c: u8 = src[i];
 
-    // Line comment: consume to the newline, keep the newline itself so
-    // line structure survives.
     if (c == 47 && i + 1 < n && src[i + 1] == 47) {
       i = i + 2;
       while (i < n && src[i] != 10) {
@@ -80,8 +29,6 @@ function strip(src: string): StripR {
       continue;
     }
 
-    // Block comment: consume to the matching `*/`. C block comments do not
-    // nest, so the FIRST `*/` closes it however many `/*` appeared inside.
     if (c == 47 && i + 1 < n && src[i + 1] == 42) {
       let start: i32 = i;
       i = i + 2;
@@ -103,10 +50,6 @@ function strip(src: string): StripR {
       continue;
     }
 
-    // String or char literal: copied through verbatim, INCLUDING anything
-    // that looks like a comment. A backslash escapes the next byte
-    // whatever it is, which is what makes `"a\\"` terminate and `"a\""`
-    // not.
     if (c == 34 || c == 39) {
       let quote: u8 = c;
       let lit_start: i32 = i;
@@ -145,11 +88,6 @@ function strip(src: string): StripR {
   return StripR { ok: true, out: out, err: no_fault() };
 }
 
-// ---------------------------------------------------------------- segments ---
-
-// Every segment is adversarial about the thing it is not: the literals contain
-// comment openers, the comments contain quotes, and the code contains slashes
-// that begin nothing.
 function pool(): Seg[] {
   return [
     Seg { text: "int x = 1;", keep: "int x = 1;" },
@@ -174,16 +112,6 @@ function pool(): Seg[] {
   ];
 }
 
-// Assemble a document AND its expected output at the same time. The expectation
-// is the concatenation of the kept segments — never a string typed out by hand,
-// and never produced by running the stripper.
-//
-// Segments are joined with a SPACE, and the space is kept on both sides. That
-// is not cosmetic: concatenating `*/` with `*/` yields `*/*/`, which genuinely
-// contains a `/*` at offset 1, so the assembled document would mean something
-// the segment list did not say and the oracle would be wrong rather than the
-// stripper. A separator that cannot combine with either neighbour keeps the
-// document's meaning equal to the concatenation of its parts.
 function assemble(idxs: i32[]): Doc {
   let segs: Seg[] = pool();
   let src: string = "";
@@ -198,9 +126,6 @@ function assemble(idxs: i32[]): Doc {
   return Doc { src: src, want: want };
 }
 
-// A deterministic spread of index triples/quads over the pool. Every ordered
-// pair of segment kinds is reached, which is what makes the sweep a real test
-// of state transitions rather than of one arrangement.
 function combos(): i32[][] {
   let segs: Seg[] = pool();
   let n: i32 = segs.len();
@@ -230,10 +155,6 @@ function is_subsequence(sub: string, sup: string): boolean {
   return i == sub.len();
 }
 
-// ------------------------------------------------------------------ tests ---
-
-// The generative core: over every assembled document, the output must equal the
-// concatenation of the non-comment segments, exactly.
 function test_exactly_the_comments_are_removed(): test.TestOutcome {
   let cs: i32[][] = combos();
   let i: i32 = 0;
@@ -274,9 +195,6 @@ function test_stripping_is_idempotent(): test.TestOutcome {
   return test.pass();
 }
 
-// Nothing invented, nothing reordered: the output must be a subsequence of the
-// input. A stripper that rewrites a comment to a space, or normalises anything,
-// fails here even when the equality test happens to agree.
 function test_the_output_is_a_subsequence_of_the_input(): test.TestOutcome {
   let cs: i32[][] = combos();
   let i: i32 = 0;
@@ -295,7 +213,6 @@ function test_the_output_is_a_subsequence_of_the_input(): test.TestOutcome {
   return test.pass();
 }
 
-// The main hazard, stated on its own so a failure names it directly.
 function test_a_comment_marker_inside_a_literal_survives(): test.TestOutcome {
   let cases: string[][] = [
     ["let s = \"// not a comment\";", "let s = \"// not a comment\";"],
@@ -318,8 +235,6 @@ function test_a_comment_marker_inside_a_literal_survives(): test.TestOutcome {
   return test.pass();
 }
 
-// The mirror hazard: a quote inside a comment must not put the lexer into a
-// string, which would swallow everything up to the next quote in real code.
 function test_a_quote_inside_a_comment_opens_nothing(): test.TestOutcome {
   let cases: string[][] = [
     ["a; // it's fine\nb;", "a; \nb;"],
@@ -341,8 +256,6 @@ function test_a_quote_inside_a_comment_opens_nothing(): test.TestOutcome {
   return test.pass();
 }
 
-// A `/` is only a comment when the next byte says so. Division, divide-assign,
-// and a stray `*/` are all ordinary text.
 function test_a_slash_that_starts_nothing_is_kept(): test.TestOutcome {
   let cases: string[] = ["a / b", "a /= 2;", "*/", "a/b/c", "x = y / z; // gone\n"];
   let wants: string[] = ["a / b", "a /= 2;", "*/", "a/b/c", "x = y / z; \n"];
@@ -360,10 +273,6 @@ function test_a_slash_that_starts_nothing_is_kept(): test.TestOutcome {
   return test.pass();
 }
 
-// Where a literal ENDS is decided by the escapes, and both directions matter:
-// `"a\\"` is a complete string whose last character is a backslash, while
-// `"a\""` contains a quote and continues. Getting either wrong desynchronises
-// the lexer for the rest of the file.
 function test_escapes_decide_where_a_literal_ends(): test.TestOutcome {
   let closed: string = "let s = \"a\\\\\"; // gone\n";
   let want_closed: string = "let s = \"a\\\\\"; \n";
@@ -387,9 +296,6 @@ function test_escapes_decide_where_a_literal_ends(): test.TestOutcome {
   return test.pass();
 }
 
-// Silently swallowing to end-of-file is how a stripper deletes the rest of a
-// file without telling anyone. Both openers are reported, with the position of
-// the OPENER rather than of the end of input.
 function test_unterminated_input_is_reported(): test.TestOutcome {
   let block: StripR = strip("a;\n/* never closed\nb;\n");
   if (block.ok) {
@@ -421,8 +327,6 @@ function test_unterminated_input_is_reported(): test.TestOutcome {
     return test.fail("char reported code " + ch.err.code.to_string());
   }
 
-  // A line comment running to end-of-file with no trailing newline is NOT an
-  // error — it is the ordinary last line of a file.
   let eof: StripR = strip("a; // to the end");
   if (!eof.ok) {
     return test.fail("a line comment at EOF was rejected: " + eof.err.msg);

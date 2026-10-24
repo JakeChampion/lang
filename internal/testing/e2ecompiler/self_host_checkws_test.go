@@ -7,15 +7,6 @@ import (
 	"testing"
 )
 
-// checkStatusLines reduces `-check <DIR>` output to its per-member verdicts and
-// the summary, dropping the diagnostics that explain a failure.
-//
-// The verdicts are what the two compilers must agree on. The explanations are
-// not comparable and are not meant to be: the self-host checker is partial
-// (#9053), so a member both refuse can be refused for differently-worded
-// reasons — and the two even order the text differently, native printing FAIL
-// before the diagnostic it collected, the self-host printing diagnostics as it
-// finds them and the verdict after.
 func checkStatusLines(out string) string {
 	var rows []string
 	for _, line := range strings.Split(out, "\n") {
@@ -28,14 +19,6 @@ func checkStatusLines(out string) string {
 	return strings.Join(rows, "\n")
 }
 
-// TestSelfHostCheckWorkspaceDifferentialX86_64 is the parity gate for
-// `-check <DIR>` (#6640): the self-host must visit the same packages, reach
-// the same verdict on each, and summarise the workspace the same way native
-// does.
-//
-// A workspace-wide check is the command that answers "does this multi-package
-// program build" — so a self-host that silently checks fewer members than
-// native reports a green workspace nobody validated.
 func TestSelfHostCheckWorkspaceDifferentialX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -47,19 +30,14 @@ func TestSelfHostCheckWorkspaceDifferentialX86_64(t *testing.T) {
 	nativeBin := buildFernCLIBin(t)
 
 	const okLib = "pub function f(): i32 { return 1; }\n"
-	// Ill-typed in a way BOTH checkers catch: the self-host's is partial, so a
-	// member has to fail for a reason it models too, or the differential is
-	// pinning native's coverage rather than the workspace walk.
 	const badLib = "pub function f(): i32 { return \"nope\"; }\n"
 
 	for _, c := range []struct {
 		name   string
 		files  map[string]string
-		target string // the directory passed to -check, relative to the tree
+		target string
 		wantOK bool
 	}{
-		// Every member checks clean: both report one `ok` per member and the
-		// same count.
 		{"workspace-all-ok", map[string]string{
 			"fern.toml":   "[workspace]\nmembers = [\"a\", \"b\"]\n",
 			"a/fern.toml": "[package]\nname = \"a\"\n",
@@ -67,8 +45,6 @@ func TestSelfHostCheckWorkspaceDifferentialX86_64(t *testing.T) {
 			"b/fern.toml": "[package]\nname = \"b\"\n",
 			"b/main.fern": "function main(): i32 { return 0; }\n",
 		}, ".", true},
-		// One broken member does not hide the rest: the walk continues, and
-		// the summary counts what failed.
 		{"workspace-one-fails", map[string]string{
 			"fern.toml":   "[workspace]\nmembers = [\"a\", \"b\"]\n",
 			"a/fern.toml": "[package]\nname = \"a\"\n",
@@ -76,39 +52,29 @@ func TestSelfHostCheckWorkspaceDifferentialX86_64(t *testing.T) {
 			"b/fern.toml": "[package]\nname = \"b\"\n",
 			"b/lib.fern":  badLib,
 		}, ".", false},
-		// A member with neither its `lib` module nor main.fern is a per-member
-		// failure naming both spellings, not a crash.
 		{"workspace-member-without-entry", map[string]string{
-			"fern.toml":   "[workspace]\nmembers = [\"a\", \"gone\"]\n",
-			"a/fern.toml": "[package]\nname = \"a\"\n",
-			"a/lib.fern":  okLib,
-			// `gone` has a manifest and no module.
+			"fern.toml":      "[workspace]\nmembers = [\"a\", \"gone\"]\n",
+			"a/fern.toml":    "[package]\nname = \"a\"\n",
+			"a/lib.fern":     okLib,
 			"gone/fern.toml": "[package]\nname = \"gone\"\n",
 		}, ".", false},
-		// A plain package directory (no [workspace]) checks its own entry
-		// module, and says nothing about members.
 		{"package-dir", map[string]string{
 			"fern.toml": "[package]\nname = \"solo\"\n",
 			"lib.fern":  okLib,
 		}, ".", true},
-		// The manifest's `lib` key selects the entry module.
 		{"package-dir-custom-lib", map[string]string{
 			"fern.toml": "[package]\nname = \"solo\"\nlib = \"core.fern\"\n",
 			"core.fern": okLib,
 		}, ".", true},
-		// A package whose manifest names a module that is not there is
-		// refused, rather than checking nothing and reporting success.
 		{"package-dir-no-entry", map[string]string{
 			"fern.toml":  "[package]\nname = \"solo\"\n",
 			"other.fern": okLib,
 		}, ".", false},
-		// A directory inside a package resolves upward to that package.
 		{"nested-dir-resolves-upward", map[string]string{
 			"fern.toml":    "[package]\nname = \"solo\"\n",
 			"lib.fern":     okLib,
 			"sub/keep.txt": "",
 		}, "sub", true},
-		// A directory no manifest governs is refused by both.
 		{"no-manifest", map[string]string{
 			"empty/keep.txt": "",
 		}, "empty", false},
@@ -146,11 +112,6 @@ func TestSelfHostCheckWorkspaceDifferentialX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostCheckDirRefusesUnknownTargetX86_64: `-check DIR -target T`
-// checks every member against T, so a T no descriptor answers for is refused
-// before any member is visited, as it is for a file. The directory form used
-// to be dispatched ahead of the target's validation and checked the whole
-// workspace against nothing.
 func TestSelfHostCheckDirRefusesUnknownTargetX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

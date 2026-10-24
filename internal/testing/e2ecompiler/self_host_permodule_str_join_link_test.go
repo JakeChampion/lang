@@ -9,10 +9,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostPerModuleStrJoinLinks: a LIBRARY unit that joins a string array
-// links per module and answers. The entry unit defines __fn___fern_arr_str_join
-// once and must export it; it did not until std/string joined the compiler's
-// own module set and the emit-all fixpoint stopped linking on reverse_words.
 func TestSelfHostPerModuleStrJoinLinks(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)

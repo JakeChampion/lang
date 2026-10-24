@@ -10,28 +10,6 @@ import (
 	"testing"
 )
 
-// `let r: string = base.replace(old, new)` releases its result, guarded:
-// replace has a genuine identity fast-path, so the result may BE the receiver.
-//
-// Measured directly, one call each, bytes allocated:
-//
-//	needle ABSENT    x86-64 0     wasm 0     -> the receiver's own box comes back
-//	needle PRESENT   x86-64 136   wasm 120   -> a fresh box
-//
-// An unguarded release frees a box the receiver still owns, and the receiver's
-// own release then double-frees. Which case it is depends on the run-time
-// needle, so the release frees only under `result != receiver`.
-//
-// Measured, 400 rounds of the harness below:
-//
-//	shape                       x86-64          wasm
-//	replace, needle present   54400 -> 0    48000 -> 0
-//	replace, needle absent        0 -> 0         0 -> 0
-//
-// The guard is witnessed at FAULT level, not merely by the absent-case staying
-// at zero: without it the liveness case below over-releases — exit 99 (rc
-// underflow) on x86-64, a trap on wasm.
-
 const strReplacePrelude = strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 `
 
@@ -60,9 +38,6 @@ var strReplaceHeapCases = []struct {
 }{
 	{"str-replace-fresh-released", `    let r: string = base.replace("wide", "NARROW");
     return r.len() % 251;`},
-	// The identity case allocates nothing to begin with, so this pins that the
-	// guard did not somehow ADD a cost — and, with the fault case below, that it
-	// skipped the free rather than performing a harmless one.
 	{"str-replace-identity-stays-flat", `    let r: string = base.replace("ZZZZ", "!");
     return r.len() % 251;`},
 }
@@ -71,9 +46,6 @@ var strReplaceFaultCases = []struct {
 	name string
 	src  string
 }{
-	// THE case. `same` IS base's own box; `diff` is fresh. Both are credited, and
-	// only one may be freed. A compiler with the guard removed exits 99 here on
-	// x86-64 and traps on wasm.
 	{"str-replace-identity-and-fresh-live", strReplacePrelude + `function round(pre: string): i32 {
     let base: string = w(pre);
     let same: string = base.replace("ZZZZ", "!");
@@ -90,7 +62,6 @@ var strReplaceFaultCases = []struct {
     return 3;
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
-	// ESCAPE: the result is returned, so the credit is withheld.
 	{"str-replace-escapes-return", strReplacePrelude + `function rep(pre: string): string { let base: string = w(pre); let r: string = base.replace("wide", "NARROW"); return r; }
 function round(pre: string): i32 {
     let r: string = rep(pre);
@@ -100,8 +71,6 @@ function round(pre: string): i32 {
     return r.len() % 251;
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; let want: i32 = round(pre); while (i < 2000) { if (round(pre) != want) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
-	// A USER `.replace()` returning a field alias: refused by the declared-type
-	// receiver test, like its trim / join / to_string siblings.
 	{"str-replace-user-method-not-credited", strReplacePrelude + `struct Holder { name: string, tag: string }
 function (h: Holder) replace(a: string, b: string): string { return h.name; }
 function rep(h: Holder): i32 { let r: string = h.replace("x", "y"); return r.len() % 251; }
@@ -134,7 +103,6 @@ func strReplaceSources() []struct{ name, src string } {
 	return out
 }
 
-// TestSelfHostStrReplaceIdentityIRX86_64 is the x86-64 leg.
 func TestSelfHostStrReplaceIdentityIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -162,7 +130,6 @@ func TestSelfHostStrReplaceIdentityIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrReplaceIdentityIRArm64 is the arm64 leg.
 func TestSelfHostStrReplaceIdentityIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -186,7 +153,6 @@ func TestSelfHostStrReplaceIdentityIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrReplaceIdentityWasmIR is the wasm leg.
 func TestSelfHostStrReplaceIdentityWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping replace identity wasm IR e2e")

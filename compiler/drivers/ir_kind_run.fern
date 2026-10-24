@@ -1,26 +1,3 @@
-// compiler/ir_kind_run.fern — round-trip driver for the integer
-// op-kind registry (ir.fern's kind_id / kind_name, issue #4394 lever 2).
-//
-// It walks the WHOLE registry (ids 1..kind_count(), plus the named extension
-// tags beyond it) and asserts the id<->name bijection —
-// kind_id(kind_name(id)) == id and kind_name(id) is never the "invalid"
-// sentinel — so a new op kind added to one direction but not the other (or a
-// duplicate id) fails here rather than silently miscompiling a backend once
-// the int tag is wired. Those two sweeps between them name every tag kind_id
-// knows, so the round trip is EXHAUSTIVE, not a sample. It also pins the
-// KIND_INVALID contract (unknown tag -> 0, out-of-range / 0 id -> "invalid"),
-// a negative sweep over near-miss tags that probes kind_id's (length, first
-// byte) narrowing from the other side, and the int-keyed classifier predicates
-// (is_const_kind / is_terminator_kind / is_foldable_binary_kind /
-// is_commutative_kind), and ends with every registered tag's id so the golden
-// pins the numbering itself.
-//
-// The companion Go test (internal/testing/e2ecompiler/self_host_ir_kind_test.go)
-// asserts the exact stdout (the id table against testdata/ir-kind-ids.txt)
-// and an exit code of 0 (zero bijection failures), pinning the registry
-// end-to-end through the self-host -> native pipeline (proving the registry
-// compiles + round-trips, not just type-checks).
-
 import "../ir";
 import "../util";
 
@@ -34,9 +11,6 @@ function b2s(b: boolean): string {
 function main(): i32 {
   let n: i32 = ir.kind_count();
 
-  // 1. Full-table bijection sweep. Every id in 1..n must render to a
-  //    non-"invalid" tag that maps back to the same id, except a retired
-  //    id, which must render to nothing.
   let failures: i32 = 0;
   let ok: i32 = 0;
   let retired: i32 = 0;
@@ -58,15 +32,6 @@ function main(): i32 {
     id = id + 1;
   }
 
-  // 1b. Extension-tag sweep — the registered ids BEYOND kind_count()
-  //     (store_i64=199 … mismatch=245). Each must sit past
-  //     the original range and round-trip through kind_name, so a tag reachable
-  //     from kind_id but unrendered by kind_name fails here.
-  //
-  //     Adding an extension tag means adding it HERE too: `oob` below probes
-  //     ext_max + 1, so an unregistered tag silently becomes the
-  //     "past every registered id" probe and reports its own name where the
-  //     invalid sentinel belongs.
   let ext_names: string[] = [
     "store_i64", "tcp_listen", "tcp_accept", "writer_write",
     "open_file", "syscall3", "raw_scratch", "syscall4", "raw_environ", "raw_splice_pipe", "raw_cover", "line", "raw_task_state", "raw_vdso", "str_from_bytes_range",
@@ -136,15 +101,6 @@ function main(): i32 {
   out = out + "ext_ok=" + util.i32_to_string(ext_ok) + "\n";
   out = out + "ext_failures=" + util.i32_to_string(ext_failures) + "\n";
 
-  // 1c. Negative sweep. kind_id narrows on the tag's (length, first byte)
-  //     before it compares a string (#8258), so "returns 0" has to be proved
-  //     against tags that pass one guard and fail the other: a near miss
-  //     inside a populated bucket ("adz" against add/and, "fadz" against the
-  //     twelve four-byte f-ops), a first byte no bucket of that length has
-  //     ("zadd"), a real tag one byte short or long ("call_direc",
-  //     "call_directt"), a length no tag has at all (17 and 20 bytes, which
-  //     no kind_id_lenN owns), the empty string, and a one-byte tag. Every
-  //     one of them must be KIND_INVALID.
   let neg_names: string[] = [
     "struct_copy", "", "a", "adz", "fadz", "zadd", "or_", "brif_", "call_direc",
     "tcp_connecx", "call_directt", "arr_push_shared_bytez",
@@ -164,20 +120,15 @@ function main(): i32 {
   out = out + "neg_ok=" + util.i32_to_string(neg_ok) + "\n";
   out = out + "neg_failures=" + util.i32_to_string(neg_failures) + "\n";
 
-  // 2. KIND_INVALID contract: unknown tag -> 0, and 0 / past-every-
-  //    registered-id (extension tags included) -> the "invalid" sentinel.
   out = out + "unknown_id=" + util.i32_to_string(ir.kind_id("not_an_op_kind")) + "\n";
   out = out + "id0=" + ir.kind_name(0) + "\n";
   out = out + "oob=" + ir.kind_name(ext_max + 1) + "\n";
 
-  // 3. Spot-check a few tags round-trip to the right names (locks the actual
-  //    ids down for the golden, so a reorder that still bijects is visible).
   out = out + "const_i32=" + util.i32_to_string(ir.kind_id("const_i32")) + "\n";
   out = out + "add=" + util.i32_to_string(ir.kind_id("add")) + "\n";
   out = out + "call_direct=" + util.i32_to_string(ir.kind_id("call_direct")) + "\n";
   out = out + "return=" + util.i32_to_string(ir.kind_id("return")) + "\n";
 
-  // 4. int-keyed classifier predicates.
   out = out + "is_const const_i32=" + b2s(ir.is_const_kind(ir.kind_id("const_i32")))
     + " const_str=" + b2s(ir.is_const_kind(ir.kind_id("const_str")))
     + " add=" + b2s(ir.is_const_kind(ir.kind_id("add"))) + "\n";
@@ -194,13 +145,6 @@ function main(): i32 {
     + " sub=" + b2s(ir.is_commutative_kind(ir.kind_id("sub")))
     + " shl=" + b2s(ir.is_commutative_kind(ir.kind_id("shl"))) + "\n";
 
-  // 5. Constructor-baked kind_tag consistency. Op no longer carries a string
-  //    kind — every constructor stamps only a kind_tag (a baked literal id
-  //    for the fixed-kind ops, kind_id(kind) for the variable-kind ones), and
-  //    all backends dispatch on it. Assert each constructor bakes the tag its
-  //    name maps to (kind_tag == kind_id(EXPECTED)) across a representative
-  //    spread — a wrong literal or a registry reorder desyncs this and fails
-  //    here rather than silently misdispatching a backend.
   let probe: ir.Op[] = [
     ir.op_const_i32(42), ir.op_const_str("x"), ir.op_load_local(0),
     ir.op_store_local(0), ir.op_tee_local(0), ir.op_bin("add", 0, false),
@@ -301,9 +245,6 @@ function main(): i32 {
   out = out + "tag_consistency ok=" + util.i32_to_string(tag_ok)
     + " bad=" + util.i32_to_string(tag_bad) + "\n";
 
-  // 6. Every registered tag's id, in id order (the golden pins the whole
-  //    table, not a spot-check: the backends dispatch on literal ids, so a
-  //    renumbering that still bijects is a miscompile).
   let tid: i32 = 1;
   while (tid <= ext_max) {
     let tname: string = ir.kind_name(tid);
@@ -313,11 +254,7 @@ function main(): i32 {
     tid = tid + 1;
   }
 
-  // Every line above already carries its own trailing "\n", so emit the
-  // accumulated buffer with `write` (no extra newline) rather than `print`.
   write(out);
 
-  // Exit code is the total failure count (bijection + extension sweep +
-  // negative sweep + tag consistency): 0 on a clean sweep.
   return failures + ext_failures + neg_failures + tag_bad;
 }

@@ -1,7 +1,7 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Array-reassignment chain (dec-on-overwrite).
+
+
+
+
 import "core/int";
 import "std/string";
 function main(): i32 {

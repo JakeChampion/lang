@@ -1,32 +1,7 @@
-// compiler/fern_toml.fern — the fern.toml / fern.lock reader for the
-// self-hosted compiler's module loader, mirroring the Go oracle's
-// internal/pkg/manifest + internal/pkg/mvs.
-//
-// The manifest parser accepts exactly the manifests manifest.Parse accepts
-// and refuses the rest with the same message: [package], [dependencies] (path,
-// workspace, version and url+hash forms, each with an optional capabilities
-// grant), [workspace], [exclude], [lint] and [lint.options]. A url dependency
-// and a url-sourced lock entry parse to their `sha256:<hex>` hash, which
-// modloader.store_dir resolves from the per-machine content-addressed store;
-// populating and verifying that store is `fern -fetch` (#4949).
-
 import "./util";
 import "./capvocab";
 import "./docsummary";
 
-// Dep is one declared dependency. `kind` tags the form the loader must
-// resolve: "path" (dir given by `path`), "workspace" (a sibling
-// workspace member, located by name), "version" (an MVS dependency
-// resolved through fern.lock — `path` unused, the lock pins the source),
-// or "url" (a url+hash dep resolved from the per-machine content-
-// addressed store by `hash` — the loader never touches the network;
-// #4949). `hash` is the manifest's `sha256:<hex>` for a url dep, ""
-// otherwise, and `url` where it is downloaded from.
-//
-// `governed` records whether the entry carried a `capabilities` key at
-// all, which is a different question from what `caps` holds: an empty
-// grant list (`capabilities = []`) denies everything, while no key at
-// all is warn-and-allow (docs/PACKAGE-CAPABILITIES-BRIEF.md, #6634).
 pub struct Dep {
   name: string,
   kind: string,
@@ -38,16 +13,6 @@ pub struct Dep {
   caps: string[],
 }
 
-// Manifest is the subset the loader reads: the [package] name + lib
-// module (empty lib ⇒ default "lib.fern"), the declared dependencies,
-// and the [workspace] members list (empty ⇒ not a workspace). `err` is the
-// first diagnostic, worded as manifest.Parse words it, or "".
-//
-// `index` is the [package] index path — the version authority MVS resolves
-// versioned dependencies against (empty ⇒ none). `excl_pkg` / `excl_ver`
-// are the [exclude] table as parallel arrays, one pair per banned version;
-// only the ROOT manifest's excludes reach resolution, which is what keeps
-// it deterministic.
 pub struct Manifest {
   name: string,
   lib: string,
@@ -56,17 +21,12 @@ pub struct Manifest {
   members: string[],
   excl_pkg: string[],
   excl_ver: string[],
-  // lint_keys / lint_vals are the [lint] and [lint.options] tables as raw
-  // `key = value` pairs, in file order; a dotted key is a rule option.
   lint_keys: string[],
   lint_vals: string[],
-  // err is the first diagnostic, at line err_line of the source.
   err: string,
   err_line: i32,
 }
 
-// index_of returns the first index of the single-char needle `c` in `s`
-// at or after `from`, or -1.
 function index_of(s: string, c: u8, from: i32): i32 {
   let i: i32 = from;
   while (i < s.len()) {
@@ -78,8 +38,6 @@ function index_of(s: string, c: u8, from: i32): i32 {
   return 0 - 1;
 }
 
-// quoted_value extracts the first double-quoted string's contents that
-// appears at or after `from` in `s`, or None.
 function quoted_value(s: string, from: i32): Option[string] {
   let q1: i32 = index_of(s, b'"', from);
   if (q1 < 0) {
@@ -92,7 +50,6 @@ function quoted_value(s: string, from: i32): Option[string] {
   return Some(slice_unchecked(s, q1 + 1, q2) + "");
 }
 
-// split_char splits `src` on the byte `c`, keeping empty fields.
 function split_char(src: string, c: u8): string[] {
   let out: string[] = [];
   let start: i32 = 0;
@@ -108,8 +65,6 @@ function split_char(src: string, c: u8): string[] {
   return out;
 }
 
-// line_content is a source line without its comment or the space around
-// it: a `#` outside a double-quoted string starts a comment.
 pub function line_content(raw: string): string {
   let quoted: boolean = false;
   let i: i32 = 0;
@@ -124,8 +79,6 @@ pub function line_content(raw: string): string {
   return util.trim(raw);
 }
 
-// is_integer_text reports whether `s` is decimal digits, after an optional
-// leading `-`.
 function is_integer_text(s: string): boolean {
   let i: i32 = 0;
   if (s.len() > 1 && s[0] == b'-') {
@@ -140,9 +93,6 @@ function is_integer_text(s: string): boolean {
   return s.len() > 0;
 }
 
-// parse reads a fern.toml source into a Manifest. It accepts exactly what
-// native manifest.Parse accepts and refuses the rest in its words: `err` is
-// the first diagnostic, and the other fields are partial when it is set.
 pub function parse(src: string): Manifest {
   let m: Manifest = Manifest {
     name: "", lib: "lib.fern", index: "", deps: [], members: [],
@@ -151,8 +101,6 @@ pub function parse(src: string): Manifest {
   let package_line: i32 = 1;
   let workspace: boolean = false;
   let section: string = "";
-  // Every section header and `section\nkey` seen so far: TOML defines each
-  // once, and a repeat is refused rather than silently overriding the first.
   let seen: string[] = [];
   let lines: string[] = split_char(src, b'\n');
   let li: i32 = 0;
@@ -184,8 +132,6 @@ pub function parse(src: string): Manifest {
   return m;
 }
 
-// diagnostic renders the refusal `m` carries as native's manifest.Error does,
-// `path:line:1: error[E088]: message`, the path left off when it is empty.
 pub function diagnostic(path: string, m: Manifest): string {
   let at: string = util.i32_to_string(m.err_line) + ":1";
   if (path.len() > 0) {
@@ -205,7 +151,6 @@ function section_error(section: string, seen: string[]): string {
   return "";
 }
 
-// entry_key is the key of a `key = value` line.
 function entry_key(line: string): string {
   let eq: i32 = index_of(line, b'=', 0);
   if (eq < 0) {
@@ -218,7 +163,6 @@ function failed(m: Manifest, err: string): Manifest {
   return Manifest { ...m, err: err };
 }
 
-// with_entry is `m` with one `key = value` line of `section` applied.
 function with_entry(m: Manifest, section: string, line: string, seen: string[]): Manifest {
   let eq: i32 = index_of(line, b'=', 0);
   if (eq < 0) {
@@ -289,8 +233,6 @@ function with_members(m: Manifest, key: string, val: string): Manifest {
   return Manifest { ...m, members: ms.values };
 }
 
-// with_lint keeps a [lint] or [lint.options] pair for the linter, which
-// reads the tables; under [lint.options] the key is `<rule>.<option>`.
 function with_lint(m: Manifest, section: string, key: string, val: string): Manifest {
   let v: Parsed = parse_scalar(val);
   if (v.err.len() > 0) {
@@ -322,12 +264,10 @@ function with_exclude(m: Manifest, key: string, val: string): Manifest {
   return Manifest { ...m, excl_pkg: excl_pkg, excl_ver: excl_ver };
 }
 
-// Parsed is one scalar value, or why it is not one.
 struct Parsed { value: string, err: string }
 
 pub struct ParsedList { values: string[], err: string }
 
-// parse_string accepts a double-quoted string with no escapes.
 function parse_string(val: string): Parsed {
   if (val.len() < 2 || val[0] != b'"' || val[val.len() - 1] != b'"') {
     return Parsed { value: "", err: "expected a double-quoted string, got " + docsummary.quote(val) };
@@ -339,7 +279,6 @@ function parse_string(val: string): Parsed {
   return Parsed { value: s, err: "" };
 }
 
-// parse_scalar accepts a quoted string or a bare integer.
 function parse_scalar(val: string): Parsed {
   if (val.len() > 0 && val[0] == b'"') {
     return parse_string(val);
@@ -353,8 +292,6 @@ function parse_scalar(val: string): Parsed {
   return Parsed { value: val, err: "" };
 }
 
-// parse_str_array parses a single-line inline array of quoted strings:
-// `["a", "b/c"]` → ["a", "b/c"].
 function parse_str_array(val: string): ParsedList {
   if (val.len() < 2 || val[0] != b'[' || val[val.len() - 1] != b']') {
     return ParsedList { values: [], err: "expected an array like [\"a\", \"b\"], got " + docsummary.quote(val) };
@@ -373,7 +310,6 @@ function parse_str_array(val: string): ParsedList {
   return ParsedList { values: out, err: "" };
 }
 
-// is_version reports whether `s` is a bare MAJOR.MINOR.PATCH version.
 pub function is_version(s: string): boolean {
   let parts: string[] = split_char(s, b'.');
   if (parts.len() != 3) {
@@ -387,7 +323,6 @@ pub function is_version(s: string): boolean {
   return true;
 }
 
-// valid_dep_name: letters, digits, `_` and `-`, not starting with a digit.
 pub function valid_dep_name(s: string): boolean {
   if (s.len() == 0 || is_digit(s[0])) {
     return false;
@@ -408,22 +343,11 @@ function is_letter(c: u8): boolean {
   return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z';
 }
 
-// HashResult is validate_hash's outcome: the 64 hex digits of the archive
-// digest, or a diagnostic naming what a hash must look like.
 pub struct HashResult {
   hex: string,
   err: string,
 }
 
-// validate_hash checks a package hash is exactly `sha256:` + 64 lowercase hex
-// digits, returning the hex part. Every route that records a hash goes through
-// here, because the hex is joined onto the content-addressed store root: an
-// unvalidated hash is a directory traversal that also skips verification —
-// there is nothing to verify against and nothing to download. Uppercase hex is
-// rejected, so one spelling of a digest names one store directory.
-//
-// Mirrors native pkgcache.ValidateHash, message included: the two compilers
-// must agree on what a hash is, or a lock one accepts is one the other refuses.
 pub function validate_hash(hash: string): HashResult {
   let bad: string = "must be `sha256:` + 64 lowercase hex digits of the archive bytes, got "
     + docsummary.quote(hash);
@@ -453,9 +377,6 @@ function dep_failed(d: Dep, err: string): DepResult {
   return DepResult { dep: d, err: err };
 }
 
-// parse_dep reads one [dependencies] value: a bare version string, or an
-// inline table of `path`, `url` + `hash`, `workspace = true` or `version`,
-// any of them with a `capabilities` grant.
 function parse_dep(name: string, val: string): DepResult {
   let d: Dep = Dep { name: name, kind: "", path: "", url: "", hash: "", version: "", governed: false, caps: [] };
   if (val.len() == 0 || val[0] != b'{') {
@@ -485,9 +406,6 @@ function parse_dep(name: string, val: string): DepResult {
   return classified(d);
 }
 
-// with_dep_field applies one `key = value` field of an inline dependency
-// table. A `workspace = true` field marks the kind until classified() checks
-// it stands alone.
 function with_dep_field(d: Dep, part: string): DepResult {
   let eq: i32 = index_of(part, b'=', 0);
   if (eq < 0) {
@@ -544,8 +462,6 @@ function with_dep_string(d: Dep, k: string, s: string): DepResult {
   return dep_failed(d, "unknown dependency key " + docsummary.quote(k) + " (supported: path, url, hash, workspace, version, capabilities)");
 }
 
-// classified settles the kind from the fields an inline table set, refusing
-// a combination that names more than one source.
 function classified(d: Dep): DepResult {
   let remote: boolean = d.url.len() > 0 || d.hash.len() > 0;
   if (d.kind == "workspace") {
@@ -563,8 +479,6 @@ function classified(d: Dep): DepResult {
   return source_classified(d, remote);
 }
 
-// source_classified settles a dependency that is neither a workspace member
-// nor versioned: a `path`, or a `url` + `hash` pair.
 function source_classified(d: Dep, remote: boolean): DepResult {
   if (d.path.len() > 0) {
     if (remote) {
@@ -581,8 +495,6 @@ function source_classified(d: Dep, remote: boolean): DepResult {
   return dep_failed(d, "missing `path` (or `url` + `hash`, `workspace = true`, or a version)");
 }
 
-// inline_parts splits an inline-table body at the commas outside any quoted
-// string or `[...]`, so an array-valued field stays one part.
 function inline_parts(body: string): string[] {
   let out: string[] = [];
   let start: i32 = 0;
@@ -606,8 +518,6 @@ function inline_parts(body: string): string[] {
   return out.append(slice_unchecked(body, start, body.len()) + "");
 }
 
-// parse_capabilities parses a `capabilities = [...]` grant: every name from
-// the vocabulary, deduped and in vocabulary order. Empty grants nothing.
 pub function parse_capabilities(val: string): ParsedList {
   let names: ParsedList = parse_str_array(val);
   if (names.err.len() > 0) {
@@ -642,11 +552,6 @@ function ordered_caps(values: string[]): string[] {
   return out;
 }
 
-// dep_path returns the declared PATH of a path dependency `name`, or
-// None. Iterates m.deps directly (no Option[Dep] intermediary): a struct-
-// payload Option (Some(dep)) is outside the self-host IR emitter's lowered
-// subset, so returning the primitive Option[string] keeps this module
-// per-module-IR-eligible.
 pub function dep_path(m: Manifest, name: string): Option[string] {
   let i: i32 = 0;
   while (i < m.deps.len()) {
@@ -658,7 +563,6 @@ pub function dep_path(m: Manifest, name: string): Option[string] {
   return None;
 }
 
-// has_dep reports whether `name` is declared at all.
 pub function has_dep(m: Manifest, name: string): boolean {
   let i: i32 = 0;
   while (i < m.deps.len()) {
@@ -670,9 +574,6 @@ pub function has_dep(m: Manifest, name: string): boolean {
   return false;
 }
 
-// dep_kind returns the kind of dependency `name` ("path"/"workspace"/
-// "version"/"url"), or "" when undeclared. Iterates m.deps directly (see
-// dep_path on why no Option[Dep] intermediary).
 pub function dep_kind(m: Manifest, name: string): string {
   let i: i32 = 0;
   while (i < m.deps.len()) {
@@ -684,7 +585,6 @@ pub function dep_kind(m: Manifest, name: string): string {
   return "";
 }
 
-// dep_names lists every declared dependency, in manifest order.
 pub function dep_names(m: Manifest): string[] {
   let out: string[] = [];
   let i: i32 = 0;
@@ -695,9 +595,6 @@ pub function dep_names(m: Manifest): string[] {
   return out;
 }
 
-// dep_governed reports whether dependency `name`'s entry carries a
-// `capabilities` key — the question that decides whether reaching outside
-// the grant is an error or a warning (#6634).
 pub function dep_governed(m: Manifest, name: string): boolean {
   let i: i32 = 0;
   while (i < m.deps.len()) {
@@ -709,8 +606,6 @@ pub function dep_governed(m: Manifest, name: string): boolean {
   return false;
 }
 
-// dep_caps returns the capabilities granted to dependency `name`, empty
-// when undeclared or ungoverned. Same primitive-return shape as dep_kind.
 pub function dep_caps(m: Manifest, name: string): string[] {
   let i: i32 = 0;
   while (i < m.deps.len()) {
@@ -723,9 +618,6 @@ pub function dep_caps(m: Manifest, name: string): string[] {
   return empty;
 }
 
-// dep_hash returns the `sha256:<hex>` hash of a url dependency `name`,
-// or None (undeclared, or not a url dep). Same primitive-Option shape as
-// dep_path.
 pub function dep_hash(m: Manifest, name: string): Option[string] {
   let i: i32 = 0;
   while (i < m.deps.len()) {
@@ -737,12 +629,6 @@ pub function dep_hash(m: Manifest, name: string): Option[string] {
   return None;
 }
 
-// LockEntry is one resolved dependency from fern.lock: the package name
-// plus, for a `path`-sourced version, its directory, and for a
-// `url`-sourced version, its `sha256:<hex>` hash — resolved from the
-// per-machine content-addressed store (#4949). `version` is the pinned
-// version; the loader does not need it, but a diagnostic naming what was
-// selected does.
 pub struct LockEntry {
   name: string,
   version: string,
@@ -751,17 +637,11 @@ pub struct LockEntry {
   hash: string,
 }
 
-// LockResult is parse_lock's outcome: the entries, or the first diagnostic.
-// A lock that names a source the loader would go on to open has to be able to
-// refuse — a `hash` is joined onto the store root, so an unchecked one picks
-// the directory the build compiles from.
 pub struct LockResult {
   entries: LockEntry[],
   err: string,
 }
 
-// parse_lock reads a fern.lock's `[[package]]` entries, keeping the name
-// plus the `path` directory (path-sourced) or the `hash` (url-sourced).
 pub function parse_lock(src: string): LockResult {
   let out: LockEntry[] = [];
   let blank: LockEntry = LockEntry { name: "", version: "", path: "", url: "", hash: "" };
@@ -804,8 +684,6 @@ pub function parse_lock(src: string): LockResult {
   return LockResult { entries: out, err: "" };
 }
 
-// with_lock_field is `e` with the lock key `key` set to `v`; any other key
-// leaves it as it is.
 function with_lock_field(e: LockEntry, key: string, v: string): LockEntry {
   if (key == "name") {
     return LockEntry { ...e, name: v };
@@ -825,9 +703,6 @@ function with_lock_field(e: LockEntry, key: string, v: string): LockEntry {
   return e;
 }
 
-// lock_has returns whether `name` has a [[package]] entry at all — the
-// question "is this dependency resolved?", which lock_path_of / lock_hash_of
-// cannot answer on their own (each is None for the other's source form).
 pub function lock_has(entries: LockEntry[], name: string): boolean {
   let i: i32 = 0;
   while (i < entries.len()) {
@@ -839,7 +714,6 @@ pub function lock_has(entries: LockEntry[], name: string): boolean {
   return false;
 }
 
-// lock_version_of returns the version pinned for `name`, or "".
 pub function lock_version_of(entries: LockEntry[], name: string): string {
   let i: i32 = 0;
   while (i < entries.len()) {
@@ -851,9 +725,6 @@ pub function lock_version_of(entries: LockEntry[], name: string): string {
   return "";
 }
 
-// lock_path_of returns the resolved directory of a `path`-sourced locked
-// dependency `name`, or None (undeclared, or a url source the self-host
-// can't reach).
 pub function lock_path_of(entries: LockEntry[], name: string): Option[string] {
   let i: i32 = 0;
   while (i < entries.len()) {
@@ -865,9 +736,6 @@ pub function lock_path_of(entries: LockEntry[], name: string): Option[string] {
   return None;
 }
 
-// lock_hash_of returns the `sha256:<hex>` hash of a url-sourced locked
-// dependency `name`, or None — the store-resolution counterpart of
-// lock_path_of (#4949).
 pub function lock_hash_of(entries: LockEntry[], name: string): Option[string] {
   let i: i32 = 0;
   while (i < entries.len()) {

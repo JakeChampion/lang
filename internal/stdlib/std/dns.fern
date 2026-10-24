@@ -1,62 +1,5 @@
-// std/dns — a stub resolver: the RFC 1035 wire codec, `/etc/hosts`,
-// `/etc/resolv.conf`, a query over UDP that retries over TCP when the reply
-// is truncated, and the A, AAAA and canonical-name lookups built on them.
-// It is the P2 slice (#9855) of the networking plan in #9851.
-//
-// The pieces, bottom up:
-//
-//   - `Message`, `Question`, `Record`, `RData` — a DNS message as data.
-//     `encode` writes one (names uncompressed, which a query never needs),
-//     `decode` reads one, following compression pointers that only ever
-//     point backwards. `query(id, name, qtype)` is a recursion-desired
-//     question, and `with_edns(m)` appends the OPT record that lets a
-//     server answer 4096 bytes over UDP (EDNS0, RFC 6891).
-//   - `parse_hosts` and `parse_resolv_conf` read the two files glibc's
-//     resolver reads, with its defaults and caps: `ndots` up to 15,
-//     `timeout` up to 30 s, `attempts` up to 5, three nameservers, and
-//     the search list from the machine's own domain when the file names
-//     none. `RES_OPTIONS`, `LOCALDOMAIN` and `HOSTALIASES` are not read,
-//     and a nameserver with an IPv6 zone (`fe80::1%eth0`) is skipped.
-//   - `search_plan` is res_search's order for a name: a name with at
-//     least `ndots` dots is asked as it stands before the search domains,
-//     one with fewer after them, and a name ending in a dot only as it
-//     stands.
-//   - `exchange(ns, q, timeout)` is one query to one nameserver: UDP,
-//     the reply awaited up to the timeout, a reply with another id
-//     ignored, and a truncated reply asked again over TCP;
-//     `exchange_many` sends several queries at once and awaits their
-//     replies together. `ask(conf, q)` and `ask_many` are res_send over
-//     the nameservers: each is tried in turn, `attempts` times round,
-//     from a rotating start when `rotate` is set, a server that fails,
-//     refuses or stays silent handing the query to the next.
-//   - `lookup_a`, `lookup_aaaa` and `canonical_name` walk the search plan
-//     over `ask` and read the answer section, following a CNAME chain to
-//     the owner of the records; `lookup_records_with` takes the asker as
-//     a function, which is how the walk is tested without a socket.
-//     `lookup_addresses` asks for the A and AAAA records together.
-//   - `order_addresses` is the destination address selection of RFC
-//     6724, over the source address the host would use for each
-//     destination (`source_for`); `sort_addresses` probes and orders.
-//   - `connect_race` is the RFC 8305 dialer: the addresses tried in turn,
-//     each attempt running alone for the attempt delay before the next
-//     starts beside it, the first to connect winning. `dial(name, port)`
-//     resolves and races.
-//   - `nat64_prefixes` reads the prefixes a NAT64 translator answers under
-//     from the AAAA records of ipv4only.arpa (RFC 7050), and `synthesize`
-//     embeds an IPv4 address under one (RFC 6052); `resolve` does that for
-//     a host with no IPv4 route.
-//   - `system_conf()` and `system_hosts()` read the machine's files, and
-//     `resolve(name)` is the lookup a program wants by default: an address
-//     literal as it is, then the hosts file, then DNS, the addresses in
-//     RFC 6724 order.
-//
-// `.local` names are not special here: there is no mDNS, so they go to
-// the nameservers like any other name, which is what a resolver without
-// an mDNS backend does.
-//
-// Reaches the host for the files (`read_file`, `hostname`), the sockets
-// (`udp_*`, `tcp_*`, `poll`), the query id (`random_i32`) and the clock
-// the wait is measured by (`monotonic_ns`).
+// This module resolves DNS names through host files, UDP, and TCP.
+
 import "std/net";
 import "std/time";
 import "std/async";
@@ -67,17 +10,6 @@ import "std/error";
 import "std/utf8" as utf8;
 import "core/cmp";
 
-// ---------------------------------------------------------------------------
-// Errors
-
-// DnsError — why a lookup answered nothing.
-//
-// `NoSuchName` is the server's NXDOMAIN, `NoData` a clean reply with no
-// record of the asked type, `NoReply` a nameserver that stayed silent
-// through the timeout, `ServerFailure` and `Refused` its SERVFAIL and
-// REFUSED, `Malformed` a reply, a name or a file that does not parse,
-// `NoNameserver` a configuration naming none, and `Socket` what the
-// transport reported.
 pub enum DnsError {
   NoSuchName,
   NoData,
@@ -127,11 +59,6 @@ pub function (e: DnsError) to_string(): string {
   return e.message();
 }
 
-// ---------------------------------------------------------------------------
-// The message
-
-// The record types and class this module reads and writes by name; any
-// other type travels as `Raw` bytes.
 pub function type_a(): i32 {
   return 1;
 }
@@ -156,7 +83,6 @@ pub function class_in(): i32 {
   return 1;
 }
 
-// The response codes a reply's header carries (RFC 1035 §4.1.1).
 pub function rcode_ok(): i32 {
   return 0;
 }
@@ -181,8 +107,6 @@ pub function rcode_refused(): i32 {
   return 5;
 }
 
-// RData — a record's data: an address, the name a CNAME or PTR points
-// at, or the bytes of a type this module does not read.
 pub enum RData {
   A(net.IpAddr),
   AAAA(net.IpAddr),
@@ -191,14 +115,10 @@ pub enum RData {
   Raw(u8[]),
 }
 
-// Question — one entry of the question section.
 pub struct Question { name: string, qtype: i32, qclass: i32 }
 
-// Record — one resource record: its owner name, type, class, TTL and data.
 pub struct Record { name: string, rtype: i32, rclass: i32, ttl: i32, data: RData }
 
-// Message — a whole DNS message. `rcode` is the four-bit response code,
-// `opcode` the four-bit operation (0 is a standard query).
 pub struct Message {
   id: i32,
   response: boolean,
@@ -214,8 +134,6 @@ pub struct Message {
   additional: Record[],
 }
 
-// `query(id, name, qtype)` — a recursion-desired query for the records
-// of `name` of type `qtype`, class IN.
 pub function query(id: i32, name: string, qtype: i32): Message {
   let qs: Question[] = [Question { name: name, qtype: qtype, qclass: class_in() }];
   return Message {
@@ -225,23 +143,16 @@ pub function query(id: i32, name: string, qtype: i32): Message {
   };
 }
 
-// `udp_payload()` — the UDP payload size this module advertises with EDNS0,
-// what Go, hickory and c-ares advertise.
 pub function udp_payload(): i32 {
   return 4096;
 }
 
-// `with_edns(m)` — `m` with the OPT pseudo-record of EDNS0 appended to its
-// additional section: owner the root, type OPT, the class carrying the UDP
-// payload size, no options.
 pub function with_edns(m: Message): Message {
   let none: u8[] = [];
   let opt: Record = Record { name: "", rtype: type_opt(), rclass: udp_payload(), ttl: 0, data: Raw(none) };
   return Message { ...m, additional: m.additional.append(opt) };
 }
 
-// `rcode_name(rcode)` — a response code by its RFC 1035 name, for log
-// lines.
 pub function rcode_name(rcode: i32): string {
   if (rcode == 0) {
     return "NOERROR";
@@ -264,8 +175,6 @@ pub function rcode_name(rcode: i32): string {
   return "RCODE" + rcode.to_string();
 }
 
-// ---- encoding ---------------------------------------------------------------
-
 function put16(b: u8[], v: i32): u8[] {
   let out: u8[] = b.append((v >> 8 & 255) as u8);
   return out.append((v & 255) as u8);
@@ -276,10 +185,6 @@ function put32(b: u8[], v: i32): u8[] {
   return put16(out, v & 65535);
 }
 
-// A name on the wire: each label behind its length, the root as a lone
-// zero byte. A trailing dot is the root and is dropped. An empty label
-// (`a..b`), one over 63 bytes, or a name over 255 bytes on the wire
-// cannot be encoded.
 pub function encode_name(name: string): Result[u8[], DnsError] {
   let out: u8[] = [];
   let n: string = name;
@@ -370,10 +275,6 @@ function encode_records(b: u8[], rs: Record[]): Result[u8[], DnsError] {
   return Ok(out);
 }
 
-// `encode(m)` — the message on the wire, without the two-byte length a
-// TCP exchange puts in front. Names are written uncompressed. A section
-// of more than 65535 entries, or a name that cannot be encoded, is
-// `Malformed`.
 pub function encode(m: Message): Result[u8[], DnsError] {
   if (!sections_fit(m)) {
     return Err(Malformed);
@@ -399,7 +300,6 @@ function sections_fit(m: Message): boolean {
   return m.questions.len() <= 65535 && m.answers.len() <= 65535 && m.authority.len() <= 65535 && m.additional.len() <= 65535;
 }
 
-// The second header word: QR, opcode, AA, TC, RD, RA and the rcode.
 function header_flags(m: Message): i32 {
   let flags: i32 = (m.opcode & 15) << 11 | m.rcode & 15;
   if (m.response) {
@@ -420,8 +320,6 @@ function header_flags(m: Message): i32 {
   return flags;
 }
 
-// ---- decoding ---------------------------------------------------------------
-
 function be16(m: u8[], i: i32): i32 {
   return m[i] as i32 << 8 | m[i + 1] as i32;
 }
@@ -430,14 +328,8 @@ function be32(m: u8[], i: i32): i32 {
   return be16(m, i) << 16 | be16(m, i + 2);
 }
 
-// NameAt — a decoded name and the offset past it in the message.
 pub struct NameAt { name: string, next: i32 }
 
-// `decode_name(msg, pos)` — the name at `pos`: labels up to the root, or
-// up to a compression pointer, which is followed to a lower offset. A
-// pointer forward or to itself, a label past the end, or a name over 255
-// bytes is `Malformed`; `next` is the offset after the labels or after
-// the first pointer, which is where the message continues.
 pub function decode_name(msg: u8[], pos: i32): Result[NameAt, DnsError] {
   let out: string = "";
   let total: i32 = 0;
@@ -472,8 +364,6 @@ pub function decode_name(msg: u8[], pos: i32): Result[NameAt, DnsError] {
   return Err(Malformed);
 }
 
-// `next` once it is set, else `at`: the offset after the first pointer or
-// the root is where the message continues.
 function first_of(next: i32, at: i32): i32 {
   if (next < 0) {
     return at;
@@ -481,9 +371,6 @@ function first_of(next: i32, at: i32): i32 {
   return next;
 }
 
-// The offset a compression pointer at `p` points at, which has to be
-// lower than `p`; `hops` bounds a chain of pointers by the message's
-// size, since each has to go backwards.
 function pointer_target(msg: u8[], p: i32, hops: i32): Result[i32, DnsError] {
   if (p + 1 >= msg.len()) {
     return Err(Malformed);
@@ -495,9 +382,6 @@ function pointer_target(msg: u8[], p: i32, hops: i32): Result[i32, DnsError] {
   return Ok(target);
 }
 
-// `out` with the `len` bytes at `at` appended as its next label, or
-// None when those bytes are not well-formed UTF-8: a name is text, and
-// the wire is the boundary where that is checked.
 function join_label(out: string, msg: u8[], at: i32, len: i32): Option[string] {
   let label: u8[] = [];
   let k: i32 = 0;
@@ -548,8 +432,6 @@ function decode_rdata(msg: u8[], rtype: i32, rclass: i32, at: i32, rdlen: i32): 
   return decode_address_rdata(rtype, raw);
 }
 
-// An A or AAAA record's address, when the data is the right length for
-// it; any other type, or length, keeps its bytes.
 function decode_address_rdata(rtype: i32, raw: u8[]): Result[RData, DnsError] {
   if (rtype == type_a() && raw.len() == 4) {
     return Ok(A(net.ipv4(raw[0] as i32, raw[1] as i32, raw[2] as i32, raw[3] as i32)));
@@ -567,8 +449,6 @@ function decode_address_rdata(rtype: i32, raw: u8[]): Result[RData, DnsError] {
   return Ok(Raw(raw));
 }
 
-// A CNAME or PTR record's name, which may point back into the message
-// but has to end within the record's data.
 function decode_name_rdata(msg: u8[], rtype: i32, at: i32, rdlen: i32): Result[RData, DnsError] {
   let n: NameAt = decode_name(msg, at)?;
   if (n.next > at + rdlen) {
@@ -614,9 +494,6 @@ function decode_records(msg: u8[], pos: i32, count: i32): Result[RecordsAt, DnsE
   return Ok(RecordsAt { rs: out, next: p });
 }
 
-// `decode(msg)` — the message the bytes carry. Anything that does not
-// fit — a short header, a section count past the end, a bad pointer —
-// is `Malformed`; bytes after the last section are ignored.
 pub function decode(msg: u8[]): Result[Message, DnsError] {
   if (msg.len() < 12) {
     return Err(Malformed);
@@ -654,8 +531,6 @@ pub function decode(msg: u8[]): Result[Message, DnsError] {
   });
 }
 
-// `names_equal(a, b)` — two names compared as DNS compares them: without
-// regard to ASCII case, and a trailing dot is the root.
 pub function names_equal(a: string, b: string): boolean {
   return strip_root(a).eq_ignore_ascii_case(strip_root(b));
 }
@@ -667,9 +542,6 @@ function strip_root(n: string): string {
   return n;
 }
 
-// `(m).answers_question(q)` — whether `m` is a reply to the question
-// `q`: the same id is the caller's to check; this is the question itself,
-// name, type and class.
 pub function (m: Message) answers_question(q: Question): boolean {
   if (m.questions.len() != 1) {
     return false;
@@ -678,14 +550,8 @@ pub function (m: Message) answers_question(q: Question): boolean {
   return mq.qtype == q.qtype && mq.qclass == q.qclass && names_equal(mq.name, q.name);
 }
 
-// Answer — what the answer section says about a name: the owner the
-// CNAME chain ends at, and that owner's records of the asked type.
 pub struct Answer { canonical: string, records: Record[] }
 
-// `records_for(m, name, rtype)` — the records of type `rtype` the answer
-// section holds for `name`, following CNAMEs from `name` to the owner
-// that has them. A chain longer than the section is cut off where it
-// loops.
 pub function records_for(m: Message, name: string, rtype: i32): Answer {
   let cur: string = name;
   let hops: i32 = 0;
@@ -701,8 +567,6 @@ pub function records_for(m: Message, name: string, rtype: i32): Answer {
   return Answer { canonical: cur, records: none };
 }
 
-// What the answer section holds for one owner: its records of the asked
-// type, and the target of its first CNAME.
 struct OwnerScan { found: Record[], alias: string }
 
 function scan_owner(m: Message, owner: string, rtype: i32): OwnerScan {
@@ -736,8 +600,6 @@ function cname_target(d: RData): string {
   return "";
 }
 
-// `addresses_of(records)` — the addresses the A and AAAA records among
-// `records` carry, in their order.
 pub function addresses_of(records: Record[]): net.IpAddr[] {
   let out: net.IpAddr[] = [];
   let i: i32 = 0;
@@ -756,16 +618,8 @@ pub function addresses_of(records: Record[]): net.IpAddr[] {
   return out;
 }
 
-// ---------------------------------------------------------------------------
-// /etc/hosts
-
-// HostsEntry — one line of the hosts file: its address and the names on
-// it, the canonical name first.
 pub struct HostsEntry { ip: net.IpAddr, names: string[] }
 
-// `parse_hosts(contents)` — the entries of a hosts file, in file order.
-// `#` starts a comment; a line whose first field is not an address of
-// either family, or that names nothing, is skipped.
 pub function parse_hosts(contents: string): HostsEntry[] {
   let out: HostsEntry[] = [];
   let lines: string[] = contents.lines();
@@ -786,9 +640,6 @@ pub function parse_hosts(contents: string): HostsEntry[] {
   return out;
 }
 
-// `hosts_lookup(entries, name)` — every address of a line whose canonical
-// name or alias is `name`, compared without regard to ASCII case, in file
-// order; empty when no line names it.
 pub function hosts_lookup(entries: HostsEntry[], name: string): net.IpAddr[] {
   let out: net.IpAddr[] = [];
   let i: i32 = 0;
@@ -801,9 +652,6 @@ pub function hosts_lookup(entries: HostsEntry[], name: string): net.IpAddr[] {
   return out;
 }
 
-// `hosts_canonical(entries, name)` — the canonical name of the first line
-// naming `name`, as getaddrinfo's AI_CANONNAME reads it from the files
-// backend.
 pub function hosts_canonical(entries: HostsEntry[], name: string): Option[string] {
   let i: i32 = 0;
   while (i < entries.len()) {
@@ -826,7 +674,6 @@ function entry_names(e: HostsEntry, name: string): boolean {
   return false;
 }
 
-// The line up to its first `marker`, if any.
 function strip_comment(line: string, marker: string): string {
   let Some(h) = line.index_of(marker) else {
     return line;
@@ -834,13 +681,6 @@ function strip_comment(line: string, marker: string): string {
   return slice_unchecked(line, 0, h) + "";
 }
 
-// ---------------------------------------------------------------------------
-// /etc/resolv.conf
-
-// ResolvConf — what the resolver reads off resolv.conf: the nameservers
-// (at most three, as glibc keeps), the search list, `ndots`, the timeout
-// of one try, how many times round the servers, and whether to start each
-// query at the next server (`rotate`).
 pub struct ResolvConf {
   nameservers: net.SocketAddr[],
   search: string[],
@@ -850,27 +690,15 @@ pub struct ResolvConf {
   rotate: boolean,
 }
 
-// `dns_port()` — 53.
 pub function dns_port(): i32 {
   return 53;
 }
 
-// `resolv_defaults(host)` — res_init with no file: 127.0.0.1 as the only
-// nameserver, the search list from `host`'s domain, `ndots` 1, a 5 s
-// timeout, 2 attempts, no rotation.
 pub function resolv_defaults(host: string): ResolvConf {
   let ns: net.SocketAddr[] = [net.socket_addr(net.ipv4_loopback(), dns_port())];
   return ResolvConf { nameservers: ns, search: host_domain(host), ndots: 1, timeout: time.duration_seconds(5 as i64), attempts: 2, rotate: false };
 }
 
-// `parse_resolv_conf(contents, host)` — glibc's res_init over the file.
-// `host` is the machine's own name, whose domain is the search list when
-// the file names none. `#` and `;` start comments. `domain` and `search`
-// each replace the list, so the last one wins. On an `options` line,
-// `ndots:n` is capped at 15, `timeout:n` (seconds) at 30, `attempts:n`
-// at 5, and `rotate` is read; anything else is ignored. A `nameserver`
-// that is not an address, or that carries an IPv6 zone, is skipped, and
-// only the first three count.
 pub function parse_resolv_conf(contents: string, host: string): ResolvConf {
   let rc: ResolvConf = resolv_defaults(host);
   let ns: net.SocketAddr[] = [];
@@ -901,9 +729,6 @@ pub function parse_resolv_conf(contents: string, host: string): ResolvConf {
   return rc;
 }
 
-// `ns` with the nameserver `text` names at port 53: an address of either
-// family, not one with an IPv6 zone, and only while there are fewer than
-// three.
 function with_nameserver(ns: net.SocketAddr[], text: string): net.SocketAddr[] {
   if (ns.len() >= 3 || text.contains("%")) {
     return ns;
@@ -919,9 +744,6 @@ function with_nameserver(ns: net.SocketAddr[], text: string): net.SocketAddr[] {
   return ns;
 }
 
-// The domains of a `search` or `domain` line: `domain` takes one, `search`
-// takes all; a trailing dot is dropped and an entry that is only a dot is
-// the root and contributes nothing.
 function search_domains(f: string[]): string[] {
   let out: string[] = [];
   let n: i32 = f.len();
@@ -961,8 +783,6 @@ function parse_options(f: string[], rc0: ResolvConf): ResolvConf {
   return rc;
 }
 
-// The number after an option's colon, clamped to `lo..hi`; `current`
-// when it is not a number.
 function option_value(o: string, at: i32, lo: i32, hi: i32, current: i32): i32 {
   match ((slice_unchecked(o, at, o.len()) + "").parse_int()) {
     Some(n) => {
@@ -981,8 +801,6 @@ function option_value(o: string, at: i32, lo: i32, hi: i32, current: i32): i32 {
   return current;
 }
 
-// The search list glibc derives from the local hostname: everything after
-// its first dot, or nothing.
 function host_domain(host: string): string[] {
   let out: string[] = [];
   let Some(dot) = host.index_of(".") else {
@@ -994,22 +812,8 @@ function host_domain(host: string): string[] {
   return out.append(slice_unchecked(host, dot + 1, host.len()) + "");
 }
 
-// ---------------------------------------------------------------------------
-// The search list
-
-// SearchPlan — the three pieces __res_context_search works in, which are
-// not interchangeable with a flat candidate list. `as_is` is the name as
-// it stands, `suffixes` the search-list names, and `leads` says whether
-// the as-is query runs before the suffixes (glibc's `tried_as_is`) or is
-// the retry after them. Which of the two it is decides both whether that
-// retry happens at all and whose status is reported.
 pub struct SearchPlan { as_is: string, suffixes: string[], leads: boolean }
 
-// `search_plan(name, rc)` — res_search's plan for `name`. A name ending in
-// a dot is asked for as it stands and nothing else. Otherwise a name with
-// at least `ndots` dots leads with the as-is query and then tries each
-// search domain; one with fewer tries the search domains first and the
-// as-is name after them.
 pub function search_plan(name: string, rc: ResolvConf): SearchPlan {
   let none: string[] = [];
   if (name.ends_with(".")) {
@@ -1032,8 +836,6 @@ pub function search_plan(name: string, rc: ResolvConf): SearchPlan {
   return SearchPlan { as_is: name, suffixes: sfx, leads: dots >= rc.ndots };
 }
 
-// `search_candidates(name, rc)` — the plan flattened into the order the
-// names are asked in.
 pub function search_candidates(name: string, rc: ResolvConf): string[] {
   let p: SearchPlan = search_plan(name, rc);
   let out: string[] = [];
@@ -1051,10 +853,6 @@ pub function search_candidates(name: string, rc: ResolvConf): string[] {
   return out;
 }
 
-// ---------------------------------------------------------------------------
-// The exchange
-
-// `new_id()` — a query id drawn from the platform's random numbers.
 pub function new_id(): i32 {
   return random_i32() & 65535;
 }
@@ -1073,7 +871,6 @@ function now_ms(): i64 {
   return monotonic_ns() / 1000000i64;
 }
 
-// Whether `fd` is readable within `wait_ms`, the wait one a task parks on.
 function readable_within(fd: i32, wait_ms: i32): boolean {
   let set: i32[] = [fd, 1];
   return async.wait_any(set, wait_ms) == 0;
@@ -1086,21 +883,10 @@ function local_for(ns: net.SocketAddr): net.SocketAddr {
   return net.socket_addr(net.ipv4_unspecified(), 0);
 }
 
-// `exchange(ns, q, timeout)` — one query to one nameserver. The
-// message goes over UDP with EDNS0 and the reply is awaited up to the
-// timeout; a datagram that is not a reply to `q` (another id, another
-// question) is ignored and the wait goes on. A truncated reply is asked
-// again over TCP, where the reply is read whole behind its length. A
-// server that stays silent is `NoReply`, one that cannot be reached
-// `Socket(e)`.
 pub function exchange(ns: net.SocketAddr, q: Message, timeout: Duration): Result[Message, DnsError] {
   return exchange_many(ns, [q], timeout)[0];
 }
 
-// `exchange_many(ns, qs, timeout)` — `exchange` for several queries at
-// once: each goes on its own socket and the replies are awaited
-// together, so the queries cost one round trip between them rather
-// than one each. The answers are parallel to `qs`.
 pub function exchange_many(ns: net.SocketAddr, qs: Message[], timeout: Duration): Result[Message, DnsError][] {
   let deadline: i64 = now_ms() + timeout.as_millis();
   let slots: Slot[] = [];
@@ -1122,11 +908,8 @@ pub function exchange_many(ns: net.SocketAddr, qs: Message[], timeout: Duration)
   return out;
 }
 
-// One query in flight: its socket (-1 when none could be opened), its
-// reply once one came, and otherwise its failure.
 struct Slot { q: Message, sock: i32, reply: Option[Message], err: DnsError }
 
-// Whether a slot is still waiting: it has a socket and no reply yet.
 function waiting(s: Slot): boolean {
   if (s.sock < 0) {
     return false;
@@ -1142,7 +925,6 @@ function waiting(s: Slot): boolean {
   return true;
 }
 
-// A slot with `q` sent to `ns`, or one carrying the failure to send it.
 function opened_slot(ns: net.SocketAddr, q: Message): Slot {
   let bytes: u8[] = [];
   match (encode(with_edns(q))) {
@@ -1164,8 +946,6 @@ function opened_slot(ns: net.SocketAddr, q: Message): Slot {
   return Slot { q: q, sock: 0 - 1, reply: None, err: NoReply };
 }
 
-// A slot's reply as the query's result: a truncated reply is asked again
-// over TCP within what is left of the deadline.
 function slot_result(ns: net.SocketAddr, s: Slot, deadline: i64): Result[Message, DnsError] {
   match (s.reply) {
     Some(reply) => {
@@ -1181,7 +961,6 @@ function slot_result(ns: net.SocketAddr, s: Slot, deadline: i64): Result[Message
   return Err(s.err);
 }
 
-// A datagram socket of the nameserver's family with `bytes` sent to it.
 function send_udp(ns: net.SocketAddr, bytes: u8[]): Result[i32, DnsError] {
   let sock: i32 = 0;
   match (net.udp_socket(local_for(ns))) {
@@ -1204,7 +983,6 @@ function send_udp(ns: net.SocketAddr, bytes: u8[]): Result[i32, DnsError] {
   return Ok(sock);
 }
 
-// The indexes of the slots still waiting.
 function pending_slots(slots: Slot[]): i32[] {
   let out: i32[] = [];
   let i: i32 = 0;
@@ -1217,10 +995,6 @@ function pending_slots(slots: Slot[]): i32[] {
   return out;
 }
 
-// The replies to the waiting slots' queries before `deadline`, datagrams
-// that are not one ignored; a slot still waiting at the deadline keeps
-// `NoReply`. The sockets are waited on as one set, so the replies are
-// taken in whichever order the server sends them.
 function await_udp_replies(slots: Slot[], deadline: i64): Slot[] {
   let out: Slot[] = slots;
   let pending: i32[] = pending_slots(out);
@@ -1237,8 +1011,6 @@ function await_udp_replies(slots: Slot[], deadline: i64): Slot[] {
   return out;
 }
 
-// Slot `k` with the datagram its socket holds taken: its reply when the
-// datagram is one, or its socket closed on a receive error.
 function taken(slots: Slot[], k: i32): Slot[] {
   match (take_reply(slots[k].sock, slots[k].q)) {
     Ok(found) => {
@@ -1258,14 +1030,11 @@ function taken(slots: Slot[], k: i32): Slot[] {
   return slots;
 }
 
-// The socket closed, and -1 for the slot that held it.
 function closed_slot(sock: i32): i32 {
   let closed: Result[void, net.NetError] = net.close(sock);
   return 0 - 1;
 }
 
-// Which of the pending slots is readable within `wait_ms`, as an index
-// into `pending`; -1 at the deadline. The wait is one a task parks on.
 function first_readable(slots: Slot[], pending: i32[], wait_ms: i32): i32 {
   let set: i32[] = [];
   let i: i32 = 0;
@@ -1277,8 +1046,6 @@ function first_readable(slots: Slot[], pending: i32[], wait_ms: i32): i32 {
   return async.wait_any(set, wait_ms);
 }
 
-// One datagram off `sock`: the reply to `q` when it is one, `None` when
-// it is something else or nothing was queued after all.
 function take_reply(sock: i32, q: Message): Result[Option[Message], DnsError] {
   let buf: u8[] = zero_bytes(udp_payload());
   let n: i32 = 0;
@@ -1311,9 +1078,6 @@ function take_reply(sock: i32, q: Message): Result[Option[Message], DnsError] {
   return Ok(None);
 }
 
-// `exchange_tcp(ns, q, timeout)` — the query over TCP: the message
-// behind a two-byte length, the reply read until its own length is
-// satisfied, each read awaited up to the timeout.
 pub function exchange_tcp(ns: net.SocketAddr, q: Message, timeout: Duration): Result[Message, DnsError] {
   let bytes: u8[] = encode(q)?;
   let framed: u8[] = [];
@@ -1328,7 +1092,6 @@ pub function exchange_tcp(ns: net.SocketAddr, q: Message, timeout: Duration): Re
   return Ok(reply);
 }
 
-// A connection to the nameserver with `framed` written to it.
 function send_tcp(ns: net.SocketAddr, framed: u8[]): Result[i32, DnsError] {
   let sock: i32 = 0;
   match (net.connect(ns)) {
@@ -1362,9 +1125,6 @@ function send_tcp(ns: net.SocketAddr, framed: u8[]): Result[i32, DnsError] {
   return Ok(sock);
 }
 
-// The message behind the two-byte length on `sock`, each read awaited up
-// to `deadline`: `NoReply` when it passes, `Malformed` when the peer
-// closes short of the length, `Socket` when a read fails.
 function read_framed(sock: i32, deadline: i64): Result[u8[], DnsError] {
   let buf: u8[] = [];
   let want: i32 = -1;
@@ -1381,9 +1141,6 @@ function read_framed(sock: i32, deadline: i64): Result[u8[], DnsError] {
   return Ok(buf.drop(2).take(want - 2));
 }
 
-// `read_some(sock)` — what one read of a readable `sock` holds: none when
-// the wake found nothing yet, `Malformed` at the end of the stream, `Socket`
-// when the read fails.
 function read_some(sock: i32): Result[u8[], DnsError] {
   match (net.read_up_to(sock, 4096)) {
     Ok(got) => {
@@ -1403,20 +1160,10 @@ function read_some(sock: i32): Result[u8[], DnsError] {
   return Err(Malformed);
 }
 
-// `ask(conf, q)` — res_send: `q` put to the nameservers of `conf` in
-// turn, `attempts` times round, from a rotating start under `rotate`,
-// until one answers. A reply with SERVFAIL or REFUSED, silence, and an
-// unreachable server each hand the query to the next; when every server
-// has been tried the failure reported is SERVFAIL if any said so, else
-// REFUSED, else silence, else the last socket error.
 pub function ask(conf: ResolvConf, q: Message): Result[Message, DnsError] {
   return ask_many(conf, [q])[0];
 }
 
-// `ask_many(conf, qs)` — `ask` for several queries at once: the queries
-// still unanswered go to each server together (`exchange_many`), and a
-// server's answer to one is kept while the others go on to the next.
-// The answers are parallel to `qs`.
 pub function ask_many(conf: ResolvConf, qs: Message[]): Result[Message, DnsError][] {
   let n: i32 = conf.nameservers.len();
   let asked: Asked[] = [];
@@ -1449,8 +1196,6 @@ pub function ask_many(conf: ResolvConf, qs: Message[]): Result[Message, DnsError
   return out;
 }
 
-// One query's progress through the servers: its answer once a server
-// gave one, else what the servers said so far.
 struct Asked { reply: Option[Message], tally: Tally }
 
 function asked_result(a: Asked): Result[Message, DnsError] {
@@ -1477,7 +1222,6 @@ function unanswered(a: Asked): boolean {
   return true;
 }
 
-// The unanswered queries put to one server, their replies noted.
 function ask_server(ns: net.SocketAddr, qs: Message[], asked: Asked[], timeout: Duration): Asked[] {
   let open: i32[] = [];
   let open_qs: Message[] = [];
@@ -1502,8 +1246,6 @@ function ask_server(ns: net.SocketAddr, qs: Message[], asked: Asked[], timeout: 
   return out;
 }
 
-// A server's answer to one query folded into its progress: a usable
-// reply settles it, SERVFAIL, REFUSED and a failure are tallied.
 function noted(a: Asked, r: Result[Message, DnsError]): Asked {
   match (r) {
     Ok(reply) => {
@@ -1519,8 +1261,6 @@ function noted(a: Asked, r: Result[Message, DnsError]): Asked {
   return a;
 }
 
-// What the servers said while none answered: the failures seen, and the
-// last error that was neither silence nor a server's own code.
 struct Tally { servfail: boolean, refused: boolean, silent: boolean, last: DnsError }
 
 function noted_rcode(t: Tally, rcode: i32): Tally {
@@ -1555,14 +1295,6 @@ function tally_error(t: Tally): DnsError {
   return t.last;
 }
 
-// ---------------------------------------------------------------------------
-// Lookups
-
-// `answer_records(reply, qname, rtype)` — the records of `rtype` a reply
-// to `qname` carries, following the CNAME chain, as the result of the
-// query: NXDOMAIN is `NoSuchName`, a clean reply with none of them
-// `NoData`, SERVFAIL and REFUSED their errors, any other rcode
-// `Malformed`.
 pub function answer_records(reply: Message, qname: string, rtype: i32): Result[Answer, DnsError] {
   if (reply.rcode == rcode_name_error()) {
     return Err(NoSuchName);
@@ -1583,20 +1315,10 @@ pub function answer_records(reply: Message, qname: string, rtype: i32): Result[A
   return Ok(a);
 }
 
-// `lookup_records_with(conf, name, rtype, asker)` — `search_with` over
-// the plan for `name`; `rtype` is the asker's to put in its queries.
 pub function lookup_records_with(conf: ResolvConf, name: string, rtype: i32, asker: (string) => Result[Answer, DnsError]): Result[Answer, DnsError] {
   return search_with(search_plan(name, conf), asker);
 }
 
-// `search_with(plan, asker)` — the search walk of __res_context_search
-// over `asker`, which answers one query: the first name with records
-// wins. A `NoSuchName` or `NoData` moves on to the next candidate;
-// `ServerFailure` does too but is remembered; `Refused` from a suffix
-// ends the walk; silence or a socket error ends the suffixes but the
-// as-is name is still tried when it comes last. When the walk finds
-// nothing, the as-is query's failure is reported when it led, else a
-// remembered `ServerFailure`, else the last failure.
 pub function search_with(plan: SearchPlan, asker: (string) => Result[Answer, DnsError]): Result[Answer, DnsError] {
   let lead_failed: boolean = false;
   let lead_err: DnsError = NoSuchName;
@@ -1635,8 +1357,6 @@ pub function search_with(plan: SearchPlan, asker: (string) => Result[Answer, Dns
   return Err(search_failure(lead_failed, lead_err, sfx.servfail, last));
 }
 
-// What a walk that found nothing reports: the as-is query's failure when
-// it led, else a server failure a suffix met, else the last failure.
 function search_failure(lead_failed: boolean, lead_err: DnsError, servfail: boolean, last: DnsError): DnsError {
   if (lead_failed) {
     return lead_err;
@@ -1647,9 +1367,6 @@ function search_failure(lead_failed: boolean, lead_err: DnsError, servfail: bool
   return last;
 }
 
-// How the search domains went: the answer one gave, or whether one was
-// refused (the walk ends), whether one failed at the server, and the
-// last failure.
 struct Suffixes { answer: Option[Answer], refused: boolean, servfail: boolean, last: DnsError }
 
 function search_suffixes(suffixes: string[], asker: (string) => Result[Answer, DnsError]): Suffixes {
@@ -1687,8 +1404,6 @@ function suffix_failed(out: Suffixes, e: DnsError): Suffixes {
   return out;
 }
 
-// Whether a suffix's failure lets the next suffix be tried: a name the
-// server does not know does, silence and a socket error do not.
 function continues_search(e: DnsError): boolean {
   match (e) {
     NoSuchName => {
@@ -1707,57 +1422,40 @@ function continues_search(e: DnsError): boolean {
   return false;
 }
 
-// `lookup_records(conf, name, rtype)` — `lookup_records_with` over the
-// nameservers of `conf`.
 pub function lookup_records(conf: ResolvConf, name: string, rtype: i32): Result[Answer, DnsError] {
   return lookup_records_with(conf, name, rtype, (qname: string): Result[Answer, DnsError] => ask_one(conf, qname, rtype));
 }
 
-// One query of the walk: `qname` put to the nameservers and its reply
-// read for the records of `rtype`.
 function ask_one(conf: ResolvConf, qname: string, rtype: i32): Result[Answer, DnsError] {
   let reply: Message = ask(conf, query(new_id(), qname, rtype))?;
   return answer_records(reply, qname, rtype);
 }
 
-// `lookup_a(conf, name)` — the IPv4 addresses of `name`.
 pub function lookup_a(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
   let a: Answer = lookup_records(conf, name, type_a())?;
   return Ok(addresses_of(a.records));
 }
 
-// `lookup_aaaa(conf, name)` — the IPv6 addresses of `name`.
 pub function lookup_aaaa(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
   let a: Answer = lookup_records(conf, name, type_aaaa())?;
   return Ok(addresses_of(a.records));
 }
 
-// `canonical_name(conf, name)` — the owner of `name`'s A records once
-// its CNAME chain is followed, as getaddrinfo's AI_CANONNAME reads it off
-// the DNS backend.
 pub function canonical_name(conf: ResolvConf, name: string): Result[string, DnsError] {
   let a: Answer = lookup_records(conf, name, type_a())?;
   return Ok(a.canonical);
 }
 
-// `lookup_addresses(conf, name)` — every address of `name`: its A and
-// AAAA records asked together at each step of the search walk, the
-// result in RFC 6724 order. A candidate name is passed over only when
-// both record types pass it over (`NoSuchName`, `NoData`); a failure on
-// either ends the walk as it does for one query.
 pub function lookup_addresses(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
   let found: net.IpAddr[] = found_addresses(conf, name)?;
   return Ok(sort_addresses(found));
 }
 
-// The paired walk's addresses for `name`, in the order the server gave.
 function found_addresses(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
   let a: Answer = search_with(search_plan(name, conf), (qname: string): Result[Answer, DnsError] => ask_pair(conf, qname))?;
   return Ok(addresses_of(a.records));
 }
 
-// One step of the paired walk: `qname`'s A and AAAA queries put to the
-// nameservers together, their replies read and combined.
 function ask_pair(conf: ResolvConf, qname: string): Result[Answer, DnsError] {
   let replies: Result[Message, DnsError][] = ask_many(conf, [query(new_id(), qname, type_a()), query(new_id(), qname, type_aaaa())]);
   return combine_pair(reply_records(replies[0], qname, type_a()), reply_records(replies[1], qname, type_aaaa()));
@@ -1768,12 +1466,6 @@ function reply_records(r: Result[Message, DnsError], qname: string, rtype: i32):
   return answer_records(reply, qname, rtype);
 }
 
-// `combine_pair(a, aaaa)` — the two record types' results as one: the
-// records of both when either has some, under the A query's canonical
-// name when it has one. When neither has, a failure that ends a search
-// (silence, a socket error, SERVFAIL, REFUSED) is reported over one that
-// passes a name over, the A query's first; both passing it over is
-// `NoSuchName` only when both said so, else `NoData`.
 pub function combine_pair(a: Result[Answer, DnsError], aaaa: Result[Answer, DnsError]): Result[Answer, DnsError] {
   match (a) {
     Ok(ra) => {
@@ -1813,8 +1505,6 @@ function pair_failure(ea: DnsError, e6: DnsError): DnsError {
   return NoData;
 }
 
-// Whether a failure passes a search candidate over rather than ending
-// the walk.
 function passes_over(e: DnsError): boolean {
   match (e) {
     NoSuchName => {
@@ -1842,25 +1532,8 @@ function is_no_such_name(e: DnsError): boolean {
   return false;
 }
 
-// ---------------------------------------------------------------------------
-// Address ordering (RFC 6724 §6)
-//
-// A name with several addresses is tried in the order the destination
-// address selection rules give, each destination judged beside the
-// source address the host would use for it: an address the host has no
-// route to goes last, then matching scope, matching label, higher
-// precedence, smaller scope and the longest common prefix decide, and
-// what they leave tied keeps the order the server gave. The rules for
-// deprecated and home addresses and for native transport need what no
-// socket reports and are skipped, as Go skips them.
-
-// `Policy` — an address's row of the RFC 6724 §2.1 policy table.
 pub struct Policy { precedence: i32, label: i32 }
 
-// `policy_of(ip)` — the policy table row for `ip`, an IPv4 address read
-// as its v4-mapped form: `::1` 50/0, `::/0` 40/1, `::ffff:0:0/96` 35/4,
-// `2002::/16` 30/2, `2001::/32` 5/5, `fc00::/7` 3/13, `::/96` 1/3,
-// `fec0::/10` 1/11, `3ffe::/16` 1/12.
 pub function policy_of(ip: net.IpAddr): Policy {
   if (ip.is_v4()) {
     return Policy { precedence: 35, label: 4 };
@@ -1875,8 +1548,6 @@ pub function policy_of(ip: net.IpAddr): Policy {
   return policy_prefixed(b);
 }
 
-// The rows for an address whose first ten bytes are zero: v4-mapped and
-// IPv4-compatible, else the default.
 function policy_embedded(b: u8[]): Policy {
   if (b[10] == 255u8 && b[11] == 255u8) {
     return Policy { precedence: 35, label: 4 };
@@ -1887,8 +1558,6 @@ function policy_embedded(b: u8[]): Policy {
   return Policy { precedence: 40, label: 1 };
 }
 
-// The rows keyed on a leading prefix: 6to4, Teredo and 6bone here, the
-// local prefixes in policy_local, else the default.
 function policy_prefixed(b: u8[]): Policy {
   if (b[0] == 32u8 && b[1] == 2u8) {
     return Policy { precedence: 30, label: 2 };
@@ -1902,8 +1571,6 @@ function policy_prefixed(b: u8[]): Policy {
   return policy_local(b);
 }
 
-// Unique local (`fc00::/7`) and site-local (`fec0::/10`) addresses, else
-// the default row.
 function policy_local(b: u8[]): Policy {
   if ((b[0] & 254u8) == 252u8) {
     return Policy { precedence: 3, label: 13 };
@@ -1914,7 +1581,6 @@ function policy_local(b: u8[]): Policy {
   return Policy { precedence: 40, label: 1 };
 }
 
-// How many of the address's bytes are zero before the first that is not.
 function leading_zero_bytes(b: u8[]): i32 {
   let n: i32 = 0;
   while (n < b.len() && b[n] == 0u8) {
@@ -1923,10 +1589,6 @@ function leading_zero_bytes(b: u8[]): i32 {
   return n;
 }
 
-// `scope_of(ip)` — the address's scope as RFC 6724 §3 reads it, in the
-// IPv6 multicast scope numbers: link-local is 2 (loopback and
-// `fe80::/10`, `127/8` and `169.254/16`), site-local 5 (`fec0::/10`),
-// global 14, and a multicast address its own nibble.
 pub function scope_of(ip: net.IpAddr): i32 {
   if (ip.is_v4()) {
     return scope_v4(ip.bytes());
@@ -1960,11 +1622,6 @@ function scope_v6(ip: net.IpAddr, b: u8[]): i32 {
   return 14;
 }
 
-// `common_prefix_len(a, b)` — how many leading bits two IPv6 addresses
-// share, at most 64 since the interface identifier says nothing about
-// the route; 0 when either is IPv4. The RFC's rule 9 reads both families,
-// but Go does not compare it for IPv4 (go.dev/issue/13283), and this
-// follows Go.
 pub function common_prefix_len(a: net.IpAddr, b: net.IpAddr): i32 {
   if (a.is_v4() || b.is_v4()) {
     return 0;
@@ -1989,10 +1646,6 @@ pub function common_prefix_len(a: net.IpAddr, b: net.IpAddr): i32 {
   return bits;
 }
 
-// `source_for(dst)` — the address the host would send to `dst` from: a
-// datagram socket connected to it, which picks the route without a
-// packet, asked for its local address; `None` when the host has no
-// route, which is what makes `dst` unusable.
 pub function source_for(dst: net.IpAddr): Option[net.IpAddr] {
   let probe: net.SocketAddr = net.socket_addr(dst, 9);
   let sock: i32 = 0;
@@ -2020,9 +1673,6 @@ pub function source_for(dst: net.IpAddr): Option[net.IpAddr] {
   return found;
 }
 
-// `order_addresses(dsts, srcs)` — `dsts` in RFC 6724 order, `srcs[i]`
-// being the source the host would use for `dsts[i]` (`None` for no
-// route). A stable sort, so what the rules leave tied keeps its order.
 pub function order_addresses(dsts: net.IpAddr[], srcs: Option[net.IpAddr][]): net.IpAddr[] {
   let out: net.IpAddr[] = [];
   let taken: boolean[] = [];
@@ -2048,14 +1698,10 @@ pub function order_addresses(dsts: net.IpAddr[], srcs: Option[net.IpAddr][]): ne
   return out;
 }
 
-// `sort_addresses(dsts)` — `order_addresses` over the source the host
-// would use for each destination.
 pub function sort_addresses(dsts: net.IpAddr[]): net.IpAddr[] {
   return sort_by(dsts, source_for);
 }
 
-// `sort_by(dsts, src)` — `order_addresses` over the source `src` answers
-// for each destination.
 function sort_by(dsts: net.IpAddr[], src: (net.IpAddr) => Option[net.IpAddr]): net.IpAddr[] {
   if (dsts.len() < 2) {
     return dsts;
@@ -2069,8 +1715,6 @@ function sort_by(dsts: net.IpAddr[], src: (net.IpAddr) => Option[net.IpAddr]): n
   return order_addresses(dsts, srcs);
 }
 
-// The rules in order, for two destinations beside their sources:
-// negative when `a` goes first, positive when `b` does, 0 when they tie.
 function prefers(a: net.IpAddr, sa: Option[net.IpAddr], b: net.IpAddr, sb: Option[net.IpAddr]): i32 {
   match (sa) {
     Some(src_a) => {
@@ -2097,7 +1741,6 @@ function prefers(a: net.IpAddr, sa: Option[net.IpAddr], b: net.IpAddr, sb: Optio
   return 0;
 }
 
-// Rules 2, 5, 6, 8 and 9 for two destinations the host can reach.
 function prefers_routed(a: net.IpAddr, sa: net.IpAddr, b: net.IpAddr, sb: net.IpAddr): i32 {
   let scope_a: i32 = scope_of(a);
   let scope_b: i32 = scope_of(b);
@@ -2120,8 +1763,6 @@ function prefers_routed(a: net.IpAddr, sa: net.IpAddr, b: net.IpAddr, sb: net.Ip
   return common_prefix_len(b, sb) - common_prefix_len(a, sa);
 }
 
-// Which of two destinations a rule's test singles out: the one it holds
-// for, when it holds for exactly one.
 function prefer_true(for_a: boolean, for_b: boolean): i32 {
   if (for_a && !for_b) {
     return 0 - 1;
@@ -2132,31 +1773,12 @@ function prefer_true(for_a: boolean, for_b: boolean): i32 {
   return 0;
 }
 
-// ---------------------------------------------------------------------------
-// Dialing (RFC 8305, Happy Eyeballs)
-//
-// A name's addresses are tried in turn rather than one after another to
-// completion: the first attempt runs alone for the attempt delay, then
-// the next address is tried beside it, and so on, the first to connect
-// winning and the rest closed. An attempt that fails hands its turn to
-// the next at once. The addresses are in RFC 6724 order with the
-// families alternating (§4), so a family whose packets go nowhere costs
-// one delay rather than the whole list.
-
-// `DialOptions` — how `connect_race` and `dial` try a name's addresses:
-// `fallback` is how long an attempt runs alone before the next address
-// is tried beside it (the connection attempt delay, Go's 300 ms), and
-// `timeout` bounds the whole dial.
 pub struct DialOptions { fallback: Duration, timeout: Duration }
 
-// `dial_options()` — 300 ms between attempts and ten seconds in all.
 pub function dial_options(): DialOptions {
   return DialOptions { fallback: time.duration_millis(300 as i64), timeout: time.duration_seconds(10 as i64) };
 }
 
-// `interleave_families(addrs)` — RFC 8305 §4's order: the first address's
-// family leads and the families alternate from there, each keeping its
-// own order.
 pub function interleave_families(addrs: net.IpAddr[]): net.IpAddr[] {
   if (addrs.len() == 0) {
     return addrs;
@@ -2187,15 +1809,8 @@ pub function interleave_families(addrs: net.IpAddr[]): net.IpAddr[] {
   return out;
 }
 
-// One connect under way: its socket, waited on for writability, which is
-// how a connect reports that it ended.
 struct Attempt { sock: i32 }
 
-// `connect_race(addrs, port, opts)` — a connection to the first of
-// `addrs` at `port` that answers, as the section above says, in the
-// blocking mode `connect` gives: `TimedOut` once `opts.timeout` passes
-// with none connected, the last failure when every address failed,
-// `HostUnreachable` for no addresses.
 pub function connect_race(addrs: net.IpAddr[], port: i32, opts: DialOptions): Result[i32, net.NetError] {
   let deadline: i64 = now_ms() + opts.timeout.as_millis();
   let race: Race = Race { open: [], next: 0, due: now_ms(), last: HostUnreachable };
@@ -2230,9 +1845,6 @@ pub function connect_race(addrs: net.IpAddr[], port: i32, opts: DialOptions): Re
   return Err(TimedOut);
 }
 
-// How long the race may wait before it has something to do: the next
-// attempt's start when an address is left, else the deadline, and at
-// least a millisecond.
 function wait_window(race: Race, n: i32, now: i64, deadline: i64): i32 {
   let wait_ms: i32 = (deadline - now) as i32;
   if (race.next < n && (race.due - now) as i32 < wait_ms) {
@@ -2244,11 +1856,8 @@ function wait_window(race: Race, n: i32, now: i64, deadline: i64): i32 {
   return wait_ms;
 }
 
-// The race's state: the attempts under way, the next address to try,
-// when it may start, and the last failure.
 struct Race { open: Attempt[], next: i32, due: i64, last: net.NetError }
 
-// The open attempts as a wait set: each socket for writability.
 function writable(attempts: Attempt[]): i32[] {
   let set: i32[] = [];
   let i: i32 = 0;
@@ -2260,10 +1869,6 @@ function writable(attempts: Attempt[]): i32[] {
   return set;
 }
 
-// The next address's attempt started: open when it is under way, the
-// turn handed on at once when it failed to start. Where the host
-// connects before answering (the interpreter), the attempt is already
-// settled and the next wait finds it so.
 function started(race: Race, addr: net.SocketAddr, opts: DialOptions): Race {
   let next: i32 = race.next + 1;
   match (net.connect_start(addr)) {
@@ -2277,9 +1882,6 @@ function started(race: Race, addr: net.SocketAddr, opts: DialOptions): Race {
   return Race { ...race, next: next };
 }
 
-// Every open attempt asked how its connect ended: the first that
-// connected is the winner, the others closed; one that failed is closed
-// and its turn handed on at once; the rest stay open.
 function settled(race: Race): Result[i32, Race] {
   let keep: Attempt[] = [];
   let out: Race = race;
@@ -2306,7 +1908,6 @@ function settled(race: Race): Result[i32, Race] {
   return Err(Race { ...out, open: keep });
 }
 
-// The attempts past index `i`.
 function after(attempts: Attempt[], i: i32): Attempt[] {
   let out: Attempt[] = [];
   let k: i32 = i + 1;
@@ -2325,9 +1926,6 @@ function close_attempts(attempts: Attempt[]): void {
   }
 }
 
-// `dial(name, port, opts)` — `name` resolved and its addresses raced:
-// a connection, or the resolver's failure, or the dial's as
-// `Socket(e)`.
 pub function dial(name: string, port: i32, opts: DialOptions): Result[i32, DnsError] {
   let addrs: net.IpAddr[] = resolve(name)?;
   match (connect_race(interleave_families(addrs), port, opts)) {
@@ -2341,18 +1939,8 @@ pub function dial(name: string, port: i32, opts: DialOptions): Result[i32, DnsEr
   return Err(NoNameserver);
 }
 
-// ---------------------------------------------------------------------------
-// NAT64 (RFC 7050 discovery, RFC 6052 synthesis)
-
-// `Nat64Prefix` — a prefix a NAT64 translator answers under: the first
-// `bits` bits of `bytes` (32, 40, 48, 56, 64 or 96), the rest zero.
 pub struct Nat64Prefix { bytes: u8[], bits: i32 }
 
-// `nat64_prefix_of(aaaa)` — the prefix an AAAA record for ipv4only.arpa
-// reveals: the well-known 192.0.0.170 or 192.0.0.171 embedded where RFC
-// 6052 puts an IPv4 address under one of the six prefix lengths, the
-// longest tried first, as RFC 7050 §3 reads it; `None` for an address
-// that embeds neither.
 pub function nat64_prefix_of(aaaa: net.IpAddr): Option[Nat64Prefix] {
   if (!aaaa.is_v6()) {
     return None;
@@ -2374,14 +1962,10 @@ pub function nat64_prefix_of(aaaa: net.IpAddr): Option[Nat64Prefix] {
   return None;
 }
 
-// RFC 7050's well-known IPv4 addresses, 192.0.0.170 and 192.0.0.171.
 function is_well_known(v4: u8[]): boolean {
   return v4[0] == 192u8 && v4[1] == 0u8 && v4[2] == 0u8 && (v4[3] == 170u8 || v4[3] == 171u8);
 }
 
-// `synthesize(prefix, v4)` — `v4` under `prefix` as RFC 6052 §2.2 lays
-// it out: the four bytes follow the prefix, skipping byte 8, which stays
-// zero. An IPv6 address is answered as it is.
 pub function synthesize(prefix: Nat64Prefix, v4: net.IpAddr): net.IpAddr {
   if (!v4.is_v4()) {
     return v4;
@@ -2408,10 +1992,6 @@ pub function synthesize(prefix: Nat64Prefix, v4: net.IpAddr): net.IpAddr {
   return v4;
 }
 
-// `nat64_prefixes(conf)` — the prefixes the nameservers reveal through
-// the AAAA records of ipv4only.arpa, each once, in the order the records
-// came; none when the name has no such record or the query fails, which
-// is every network without a translator.
 pub function nat64_prefixes(conf: ResolvConf): Nat64Prefix[] {
   let out: Nat64Prefix[] = [];
   match (lookup_aaaa(conf, "ipv4only.arpa.")) {
@@ -2434,11 +2014,6 @@ pub function nat64_prefixes(conf: ResolvConf): Nat64Prefix[] {
   return out;
 }
 
-// `nat64_carried(addr)` — the IPv4 address `addr` carries under a NAT64
-// prefix this host's nameservers reveal, or `None`: for an IPv4 address,
-// one under no revealed prefix, or a network with no translator. What a
-// block list checks beside `net.is_global`, which knows only the
-// well-known and local-use prefixes.
 pub function nat64_carried(addr: net.IpAddr): Option[net.IpAddr] {
   return carried_by(addr, (): Nat64Prefix[] => nat64_prefixes(system_conf()));
 }
@@ -2482,10 +2057,6 @@ function same_bytes(a: u8[], b: u8[]): boolean {
   return true;
 }
 
-// `addrs` as this host can reach them: on a host with no IPv4 route and a
-// list of IPv4 addresses with no IPv6 beside them (RFC 8305 §7.3), each is
-// replaced by its synthesis under every prefix the nameservers reveal;
-// elsewhere, or with no prefix revealed, `addrs` as it is.
 function with_nat64(conf: ResolvConf, addrs: net.IpAddr[]): net.IpAddr[] {
   return nat64_by(addrs, source_for, (): Nat64Prefix[] => nat64_prefixes(conf));
 }
@@ -2524,9 +2095,6 @@ function nat64_by(addrs: net.IpAddr[], src: (net.IpAddr) => Option[net.IpAddr], 
   return out;
 }
 
-// `system_conf()` — the resolver this machine is configured with: its
-// `/etc/resolv.conf` over its hostname, the defaults when the file is
-// missing.
 pub function system_conf(): ResolvConf {
   let contents: string = "";
   match (read_file("/etc/resolv.conf")) {
@@ -2538,7 +2106,6 @@ pub function system_conf(): ResolvConf {
   return parse_resolv_conf(contents, hostname());
 }
 
-// `system_hosts()` — this machine's `/etc/hosts`, empty when missing.
 pub function system_hosts(): HostsEntry[] {
   match (read_file("/etc/hosts")) {
     Ok(c) => {
@@ -2553,20 +2120,11 @@ pub function system_hosts(): HostsEntry[] {
   return none2;
 }
 
-// `resolve(name)` — the addresses of `name` on this machine: an address
-// literal as it is, then the hosts file, then DNS. The first source with
-// an address answers, the addresses in RFC 6724 order; DNS reports its
-// failure when the hosts file has none. On a host with no IPv4 route,
-// IPv4 addresses with no IPv6 beside them are synthesized under the
-// NAT64 prefixes the nameservers reveal.
 pub function resolve(name: string): Result[net.IpAddr[], DnsError] {
   let conf: ResolvConf = system_conf();
   return Ok(reachable(conf, resolve_with(conf, name)?));
 }
 
-// `resolve_plain(name)` — `resolve` as the sources name the addresses,
-// before NAT64 synthesis and RFC 6724 ordering: what a policy judges,
-// since a synthesized address stands for the one it carries.
 pub function resolve_plain(name: string): Result[net.IpAddr[], DnsError] {
   match (net.ip_parse(name)) {
     Some(ip) => {
@@ -2577,8 +2135,6 @@ pub function resolve_plain(name: string): Result[net.IpAddr[], DnsError] {
   return resolve_with(system_conf(), name);
 }
 
-// `synthesized(addrs)` — `addrs` as this machine reaches them: `resolve`'s
-// NAT64 synthesis and ordering over `resolve_plain`'s answer.
 pub function synthesized(addrs: net.IpAddr[]): net.IpAddr[] {
   return reachable(system_conf(), addrs);
 }
@@ -2587,37 +2143,22 @@ function reachable(conf: ResolvConf, addrs: net.IpAddr[]): net.IpAddr[] {
   return sort_addresses(with_nat64(conf, addrs));
 }
 
-// ---- The machine's resolver, kept between lookups ------------------------
-//
-// `Resolver` — the lookups above for a long-lived client: the two files,
-// the NAT64 prefixes and the source address for each destination are read
-// once and kept for RECHECK_NS, as glibc and Go keep resolv.conf, then
-// read again. A lookup of an address literal touches no file and opens no
-// socket, and one of a name asks DNS but probes no route it has probed
-// within the interval. Copies of the value share what it has read.
 pub struct Resolver { seen: Cell[Seen] }
 
-// `Seen` — what a resolver read and when (monotonic nanoseconds, -1 for
-// never): the files, the NAT64 prefixes once asked for, and each probed
-// destination's source.
 pub struct Seen { at: i64, conf: ResolvConf, hosts: HostsEntry[], nat64: Option[Nat64Prefix[]], routes: Route[] }
 
 pub struct Route { dst: net.IpAddr, src: Option[net.IpAddr] }
 
 const RECHECK_NS: i64 = 5000000000;
 
-// At most this many probed destinations are kept; the oldest goes first.
 const ROUTES_KEPT: i32 = 64;
 
-// `resolver()` — a resolver that has read nothing yet.
 pub function resolver(): Resolver {
   let routes: Route[] = [];
   let hosts: HostsEntry[] = [];
   return Resolver { seen: cell_new(Seen { at: 0 - 1 as i64, conf: parse_resolv_conf("", ""), hosts: hosts, nat64: None, routes: routes }) };
 }
 
-// `fresh()` — what the resolver has read, read again once it is older
-// than RECHECK_NS.
 function (r: Resolver) fresh(): Seen {
   let s: Seen = r.seen.get();
   let now: i64 = monotonic_ns();
@@ -2630,12 +2171,10 @@ function (r: Resolver) fresh(): Seen {
   return read;
 }
 
-// `conf()` — the machine's resolv.conf as the resolver last read it.
 pub function (r: Resolver) conf(): ResolvConf {
   return r.fresh().conf;
 }
 
-// `source(dst)` — `source_for(dst)`, probed once per interval.
 pub function (r: Resolver) source(dst: net.IpAddr): Option[net.IpAddr] {
   let s: Seen = r.fresh();
   for route in s.routes {
@@ -2652,8 +2191,6 @@ pub function (r: Resolver) source(dst: net.IpAddr): Option[net.IpAddr] {
   return src;
 }
 
-// `prefixes()` — `nat64_prefixes` of the machine's resolver, asked once per
-// interval.
 function (r: Resolver) prefixes(): Nat64Prefix[] {
   let s: Seen = r.fresh();
   if let Some(p) = s.nat64 {
@@ -2664,7 +2201,6 @@ function (r: Resolver) prefixes(): Nat64Prefix[] {
   return found;
 }
 
-// `resolve_plain(name)` — `resolve_plain` over what the resolver has read.
 pub function (r: Resolver) resolve_plain(name: string): Result[net.IpAddr[], DnsError] {
   match (net.ip_parse(name)) {
     Some(ip) => {
@@ -2676,18 +2212,15 @@ pub function (r: Resolver) resolve_plain(name: string): Result[net.IpAddr[], Dns
   return resolve_in(s.conf, (): HostsEntry[] => s.hosts, name);
 }
 
-// `resolve(name)` — `resolve` over what the resolver has read.
 pub function (r: Resolver) resolve(name: string): Result[net.IpAddr[], DnsError] {
   return Ok(r.synthesized(r.resolve_plain(name)?));
 }
 
-// `synthesized(addrs)` — `synthesized` over the resolver's probes.
 pub function (r: Resolver) synthesized(addrs: net.IpAddr[]): net.IpAddr[] {
   let src: (net.IpAddr) => Option[net.IpAddr] = (d: net.IpAddr): Option[net.IpAddr] => r.source(d);
   return sort_by(nat64_by(addrs, src, (): Nat64Prefix[] => r.prefixes()), src);
 }
 
-// `nat64_carried(addr)` — `nat64_carried` under the resolver's prefixes.
 pub function (r: Resolver) nat64_carried(addr: net.IpAddr): Option[net.IpAddr] {
   return carried_by(addr, (): Nat64Prefix[] => r.prefixes());
 }

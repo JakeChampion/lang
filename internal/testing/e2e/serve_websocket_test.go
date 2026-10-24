@@ -9,10 +9,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestServeWebSocketSequentialInterp is the Go compiler's twin of the
-// WebSocket gate (TestSelfHostServeWebSocket): under the blocking
-// fallback the session's reads block the loop, so only the checks that
-// drive one client at a time hold.
 func TestServeWebSocketSequentialInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	srcPath := filepath.Join(t.TempDir(), "srv.fern")

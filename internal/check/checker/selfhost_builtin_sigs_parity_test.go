@@ -12,16 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// TestSelfHostBuiltinSigsMatch pins compiler/checker.fern's
-// builtin_sigs() against the signature native registers for every surface
-// builtin, entry for entry and in both directions.
-//
-// TestSelfHostKnowsEveryNativeBuiltin is the name half: it proves the self-host
-// accepts the name. This is the type half. A builtin whose call the self-host
-// checker cannot type collapses the statement holding it to unknown, which
-// marks the whole function ill-typed and fails `-check` for every program that
-// imports the module calling it (#10132): `buf_new` in std/array's `join` did
-// that to anything importing std/string.
 func TestSelfHostBuiltinSigsMatch(t *testing.T) {
 	native := nativeBuiltinSigRows(t)
 	selfHost := selfHostBuiltinSigRows(t)
@@ -49,12 +39,6 @@ func TestSelfHostBuiltinSigsMatch(t *testing.T) {
 	}
 }
 
-// nativeBuiltinSigRows renders each surface builtin, each builtin method whose
-// signature names no type parameter (`__method_Reader_close`), and the
-// `__c_callN` trampolines intrinsic_result has no entry for, as
-// `name(p1, p2): result`, the spelling the self-host table is written in. The
-// generic methods (Array, Map, MapIter, Cell, slice) are typed by their own
-// arms in check_call_expr, which read the receiver's type arguments.
 func nativeBuiltinSigRows(t *testing.T) map[string]string {
 	t.Helper()
 	prog, err := parser.Parse(`function main(): i32 { return 0; }`)
@@ -117,7 +101,6 @@ func sigNamesTypeParam(sig *ast.FuncType) bool {
 	return found
 }
 
-// sigSpelling is ast.Type's own rendering, with no result spelled `void`.
 func sigSpelling(t ast.Type) string {
 	if t == nil {
 		return "void"

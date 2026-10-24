@@ -8,13 +8,6 @@ import (
 	"testing"
 )
 
-// From-converting `?` (#2674): a `Result[_, E1]` propagated through a
-// function returning `Result[_, E2]` converts the concrete error `E1`
-// into `E2` via `E2.from(E1)` when an assoc `from` constructor exists
-// (the Rust `?` + `From` idiom). Here `impl From[IoErr] for AppErr`
-// supplies `AppErr.from`. read(true) → Ok(8); read(false) → Err(IoErr{42}),
-// converted to AppErr{142}. run(true) yields 8, run(false) yields 142.
-// 8 + 142 = 150.
 const tryFromErrorSrc = `trait From[T] { function from(value: T): Self; }
 struct IoErr { code: i32 }
 struct AppErr { code: i32 }

@@ -2,9 +2,6 @@ package e2e
 
 import "testing"
 
-// A recursive generic visitor must preserve the original lexical scope while
-// accumulating bindings in its children. Appending to empty supplies spare
-// capacity: a full literal would force allocation and mask unsafe buffer reuse.
 const callbackSnapshotProg = `
 struct Binding { id: i32, name: string, symbol: string, line: i32, col: i32 }
 struct Scope { bindings: Binding[], visible: i32[], reserved: string[] }

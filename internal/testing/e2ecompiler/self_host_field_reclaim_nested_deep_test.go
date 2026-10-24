@@ -8,57 +8,23 @@ import (
 	"testing"
 )
 
-// #8538: a struct local rebound from a call must release a replaced
-// nested-STRUCT field deeply — the inner box's own rc children with it — rather
-// than dec the inner box alone and strand what it owns. An ARRAY field's buffer
-// IS the box, so for it the shallow dec is already complete.
-//
-// THE EXIT CODE DOES NOT MOVE. This is a pure leak, so the register and wasm
-// legs below are the miscompile guard on the deep release; the LEAKCHECK leg is
-// the gate, with native as the oracle.
-//
-// A direct ENUM field with an rc payload is released deeply the same way. The
-// scalar-payload enum row below is the boundary: nothing heap sits under that
-// box, so the shallow dec is already complete and it must stay clean either way.
 var selfHostFieldReclaimNestedCases = []struct {
 	name string
 	src  string
 }{
-	// The reported shape: a struct local rebound from a call, whose old value's
-	// nested-struct field owns a buffer.
 	{"nested-field-rebind-from-call", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { cfi: CfiState { bad: [v], open: false }, n: a.n };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
-	// The same with the write-back spelled as a spread — the spread is not the
-	// condition, and this row is what says so.
 	{"nested-field-rebind-spread", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, cfi: CfiState { bad: [v], open: false } };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
-	// Two levels of nesting. Inner's drop is reached through Mid's, so the release
-	// has to recurse to the buffer two boxes down rather than stop one level in.
 	{"nested-two-deep", "struct Inner { xs: i32[] }\nstruct Mid { i: Inner }\nstruct Asm { m: Mid, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, m: Mid { i: Inner { xs: [v] } } };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { m: Mid { i: Inner { xs: [] } }, n: 0 };\n    a = step(a, 1);\n    return a.m.i.xs.len() + __rc_underflow_count();\n}"},
 
-	// Control: an ARRAY field in the same shape. The buffer is the box, so the
-	// shallow dec was already complete — a deep walk here would be a double free,
-	// not a fix.
 	{"array-field-control", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, bad: [v] };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { bad: [], n: 0 };\n    a = step(a, 1);\n    return a.bad.len() + __rc_underflow_count();\n}"},
 
-	// Control: an enum field whose payload is a SCALAR. Nothing heap sits under
-	// the enum box, so the shallow dec is complete and this row is clean both
-	// ways — the boundary of what the missing walk costs.
 	{"scalar-payload-enum-control", "enum Payload { None, Some(i32) }\nstruct Asm { p: Payload, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, p: Payload.Some(v) };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { p: Payload.Some(0), n: 0 };\n    a = step(a, 1);\n    let r: i32 = 0;\n    match (a.p) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g; } }\n    return r + __rc_underflow_count();\n}"},
 
-	// Control: the identical rebind with no call. It reaches the in-place reuse
-	// path, which already deep-drops the replaced field — which is what said the
-	// gap was in the reclaim helper rather than in the rebind.
 	{"no-call-control", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = Asm { ...a, cfi: CfiState { bad: [1], open: false } };\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 }
 
-// TestSelfHostFieldReclaimNestedLeakCheck is the gate: clean under
-// FERN_LEAKCHECK on BOTH compilers, native as the oracle.
-//
-// The three nested rows leak without the fix; the three controls are clean
-// either way. A walk that ran unguarded, or on a field kind that did not want
-// one, would show up as an over-release (exit 99) rather than a leak, which is
-// why the exit code is asserted alongside the verdict.
 func TestSelfHostFieldReclaimNestedLeakCheck(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	cli := buildLangBinForInterp(t)
@@ -84,8 +50,6 @@ func TestSelfHostFieldReclaimNestedLeakCheck(t *testing.T) {
 	}
 }
 
-// TestSelfHostFieldReclaimNestedX86_64 — the answers, against the interpreter
-// oracle. The miscompile guard on the added walk, not the leak signal.
 func TestSelfHostFieldReclaimNestedX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -115,9 +79,6 @@ func TestSelfHostFieldReclaimNestedX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFieldReclaimNestedArm64 — the same rows on arm64, against the
-// interpreter oracle. Each backend emits the release calls itself, so a box
-// pointer held in a clobbered register across a drop call shows up only here.
 func TestSelfHostFieldReclaimNestedArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -143,9 +104,6 @@ func TestSelfHostFieldReclaimNestedArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFieldReclaimNestedWasmIR — the wasm leg, against the interpreter
-// oracle. The module must define every drop helper its releases call, or it
-// fails to load.
 func TestSelfHostFieldReclaimNestedWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping the wasm leg")

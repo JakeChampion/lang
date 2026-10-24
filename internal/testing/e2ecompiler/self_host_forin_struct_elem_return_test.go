@@ -4,15 +4,6 @@ import (
 	"testing"
 )
 
-// --- A struct-array element read through a for-in body that RETURNS ---------
-//
-// A for-in binder is an uncounted borrow of the element the container owns
-// (#6888), and a field read through it is a borrow wherever it stands —
-// including a body that RETURNS a projection of the element (#8178): `return
-// sd.name`, `return sd.fields.len()` and their INDEX spellings. Over a local, a
-// param or a call-result struct array (`for sd in mks(i)`), every case holds
-// allocs == frees at live_bytes 0.
-
 const forinStructElemDecl = `struct S { name: string, fields: string[] }
 function mkstr(p: string): string { return p + "-long-enough-to-heap-allocate"; }
 function mks(i: i32): S[] {
@@ -28,7 +19,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 func forinStructElemReturnCases() []arrenumShareCase {
 	return []arrenumShareCase{
 		{
-			// The control: a read-only body over a local struct array.
 			name: "forin_local_read",
 			src: forinStructElemDecl + `@noinline function scan(i: i32): i32 {
     let xs: S[] = mks(i);
@@ -40,9 +30,6 @@ function round(i: i32): i32 { return scan(i) % 101; }` + forinStructElemMain,
 			want: 58,
 		},
 		{
-			// A scalar read through the element returned mid-loop: the sweep
-			// at that return releases the local container under the borrowed
-			// element, after the read.
 			name: "forin_local_return_scalar",
 			src: forinStructElemDecl + `@noinline function count(i: i32, k: i32): i32 {
     let xs: S[] = mks(i);
@@ -53,7 +40,6 @@ function round(i: i32): i32 { return (count(i, 30) + count(i, 31) + 2) % 101; }`
 			want: 51,
 		},
 		{
-			// The same two bodies over a PARAM container.
 			name: "forin_param_read",
 			src: forinStructElemDecl + `@noinline function scan(xs: S[]): i32 {
     let t: i32 = 0;
@@ -73,8 +59,6 @@ function round(i: i32): i32 { let xs: S[] = mks(i); return (count(xs, 30) + coun
 			want: 51,
 		},
 		{
-			// A returned STRING FIELD of a borrowed param's element. The
-			// value survives the churn (exit 36 on both compilers).
 			name: "forin_param_return_string_field",
 			src: forinStructElemDecl + `@noinline function pick(xs: S[], k: i32): string {
     for sd in xs { if (sd.fields.len() == k) { return sd.name; } }
@@ -90,7 +74,6 @@ function round(i: i32): i32 {
 			want: 36,
 		},
 		{
-			// The INDEX spelling of the case above.
 			name: "index_param_return_string_field",
 			src: forinStructElemDecl + `@noinline function pick(xs: S[], k: i32): string {
     let j: i32 = 0;
@@ -107,7 +90,6 @@ function round(i: i32): i32 {
 			want: 36,
 		},
 		{
-			// A CALL-RESULT iterand with a read-only body.
 			name: "forin_call_iterand_read",
 			src: forinStructElemDecl + `@noinline function scan(i: i32): i32 {
     let t: i32 = 0;
@@ -120,8 +102,6 @@ function round(i: i32): i32 { return scan(i) % 101; }` + forinStructElemMain,
 	}
 }
 
-// TestSelfHostForInStructElemReturnX86_64 — a for-in body that returns a
-// projection of a struct-array element keeps the container's credit.
 func TestSelfHostForInStructElemReturnX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

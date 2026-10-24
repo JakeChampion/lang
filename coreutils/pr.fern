@@ -1,32 +1,3 @@
-// pr.fern — GNU-compatible `pr`.
-//
-//   pr [+FIRST[:LAST]] [-COLUMN] [OPTION]... [FILE]...
-//
-// Paginate or columnate FILEs for printing: a 66-line page carrying a
-// five-line header (two blanks, the header line, two blanks) and a
-// five-line trailer, with the body split into columns down or across.
-//
-// Four of the reference binary's behaviours are not the obvious reading
-// and are what most of the code below is about:
-//
-//   - The DIGITS of -COLUMN accumulate across the whole option scan, so
-//     `-2 -3` is twenty-three columns and not three.
-//   - Whitespace pr GENERATES (the offset, the line-number field, the
-//     gap between columns) is written with output tabs, while spaces
-//     that came from the input are copied verbatim until -i is given.
-//     A TAB in the input is a third thing again: in one column it is
-//     copied as the byte, and in several it becomes generated
-//     whitespace to the next stop — which is why -i changes it there
-//     and nowhere else — unless the columns are unpadded and separated
-//     by the single TAB that -s and -J leave by default.
-//   - A column's positions are LOCAL: a tab stop, the -e expansion and
-//     the -n separator all count from the column's own first byte, so
-//     the same line lands differently in column 1 and column 2.
-//   - A byte's display WIDTH is not one. In the C locale a backspace is
-//     minus one column and every other non-printable is zero, until -c
-//     or -v replaces it with an escape, whose printed length is then
-//     the width. Truncation, tab stops and the header's centring all
-//     read that width.
 import "std/array";
 import "std/string";
 import "std/io_buffered";
@@ -35,11 +6,6 @@ import "./lib/gnu";
 import "./lib/timefmt";
 import "std/tz";
 
-// ---- options ----------------------------------------------------------------
-//
-// The ids, and below them the declaration order the ambiguity lists
-// reveal: `pr --s` names show-control-chars, separator, sep-string and
-// show-nonprinting in that order.
 function opt_pages(): i32 {
   return 1;
 }
@@ -136,8 +102,6 @@ function opt_pagewidth(): i32 {
   return 24;
 }
 
-// `-b` is accepted, has no long spelling, is absent from GNU's own help
-// and does nothing. It is here because refusing it would diverge.
 function opt_balance(): i32 {
   return 25;
 }
@@ -206,21 +170,16 @@ function help_text(): string {
   return out;
 }
 
-// ---- configuration ----------------------------------------------------------
 struct Cfg { columns: i32, across: boolean, merge: boolean, ctrl: boolean, nonprint: boolean, double_space: boolean, date_fmt: timefmt.Format, untabify: boolean, in_tab: i32, in_tab_width: i32, tabify: boolean, out_tab: i32, out_tab_width: i32, form_feed: boolean, header: string, has_header: boolean, page_length: i32, numbering: boolean, num_sep: i32, num_digits: i32, num_width: i32, first_line: i32, has_first_line: boolean, offset: i32, nowarn: boolean, sep: string, omit_header: boolean, omit_pagination: boolean, page_width: i32, zone: tz.Zone, truncate: boolean, tab_literal: boolean, num_prefix: i32, first_page: u64, last_page: u64, chars_per_column: i32 }
 
 function tab_stop(): i32 {
   return 8;
 }
 
-// ---- display width ----------------------------------------------------------
 function is_print(b: i32): boolean {
   return b >= 32 && b < 127;
 }
 
-// The columns a body byte advances. A backspace is minus one and every other
-// non-printable is zero, which is what -c and -v replace with an escape
-// whose printed length becomes the width.
 function clump_width(b: i32, c: Cfg): i32 {
   if (is_print(b)) {
     return 1;
@@ -240,15 +199,8 @@ function clump_width(b: i32, c: Cfg): i32 {
   return 0;
 }
 
-// ---- the output line --------------------------------------------------------
-//
-// One output line under construction. `pos` is the display column the
-// next byte lands in and `pend` the generated whitespace not written
-// yet: it is flushed by the next visible byte and DROPPED at the end of
-// the line, which is what trims a row whose last column is absent.
 struct Line { buf: usize, pos: i32, pend: i32 }
 
-// `line_on(h)` — a line written into the builder `h`.
 function line_on(h: usize): Line {
   return Line { buf: h, pos: 0, pend: 0 };
 }
@@ -263,7 +215,6 @@ function take_bytes(h: usize): u8[] {
   return bytes;
 }
 
-// `(l).ws(n, c)` — `n` columns of generated whitespace.
 function (l: Line) ws(n: i32, c: Cfg): Line {
   if (n <= 0) {
     return l;
@@ -275,7 +226,6 @@ function (l: Line) ws(n: i32, c: Cfg): Line {
   return Line { ...l, pos: l.pos + n };
 }
 
-// `push_spaces(h, n)` — `n` spaces, pushed from a constant run.
 function push_spaces(h: usize, n: i32): void {
   let left: i32 = n;
   while (left > 0) {
@@ -288,20 +238,10 @@ function push_spaces(h: usize, n: i32): void {
   }
 }
 
-// `(l).to(target, c)` — generated whitespace up to column `target`.
 function (l: Line) to(target: i32, c: Cfg): Line {
   return l.ws(target - l.pos, c);
 }
 
-// `(l).flush(c)` — write the pending whitespace, using an output tab
-// wherever the next stop is still short of where the whitespace ends.
-//
-// Two rules are the reference binary's rather than the obvious ones. A
-// gap of ONE column is always a space, even when a tab would land on
-// it exactly — the loop runs only while more than one column is left.
-// And the tab CHARACTER is written once per stop crossed whatever it
-// is, so `-i,` puts one comma where a tab would have moved eight
-// columns and the rest of the line is off by the difference.
 function (l: Line) flush(c: Cfg): Line {
   if (l.pend <= 0) {
     return l;
@@ -324,7 +264,6 @@ function (l: Line) flush(c: Cfg): Line {
   return Line { ...l, pend: 0 };
 }
 
-// `(l).put(s, width, c)` — visible bytes occupying `width` columns.
 function (l: Line) put(s: string, width: i32, c: Cfg): Line {
   let f: Line = l.flush(c);
   buf_push(f.buf, s);
@@ -359,8 +298,6 @@ function (l: Line) put_clump(b: i32, c: Cfg): Line {
   return Line { ...f, pos: f.pos + clump_width(b, c) };
 }
 
-// `(l).space(c)` — one input space. It joins the pending whitespace
-// only once -i has asked for tabification; otherwise it is a byte.
 function (l: Line) space(c: Cfg): Line {
   if (c.tabify) {
     return Line { ...l, pos: l.pos + 1, pend: l.pend + 1 };
@@ -369,12 +306,6 @@ function (l: Line) space(c: Cfg): Line {
   return Line { ...l, pos: l.pos + 1 };
 }
 
-// ---- the input --------------------------------------------------------------
-//
-// One input stream. A line ends at a newline or, once pagination is on,
-// at a form feed; a form feed that ends an EMPTY line is a page break
-// with no line of its own, which is why a leading one makes a blank
-// page and a trailing one makes no page at all.
 struct Src { r: Reader, name: string, is_stdin: boolean, open: boolean, buf: u8[], pos: i32, eof: boolean, fatal: boolean, nlat: i32, ffat: i32, mtime: i64, mnsec: i64 }
 
 function read_size(): i32 {
@@ -385,18 +316,13 @@ function src_closed(): Src {
   return Src { r: stdin(), name: "", is_stdin: false, open: false, buf: [], pos: 0, eof: true, fatal: false, nlat: 0 - 1, ffat: 0 - 1, mtime: 0 as i64, mnsec: 0 as i64 };
 }
 
-// `src_fill(s)` — more bytes, or eof. A read failure is fatal: GNU stops
-// the whole run on an EISDIR where it only warns about a failed open.
 function src_fill(s: Src): Src {
-  // src_line calls this only after consuming the previous chunk.
   match (s.r.read_chunk_bytes(read_size())) {
     Ok(chunk) => {
       return Src { ...s, buf: chunk, pos: 0, eof: chunk.len() == 0, nlat: __memchr_bytes(chunk, 10, 0), ffat: __memchr_bytes(chunk, 12, 0) };
     },
     Err(e) => {
       let message: string = gnu.io_error_text(e);
-      // WASI can report EBADF when reading a directory descriptor. Identify
-      // the descriptor itself before choosing GNU's directory diagnostic.
       match (s.r.stat()) {
         Ok(st) => {
           if (st.is_dir) {
@@ -411,8 +337,6 @@ function src_fill(s: Src): Src {
   }
 }
 
-// Complete an owned record, appending to its existing builder when it spans
-// chunks. Empty form-feed records need no builder.
 function finish_record(carry: usize, chunk: u8[], from: i32, to: i32): u8[] {
   if (carry == 0 as usize && from == to) {
     return [];
@@ -425,9 +349,6 @@ function finish_record(carry: usize, chunk: u8[], from: i32, to: i32): u8[] {
   return take_bytes(h);
 }
 
-// A record is one input event: a line, a form feed, or EOF. A form feed
-// after text both completes that line and holds its input until the next page.
-// Keeping the events separate prevents one merge column from advancing another.
 struct Record { src: Src, line: boolean, ff: boolean, text: u8[] }
 
 function src_line(s0: Src): Record {
@@ -444,8 +365,6 @@ function src_line(s0: Src): Record {
       s = src_fill(s);
       continue;
     }
-    // Cache both delimiters: repeated form feeds without a newline must not
-    // rescan the remaining chunk for a newline on every event.
     if (s.nlat >= 0 && s.nlat < s.pos) {
       s = Src { ...s, nlat: __memchr_bytes(s.buf, 10, s.pos) };
     }
@@ -469,7 +388,6 @@ function src_line(s0: Src): Record {
     let text: u8[] = finish_record(carry, s.buf, s.pos, end);
     s = Src { ...s, pos: end + 1 };
     if (is_ff) {
-      // GNU consumes one newline after a form feed, even across reads.
       if (s.pos >= s.buf.len() && !s.eof) {
         s = src_fill(s);
       }
@@ -482,10 +400,6 @@ function src_line(s0: Src): Record {
   return Record { src: s, line: false, ff: false, text: [] };
 }
 
-// ---- numbers ----------------------------------------------------------------
-// `parse_int(s)` — strtol over the whole string: blanks, a sign, digits
-// and nothing after them. Returns (value, ok); a magnitude past the i64
-// range saturates, which is enough for every band the caller reports.
 function parse_int(s: string): (i64, boolean) {
   let i: i32 = 0;
   while (i < s.len() && gnu.is_blank(s[i] as i32)) {
@@ -519,12 +433,6 @@ function parse_int(s: string): (i64, boolean) {
   return (v, true);
 }
 
-// The two errno texts gnulib's xstrtol_fatal reports a refused number
-// with, and what chooses between them: the FLAG the option was parsed
-// under, not the magnitude. pr asks for XTOINT_MIN_RANGE only where the
-// minimum is its own rather than the type's, so a value below a
-// positive minimum is ERANGE and everything else out of range is
-// EOVERFLOW. GNU <= 9.4 put the boundary at -2^30 instead.
 function num_fault(v: i64, ok: boolean, min: i64): i32 {
   if (!ok) {
     return 1;
@@ -548,8 +456,6 @@ function num_text(status: i32): string {
   return "";
 }
 
-// `getnum(value, stem, min)` — one numeric option argument, or the end
-// of the program with gnulib's wording and no `Try …` line.
 function getnum(value: string, stem: string, min: i64): i32 {
   let r: (i64, boolean) = parse_int(value);
   let st: i32 = num_fault(r.0, r.1, min);
@@ -560,11 +466,6 @@ function getnum(value: string, stem: string, min: i64): i32 {
   return r.0 as i32;
 }
 
-// ---- the CHAR / WIDTH grammar of -e, -i and -n ------------------------------
-//
-// `-n:3` is the separator ':' and three digits, `-n3` is three digits
-// with the default separator, and anything else in the WIDTH half is
-// `'-n' extra characters or invalid number in the argument: '3x'`.
 function char_width(value: string, letter: string, defchar: i32, defwidth: i32): (i32, i32) {
   let ch: i32 = defchar;
   let rest: string = value;
@@ -590,13 +491,6 @@ function char_width(value: string, letter: string, defchar: i32, defwidth: i32):
   return (ch, r.0 as i32);
 }
 
-// ---- the page range ---------------------------------------------------------
-//
-// `+FIRST[:LAST]` and `--pages=FIRST[:LAST]` share a parser and differ
-// only in what a range that PARSES but is empty means: the `+` form
-// falls through to being a file name, the long option is a fault.
-// Returns (first, last, status): 0 a range, 1 not one, and the fatal
-// wordings are reported here.
 function parse_range(arg: string, what: string): (u64, u64, i32) {
   let head: string = arg;
   let tail: string = "";
@@ -645,18 +539,6 @@ function parse_range(arg: string, what: string): (u64, u64, i32) {
   return (f.0, last, 0);
 }
 
-// ---- the header date --------------------------------------------------------
-//
-// The header carries `timefmt.format(-D or "%Y-%m-%d %H:%M", localtime(t))`,
-// where `t` is the FILE's modification time — the wall clock reaches it
-// only for standard input and for -m, which have no one file to ask.
-// The zone is `std/tz`, which is tzset(3): the TZif file
-// $TZ names, the POSIX rule in its footer past the transition table, or
-// a POSIX rule string where $TZ is not a file at all.
-// ---- the header line --------------------------------------------------------
-// The columns a header field occupies: gnulib measures it with
-// mbswidth, so a control byte is worth nothing and every other byte one.
-// -c and -v never reach the header.
 function header_width(s: [u8]): i32 {
   let w: i32 = 0;
   let i: i32 = 0;
@@ -670,7 +552,6 @@ function header_width(s: [u8]): i32 {
   return w;
 }
 
-// The header date's format, compiled once for every page.
 function header_date_format(has_date: boolean, fmt: string): timefmt.Format {
   if (has_date) {
     return timefmt.compile(fmt);
@@ -678,9 +559,6 @@ function header_date_format(has_date: boolean, fmt: string): timefmt.Format {
   return timefmt.compile("%Y-%m-%d %H:%M");
 }
 
-// `header_text(c, name, t, nsec, page)` — date, name and `Page N` with
-// the name centred between them. Each gap keeps a space of its own when
-// the three do not fit, so a narrow page OVERFLOWS rather than shrinks.
 function header_text(c: Cfg, name: string, t: i64, nsec: i64, page: u64): u8[] {
   let date: u8[] = timefmt.format_bytes(c.date_fmt, c.zone, t, nsec);
   let nm: string = name;
@@ -706,19 +584,10 @@ function header_text(c: Cfg, name: string, t: i64, nsec: i64, page: u64): u8[] {
   return take_bytes(h);
 }
 
-// ---- one column -------------------------------------------------------------
 function col_start(c: Cfg, i: i32): i32 {
   return c.offset + c.num_prefix + i * (c.chars_per_column + c.sep.len());
 }
 
-// `put_sep(l, c)` — the column separator, one column per byte.
-//
-// A SPACE in it joins the generated whitespace rather than ending it,
-// which is why the default separator disappears into the gap's last
-// tab. A TAB does the same only when it is the WHOLE separator and the
-// columns are padded apart; in any longer separator, and wherever the
-// columns are not padded (-s or -J without a width), it is written as
-// the byte.
 function put_sep(l0: Line, c: Cfg): Line {
   let l: Line = l0;
   let k: i32 = 0;
@@ -734,9 +603,6 @@ function put_sep(l0: Line, c: Cfg): Line {
   return l;
 }
 
-// `tab_span(b, c)` — the columns a byte advances when it is a tab, or
-// zero. The input tab CHARACTER -e names moves to its own width; a real
-// TAB that is not that character still moves to the eighth column.
 function tab_span(b: i32, c: Cfg): i32 {
   if (b == c.in_tab) {
     return c.in_tab_width;
@@ -747,10 +613,6 @@ function tab_span(b: i32, c: Cfg): i32 {
   return 0;
 }
 
-// `put_tab(l, c, cs, span)` — a tab reached at the line's current
-// position. -e turns it into spaces and several columns turn it into
-// generated whitespace; one column, and a layout whose columns are
-// unpadded behind a single-TAB separator, leave the byte alone.
 function put_tab(l0: Line, c: Cfg, cs: i32, span: i32, b: i32): (Line, i32) {
   let local: i32 = l0.pos - cs;
   if (local < 0) {
@@ -774,16 +636,10 @@ function put_tab(l0: Line, c: Cfg, cs: i32, span: i32, b: i32): (Line, i32) {
   return (Line { ...f, pos: target }, target);
 }
 
-// `put_number(l, c, cs, n)` — the line-number field: the counter right
-// aligned in DIGITS columns, then the separator. A TAB separator is not
-// a byte but a move to the next eighth column of the COLUMN, which is
-// where `num_width` comes from.
 function put_number(l0: Line, c: Cfg, cs: i32, n: i64): Line {
   let l: Line = l0;
   let d: i32 = c.num_digits;
   if (n >= 0 as i64 && d >= 1 && d <= 18) {
-    // A counter wider than the field keeps its last `d` digits, zeros
-    // included.
     let v: u64 = n as u64;
     let len: i32 = io_buffered.buf_u64_len(v);
     let zeros: i32 = 0;
@@ -826,11 +682,6 @@ function put_number(l0: Line, c: Cfg, cs: i32, n: i64): Line {
   return l;
 }
 
-// `put_column(l, c, i, txt, n, numbered)` — column `i` of one row: the
-// gap that carries the separator, the line number when the column takes
-// one, and the text up to the column's own width. The pending
-// whitespace is FLUSHED once the column is positioned, so a column that
-// exists and renders nothing still leaves its gap behind.
 function put_column(l0: Line, c: Cfg, i: i32, txt: u8[], n: i64, numbered: boolean): Line {
   let cs: i32 = col_start(c, i);
   let l: Line = l0;
@@ -867,9 +718,6 @@ function put_column(l0: Line, c: Cfg, i: i32, txt: u8[], n: i64, numbered: boole
   }
   let k: i32 = 0;
   while (k < txt.len()) {
-    // A run of ordinary printable bytes is one column each and one
-    // append between them all; only a blank, a tab or a byte the
-    // escapes reach needs looking at on its own.
     let j: i32 = k;
     while (j < txt.len()) {
       let pb: i32 = txt[j] as i32;
@@ -929,10 +777,6 @@ function put_column(l0: Line, c: Cfg, i: i32, txt: u8[], n: i64, numbered: boole
   return l;
 }
 
-// `row_into(out, c, texts, nums, numbered)` — one body line, onto `out`. Pending
-// whitespace is never flushed at the end, so a row whose last column is
-// ABSENT carries no trailing pad; a column that exists and renders
-// nothing still does, because its separator is a byte.
 function row_into(out: usize, c: Cfg, texts: u8[][], nums: i64[], numbered: boolean): void {
   let l: Line = line_on(out);
   if (c.num_prefix > 0 && nums.len() > 0) {
@@ -952,8 +796,6 @@ function row_into(out: usize, c: Cfg, texts: u8[][], nums: i64[], numbered: bool
   buf_push_byte(out, 10);
 }
 
-// ---- the page ---------------------------------------------------------------
-// `wrap32(n)` — the line-number counter is a C int and wraps there.
 function wrap32(n: i64): i64 {
   let v: i64 = n;
   while (v > 2147483647 as i64) {
@@ -965,9 +807,6 @@ function wrap32(n: i64): i64 {
   return v;
 }
 
-// `column_lengths(n, c)` — how many lines each column of a page holds.
-// Down mode balances: the row count is ceil(n / columns) and the first
-// `n mod columns` columns are the full ones.
 function column_lengths(n: i32, c: Cfg): i32[] {
   let out: i32[] = [];
   let k: i32 = c.columns;
@@ -988,15 +827,10 @@ function column_lengths(n: i32, c: Cfg): i32[] {
   return out;
 }
 
-// `body_into(out, c, lines, first_no)` — the rows of one page onto `out`,
-// answering how many output lines they took.
 function body_into(out: usize, c: Cfg, lines: u8[][], first_no: i64): i32 {
   let count: i32 = 0;
   let n: i32 = lines.len();
   if (c.columns == 1 && !c.merge) {
-    // One column with nothing to do to the bytes — no number, no
-    // offset, no escaping, no truncation and no tab of either kind —
-    // is the default invocation, and the line goes out as it came in.
     let verbatim: boolean = !c.numbering && c.offset == 0 && !c.ctrl && !c.nonprint && !c.truncate && !c.untabify && !c.tabify;
     let i: i32 = 0;
     while (i < n) {
@@ -1060,8 +894,6 @@ function body_into(out: usize, c: Cfg, lines: u8[][], first_no: i64): i32 {
   return count;
 }
 
-// `merge_body_into(out, c, rows, first_no)` — the rows of a parallel page,
-// which are already laid out one column per FILE, onto `out`.
 function merge_body_into(out: usize, c: Cfg, rows: u8[][], width: i32, row_widths: i32[], first_no: i64): i32 {
   let count: i32 = 0;
   let nrows: i32 = 0;
@@ -1089,10 +921,6 @@ function merge_body_into(out: usize, c: Cfg, rows: u8[][], width: i32, row_width
   return count;
 }
 
-// `page_head(out, c, page, name, t, nsec)` and `page_tail(out, c, lines)` —
-// the header block before a page's body, and whatever closes the page after
-// it: five blank lines after padding it out, a single form feed, or, like the
-// header, nothing at all under -t.
 function page_head(out: usize, c: Cfg, page: u64, name: string, t: i64, nsec: i64): void {
   if (c.omit_header) {
     return;
@@ -1125,16 +953,12 @@ function page_tail(out: usize, c: Cfg, lines: i32): void {
   buf_push(out, "\n\n\n\n\n");
 }
 
-// ---- running one job --------------------------------------------------------
 struct Job { o: io_buffered.BufWriter, ok: boolean, fatal: boolean }
 
 function now_seconds(): i64 {
   return now_unix_ms() / (1000 as i64);
 }
 
-// `open_src(c, name)` — one operand. A failed OPEN is a warning that
-// costs the exit status and not the run; `-` is standard input, whose
-// header carries the wall clock and no name.
 function open_src(c: Cfg, name: string): (Src, boolean) {
   if (name == "-") {
     return (Src { r: stdin(), name: "-", is_stdin: true, open: true, buf: [], pos: 0, eof: false, fatal: false, nlat: 0 - 1, ffat: 0 - 1, mtime: now_seconds(), mnsec: 0 as i64 }, true);
@@ -1175,9 +999,6 @@ function rows_per_page(c: Cfg): i32 {
   return body;
 }
 
-// `page_warning(c, pages, o)` — GNU's `starting page number N exceeds
-// page count M`, which is a warning: it leaves the exit status alone
-// and an empty file still counts as one page.
 function page_warning(c: Cfg, pages: u64, o0: io_buffered.BufWriter): io_buffered.BufWriter {
   let total: u64 = pages;
   if (total == 0 as u64) {
@@ -1189,14 +1010,6 @@ function page_warning(c: Cfg, pages: u64, o0: io_buffered.BufWriter): io_buffere
   return gnu.error_out(o0, "starting page number " + c.first_page.to_string() + " exceeds page count " + total.to_string());
 }
 
-// `run_serial(c, name, o, ok)` — one file paginated on its own: page
-// numbers and line numbers both start again here.
-//
-// A form feed ends the page it is read on, EXCEPT when that page had
-// already filled: the break is then the one the page boundary already
-// made, so a matching input break adds no blank page. Without headers the
-// break still completes the logical page: -t emits the form feed and -T
-// omits it.
 function run_serial(c: Cfg, name: string, o0: io_buffered.BufWriter, ok0: boolean): Job {
   let opened: (Src, boolean) = open_src(c, name);
   if (!opened.1) {
@@ -1273,8 +1086,6 @@ function run_serial(c: Cfg, name: string, o0: io_buffered.BufWriter, ok0: boolea
     s.r.close();
   }
   if (!fatal) {
-    // GNU's page skipper discovers EOF on the page after a full page or
-    // form feed, even though that final empty page has no printed header.
     if (eof && boundary_end && c.first_page > pages) {
       pages = pages + 1 as u64;
     }
@@ -1283,11 +1094,6 @@ function run_serial(c: Cfg, name: string, o0: io_buffered.BufWriter, ok0: boolea
   return Job { o: o, ok: ok && !fatal, fatal: fatal };
 }
 
-// `run_merge(c, names, o, ok)` — every operand in parallel, one per
-// column. The column WIDTH comes from the operand count, so a file that
-// could not be opened still reserves its share; the files that did open
-// are packed into the columns from the left. Several `-` operands are
-// ONE stream read alternately, as GNU's shared stdin is.
 function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: boolean): Job {
   let o: io_buffered.BufWriter = o0;
   let ok: boolean = ok0;
@@ -1452,7 +1258,6 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
   return Job { o: o, ok: ok && !fatal, fatal: fatal };
 }
 
-// ---- main -------------------------------------------------------------------
 function build_opts(): gnu.Opt[] {
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("", "pages", opt_pages()));
@@ -1489,8 +1294,6 @@ function build_opts(): gnu.Opt[] {
   return opts;
 }
 
-// gnulib's xstrtoimax over -N, which has no lower bound of its own: the
-// whole int range is accepted and only a magnitude past it is refused.
 function getnum_first_line(value: string): i32 {
   let r: (i64, boolean) = parse_int(value);
   let bad: i32 = 0;
@@ -1668,8 +1471,6 @@ pub function main(): i32 {
     ri = ri + 1;
   }
 
-  // The column count is validated only once the whole scan is over, so
-  // `pr -0 --help` prints the help where `pr -l 0 --help` does not.
   if (have_columns) {
     let cn: (i64, boolean) = parse_int(col_str);
     let st: i32 = num_fault(cn.0, cn.1, 1 as i64);
@@ -1732,9 +1533,6 @@ pub function main(): i32 {
   if (num_sep == 9) {
     num_width = num_digits + tab_stop() - num_digits % tab_stop();
   }
-  // In parallel mode the line number is a prefix of the whole ROW, so
-  // it comes off the page width before the columns divide it; in column
-  // mode it sits INSIDE the first column's own width.
   let num_prefix: i32 = 0;
   if (merge && numbering) {
     num_prefix = num_width;
@@ -1744,9 +1542,6 @@ pub function main(): i32 {
     gnu.error("page width too narrow");
     exit(1);
   }
-  // Where the columns are NOT padded apart and the separator is
-  // exactly one TAB — which is what -s and -J leave by default — the
-  // input's own tabs are left alone as well.
   let tab_literal: boolean = !truncate && sep == "\t";
 
   let c: Cfg = Cfg { columns: columns, across: across, merge: merge, ctrl: ctrl, nonprint: nonprint, double_space: double_space, date_fmt: header_date_format(has_date, date_fmt), untabify: untabify, in_tab: in_tab, in_tab_width: in_tab_width, tabify: want_tabify || columns > 1, out_tab: out_tab, out_tab_width: out_tab_width, form_feed: form_feed, header: header, has_header: has_header, page_length: page_length, numbering: numbering, num_sep: num_sep, num_digits: num_digits, num_width: num_width, first_line: first_line, has_first_line: has_first_line, offset: offset, nowarn: nowarn, sep: sep, omit_header: omit_header, omit_pagination: omit_pagination, page_width: page_width, zone: tz.local_zone(), truncate: truncate, tab_literal: tab_literal, num_prefix: num_prefix, first_page: first_page, last_page: last_page, chars_per_column: chars_per_column };

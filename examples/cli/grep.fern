@@ -1,20 +1,3 @@
-// grep.fern — print lines matching a fixed pattern, like `grep(1)`
-// (specifically `grep -F`, fixed-string substring matching — no
-// regular expressions).
-//
-//   -i   case-insensitive match
-//   -v   invert: print lines that do NOT match
-//   -n   prefix each match with its 1-based line number
-//   -c   print only a count of matching lines per file
-//   -w   print the matching files' names with a colon prefix when
-//        more than one file is given (auto-enabled for multi-file)
-//
-//   $ ./grep error log.txt
-//   $ printf 'a\nbAb\nc\n' | ./grep -i b
-//   $ ./grep -vn foo file.txt
-//
-// Showcases: substring search (`contains` / `contains_ci`), invert
-// + count modes, multi-file output prefixes.
 import "std/string";
 import "std/i32";
 import "std/io";
@@ -39,18 +22,17 @@ function main(): i32 {
   while (i < argv.len()) {
     let a: string = argv[i];
     if (a.starts_with("-") && a.len() > 1 && !have_pat) {
-      // Bundle of single-char flags, e.g. `-iv`.
       let f: i32 = 1;
       while (f < a.len()) {
         let c: i32 = a[f] as i32;
         if (c == 105) {
-          o = Opts { ...o, ignore_case: true };  // i
+          o = Opts { ...o, ignore_case: true };
         } else if (c == 118) {
-          o = Opts { ...o, invert: true };  // v
+          o = Opts { ...o, invert: true };
         } else if (c == 110) {
-          o = Opts { ...o, show_num: true };  // n
+          o = Opts { ...o, show_num: true };
         } else if (c == 99) {
-          o = Opts { ...o, count_only: true };  // c
+          o = Opts { ...o, count_only: true };
         } else {
           eprint("grep: invalid option -- '" + slice_unchecked(a, f, f + 1) + "'");
           return 2;
@@ -76,7 +58,7 @@ function main(): i32 {
 
   let multi: boolean = inputs.len() > 1;
   let any_match: boolean = false;
-  let status: i32 = 1;  // grep exits 1 when nothing matches
+  let status: i32 = 1;
 
   let j: i32 = 0;
   while (j < inputs.len()) {

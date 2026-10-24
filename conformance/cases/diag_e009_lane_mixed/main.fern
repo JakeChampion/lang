@@ -1,5 +1,5 @@
-// E009: lane arithmetic takes two values of one lane type. A scalar is made a
-// lane value with splat, and the two lane types do not mix.
+
+
 import "std/f64";
 
 function main(): i32 {

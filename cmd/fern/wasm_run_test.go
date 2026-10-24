@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// -run on a wasm32-wasi target runs the output under wasmtime. It used to go
-// through the qemu path like any non-host ISA, which handed qemu-aarch64 a
-// wasm binary that it rejected with exit 1 and no output.
 func TestRunWasmUnderWasmtime(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -20,7 +17,6 @@ func TestRunWasmUnderWasmtime(t *testing.T) {
 		emit []string
 		code int
 	}{
-		// A wasi:cli/run component reports ok or err, so 3 arrives as 1.
 		{"component", nil, 1},
 		{"command-module", []string{"-emit", "command-module"}, 3},
 	} {

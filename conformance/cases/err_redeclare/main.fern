@@ -1,4 +1,4 @@
-// Declaring the same variable twice in one scope.
+
 function main(): i32 {
     let x: i32 = 1;
     let x: i32 = 2;

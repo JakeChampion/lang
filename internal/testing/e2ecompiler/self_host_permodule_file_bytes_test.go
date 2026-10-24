@@ -10,8 +10,6 @@ import (
 	"testing"
 )
 
-// A library-only caller must link against the entry unit's shared runtime.
-// Whole-program compilation cannot detect an omitted per-module runtime root.
 func TestSelfHostPerModuleFileBytes(t *testing.T) {
 	checkSelfHostPerModuleByteSink(t, `pub function save(): i32 {
   let data: u8[] = [255 as u8, 0 as u8, 128 as u8, 65 as u8];
@@ -29,8 +27,6 @@ func TestSelfHostPerModuleFileBytes(t *testing.T) {
 	})
 }
 
-// std/io's read_file_bytes call is typed, so it reaches the packed helper
-// the entry unit has to export.
 func TestSelfHostPerModuleReadFileBytes(t *testing.T) {
 	checkSelfHostPerModuleByteSink(t, `import "std/io";
 

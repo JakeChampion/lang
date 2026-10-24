@@ -7,27 +7,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostSubprocessIR pins `subprocess(cmd, args, stdin)` lowering on the
-// self-host x86-64 IR path. subprocess spawns a child, pipes its streams, and
-// returns a BARE ProcessResult struct {stdout, stderr, exit_code} — unwrapped by
-// a Result, unlike stat.
-//
-// The helper is Fern now (#2649, asmcore.rt_src_subprocess): three pipes, a
-// fork, dup3 + execve with the /bin and /usr/bin fallbacks in the child, and
-// stdin feed / stream drain / wait4 in the parent, all over the existing
-// __syscall3 / __syscall4 / __raw_* floor. The symbol check is pinned to the
-// full mangled name: `__fern_subprocess` is a PREFIX of `__fn___fern_subprocess`,
-// so the old spelling passed on both sides of the migration and proved nothing.
-//
-// This exercises the bare-struct-RESULT typing: expr_struct_type types
-// `subprocess(..)` as ProcessResult (no match needed), so `let r = subprocess(..)`
-// binds r and r.stdout / r.exit_code resolve against the injected struct. The
-// program runs /bin/echo (stdout capture), /bin/cat (stdin piping), and a
-// nonexistent binary (spawn failure -> exit_code 127), exiting 0 only if all
-// three resolve correctly. Two more cover what the original left untested and
-// this migration rewrote: stderr capture (kept separate from stdout) and a
-// non-zero exit status, both through a BARE `sh` so the /bin PATH fallback is
-// exercised rather than an absolute path.
 func TestSelfHostSubprocessIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -76,15 +55,6 @@ func TestSelfHostSubprocessIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostSubprocessIRArm64 is the arm64-Linux half of the migration. The
-// helper is the SAME asmcore.rt_src_subprocess source as x86-64, with only the
-// syscall numbers substituted — pipe2 59, dup3 24, execve 221, wait4 260 and
-// the clone(SIGCHLD, …) spelling of fork, all of which the asm-content checks
-// pin so a mis-numbered syscall fails here rather than hanging under qemu.
-//
-// Darwin does NOT share this body: XNU has no pipe2 and its pipe() reports the
-// second fd in x1, which no __syscall* intrinsic can see. That target keeps the
-// hand-written __fn___fern_subprocess (self_host_macho_test.go covers it).
 func TestSelfHostSubprocessIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -115,9 +85,6 @@ func TestSelfHostSubprocessIRArm64(t *testing.T) {
 	if strings.Contains(asm, ".Lsp_ccmd") {
 		t.Error("the hand-written arm64 __fn___fern_subprocess body is still emitted (.Lsp_ccmd present)")
 	}
-	// The syscall numbers arrive as ordinary pushed operands popped into x8, so
-	// each is materialised in a register of the allocator's choosing rather
-	// than written to x8 directly.
 	for _, want := range []string{"59", "24", "221", "260", "220"} {
 		if !arm64Imm(asm, want) {
 			t.Errorf("emitted arm64 asm does not materialise the syscall number %s", want)
@@ -130,10 +97,6 @@ func TestSelfHostSubprocessIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostSubprocessNeedGatedArm64 pins that the subprocess helper is
-// need-gated on arm64. It used to sit inside the bare `heap` gate, so every
-// allocating program carried ~400 instructions nothing branched to — the same
-// unconditional emission the Reader bodies had (#6921).
 func TestSelfHostSubprocessNeedGatedArm64(t *testing.T) {
 	arm64gcc, arm64runner := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -141,7 +104,6 @@ func TestSelfHostSubprocessNeedGatedArm64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	// Constant arrays use static storage; retain this as the no-heap control.
 	const noSpawn = `function main(): i32 {
     let xs: string[] = ["a", "b"];
     return xs.len() - 2;

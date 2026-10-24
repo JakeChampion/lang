@@ -1,16 +1,3 @@
-// compiler/lspquery.fern — what `fern -lsp` answers a hover or a
-// go-to-definition request from: the bundle a document's check loaded and the
-// self-host checker's view of it, whose tokens, scopes and signatures
-// lspassist.fern answers the other requests with. Positions here are the
-// bundle's, a module's lines numbered from its base (util.line_base), so the
-// server maps a request into them and an answer out of them; lsp.fern is the
-// wire.
-//
-// The name under the cursor is found among the module's tokens, then read off
-// the syntax tree at that token's position: an identifier, a qualified
-// `alias.name`, a field or method after a `.`, or a struct literal's type. A
-// name no tree node is positioned at is a type written in an annotation.
-
 import "./ast";
 import "./astwalk";
 import "./checker";
@@ -22,14 +9,8 @@ import "./parser";
 import "./typeinfo";
 import "./util";
 
-// Program is what a document's check loaded: the bundle, its entry and the
-// modules it imports, and each module's text, indexed as util.pos_file_index
-// numbers modules; and what requests read of it, built by `viewed` on first
-// use.
 pub struct Program { merged: parser.Module, entry: parser.Module, loaded: flatten.LoadedModule[], srcs: string[], view: Option[View] }
 
-// View is the checker's view of a program and how each of its modules names
-// the others.
 pub struct View { types: checker.QueryView, quals: flatten.Qualifiers[] }
 
 pub function program(merged: parser.Module, entry: parser.Module, loaded: flatten.LoadedModule[], srcs: string[]): Program {
@@ -50,15 +31,12 @@ pub function view_of(p: Program): View {
   return View { types: checker.query_view(p.merged), quals: flatten.bundle_qualifiers(p.entry, p.loaded) };
 }
 
-// Answer is a request's answer: a hover's `text`, and the `len` bytes at
-// `line`, `col` — the name hovered, or the declaration a definition names.
 pub struct Answer { found: boolean, text: string, line: i32, col: i32, len: i32 }
 
 pub function no_answer(): Answer {
   return Answer { found: false, text: "", line: 0, col: 0, len: 0 };
 }
 
-// hover describes the name at `line`, `col`.
 pub function hover(p: Program, line: i32, col: i32): Answer {
   let (q, ok) = query(p, line, col);
   if (!ok) {
@@ -77,8 +55,6 @@ pub function hover(p: Program, line: i32, col: i32): Answer {
   return Answer { found: true, text: util.show_type_vars(text), line: q.site.line, col: q.site.col, len: q.site.len };
 }
 
-// hover_doc is the doc comment above the declaration the name at `line`, `col`
-// names, the comment run a reference page shows for it, or "".
 pub function hover_doc(p: Program, line: i32, col: i32): string {
   if (names_a_parameter(p, line, col)) {
     return "";
@@ -92,9 +68,6 @@ pub function hover_doc(p: Program, line: i32, col: i32): string {
   return ferndoc.take_doc(comments, 0, d.line - util.line_base(m - 1)).doc;
 }
 
-// names_a_parameter is whether the name at `line`, `col` is a parameter, whose
-// declaration line is its function's: the comment above it documents the
-// function.
 function names_a_parameter(p: Program, line: i32, col: i32): boolean {
   let (q, ok) = query(p, line, col);
   if (!ok || q.f.kind == K_NONE || q.f.kind == K_QUALIFIED) {
@@ -108,8 +81,6 @@ function names_a_parameter(p: Program, line: i32, col: i32): boolean {
   return false;
 }
 
-// definition is where the name at `line`, `col` is declared: its name in that
-// declaration.
 pub function definition(p: Program, line: i32, col: i32): Answer {
   let (q, ok) = query(p, line, col);
   if (!ok) {
@@ -122,9 +93,6 @@ pub function definition(p: Program, line: i32, col: i32): Answer {
   return node_def(p, q.v, scope_at(q.v, fd, q.site), fd, q.f, q.site);
 }
 
-// Query is a request read against a program: the checker's view of it, the
-// name at the position, how that name's module names others, and the node
-// naming it (K_NONE for a type written in an annotation).
 pub struct Query { v: checker.QueryView, site: Site, quals: flatten.Qualifiers, f: Found }
 
 pub function query(p: Program, line: i32, col: i32): (Query, boolean) {
@@ -135,28 +103,19 @@ pub function query(p: Program, line: i32, col: i32): (Query, boolean) {
   return (Query { v: view.types, site: site, quals: quals, f: locate(view.types, site) }, ok);
 }
 
-// ---- Tokens ----
-
-// Tok is a token as the locator reads it: its spelling (an identifier's name,
-// a keyword's or punctuation's text, "" for a literal), whether it is an
-// identifier, and where it starts.
 pub struct Tok { text: string, ident: boolean, line: i32, col: i32 }
 
-// module_toks is module `m`'s tokens, numbered as the bundle numbers its
-// lines; an f-string's interpolants are lexed in place.
 pub function module_toks(p: Program, m: i32): Tok[] {
   let out: Tok[] = [];
   if (m < 0 || m >= p.srcs.len()) {
     return out;
   }
-  // Module m's lines follow util.line_base(m - 1): the entry's start at 1.
   for t in lexer.tokenize_from(p.srcs[m], util.line_base(m - 1) + 1) {
     out = append_tok(out, t);
   }
   return out;
 }
 
-// parsed_module is module `m` as it was parsed, its names unprefixed.
 pub function parsed_module(p: Program, m: i32): parser.Module {
   if (m > 0 && m <= p.loaded.len()) {
     return p.loaded[m - 1].mod;
@@ -208,11 +167,6 @@ pub function quals_of(v: View, m: i32): flatten.Qualifiers {
   return flatten.Qualifiers { aliases: [], prefixes: [], own: "", reexport_keys: [], reexport_targets: [] };
 }
 
-// Site is the name under the cursor: `name`, written in the `len` bytes from
-// `line`, `col` — from its qualifier, for a qualified `alias.name`, whose alias
-// is `qual` and bundled name `target` — with the name itself at `name_col`,
-// the `.` before it at `dot_col` (0 when there is none), and the token before
-// the whole name in `prev`.
 pub struct Site { name: string, qual: string, target: string, line: i32, col: i32, len: i32, name_col: i32, dot_col: i32, prev: string }
 
 pub function site_at(toks: Tok[], q: flatten.Qualifiers, line: i32, col: i32): (Site, boolean) {
@@ -221,7 +175,6 @@ pub function site_at(toks: Tok[], q: flatten.Qualifiers, line: i32, col: i32): (
   if (i < 0) {
     return (none, false);
   }
-  // On the alias of `alias.name`, the cursor is on the qualified name.
   if (!punct_before(toks, i, ".") && util.has_str(q.aliases, toks[i].text) && dot_ident_after(toks, i)) {
     i = i + 2;
   }
@@ -242,8 +195,6 @@ pub function site_at(toks: Tok[], q: flatten.Qualifiers, line: i32, col: i32): (
   return (Site { ...site, qual: qt.text, target: target, col: qt.col, len: t.col + t.text.len() - qt.col, prev: text_at(toks, i - 3) }, true);
 }
 
-// ident_at is the index of the name token covering `line`, `col`, or -1. A
-// token covers its own bytes, not the position just past its end.
 function ident_at(toks: Tok[], q: flatten.Qualifiers, line: i32, col: i32): i32 {
   let i: i32 = 0;
   while (i < toks.len()) {
@@ -256,8 +207,6 @@ function ident_at(toks: Tok[], q: flatten.Qualifiers, line: i32, col: i32): i32 
   return 0 - 1;
 }
 
-// names_something reports whether `t` is a name: an identifier, or a keyword
-// an import is qualified by (std/string's `string`).
 pub function names_something(t: Tok, q: flatten.Qualifiers): boolean {
   return t.ident || util.has_str(q.aliases, t.text);
 }
@@ -269,7 +218,6 @@ pub function text_at(toks: Tok[], i: i32): string {
   return toks[i].text;
 }
 
-// punct_before reports whether token `i` follows `text` on its own line.
 pub function punct_before(toks: Tok[], i: i32, text: string): boolean {
   return i >= 1 && !toks[i - 1].ident && toks[i - 1].text == text && toks[i - 1].line == toks[i].line;
 }
@@ -277,8 +225,6 @@ pub function punct_before(toks: Tok[], i: i32, text: string): boolean {
 function dot_ident_after(toks: Tok[], i: i32): boolean {
   return i + 2 < toks.len() && toks[i + 2].ident && punct_before(toks, i + 2, ".") && toks[i + 1].line == toks[i].line;
 }
-
-// ---- Finding the node ----
 
 pub const K_NONE: i32 = 0;
 
@@ -292,9 +238,6 @@ const K_METHOD: i32 = 4;
 
 const K_STRUCT_LIT: i32 = 5;
 
-// Probe is a search of a tree for the node naming `site`: the kind of node
-// found (K_NONE until one is) and the node. A method call outranks the field
-// access that is its callee.
 struct Probe { site: Site, kind: i32, expr: ast.Expr }
 
 function probe(site: Site): Probe {
@@ -360,15 +303,11 @@ function after_dot(fa: ast.ExprFieldAccess, site: Site): boolean {
   return site.dot_col > 0 && site.qual.len() == 0 && fa.line == site.line && fa.col == site.dot_col && names(fa.field, site.name);
 }
 
-// names reports whether the bundled name `n` is a spelling of `name`: the name
-// itself, a module's mangled `prefix__name`, or a lexical binding of it.
 function names(n: string, name: string): boolean {
   let s: string = lexical.source_name(n);
   return s == name || util.str_has_suffix(s, "__" + name);
 }
 
-// Found is the node naming a site and the index of the function whose body
-// holds it.
 pub struct Found { kind: i32, expr: ast.Expr, fd: i32 }
 
 function locate(v: checker.QueryView, site: Site): Found {
@@ -403,14 +342,11 @@ function holds_expr(e: ast.Expr, site: Site): boolean {
   return astwalk.fold_expr_nodes(e, probe(site), probe_stmt, probe_expr, astwalk.descend_all).kind != K_NONE;
 }
 
-// access_site is the site of the member a field access names after its `.`.
 pub function access_site(fa: ast.ExprFieldAccess): Site {
   let name: string = lexical.source_name(fa.field);
   return Site { name: name, qual: "", target: "", line: fa.line, col: fa.col + 1, len: name.len(), name_col: fa.col + 1, dot_col: fa.col, prev: "." };
 }
 
-// call_parts is the signature of what the name at `site` calls — a function,
-// a module's function or a method — and whether the tree has a node there.
 pub function call_parts(v: checker.QueryView, site: Site): (Parts, boolean) {
   let f: Found = locate(v, site);
   if (f.kind == K_NONE) {
@@ -439,11 +375,6 @@ pub function call_parts(v: checker.QueryView, site: Site): (Parts, boolean) {
   return (no_parts(), true);
 }
 
-// ---- The enclosing function ----
-
-// enclosing is the index in `mod.funcs` of the function of module `m` whose
-// declaration holds `line`, `col` — the latest one to start before it, when
-// its body has not closed — or -1.
 pub function enclosing(mod: parser.Module, toks: Tok[], m: i32, line: i32, col: i32): i32 {
   let best: i32 = 0 - 1;
   let i: i32 = 0;
@@ -464,22 +395,14 @@ pub function enclosing(mod: parser.Module, toks: Tok[], m: i32, line: i32, col: 
   return best;
 }
 
-// declared_in reports whether a declaration at bundle line `line` is in module
-// `m`; a declaration the front end synthesises has no line.
 pub function declared_in(line: i32, m: i32): boolean {
   return line > 0 && util.pos_file_index(line) == m;
 }
 
-// before reports whether `l0`, `c0` comes strictly before `l1`, `c1`.
 pub function before(l0: i32, c0: i32, l1: i32, c1: i32): boolean {
   return l0 < l1 || l0 == l1 && c0 < c1;
 }
 
-// ---- The scope at a node ----
-
-// scope_at is the scope the checker types the statement holding `site` in:
-// the function's, with every statement before it bound, inside each block,
-// arm, loop and lambda that encloses it.
 pub function scope_at(v: checker.QueryView, fd: parser.FuncDecl, site: Site): checker.Scope {
   return scope_in(fd.body, checker.func_scope(v, fd), site);
 }
@@ -568,13 +491,10 @@ function skip_stmt(st: ast.Stmt, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
   return acc;
 }
 
-// lambdas is the lambdas `e` holds that no other lambda of it holds.
 pub function lambdas(e: ast.Expr): ast.ExprLambda[] {
   return astwalk.fold_expr_nodes(e, [], skip_stmt, collect_lambda, astwalk.not_lambda);
 }
 
-// scope_in_expr is the scope inside whichever lambda of `e` holds `site`, or
-// `s` when none does.
 function scope_in_expr(e: ast.Expr, s: checker.Scope, site: Site): checker.Scope {
   for lm in lambdas(e) {
     if (holds(lm.body, site)) {
@@ -584,8 +504,6 @@ function scope_in_expr(e: ast.Expr, s: checker.Scope, site: Site): checker.Scope
   return s;
 }
 
-// binding_of is the lexical binding the identifier at `site` reads, when it
-// reads a local or a parameter of `fd`.
 pub function binding_of(fd: parser.FuncDecl, site: Site): (lexical.Binding, boolean) {
   let r: lexical.ResolvedFunction = lexical.resolve_func(fd);
   let p: Probe = probe_all(r.func.body, site);
@@ -599,8 +517,6 @@ pub function binding_of(fd: parser.FuncDecl, site: Site): (lexical.Binding, bool
   return (lexical.Binding { id: 0 - 1, name: "", symbol: "", line: 0, col: 0 }, false);
 }
 
-// is_param reports whether `b` is a parameter of `fd` or of a lambda in it:
-// those are bound at their function's position.
 pub function is_param(b: lexical.Binding, fd: parser.FuncDecl): boolean {
   if (b.line == fd.line && b.col == fd.col) {
     return true;
@@ -614,8 +530,6 @@ pub function is_param(b: lexical.Binding, fd: parser.FuncDecl): boolean {
   }
   return false;
 }
-
-// ---- Hover text ----
 
 function node_text(s: checker.Scope, fd: parser.FuncDecl, f: Found, site: Site): string {
   match (f.expr) {
@@ -653,8 +567,6 @@ function ident_text(s: checker.Scope, fd: parser.FuncDecl, name: string, site: S
   return kind + site.name + ": " + checker.type_label(checker.scope_type(s, name));
 }
 
-// global_text describes a module-level name — a variant, function, struct or
-// enum — written `shown`.
 function global_text(s: checker.Scope, name: string, shown: string): string {
   let owner: string = checker.variant_enum(s, name);
   if (owner.len() > 0) {
@@ -678,7 +590,6 @@ function qualified_text(s: checker.Scope, name: string, site: Site): string {
   return global_text(s, name, site.name);
 }
 
-// type_text describes the struct, record variant or enum `name` names.
 function type_text(s: checker.Scope, name: string): string {
   let owner: string = checker.variant_enum(s, name);
   if (owner.len() > 0) {
@@ -695,7 +606,6 @@ function type_text(s: checker.Scope, name: string): string {
   return "";
 }
 
-// enum_qualifier is the enum `fa` names a variant of, as `Shape.Circle`, or "".
 pub function enum_qualifier(s: checker.Scope, fa: ast.ExprFieldAccess): string {
   if let ast.ExprIdent(q) = fa.obj {
     if (checker.enum_sig(s, q.name).is_enum) {
@@ -705,8 +615,6 @@ pub function enum_qualifier(s: checker.Scope, fa: ast.ExprFieldAccess): string {
   return "";
 }
 
-// member_text describes what `fa` names: an enum's variant, or a method when
-// `fa` is called, else a field.
 function member_text(s: checker.Scope, fa: ast.ExprFieldAccess, called: boolean): string {
   if (enum_qualifier(s, fa).len() > 0) {
     return type_text(s, fa.field);
@@ -741,15 +649,12 @@ function method_text(s: checker.Scope, fa: ast.ExprFieldAccess): string {
   return "(method on " + owner + ") " + parts_text(fa.field, parts);
 }
 
-// Parts is a signature's parameter and result types, spelled as its
-// declaration spells them; `found` is false when there is no signature.
 pub struct Parts { found: boolean, params: string[], ret: string }
 
 pub function no_parts(): Parts {
   return Parts { found: false, params: [], ret: "" };
 }
 
-// parts_text is `function name(p1, p2): ret`.
 pub function parts_text(name: string, parts: Parts): string {
   return "function " + name + "(" + joined(parts.params) + "): " + parts.ret;
 }
@@ -762,8 +667,6 @@ pub function method_parts(ms: checker.MethodSig): Parts {
   return Parts { found: ms.name.len() > 0, params: label_list(ms.param_types, ms.param_type_names, 0), ret: label(ms.ret_type, ms.ret_type_name) };
 }
 
-// member_parts is the signature of method `field` of a value of type `t`:
-// one declared on its type, a built-in one, or an array's.
 function member_parts(s: checker.Scope, t: typeinfo.Type, field: string): Parts {
   if let typeinfo.TypeArray(a) = t {
     return array_parts(s, a, field);
@@ -779,8 +682,6 @@ function member_parts(s: checker.Scope, t: typeinfo.Type, field: string): Parts 
   return builtin_parts(recv, field);
 }
 
-// builtin_parts is the signature of the built-in method `name` of receiver
-// type `recv`, its receiver left out.
 pub function builtin_parts(recv: string, name: string): Parts {
   if let typeinfo.TypeFunc(f) = checker.builtin_method_sig(recv, name) {
     return Parts { found: true, params: label_list(f.param_types, [], 0), ret: checker.type_label(f.ret_type) };
@@ -788,8 +689,6 @@ pub function builtin_parts(recv: string, name: string): Parts {
   return no_parts();
 }
 
-// array_parts is the signature of the method `field` of an array: a method
-// declared on an array receiver, or the built-in `len`.
 pub function array_parts(s: checker.Scope, a: typeinfo.TypeArray, field: string): Parts {
   let ms: checker.MethodSig = checker.array_method_sig(s, field, a.view);
   if (ms.name.len() > 0) {
@@ -810,8 +709,6 @@ pub function variant_text(s: checker.Scope, name: string, owner: string): string
   return "(variant of " + owner + ") " + unprefixed(name, u.module) + payload(s, name, u);
 }
 
-// payload is variant `name`'s payload list: its declaration's, or for a
-// built-in Option's or Result's, the type parameter it carries.
 function payload(s: checker.Scope, name: string, u: checker.UnionSig): string {
   let v: checker.StructSig = checker.variant_sig(s, name, u.name);
   if (v.field_types.len() > 0) {
@@ -873,8 +770,6 @@ pub function type_params(tps: string[]): string {
   return out + "]";
 }
 
-// label spells a declared type as its declaration does, and an inferred one,
-// which has no spelling, as the checker names it.
 pub function label(t: typeinfo.Type, spelling: string): string {
   if (spelling.len() > 0) {
     return spelling;
@@ -886,7 +781,6 @@ function labels(ts: typeinfo.Type[], spellings: string[]): string {
   return joined(label_list(ts, spellings, 0));
 }
 
-// label_list is the labels of the types from index `from` on.
 function label_list(ts: typeinfo.Type[], spellings: string[], from: i32): string[] {
   let out: string[] = [];
   let i: i32 = from;
@@ -914,7 +808,6 @@ function joined(xs: string[]): string {
   return out;
 }
 
-// unprefixed is a bundled name as its own module wrote it.
 pub function unprefixed(name: string, prefix: string): string {
   let p: string = prefix + "__";
   if (prefix.len() > 0 && util.str_has_prefix(name, p)) {
@@ -923,12 +816,6 @@ pub function unprefixed(name: string, prefix: string): string {
   return name;
 }
 
-// ---- Type references ----
-
-// type_candidates are the bundled names the type written at the query's site
-// may name: a qualified one's target, or a bare one's own-module declaration
-// and then the name as a builtin or entry declaration. A declaration's own
-// name is not a reference, nor is a member after a `.`.
 pub function type_candidates(q: Query): string[] {
   let p: string = q.site.prev;
   if (p == "struct" || p == "enum" || p == "type" || p == "trait" || p == "function" || p == "resource") {
@@ -946,7 +833,6 @@ pub function type_candidates(q: Query): string[] {
   return [q.site.name];
 }
 
-// type_ref_text describes the first candidate naming a struct or an enum.
 function type_ref_text(s: checker.Scope, candidates: string[]): string {
   for c in candidates {
     if (checker.variant_enum(s, c).len() == 0) {
@@ -958,8 +844,6 @@ function type_ref_text(s: checker.Scope, candidates: string[]): string {
   }
   return "";
 }
-
-// ---- Definitions ----
 
 function node_def(p: Program, v: checker.QueryView, s: checker.Scope, fd: parser.FuncDecl, f: Found, site: Site): Answer {
   match (f.expr) {
@@ -988,14 +872,10 @@ function node_def(p: Program, v: checker.QueryView, s: checker.Scope, fd: parser
   return no_answer();
 }
 
-// local_def is the name a local or parameter is declared with: the first
-// token spelled so at its binding, which for a parameter is in its function's
-// parameter list.
 pub function local_def(p: Program, b: lexical.Binding, param: boolean, name: string): Answer {
   return binding_decl(module_toks(p, util.pos_file_index(b.line)), b, param, name);
 }
 
-// binding_decl is local_def among the binding's module's tokens `toks`.
 pub function binding_decl(toks: Tok[], b: lexical.Binding, param: boolean, name: string): Answer {
   let i: i32 = first_ident(toks, after(toks, b.line, b.col), name);
   while (param && i >= 0 && !(punct_before(toks, i, "(") || punct_before(toks, i, ","))) {
@@ -1004,8 +884,6 @@ pub function binding_decl(toks: Tok[], b: lexical.Binding, param: boolean, name:
   return tok_answer(toks, i, b.line, b.col, name);
 }
 
-// global_def is the declaration of the module-level name `name` (bundled):
-// a variant's in its enum, or a function's, struct's or enum's.
 function global_def(p: Program, v: checker.QueryView, s: checker.Scope, name: string): Answer {
   let owner: string = checker.variant_enum(s, name);
   if (owner.len() > 0) {
@@ -1095,8 +973,6 @@ function type_def(p: Program, v: checker.QueryView, s: checker.Scope, candidates
   return no_answer();
 }
 
-// decl_def is the name of the declaration at `line`, `col` that declares the
-// bundled `name`: the first token after it spelled as its module wrote it.
 pub function decl_def(p: Program, line: i32, col: i32, name: string): Answer {
   if (line <= 0) {
     return no_answer();
@@ -1107,8 +983,6 @@ pub function decl_def(p: Program, line: i32, col: i32, name: string): Answer {
   return tok_answer(toks, first_ident(toks, after(toks, line, col), shown), line, col, shown);
 }
 
-// tok_answer is token `i`, or the declaration position `line`, `col` when no
-// token was found there.
 function tok_answer(toks: Tok[], i: i32, line: i32, col: i32, name: string): Answer {
   if (i >= 0) {
     return Answer { found: true, text: "", line: toks[i].line, col: toks[i].col, len: name.len() };
@@ -1116,7 +990,6 @@ function tok_answer(toks: Tok[], i: i32, line: i32, col: i32, name: string): Ans
   return Answer { found: line > 0, text: "", line: line, col: col, len: name.len() };
 }
 
-// tok_at is the index of the token at `line`, `col`, or -1.
 pub function tok_at(toks: Tok[], line: i32, col: i32): i32 {
   let i: i32 = after(toks, line, col);
   if (i < toks.len() && toks[i].line == line && toks[i].col == col) {
@@ -1125,9 +998,6 @@ pub function tok_at(toks: Tok[], line: i32, col: i32): i32 {
   return 0 - 1;
 }
 
-// pattern_end is the index of the token ending the pattern whose first token
-// is `from`: the `=>` of a match arm, the `if` of its guard, or the `=` of an
-// `if let` or a `let … else`, outside the pattern's brackets.
 pub function pattern_end(toks: Tok[], from: i32): i32 {
   let depth: i32 = 0;
   let i: i32 = from;
@@ -1145,8 +1015,6 @@ function ends_pattern(t: Tok): boolean {
   return !t.ident && (t.text == "=>" || t.text == "=" || t.text == "if");
 }
 
-// bracket_step is how far token `t` moves the bracket depth: in at an
-// opening bracket, out at a closing one.
 function bracket_step(t: Tok): i32 {
   if (t.ident || t.text.len() != 1) {
     return 0;
@@ -1160,8 +1028,6 @@ function bracket_step(t: Tok): i32 {
   return 0;
 }
 
-// after is the index of the first token at or after `line`, `col`; tokens are
-// in source order.
 pub function after(toks: Tok[], line: i32, col: i32): i32 {
   let lo: i32 = 0;
   let hi: i32 = toks.len();
@@ -1176,9 +1042,6 @@ pub function after(toks: Tok[], line: i32, col: i32): i32 {
   return lo;
 }
 
-// body_end is the index of the `}` closing the body of the declaration whose
-// tokens start at `from` — its first `{` outside parentheses and brackets —
-// or -1 when a `;` ends it first.
 pub function body_end(toks: Tok[], from: i32): i32 {
   let depth: i32 = 0;
   let i: i32 = from;
@@ -1202,8 +1065,6 @@ pub function body_end(toks: Tok[], from: i32): i32 {
   return 0 - 1;
 }
 
-// closing_brace is the index of the `}` matching the `{` at `open`, or the
-// last token when the braces do not balance.
 function closing_brace(toks: Tok[], open: i32): i32 {
   let depth: i32 = 0;
   let i: i32 = open;
@@ -1221,8 +1082,6 @@ function closing_brace(toks: Tok[], open: i32): i32 {
   return toks.len() - 1;
 }
 
-// field_tok is the index of the field `name` declared in the struct body that
-// follows token `from` — spelled so and followed by `:` — or -1.
 pub function field_tok(toks: Tok[], from: i32, name: string): i32 {
   let i: i32 = from;
   while (i < toks.len() && toks[i].text != "}") {
@@ -1234,8 +1093,6 @@ pub function field_tok(toks: Tok[], from: i32, name: string): i32 {
   return 0 - 1;
 }
 
-// first_ident is the index of the first identifier spelled `name` from token
-// `from` on, looking no further than a declaration's head reaches, or -1.
 pub function first_ident(toks: Tok[], from: i32, name: string): i32 {
   let i: i32 = from;
   while (i >= 0 && i < toks.len() && i < from + 64) {

@@ -1,60 +1,3 @@
-// compiler/rccertify.fern — the certifier of the reference counting the
-// physical lowering emits (#11908).
-//
-// ssaunits.verify_planned replays the abstract unit plan: every unit is moved,
-// dropped or returned exactly once. ssarc then lowers that plan to physical
-// RC — retains, releases, reuse tokens, takes and steals, grow brackets — and
-// nothing checked the ops it emits. This does. It reads the lifted SSA of a
-// lowered function (ssa_lift) and nothing of the plan, and accounts, per
-// path, the units the function holds:
-//
-//   - a value's definition says what the frame holds on it (`origin`): an
-//     allocation or an owned call result is a fresh unit, a counted parameter
-//     a unit handed in, a load or a borrowed parameter nothing, a phi whatever
-//     its edges bring;
-//   - a retain adds a unit, a release, a move into a callee or a container
-//     and a return each spend one;
-//   - at a join the counts are met per value, and a disagreement is
-//     `unproved` rather than a finding.
-//
-// A finding is a definite violation: a unit spent that the frame does not
-// hold (an over-release, a double move, a return of a borrow), or a unit the
-// frame definitely holds when it returns or when the value is redefined (a
-// leak). Fail-soft on what it cannot see — an unknown callee poisons its
-// operands, a disagreeing join is unproved, an op with no row consumes
-// nothing and produces what the lowering's mark says — so a clean report
-// over the compiler means no shape it understood is unbalanced, and the
-// counters say how much it understood.
-//
-// Ownership is tracked per rename root: a `copy`, a retain's result and the
-// pointer it was handed are one value. The counts are small integers with a
-// cap, met exactly, so a value retained once and moved twice is caught where
-// a boolean lattice would let the second move through.
-//
-// # The box the frame proved unique
-//
-// The lowering releases a box's children inline under `__fern_rc_is_unique`:
-// `if unique(b) { release(b.f) ... } release(b)`. A child read inside that
-// arm is the frame's to release — the box is about to be freed shallowly and
-// nothing else will — so a load from `b` in a block the arm dominates is a
-// unit the frame holds (`child`). The same holds under a reuse token's
-// nonzero test, since the token is the box itself when it was unique, and in
-// the body of a children-only drop helper (`__sem_drop_<T>`), whose parameter
-// its caller proved unique. Elsewhere a load is a borrow, and releasing one
-// is the finding this exists for.
-//
-// # The paths a token decides
-//
-// The lowering pairs a retain under one test of a reuse token with a
-// consume under a later test of the same token, so the join between them
-// is where the paths disagree and the count met there is unproved. A token
-// is one value on every path through its tests, so when the walk leaves a
-// count unproved it walks the function again under each value of each
-// tested token, on a copy with the edges that value rules out removed
-// (`prune_token`): there the token's box is unique wherever the token
-// holds, a finding is on a real path, and a count both walks settle is
-// settled.
-
 import "./ir";
 import "./ssa";
 import "./ssadeps";
@@ -63,9 +6,6 @@ import "./rcsigs";
 import "./rcccompact";
 import "./util";
 
-// ---- the boundary ---------------------------------------------------------
-
-// The parameter modes, as ssasem spells them.
 pub function value_mode(): i32 {
   return 1;
 }
@@ -78,30 +18,10 @@ pub function counted_mode(): i32 {
   return 3;
 }
 
-// A children-only drop helper's parameter: a box the caller proved unique,
-// whose every child the body releases and whose own unit stays the caller's.
 pub function children_mode(): i32 {
   return 4;
 }
 
-// Abi is one function's declared ownership: a mode per parameter, and
-// whether its caller owns the result. `known` is false when nothing declared
-// it, and the certifier then assumes nothing of the parameters or the result.
-//
-// A function sempair returns in two words — a pair as its elements, a
-// variant as its position and one payload — is read by the words: the
-// callee's `ret` spends a unit of the first iff `pair_first`, its `ret_word`
-// one of the second iff `pair_second` says so, and a caller's `call_word` is
-// a fresh unit on the same terms. `pair_second` is 0 for a scalar word, -1
-// for a pair's reference, -2 where nothing is known, and otherwise the set
-// of variant tags whose payload is a reference, one bit per tag: the word
-// then holds a unit only where the first word is such a tag, which a
-// branch on it settles edge by edge. Whether a function IS paired is what
-// its body and its call sites say.
-//
-// `result_word` says the result is a raw word (`usize`), which core/map's
-// functions hand counted boxes around in: a unit the body holds may leave
-// through such a return, so one is given up where the frame holds one.
 pub struct Abi { known: boolean, modes: i32[], result_unit: boolean, pair_first: boolean, pair_second: i32, result_word: boolean }
 
 pub function unknown_abi(): Abi {
@@ -112,13 +32,10 @@ pub function abi(modes: i32[], result_unit: boolean): Abi {
   return Abi { known: true, modes: modes, result_unit: result_unit, pair_first: false, pair_second: -2, result_word: false };
 }
 
-// second_holds: a second word carries a unit under `pair_second` at all.
 function second_holds(pair_second: i32): boolean {
   return pair_second == -1 || pair_second > 0;
 }
 
-// Abis is the module's contracts as plain rows keyed by function name, built
-// by the backend from the contracts the lowering handed it.
 pub struct Abis { names: util.NameIndex, modes: i32[][], results: boolean[], firsts: boolean[], seconds: i32[], words: boolean[] }
 
 pub function no_abis(): Abis {
@@ -130,13 +47,6 @@ pub function abis_of(names: string[], modes: i32[][], results: boolean[], firsts
   return Abis { names: util.name_index(names), modes: modes, results: results, firsts: firsts, seconds: seconds, words: words };
 }
 
-// lookup is `name`'s declared ownership, or the generated helpers' by their
-// names: a children-only drop lends a unique box, a whole-value release
-// consumes its argument, and neither hands back a unit.
-// env_abi: core/map calls these through a function value, the environment
-// first: a column release takes its value owned, a key hash or equality
-// lends. A scalar column's value is a word, and a wide one's crosses as a
-// raw cell core/map frees, which no count covers.
 function env_abi(name: string): Abi {
   if (util.str_has_prefix(name, "__sem_key")) {
     return abi([borrow_mode(), borrow_mode(), borrow_mode()], false);
@@ -147,7 +57,6 @@ function env_abi(name: string): Abi {
   return abi([borrow_mode(), counted_mode()], false);
 }
 
-// byte_view_abi: the helpers ssabytes writes in Fern over a borrowed view.
 function byte_view_abi(name: string): Abi {
   if (name == "__sem_byte_view_len" || name == "__sem_byte_view_data") {
     return abi([borrow_mode()], false);
@@ -178,18 +87,11 @@ pub function (a: Abis) lookup(name: string): Abi {
   return byte_view_abi(name);
 }
 
-// env_closure: a generated body core/map calls as a function value, named
-// with the `$env` suffix.
 function env_closure(name: string): boolean {
   let n: i32 = name.len();
   return n > 4 && slice_unchecked(name, n - 4, n) == "$env" && util.str_has_prefix(name, "__sem_");
 }
 
-// ---- the report -----------------------------------------------------------
-
-// Finding is one definite violation: `kind` names the class, `value` the SSA
-// value whose unit it concerns (its rename root), `block` the block it was
-// found in, `defined` the kind of the value's definition.
 pub struct Finding { kind: string, value: i32, block: i32, defined: string, message: string }
 
 pub function render(fn_name: string, x: Finding): string {
@@ -197,17 +99,11 @@ pub function render(fn_name: string, x: Finding): string {
     + util.i32_to_string(x.block) + ": " + x.message;
 }
 
-// Report is one function's verdict and the coverage behind it: how many
-// rename roots the walk tracked, how many it left unproved at a return, the
-// callees it had no signature for and the IR ops its table does not name.
-// `skipped` names why the walk did not run at all, "" when it did.
 pub struct Report { findings: Finding[], tracked: i32, unproved: i32, opaque: string[], skipped: string }
 
 function skipped(why: string): Report {
   return Report { findings: [], tracked: 0, unproved: 0, opaque: [], skipped: why };
 }
-
-// ---- origins --------------------------------------------------------------
 
 function org_none(): i32 {
   return 0;
@@ -237,7 +133,6 @@ function org_child(): i32 {
   return 6;
 }
 
-// The count a value's definition puts in the frame's hands.
 function initial_count(origin: i32): i32 {
   if (origin == org_fresh() || origin == org_transferred() || origin == org_child()) {
     return 1;
@@ -270,11 +165,6 @@ function origin_name(origin: i32): string {
   return "none";
 }
 
-// ---- the count lattice ----------------------------------------------------
-
-// A root's state is a count of the units the frame holds on it, or one of
-// two marks: `absent`, no definition reached this point, and `maybe`, the
-// paths disagree or an opaque call touched it.
 function absent(): i32 {
   return -2;
 }
@@ -283,16 +173,10 @@ function maybe(): i32 {
   return -1;
 }
 
-// owed: a unit of a payload read off the box a token holds was spent ahead
-// of the null store that takes it (Walk.debt); the store settles it, and a
-// death before the store is the spend without a unit it looked like.
 function owed(): i32 {
   return -3;
 }
 
-// Counts above the cap are unproved rather than tracked: a retain repeated
-// round a loop with no release is a leak the fixpoint would otherwise climb
-// forever on.
 function cap(): i32 {
   return 8;
 }
@@ -307,10 +191,6 @@ function meet(a: i32, b: i32): i32 {
   return maybe();
 }
 
-// ---- the walk's tables ----------------------------------------------------
-
-// Pos locates a value's definition: the block position and the instruction
-// index, -1 for a parameter or an undefined value.
 struct Defs { block: i32[], at: i32[] }
 
 function definitions(f: ssa.SFunc): Defs {
@@ -340,15 +220,11 @@ function def_of(f: ssa.SFunc, d: Defs, v: i32): ssa.SInst {
   return f.blocks[d.block[v]].insts[d.at[v]];
 }
 
-// A const_int zero, which the lowering stores to empty a slot and compares a
-// token against.
 function is_zero(f: ssa.SFunc, d: Defs, v: i32): boolean {
   let ins: ssa.SInst = def_of(f, d, v);
   return ins.kind_tag == 1 && ins.imm == 0;
 }
 
-// def_at: `v`'s definition in the walk's function, or, where the region
-// uses it but does not define it, in the base walk's.
 function def_at(w: Walk, v: i32): ssa.SInst {
   if (w.outer.on && outside(w.f, w.defs, v)) {
     return def_of(w.outer.f, w.outer.defs, v);
@@ -361,9 +237,6 @@ function zero_at(w: Walk, v: i32): boolean {
   return ins.kind_tag == 1 && ins.imm == 0;
 }
 
-// marked_result: the lowering marked this runtime call's or flat op's
-// result a counted reference (ir.counted): a runtime call carries it in
-// `imm`, a flat op on the op its `imm` indexes.
 function marked_result(w: Walk, ins: ssa.SInst): boolean {
   if (ins.kind_tag == 49 || ins.kind_tag == 50) {
     return (ins.imm & 2) != 0;
@@ -378,29 +251,18 @@ function is_call(ins: ssa.SInst, name: string): boolean {
   return ins.kind_tag == 11 && ins.str == name;
 }
 
-// A load of a counted reference: a byte-offset read (40) or a checked
-// element read (42) the lowering marked (ir.counted, carried as `rc`). An
-// unmarked load reads a scalar word — a length, a tag, a number — and holds
-// nothing.
 function is_load(ins: ssa.SInst): boolean {
   return (ins.kind_tag == 40 || ins.kind_tag == 42) && ins.str == "rc";
 }
 
-// The kinds that store their last operand into the box their first names.
 function is_store(k: i32): boolean {
   return k == 41 || k == 43 || k == 53 || k == 55;
 }
 
-// The kinds carrying an IR op by name: a Fern-compiled runtime helper (49),
-// a register-ABI runtime routine (50) and the stack machine's own arm (59).
 function is_named_op(k: i32): boolean {
   return k == 49 || k == 50 || k == 59;
 }
 
-// ---- roots ------------------------------------------------------------------
-
-// Walk is everything the per-block transfer reads: the function, its tables
-// and the boundary, built once per function.
 struct Walk {
   f: ssa.SFunc,
   defs: Defs,
@@ -416,57 +278,28 @@ struct Walk {
   paired: boolean,
   why: i32[],
   opened: i32[],
-  // The ops the function was lifted from: a flat op's `imm` indexes them,
-  // and the mark on the op (ir.counted) says its result is a reference.
   irops: ir.Op[],
-  // `p + c`: an address inside the object `p` names, which aliases `p`'s
-  // root for a spend but carries no unit of its own into a phi.
   derived: boolean[],
-  // For a paired call's second word, the first word it is read beside, and
-  // that callee's `pair_second` mask; -1 and 0 for any other value.
   pair_tag: i32[],
   pair_mask: i32[],
   pair_words: i32[],
-  // How many instructions and terminators read each value.
   uses: i32[],
   dom: ssadeps.Dom,
-  // Per block, the boxes proved unique there (Regions.roots), and the
-  // block whose branch opened each (Regions.openers).
   regions: i32[][],
   openers: i32[][],
-  // The box a token holds (walk_assuming), -1 in the walk without an
-  // assumption and the one where the token is null; and, per root, whether
-  // it is a payload read off that box where the hold is a fact whose slot
-  // the frame then empties: nothing else reaches the box, so the lowering
-  // may spend the payload before the store that takes it (owed).
   held: i32,
   reused: boolean[],
-  // The phis the function defines, and the base walk's tables for the
-  // phis a region uses but does not define (carries).
   phis: i32[],
   outer: Outer,
-  // Per root, the blocks holding an instruction whose first operand has
-  // that root: the only blocks a slot's events and releases can be in.
   firsts: i32[][],
-  // Per box, the phis that carry it (carries).
   carried: i32[][],
-  // The roots whose children the frame owns outright (children_boxes), and
-  // the null stores' takes (takes_of).
   children: boolean[],
   takes: Takes,
-  // The walk defines the parameters at its entry; a region's walk starts
-  // from the counts the base handed in (seeded) instead.
   params_at_entry: boolean,
   debt: boolean[],
-  // Per value, whether every store of it back into the slot of the held box
-  // it was read from has the slot's unit still in place: such a store keeps
-  // the slot's unit and spends nothing (apply_store). A store of it into any
-  // other slot spends a unit as usual.
   kept: boolean[],
 }
 
-// returns_pair: the body sets a second return word, so it is a paired
-// callee and its `ret` returns the first word alone.
 function returns_pair(f: ssa.SFunc): boolean {
   for b in f.blocks {
     for ins in b.insts {
@@ -478,7 +311,6 @@ function returns_pair(f: ssa.SFunc): boolean {
   return false;
 }
 
-// paired_call: the instruction after a call that reads its second word.
 function paired_call(b: ssa.SBlock, pos: i32): boolean {
   if (pos + 1 >= b.insts.len()) {
     return false;
@@ -487,8 +319,6 @@ function paired_call(b: ssa.SBlock, pos: i32): boolean {
   return next.kind_tag == 59 && next.str == "call_word";
 }
 
-// pair_word_origin classifies a paired call's words: the call itself is the
-// first word, the `call_word` after it the second.
 function word_origin(a: Abi, second: boolean): i32 {
   if (!a.known) {
     return org_unknown();
@@ -508,19 +338,10 @@ function word_origin(a: Abi, second: boolean): i32 {
   return org_unknown();
 }
 
-// roots resolves every rename: a `copy`, and a helper that hands back the
-// operand it was given (the retains). Operands precede their renames in the
-// lift's block order, so one pass settles the chains.
 struct Roots { root: i32[], derived: boolean[] }
 
-// Alias is what an instruction renames: the operand index it aliases, -1 for
-// none, and whether as an address inside the object (`p + c`) rather than
-// the object itself.
 struct Alias { of: i32, derived: boolean }
 
-// arith_alias: `p + c` and `p - c` name the object `p` does — a tag in the
-// pointer's low bits, a cursor's word, an interior address. A scalar's sum
-// aliases its scalar, which holds nothing either way.
 function arith_alias(f: ssa.SFunc, defs: Defs, ins: ssa.SInst): Alias {
   if (ins.args.len() != 2 || ins.str != "add" && ins.str != "sub") {
     return Alias { of: -1, derived: false };
@@ -536,10 +357,6 @@ function arith_alias(f: ssa.SFunc, defs: Defs, ins: ssa.SInst): Alias {
   return Alias { of: -1, derived: false };
 }
 
-// cursor_step: a step of whole words is an address inside the object, a
-// cursor that carries no unit into a phi; a step below the word is a tag in
-// the pointer's low bits (a byte view over a string or an array), which is
-// the object's handle and carries its unit wherever it goes.
 function cursor_step(c: i32): boolean {
   return c % 8 == 0;
 }
@@ -568,7 +385,6 @@ function roots(f: ssa.SFunc, defs: Defs, sigs: rcsigs.Table): Roots {
   return roots_over(f, defs, sigs, own_roots(f.nvals));
 }
 
-// own_roots is every value its own root, derived from nothing.
 function own_roots(n: i32): Roots {
   let root: i32[] = __alloc_i32(n);
   let v: i32 = 0;
@@ -579,8 +395,6 @@ function own_roots(n: i32): Roots {
   return Roots { root: root, derived: __alloc_bool(n) };
 }
 
-// roots_over resolves each alias `f` defines through `start`, which gives
-// the values `f` does not define their roots.
 function roots_over(f: ssa.SFunc, defs: Defs, sigs: rcsigs.Table, start: Roots): Roots {
   let derived: boolean[] = start.derived;
   let root: i32[] = start.root;
@@ -595,8 +409,6 @@ function roots_over(f: ssa.SFunc, defs: Defs, sigs: rcsigs.Table, start: Roots):
         root = root.with(ins.result, root[ins.args[a.of]]);
         derived = derived.with(ins.result, a.derived || derived[ins.args[a.of]]);
       }
-      // Every zero is one value: null, and the address of the empty static
-      // box, which a uniqueness test and a load name by different constants.
       if (is_zero_const(ins)) {
         if (zero < 0) {
           zero = ins.result;
@@ -609,29 +421,18 @@ function roots_over(f: ssa.SFunc, defs: Defs, sigs: rcsigs.Table, start: Roots):
   return Roots { root: root, derived: derived };
 }
 
-// ---- the unique regions -----------------------------------------------------
-
-// Cond is a branch condition's reading: `root` the box whose uniqueness it
-// tests, -1 when it tests no uniqueness; `on_true` whether the box is unique
-// on the true arm (else on the false arm).
 struct Cond { root: i32, on_true: boolean, also: i32[] }
 
 function no_cond(): Cond {
   return Cond { root: -1, on_true: true, also: [] };
 }
 
-// Unique is what a word says of a box: the box it proves unique when the
-// word is true, -1 for none, and the phis beside the word's phis that
-// select that box on the same edges, so are the box where the word holds.
 struct Unique { root: i32, also: i32[] }
 
 function no_unique(): Unique {
   return Unique { root: -1, also: [] };
 }
 
-// unique_word reads `v` as a uniqueness test of one box: the test itself, or
-// a phi of such tests and the constant false — the test hoisted out of an
-// arm, or carried across an async frame's resume — through phis of phis.
 function unique_word(w: Walk, v: i32, depth: i32): Unique {
   let root: i32 = w.root[v];
   let ins: ssa.SInst = def_of(w.f, w.defs, root);
@@ -659,9 +460,6 @@ function unique_word(w: Walk, v: i32, depth: i32): Unique {
   return out;
 }
 
-// unique_input folds one non-null input of a phi into what the phi says:
-// the input must say the same box, and the phis beside this one that
-// select it on this edge are the box too.
 function unique_input(w: Walk, phi: i32, i: i32, a: i32, depth: i32, out: Unique): Unique {
   let u: Unique = unique_word(w, a, depth + 1);
   if (u.root < 0 || out.root >= 0 && u.root != out.root) {
@@ -675,7 +473,6 @@ function unique_input(w: Walk, phi: i32, i: i32, a: i32, depth: i32, out: Unique
   return Unique { root: u.root, also: also };
 }
 
-// beside adds the phis in `phi`'s block that select `box` on edge `i`.
 function beside(w: Walk, phi: i32, i: i32, box: i32, also: i32[]): i32[] {
   let out: i32[] = also;
   for q in w.f.blocks[w.defs.block[phi]].insts {
@@ -686,9 +483,6 @@ function beside(w: Walk, phi: i32, i: i32, box: i32, also: i32[]): i32[] {
   return out;
 }
 
-// token_root is the box a reuse token stands for: a phi of the box on edges
-// from blocks where it was proved unique and of null on the rest, through
-// copies. -1 for anything else.
 function token_root(w: Walk, regions: i32[][], v: i32): i32 {
   let none: i32[] = [];
   let r: i32 = token_root_at(w, regions, v, none);
@@ -698,14 +492,9 @@ function token_root(w: Walk, regions: i32[][], v: i32): i32 {
   return r;
 }
 
-// token_root_at follows a token through phis of phis: each non-null input
-// is the box, unique in the block it comes from, or a token of the same box
-// — the shape an async frame's resume gives a token carried across a
-// suspension.
 function token_root_at(w: Walk, regions: i32[][], v: i32, path: i32[]): i32 {
   let root: i32 = w.root[v];
   if (util.index_of_i32(path, root) >= 0) {
-    // Back round a loop to a token on the path: it constrains nothing.
     return -2;
   }
   let ins: ssa.SInst = def_of(w.f, w.defs, root);
@@ -715,8 +504,6 @@ function token_root_at(w: Walk, regions: i32[][], v: i32, path: i32[]): i32 {
   return token_inputs(w, regions, ins, w.f.blocks[w.defs.block[root]].preds, path.append(root));
 }
 
-// token_inputs folds a token phi's inputs: every non-null one must name
-// the same box; -2 when none names one, -1 when one is neither box nor token.
 function token_inputs(w: Walk, regions: i32[][], ins: ssa.SInst, preds: i32[], path: i32[]): i32 {
   let found: i32 = -2;
   let i: i32 = 0;
@@ -736,8 +523,6 @@ function token_inputs(w: Walk, regions: i32[][], ins: ssa.SInst, preds: i32[], p
   return found;
 }
 
-// token_merge combines what two inputs say: a box each must agree on, -2
-// for no constraint, -1 for a conflict or a non-token.
 function token_merge(found: i32, r: i32): i32 {
   if (r == -1 || found == -1) {
     return -1;
@@ -751,9 +536,6 @@ function token_merge(found: i32, r: i32): i32 {
   return -1;
 }
 
-// token_input reads one input of a token phi from predecessor `pi`: the box
-// itself when unique there, else a token of the box (-2 when it constrains
-// nothing, -1 when it is neither).
 function token_input(w: Walk, regions: i32[][], a: i32, pi: i32, path: i32[]): i32 {
   let r: i32 = w.root[a];
   if (pi >= 0 && util.index_of_i32(regions[pi], r) >= 0) {
@@ -762,8 +544,6 @@ function token_input(w: Walk, regions: i32[][], a: i32, pi: i32, path: i32[]): i
   return token_root_at(w, regions, a, path);
 }
 
-// Tested is the word a branch condition tests and the arm it holds on:
-// `brif x` on the true arm, `x != 0` likewise, `x == 0` on the false arm.
 struct Tested { word: i32, on_true: boolean }
 
 function tested(w: Walk, cond: i32): Tested {
@@ -799,15 +579,8 @@ function cond_of(w: Walk, regions: i32[][], cond: i32, with_tokens: boolean): Co
   return no_cond();
 }
 
-// Regions is, per block, the boxes proved unique there and, in parallel,
-// the block whose branch proved each.
 struct Regions { roots: i32[][], openers: i32[][] }
 
-// regions_round adds to `regions` the blocks each uniqueness test's arm
-// dominates, keyed by the box the test proved unique. An arm that is also
-// reached around the test (the join after a one-sided retain) opens nothing.
-// open_region adds `root` to every reachable block `arm` dominates, as
-// opened by block `by`.
 function open_region(own rg: Regions, dom: ssadeps.Dom, reach: boolean[], arm: i32, root: i32, by: i32): Regions {
   if (dom.pre[arm] < 0) {
     return rg;
@@ -851,8 +624,6 @@ function unique_regions(w: Walk, dom: ssadeps.Dom, reach: boolean[]): Regions {
     rg = Regions { roots: rg.roots.append([]), openers: rg.openers.append([]) };
   }
   rg = regions_round(w, rg, dom, reach, false);
-  // A token's region can open another token's test, so the token pass runs
-  // until no region grows.
   let before: i32 = -1;
   let after: i32 = region_count(rg);
   while (after != before) {
@@ -871,11 +642,6 @@ function region_count(rg: Regions): i32 {
   return n;
 }
 
-// ---- origins --------------------------------------------------------------
-
-// A value whose definition is a load from a box that is unique here, or
-// from a box a children-only drop owns the children of: the frame's to
-// release.
 function child_load(w: Walk, regions: i32[][], bi: i32, ins: ssa.SInst, children_box: boolean[]): boolean {
   if (ins.args.len() == 0) {
     return false;
@@ -887,8 +653,6 @@ function child_load(w: Walk, regions: i32[][], bi: i32, ins: ssa.SInst, children
   return util.index_of_i32(regions[bi], base) >= 0;
 }
 
-// Shells is every shell release (ir.shell): the box released shallowly
-// after the frame took its payload, by root, with where the release sits.
 struct Shells { base: i32[], phi: i32[], block: i32[], at: i32[] }
 
 function shells_of(w: Walk): Shells {
@@ -924,10 +688,6 @@ function is_reuse(ins: ssa.SInst): boolean {
   return ins.kind_tag == 11 && ins.str == "__fern_alloc_reuse" && ins.args.len() > 0;
 }
 
-// carries: phi `p` is `base` where it is not null: each input is the box,
-// null, or such a phi, and one is the box. A phi the region uses but does
-// not define is read off the base walk's tables, and so is a null it does
-// not define: the null an arm outside the region gives the token.
 function carries(w: Walk, p: i32, base: i32): boolean {
   let path: i32[] = [];
   return carries_at(w, p, base, path, false);
@@ -969,7 +729,6 @@ function carries_at(w: Walk, p: i32, base: i32, path: i32[], outer: boolean): bo
   return any;
 }
 
-// phi_valued: `v` is a phi, here or in the base walk's function.
 function phi_valued(w: Walk, v: i32): boolean {
   return def_at(w, v).kind_tag == 8;
 }
@@ -978,8 +737,6 @@ function is_shell(w: Walk, ins: ssa.SInst): boolean {
   return ins.kind_tag == 11 && ins.imm == 2 && ins.args.len() > 0;
 }
 
-// reuses: `ins` hands the box `base`, or a phi in `boxed`, on as a
-// construction's block: the call, or the copy box_ops made of it.
 function reuses(w: Walk, ins: ssa.SInst, base: i32, boxed: boolean[]): boolean {
   if (ins.args.len() == 0 || ins.result < 0) {
     return false;
@@ -992,10 +749,6 @@ function reuses(w: Walk, ins: ssa.SInst, base: i32, boxed: boolean[]): boolean {
   return r == base || r < boxed.len() && boxed[r];
 }
 
-// writes_slot: the construction built in `r`, reused at position `i` of
-// block `mb`, stores into the slot `ld` read before reading it again, so
-// the payload `ld` read was the frame's: released, or stored back by that
-// store, which spends it. A slot the construction keeps stays the box's.
 function writes_slot(w: Walk, mb: i32, i: i32, r: i32, ld: ssa.SInst): boolean {
   let insts: ssa.SInst[] = w.f.blocks[mb].insts;
   let key: i32 = load_key(w, ld);
@@ -1015,10 +768,6 @@ function writes_slot(w: Walk, mb: i32, i: i32, r: i32, ld: ssa.SInst): boolean {
   return false;
 }
 
-// shell_taken: `ld` reads a box the frame releases as a shell after it, so
-// the payload it read is the frame's, unless a later read of the same slot
-// or a children-only drop of the box comes first on every path (between),
-// or a path from the load returns without the release (escapes).
 function shell_taken(w: Walk, sh: Shells, dom: ssadeps.Dom, bi: i32, pos: i32, ld: ssa.SInst): boolean {
   if (ld.args.len() == 0) {
     return false;
@@ -1033,9 +782,6 @@ function shell_taken(w: Walk, sh: Shells, dom: ssadeps.Dom, bi: i32, pos: i32, l
   if (!any) {
     return false;
   }
-  // The paths from the load, once: whether one returns without the box's
-  // release, and which phis of the box they give the box, so a reuse
-  // through a phi counts only where the paths say it is the box's.
   let es: Escape = escape_fixpoint(w, ld, bi, pos);
   if (es.escapes) {
     return false;
@@ -1060,8 +806,6 @@ function shell_taken(w: Walk, sh: Shells, dom: ssadeps.Dom, bi: i32, pos: i32, l
   return false;
 }
 
-// Whether position `pos` of block `bi` comes before position `at` of block
-// `sb` on every path to the latter.
 function before(dom: ssadeps.Dom, bi: i32, pos: i32, sb: i32, at: i32): boolean {
   if (sb == bi) {
     return at > pos;
@@ -1069,12 +813,6 @@ function before(dom: ssadeps.Dom, bi: i32, pos: i32, sb: i32, at: i32): boolean 
   return ssadeps.dom_holds(dom, sb, bi);
 }
 
-// children_boxes marks the roots whose children the frame owns outright: a
-// children-only drop's parameter, and a phi every edge of which brings such
-// a box or one proved unique in the block it comes from — the node of a
-// chain drop, rebound to the next link once that link is proved unique.
-// children_phi: every input of the phi is a children box or a box unique on
-// its edge, so the phi is a children box too.
 function children_phi(w: Walk, regions: i32[][], out: boolean[], b: ssa.SBlock, ins: ssa.SInst): boolean {
   let i: i32 = 0;
   while (i < ins.args.len()) {
@@ -1092,7 +830,6 @@ function children_phi(w: Walk, regions: i32[][], out: boolean[], b: ssa.SBlock, 
   return true;
 }
 
-// children_params marks the parameters declared children-only.
 function children_params(w: Walk, own out: boolean[]): boolean[] {
   let pi: i32 = 0;
   while (w.self_abi.known && pi < w.self_abi.modes.len() && pi < w.f.nparams) {
@@ -1138,11 +875,6 @@ function result_origin(result: i32): i32 {
   return org_none();
 }
 
-// call_origin classifies a `call_direct` result: by the helper table, by
-// contract, else unknown. The table first: a runtime helper core/map calls
-// by name has a contract too, written for the planner, which reads the raw
-// word it answers as a value; what the call does to a count is this table's
-// to say wherever the name appears.
 function call_origin(w: Walk, ins: ssa.SInst): i32 {
   let s: rcsigs.Sig = w.sigs.lookup(ins.str);
   if (s.known) {
@@ -1170,11 +902,6 @@ function call_origin(w: Walk, ins: ssa.SInst): i32 {
   return org_none();
 }
 
-// scalar_phis clears the phis every edge of which brings a value that holds
-// nothing — a scalar, or another such phi — to a fixpoint. A phi of scalars
-// is stored, pushed and returned like any word, and must not read as a unit
-// spent without one.
-// phi_holds: one edge of the phi brings a value that holds something.
 function phi_holds(w: Walk, out: i32[], holds: boolean[], ins: ssa.SInst): boolean {
   for a in ins.args {
     if (a < 0 || w.derived[a]) {
@@ -1190,9 +917,6 @@ function phi_holds(w: Walk, out: i32[], holds: boolean[], ins: ssa.SInst): boole
 
 function scalar_phis(w: Walk, own out: i32[]): i32[] {
   let f: ssa.SFunc = w.f;
-  // A phi holds something when one of its edges brings a value that does, a
-  // phi included, to a fixpoint from nothing: a cycle of phis fed only by
-  // scalars and statics, an accumulator never appended to, holds nothing.
   let holds: boolean[] = __alloc_bool(f.nvals);
   let changed: boolean = true;
   while (changed) {
@@ -1220,16 +944,8 @@ function clear_scalar_phis(own out: i32[], holds: boolean[]): i32[] {
   return out;
 }
 
-// origins classifies every value's definition. The parameters read the
-// boundary; everything else its kind, the tables and the regions.
-// Origins is every value's origin, and for a child the reason: 1 a load in
-// the box's unique region or of a children-only drop's box, 2 a slot the
-// frame overwrites, 3 a shell's payload.
 struct Origins { origin: i32[], why: i32[], opened: i32[], pair_tag: i32[], pair_mask: i32[], pair_words: i32[] }
 
-// Found is one value's origin with what goes beside it: a child's reason and
-// the block whose branch opened its region, a pair word's first word and
-// tag set.
 struct Found { origin: i32, why: i32, opened: i32, tag: i32, mask: i32 }
 
 function plain(origin: i32): Found {
@@ -1240,7 +956,6 @@ function child(why: i32): Found {
   return Found { origin: org_child(), why: why, opened: -1, tag: -1, mask: 0 };
 }
 
-// Context is what classifying a definition reads besides the walk.
 struct Context { regions: i32[][], openers: i32[][], children_box: boolean[], dom: ssadeps.Dom, stores: Stores, shells: Shells }
 
 function param_origin(w: Walk, p: i32): i32 {
@@ -1257,9 +972,6 @@ function param_origin(w: Walk, p: i32): i32 {
   return org_none();
 }
 
-// load_origin: a marked load is a borrow, or the frame's own unit — a child
-// — when it reads a box the frame proved unique, a slot the frame
-// overwrites, or a shell's payload.
 function load_origin(w: Walk, c: Context, bi: i32, pos: i32, ins: ssa.SInst): Found {
   if (child_load(w, c.regions, bi, ins, c.children_box)) {
     let fd: Found = child(1);
@@ -1281,8 +993,6 @@ function load_origin(w: Walk, c: Context, bi: i32, pos: i32, ins: ssa.SInst): Fo
 }
 
 function call_origin_at(w: Walk, c: Context, bi: i32, pos: i32, ins: ssa.SInst): Found {
-  // A cursor's map, read to be dropped where the cursor is unique: the
-  // cursor's unit of it passes to the frame.
   if (is_call(ins, "__mapiter_map_impl") && child_load(w, c.regions, bi, ins, c.children_box)) {
     return child(1);
   }
@@ -1292,9 +1002,6 @@ function call_origin_at(w: Walk, c: Context, bi: i32, pos: i32, ins: ssa.SInst):
   return plain(call_origin(w, ins));
 }
 
-// word_origin_at: a paired call's second word, read right after the call —
-// a fresh unit on the callee's terms, bound to the first word where those
-// terms are a set of tags.
 function word_origin_at(w: Walk, bi: i32, pos: i32): Found {
   let insts: ssa.SInst[] = w.f.blocks[bi].insts;
   if (pos == 0 || insts[pos - 1].kind_tag != 11) {
@@ -1320,8 +1027,6 @@ function named_origin(w: Walk, ins: ssa.SInst): i32 {
   return org_none();
 }
 
-// simple_origin classifies the definitions that need no context: a phi, a
-// fresh box, a frame view, a named op, an indirect call. -1 for the rest.
 function simple_origin(w: Walk, ins: ssa.SInst): i32 {
   let k: i32 = ins.kind_tag;
   if (k == 8) {
@@ -1400,11 +1105,6 @@ function origins(w: Walk, stores: Stores, regions: i32[][], openers: i32[][], ch
   return Origins { origin: scalar_phis(w, out), why: why, opened: opened, pair_tag: pair_tag, pair_mask: pair_mask, pair_words: pair_words };
 }
 
-// ---- the slots a frame takes from ---------------------------------------------
-
-// Stores is every field and element store, bucketed by the box it writes:
-// `key` is the field offset or the index value's root, `zero` whether the
-// stored value is the null word.
 struct Stores { base: i32[], key: i32[], block: i32[], at: i32[], zero: boolean[], by_base: i32[][] }
 
 function stores_of(w: Walk): Stores {
@@ -1439,8 +1139,6 @@ function stores_of(w: Walk): Stores {
   return out;
 }
 
-// The slot a load reads: the box's root and the field offset or the index
-// key, the key stores_of files the writes under.
 function load_key(w: Walk, ld: ssa.SInst): i32 {
   if (ld.kind_tag == 40) {
     return ld.imm;
@@ -1451,9 +1149,6 @@ function load_key(w: Walk, ld: ssa.SInst): i32 {
   return -1;
 }
 
-// An index value's key: a constant by its value, below -1 so it meets no
-// root, else its root. Two constants of one value are two SSA values and
-// one slot.
 function index_key(w: Walk, v: i32): i32 {
   let d: ssa.SInst = def_of(w.f, w.defs, w.root[v]);
   if (d.kind_tag == 1 && d.imm >= 0) {
@@ -1472,11 +1167,6 @@ function same_slot(w: Walk, st: Stores, k: i32, ld: ssa.SInst): boolean {
   return w.f.blocks[st.block[k]].insts[st.at[k]].kind_tag == 43;
 }
 
-// overwritten: a store of another value into the slot `ld` read, after it on
-// every path from it (in its block past it, or in a block it dominates). The
-// frame replaces what the slot holds, so the value it read is its own to
-// release before the write — an element `with` overwrites, a field grown in
-// place.
 function overwritten(w: Walk, st: Stores, dom: ssadeps.Dom, bi: i32, pos: i32, ld: ssa.SInst): boolean {
   if (ld.args.len() == 0) {
     return false;
@@ -1497,12 +1187,6 @@ function overwritten(w: Walk, st: Stores, dom: ssadeps.Dom, bi: i32, pos: i32, l
   return false;
 }
 
-// escapes: a path from `ld` (block `lb`, `lp`) reaches a return without
-// passing what settles the slot: another read of it, a drop of the box, and
-// by `mode` a store into the slot (1) or a shell release of the box (2);
-// or comes back to the load's own block to read the slot again. On such a
-// path the slot keeps the payload, so the frame does not own what `ld`
-// read.
 function escapes(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32): boolean {
   let none: boolean[] = [];
   if (mode != 2) {
@@ -1512,21 +1196,12 @@ function escapes(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32): boolean {
   return escape_fixpoint(w, ld, lb, lp).escapes;
 }
 
-// Escape is escape_fixpoint's answer: whether a path from the load returns
-// without the box's release, and the phis of the box the paths give the
-// box.
 struct Escape { escapes: boolean, boxed: boolean[] }
 
-// escape_fixpoint: a reuse through a token phi of the box is the box's
-// where every edge the paths take into the phi gives it the box: assumed
-// of every token phi, and withdrawn from each the paths refute until none
-// is.
 function escape_fixpoint(w: Walk, ld: ssa.SInst, lb: i32, lp: i32): Escape {
   let base: i32 = w.root[ld.args[0]];
   let cands: i32[] = token_phis_of(w, base);
   let boxed: boolean[] = assumed_boxed(w, cands);
-  // The candidates only shrink, so the blocks they mark at the start hold
-  // every event a later round can find.
   let marks: boolean[] = slot_blocks(w, base, cands);
   let again: boolean = true;
   while (again) {
@@ -1545,8 +1220,6 @@ function escape_fixpoint(w: Walk, ld: ssa.SInst, lb: i32, lp: i32): Escape {
   return Escape { escapes: false, boxed: boxed };
 }
 
-// assumed_boxed flags each candidate phi, and is empty when there is none:
-// its readers check the bound.
 function assumed_boxed(w: Walk, cands: i32[]): boolean[] {
   if (cands.len() == 0) {
     return [];
@@ -1558,8 +1231,6 @@ function assumed_boxed(w: Walk, cands: i32[]): boolean[] {
   return boxed;
 }
 
-// firsts_of indexes, per root, the blocks holding an instruction whose
-// first operand has that root.
 function firsts_of(f: ssa.SFunc, root: i32[]): i32[][] {
   let out: i32[][] = [];
   while (out.len() < f.nvals) {
@@ -1581,9 +1252,6 @@ function firsts_of(f: ssa.SFunc, root: i32[]): i32[][] {
   return out;
 }
 
-// slot_blocks marks the blocks that can hold an event for a load off
-// `base` (event_in, settles_in): an instruction whose first operand is
-// rooted at `base` or at a phi in `phis`, or the definition of `base`.
 function slot_blocks(w: Walk, base: i32, phis: i32[]): boolean[] {
   let out: boolean[] = __alloc_bool(w.f.blocks.len());
   for b in w.firsts[base] {
@@ -1600,9 +1268,6 @@ function slot_blocks(w: Walk, base: i32, phis: i32[]): boolean[] {
   return out;
 }
 
-// Paths is what escape_paths walked: whether a path returned, and, when
-// asked for (`edges`), the edges it took (block index times two, plus the
-// successor).
 struct Paths { escapes: boolean, edge: boolean[] }
 
 function escape_paths(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32, boxed: boolean[], marks: boolean[], edges: boolean): Paths {
@@ -1648,8 +1313,6 @@ function escape_paths(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32, boxed
   return Paths { escapes: false, edge: edge };
 }
 
-// edge_flags is escape_paths' record of the edges it takes: one flag per
-// edge when asked for, else empty, which took_edge leaves alone.
 function edge_flags(w: Walk, edges: boolean): boolean[] {
   if (!edges) {
     return [];
@@ -1664,8 +1327,6 @@ function took_edge(own edge: boolean[], i: i32): boolean[] {
   return edge.with(i, true);
 }
 
-// carried_of indexes, per box, the phis that carry it where they are not
-// null: the walk's own phis and the base walk's the region uses.
 function carried_of(w: Walk): i32[][] {
   let out: i32[][] = [];
   while (out.len() < w.f.nvals) {
@@ -1693,10 +1354,6 @@ function carried_into(own out: i32[][], w: Walk, p: i32): i32[][] {
   return out;
 }
 
-// carry_candidates: the boxes phi `p` can carry. carries holds only of a
-// box every input past null leads to, so of `p` itself, a phi only it and
-// null feed, or of one along the first such input, followed through phis
-// as carries_at follows them.
 function carry_candidates(w: Walk, p: i32): i32[] {
   let out: i32[] = [p];
   let path: i32[] = [];
@@ -1732,15 +1389,10 @@ function carry_candidates(w: Walk, p: i32): i32[] {
   return out;
 }
 
-// token_phis_of: the phis that carry `base` where they are not null.
 function token_phis_of(w: Walk, base: i32): i32[] {
   return w.carried[base];
 }
 
-// box_on_edges: the paths took an edge into phi `p`'s block, and every
-// edge they took gives it the box, or a phi still assumed the box. A phi
-// the paths never enter was given its value before the load, which may be
-// null: it is not the box.
 function box_on_edges(w: Walk, p: i32, base: i32, boxed: boolean[], edge: boolean[]): boolean {
   let bi: i32 = w.defs.block[p];
   if (bi < 0) {
@@ -1779,9 +1431,6 @@ function edge_taken(w: Walk, edge: boolean[], pb: i32, sid: i32): boolean {
   return false;
 }
 
-// settles_in: positions `from` up to `to` of block `mb` hold an event of
-// event_in, or by `mode` a store into `ld`'s slot (1) or a shell release of
-// its box (2).
 function settles_in(w: Walk, ld: ssa.SInst, mb: i32, from: i32, to: i32, mode: i32, boxed: boolean[]): boolean {
   if (event_in(w, ld, mb, from, to)) {
     return true;
@@ -1802,7 +1451,6 @@ function settles_in(w: Walk, ld: ssa.SInst, mb: i32, from: i32, to: i32, mode: i
   return false;
 }
 
-// store_key is load_key for a store: the field offset or the index key.
 function store_key(w: Walk, st: ssa.SInst): i32 {
   if (st.kind_tag == 41) {
     return st.imm;
@@ -1810,16 +1458,9 @@ function store_key(w: Walk, st: ssa.SInst): i32 {
   return index_key(w, st.args[1]);
 }
 
-// between: on every path from `ld` (block `lb`, `lp`) to the store (block
-// `sb`, `sp`) sits another load of its slot, which is the read the store
-// follows, or a children-only drop of its box, which released the payload;
-// `ld` only borrowed then. A path around every such event, the store's own
-// block entered from above included, says the store replaces what `ld`
-// read.
 function between(w: Walk, dom: ssadeps.Dom, ld: ssa.SInst, lb: i32, lp: i32, sb: i32, sp: i32): boolean {
   let no_phis: i32[] = [];
   let marks: boolean[] = slot_blocks(w, w.root[ld.args[0]], no_phis);
-  // A position before the load in its own block is reached round a loop.
   if (lb == sb && sp > lp && !(marks[lb] && event_in(w, ld, lb, lp + 1, sp))) {
     return false;
   }
@@ -1857,10 +1498,6 @@ function between(w: Walk, dom: ssadeps.Dom, ld: ssa.SInst, lb: i32, lp: i32, sb:
   return true;
 }
 
-// event_in: positions `from` up to `to` of block `mb` hold another load of
-// `ld`'s slot, a children-only drop of its box, or the box's own
-// construction: reached again round a loop, it makes another box, whose
-// slots are not the one `ld` read.
 function event_in(w: Walk, ld: ssa.SInst, mb: i32, from: i32, to: i32): boolean {
   let insts: ssa.SInst[] = w.f.blocks[mb].insts;
   let base: i32 = w.root[ld.args[0]];
@@ -1875,24 +1512,16 @@ function event_in(w: Walk, ld: ssa.SInst, mb: i32, from: i32, to: i32): boolean 
   return false;
 }
 
-// stores_back: store `k` writes the value `ld` read back where it read it,
-// which replaces nothing (a slot a reused box keeps, box_ops).
 function stores_back(w: Walk, st: Stores, k: i32, ld: ssa.SInst): boolean {
   let s: ssa.SInst = w.f.blocks[st.block[k]].insts[st.at[k]];
   return ld.result >= 0 && w.root[s.args[s.args.len() - 1]] == w.root[ld.result];
 }
 
-// same_slot_load: `other` reads the slot `ld` reads, as a different value.
 function same_slot_load(w: Walk, other: ssa.SInst, ld: ssa.SInst): boolean {
   return other.result != ld.result && is_load(other) && other.kind_tag == ld.kind_tag
     && other.args.len() > 0 && w.root[other.args[0]] == w.root[ld.args[0]] && load_key(w, other) == load_key(w, ld);
 }
 
-// ---- which roots the walk tracks --------------------------------------------
-
-// A borrow or a phi enters the state only where something acts on its unit:
-// a retain, a release, a move, a store, a return. Keeping the untouched ones
-// out is what keeps a block's row small.
 struct Touch { touched: boolean[] }
 
 function touch(own t: Touch, w: Walk, v: i32): Touch {
@@ -1909,9 +1538,6 @@ function touch_all(own t: Touch, w: Walk, args: i32[]): Touch {
   return t;
 }
 
-// touch_call marks what a call may spend: by the helper table, else by the
-// callee's contract, else every operand.
-// touch_sig marks the operands a helper's row names.
 function touch_sig(own t: Touch, w: Walk, ins: ssa.SInst, sg: rcsigs.Sig): Touch {
   if (sg.arg >= 0 && sg.arg < ins.args.len() && sg.effect != rcsigs.effect_inspect()) {
     t = touch(t, w, ins.args[sg.arg]);
@@ -1948,8 +1574,6 @@ function touch_call(own t: Touch, w: Walk, ins: ssa.SInst): Touch {
   return t;
 }
 
-// touch_named marks what a named op may spend: the element a push stores,
-// every operand a box takes, the operand a row names.
 function touch_named(own t: Touch, w: Walk, ins: ssa.SInst): Touch {
   if (ins.str == "ret_word") {
     if (w.self_abi.pair_second != 0) {
@@ -2004,10 +1628,6 @@ function touches(w: Walk, null_taken: boolean[]): boolean[] {
   return t.touched;
 }
 
-// null_takes marks the loads a null store empties the slot of: the frame has
-// taken the unit the slot held, so the loaded value holds it from the store
-// on. A load qualifies when it reads the same slot of the same box before
-// the store, in a block that dominates the store's.
 function null_takes(w: Walk, takes: Takes): boolean[] {
   let out: boolean[] = __alloc_bool(w.f.nvals);
   for rs in takes.roots {
@@ -2018,14 +1638,11 @@ function null_takes(w: Walk, takes: Takes): boolean[] {
   return out;
 }
 
-// is_take: `st` stores null into a slot of a box the frame reads, not into
-// the box it reused as a construction's block (Hold.reused).
 function is_take(w: Walk, st: ssa.SInst): boolean {
   return (st.kind_tag == 41 || st.kind_tag == 43) && st.args.len() >= 2 && zero_at(w, st.args[st.args.len() - 1])
     && !(st.args[0] >= 0 && st.args[0] < w.reused.len() && w.reused[st.args[0]]);
 }
 
-// The load `st` empties: same kind of read, same box, same offset or index.
 function matches_store(w: Walk, ld: ssa.SInst, st: ssa.SInst): boolean {
   if (ld.args.len() == 0 || w.root[ld.args[0]] != w.root[st.args[0]]) {
     return false;
@@ -2036,17 +1653,8 @@ function matches_store(w: Walk, ld: ssa.SInst, st: ssa.SInst): boolean {
   return ld.kind_tag == 42 && ld.args.len() >= 2 && st.args.len() >= 3 && w.root[ld.args[1]] == w.root[st.args[1]];
 }
 
-// taken_root is the root of the load the null store at (sb, si) gives the
-// slot's unit to, -1 for none: the nearest load of that slot before it on
-// every path that the body goes on to read after it — the value the lowering
-// took the unit for. An older load read after it names the same object but
-// the unit is taken once, by the latest; a load read only before the store
-// takes nothing. With no load read after, the nearest one is taken, so a
-// take the lowering emits and never uses still shows as held. `after` is the
-// blocks reached from `sb` (reached_from).
 function taken_root(w: Walk, dom: ssadeps.Dom, after: boolean[], sb: i32, si: i32, st: ssa.SInst): i32 {
   let pick: Picked = pick_loads(w, dom, after, Picked { used: -1, any: -1 }, sb, si, sb, si, st);
-  // The blocks that dominate the store's are its dominator-tree ancestors.
   let lb: i32 = sb;
   while (dom.idom[lb] >= 0 && dom.idom[lb] != lb) {
     lb = dom.idom[lb];
@@ -2061,13 +1669,8 @@ function taken_root(w: Walk, dom: ssadeps.Dom, after: boolean[], sb: i32, si: i3
   return -1;
 }
 
-// Picked is the nearest load of the slot read after the store, and the
-// nearest at all, -1 for none yet.
 struct Picked { used: i32, any: i32 }
 
-// A read reached from the store only by way of the load's own block reads
-// the load's next value, so `after` (the blocks reached from the store)
-// leaves that block out where a path from the store comes back to it.
 function pick_loads(w: Walk, dom: ssadeps.Dom, after0: boolean[], own pick: Picked, lb: i32, stop: i32, sb: i32, si: i32, st: ssa.SInst): Picked {
   let after: boolean[] = after0;
   let avoided: boolean = !after0[lb];
@@ -2089,9 +1692,6 @@ function pick_loads(w: Walk, dom: ssadeps.Dom, after0: boolean[], own pick: Pick
   return pick;
 }
 
-// nearer picks, of two loads before the store in block `sb`, the one the
-// store sees last: the later in the store's own block, else the one in the
-// deeper dominating block.
 function nearer(w: Walk, dom: ssadeps.Dom, sb: i32, a: i32, b: i32): i32 {
   if (a < 0) {
     return b;
@@ -2110,8 +1710,6 @@ function nearer(w: Walk, dom: ssadeps.Dom, sb: i32, a: i32, b: i32): i32 {
   return a;
 }
 
-// used_after: some value of `root` is read after position (sb, si): later
-// in that block, or in a block reached from it (`after`).
 function used_after(w: Walk, after: boolean[], root: i32, sb: i32, si: i32): boolean {
   let bi: i32 = 0;
   while (bi < w.f.blocks.len()) {
@@ -2129,7 +1727,6 @@ function used_after(w: Walk, after: boolean[], root: i32, sb: i32, si: i32): boo
   return false;
 }
 
-// reads_root: block `bi` reads a value of `root` at or after position `from`.
 function reads_root(w: Walk, bi: i32, from: i32, root: i32): boolean {
   let insts: ssa.SInst[] = w.f.blocks[bi].insts;
   let i: i32 = from;
@@ -2145,13 +1742,10 @@ function reads_root(w: Walk, bi: i32, from: i32, root: i32): boolean {
   return t.value >= 0 && w.root[t.value] == root;
 }
 
-// reached_from marks the blocks a path leaves block `sb` into, `sb` itself
-// only round a loop.
 function reached_from(w: Walk, sb: i32): boolean[] {
   return reached_in(w.f, w.at, sb, -1);
 }
 
-// reached_avoiding is reached_from with no path through block `avoid`.
 function reached_avoiding(w: Walk, sb: i32, avoid: i32): boolean[] {
   return reached_in(w.f, w.at, sb, avoid);
 }
@@ -2177,12 +1771,6 @@ function reached_in(f: ssa.SFunc, at: i32[], sb: i32, avoid: i32): boolean[] {
   return seen;
 }
 
-// indexes assigns each tracked root a slot in the rows: every fresh,
-// transferred, child and unknown root, and a borrow or a phi something
-// touches. A phi one of whose operands is tracked is tracked too, to a
-// fixpoint, since a unit reaches a phi through a phi.
-// tracked_root: a fresh, transferred, child or unknown root is always
-// tracked; a borrow only once something touches it.
 function tracked_root(w: Walk, touched: boolean[], v: i32): boolean {
   if (w.root[v] != v) {
     return false;
@@ -2194,8 +1782,6 @@ function tracked_root(w: Walk, touched: boolean[], v: i32): boolean {
   return o != org_none() && touched[v];
 }
 
-// grow_phis marks each phi one of whose operands is marked, to a fixpoint:
-// a unit reaches a phi through a phi.
 function grow_phis(w: Walk, own on: boolean[]): boolean[] {
   let grown: boolean = true;
   while (grown) {
@@ -2243,16 +1829,6 @@ function indexes(w: Walk, touched: boolean[]): i32[] {
   return idx;
 }
 
-// ---- the rows, by liveness --------------------------------------------------
-
-// Live lays the rows out by liveness. A block's row is the tracked slots
-// live at its entry, the slots it defines and the slots its null stores
-// credit; the row it hands a successor holds the slots live at that
-// successor's entry, in the successor's order, so the entry meet is
-// elementwise. A slot in a block's row and not in a successor's entry dies
-// on that edge. Every list is a span of `slots`; a block's edge `e` is entry
-// `bi * 2 + e` of the per-edge tables, `out_at` -1 for an edge that leads
-// nowhere.
 struct Live {
   ok: boolean,
   why: string,
@@ -2267,8 +1843,6 @@ struct Live {
   nout: i32,
 }
 
-// alias_deps makes a value's root live wherever the value is: a derived
-// pointer or a copy reads the object its root names.
 function alias_deps(w: Walk): i32[][] {
   let deps: i32[][] = [];
   let v: i32 = 0;
@@ -2283,8 +1857,6 @@ function alias_deps(w: Walk): i32[][] {
   return deps;
 }
 
-// Marked is a slot list under construction with the membership marks that
-// keep it free of repeats.
 struct Marked { mark: boolean[], list: i32[] }
 
 function add_slot(own m: Marked, k: i32): Marked {
@@ -2308,7 +1880,6 @@ function clear_marks(own m: Marked): Marked {
   return Marked { mark: m.mark, list: [] };
 }
 
-// in_slots lists the slots of the values live at block bi's entry.
 function in_slots(w: Walk, fl: ssalive.Flow, own m: Marked, bi: i32): Marked {
   let ids: i32[] = ssalive.live_in_ids(fl, bi);
   for v in ids {
@@ -2317,8 +1888,6 @@ function in_slots(w: Walk, fl: ssalive.Flow, own m: Marked, bi: i32): Marked {
   return m;
 }
 
-// row_slots extends a block's live-in slots with the slots the block
-// defines and the slots its null stores credit.
 function row_slots(w: Walk, takes: Takes, own m: Marked, bi: i32): Marked {
   let b: ssa.SBlock = w.f.blocks[bi];
   if (bi == w.at[w.f.entry]) {
@@ -2341,7 +1910,6 @@ function row_slots(w: Walk, takes: Takes, own m: Marked, bi: i32): Marked {
   return m;
 }
 
-// Spans is the slot pool with one list's span appended at a time.
 struct Spans { slots: i32[], at: i32[], n: i32[] }
 
 function push_span(own sp: Spans, list: i32[]): Spans {
@@ -2353,8 +1921,6 @@ function push_span(own sp: Spans, list: i32[]): Spans {
   return Spans { slots: slots, at: sp.at.append(at), n: sp.n.append(list.len()) };
 }
 
-// die_slots lists the slots of block bi's row that are not live at the
-// entry of its successor `si`.
 function die_slots(lv: Live, own m: Marked, bi: i32, si: i32): Marked {
   let j: i32 = 0;
   while (j < lv.in_n[si]) {
@@ -2382,7 +1948,6 @@ function no_live(why: string): Live {
   return Live { ok: false, why: why, slots: [], in_at: [], in_n: [], row_at: [], row_n: [], die_at: [], die_n: [], out_at: [], nout: 0 };
 }
 
-// live_rows lays out each block's entry and row lists.
 function live_rows(w: Walk, fl: ssalive.Flow, takes: Takes): Live {
   let m: Marked = Marked { mark: __alloc_bool(w.tracked), list: [] };
   let ins: Spans = Spans { slots: [], at: [], n: [] };
@@ -2408,7 +1973,6 @@ function live_rows(w: Walk, fl: ssalive.Flow, takes: Takes): Live {
   return Live { ok: true, why: "", slots: slots, in_at: ins.at, in_n: ins.n, row_at: row_at, row_n: rows.n, die_at: [], die_n: [], out_at: [], nout: 0 };
 }
 
-// live_edges lays out each edge's death list and the span of its out row.
 function live_edges(w: Walk, own lv: Live): Live {
   let m: Marked = Marked { mark: __alloc_bool(w.tracked), list: [] };
   let dies: Spans = Spans { slots: lv.slots, at: [], n: [] };
@@ -2439,8 +2003,6 @@ function live_edges(w: Walk, own lv: Live): Live {
   return Live { ...lv, slots: dies.slots, die_at: dies.at, die_n: dies.n, out_at: out_at, nout: nout };
 }
 
-// debt_deps keeps a payload in debt live to the null store that takes it:
-// the store's null word depends on the load, where the load comes first.
 function debt_deps(w: Walk, takes: Takes, own deps: i32[][]): i32[][] {
   if (w.debt.len() == 0) {
     return deps;
@@ -2459,7 +2021,6 @@ function debt_deps(w: Walk, takes: Takes, own deps: i32[][]): i32[][] {
   return deps;
 }
 
-// defined_before: `a`'s definition comes before `b`'s on every path to it.
 function defined_before(w: Walk, a: i32, b: i32): boolean {
   let ab: i32 = w.defs.block[a];
   let bb: i32 = w.defs.block[b];
@@ -2472,8 +2033,6 @@ function defined_before(w: Walk, a: i32, b: i32): boolean {
   return ssadeps.dom_holds(w.dom, bb, ab);
 }
 
-// tracked_values marks the values whose root the walk tracks, the only ones
-// live_rows reads a liveness bit for.
 function tracked_values(w: Walk): boolean[] {
   let out: boolean[] = __alloc_bool(w.f.nvals);
   let v: i32 = 0;
@@ -2495,17 +2054,6 @@ function live_of(w: Walk, takes: Takes): Live {
   return live_edges(w, live_rows(w, fl, takes));
 }
 
-// ---- the dataflow -----------------------------------------------------------
-
-// Progress is the dataflow's state: `out` holds the row each block hands
-// each successor, laid out by `Live`; `phin` holds each tracked phi's
-// inputs, those of phi `v` from `phi_at[v]`; `state` is one row of every
-// tracked slot, reused block by block and cleared of a block's slots when
-// its round ends, so only the slots in the block's row are ever read.
-// `maybe_at` is, per slot, the block whose entry first met the slot's
-// count to maybe, -1 for none: the join a token's walks may settle.
-// `ulog` and `mlog` list the slots the block being run leaves unproved and
-// meets at maybe, for its Memo.
 struct Progress { out: i32[], done: boolean[], phi_at: i32[], phin: i32[], state: i32[], findings: Finding[], opaque: string[], unproved: boolean[], maybe_at: i32[], ulog: i32[], mlog: i32[] }
 
 function filled(n: i32, v: i32): i32[] {
@@ -2549,7 +2097,6 @@ function found(own p: Progress, w: Walk, kind: string, root: i32, block: i32, me
   return Progress { ...p, findings: p.findings.append(x) };
 }
 
-// spend takes one unit off `v`'s root: a release, a move or a return.
 function spend(own p: Progress, w: Walk, v: i32, block: i32, what: string): Progress {
   let r: i32 = w.root[v];
   let k: i32 = w.idx[r];
@@ -2572,10 +2119,6 @@ function spend(own p: Progress, w: Walk, v: i32, block: i32, what: string): Prog
   return Progress { ...p, state: p.state.with(k, s - 1) };
 }
 
-// spend_counted is a release's or a move's spend: the callee consumes a
-// unit, so a word nothing counts — an op's result with no mark and no
-// row — handed to it is a producer the lowering left unmarked, or a
-// release of a scalar.
 function spend_counted(own p: Progress, w: Walk, v: i32, block: i32, what: string): Progress {
   let r: i32 = w.root[v];
   if (w.idx[r] < 0 && w.origin[r] == org_none() && r >= w.f.nparams) {
@@ -2587,9 +2130,6 @@ function spend_counted(own p: Progress, w: Walk, v: i32, block: i32, what: strin
   return spend(p, w, v, block, what);
 }
 
-// spend_if_held is a return's spend where nothing declared whether the
-// result carries a unit: one is given up when the frame holds one, and a
-// borrow returned is not a finding.
 function spend_if_held(own p: Progress, w: Walk, v: i32): Progress {
   let k: i32 = w.idx[w.root[v]];
   if (k < 0 || p.state[k] <= 0) {
@@ -2604,10 +2144,6 @@ function retain(own p: Progress, w: Walk, v: i32, result: i32): Progress {
   if (k < 0) {
     return p;
   }
-  // A retain of a value read out of a box the frame owns, where neither the
-  // retain's result nor the value is read again: the box takes the unit, as
-  // when the lowering fills an option it made with a payload it borrowed.
-  // Read again, the value is the frame's own binding and the unit is its.
   if (result >= 0 && w.uses[result] == 0 && w.uses[v] == 1 && w.origin[r] == org_borrowed() && owned_base(w, r)) {
     return p;
   }
@@ -2648,9 +2184,6 @@ function poison_all(own p: Progress, w: Walk, args: i32[]): Progress {
   return p;
 }
 
-// define sets a root's count to what its definition hands the frame. A count
-// still held from the previous execution of the same definition — a loop
-// body that allocates without releasing — is a leak of that earlier value.
 function define(own p: Progress, w: Walk, v: i32, block: i32): Progress {
   if (v < 0 || w.root[v] != v) {
     return p;
@@ -2665,7 +2198,6 @@ function define(own p: Progress, w: Walk, v: i32, block: i32): Progress {
   return Progress { ...p, state: p.state.with(k, initial_count(w.origin[v])) };
 }
 
-// apply_sig applies a helper's row to its operands.
 function apply_sig(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, s: rcsigs.Sig): Progress {
   if (s.arg >= 0 && s.arg < ins.args.len()) {
     p = apply_effect(p, w, ins, block, s.effect, ins.args[s.arg]);
@@ -2721,8 +2253,6 @@ function apply_call(own p: Progress, w: Walk, ins: ssa.SInst, block: i32): Progr
   return define(p, w, ins.result, block);
 }
 
-// apply_ret_word: the second word of a paired return leaves with a unit on
-// the body's own terms.
 function apply_ret_word(own p: Progress, w: Walk, ins: ssa.SInst, block: i32): Progress {
   if (second_holds(w.self_abi.pair_second)) {
     return spend(p, w, ins.args[0], block, "returned as the second word");
@@ -2733,8 +2263,6 @@ function apply_ret_word(own p: Progress, w: Walk, ins: ssa.SInst, block: i32): P
   return p;
 }
 
-// apply_op_row applies a named op's row: the operands it boxes or pushes,
-// and the one it consumes.
 function apply_op_row(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, s: rcsigs.Sig): Progress {
   if (rcsigs.boxes_operands(ins.str)) {
     for a in ins.args {
@@ -2766,11 +2294,6 @@ function apply_named_op(own p: Progress, w: Walk, ins: ssa.SInst, block: i32): P
   return define(p, w, ins.result, block);
 }
 
-// apply_store: the stored value's unit passes into the container. A null
-// store empties a slot the frame took the unit of: the loads it matched were
-// marked at the definition, and the count moves at the store. Under a
-// token's value a reused box is the box itself, so a value read out of a
-// slot and stored back into it is kept, not spent (put_back).
 function apply_store(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken: i32[]): Progress {
   let val: i32 = ins.args[ins.args.len() - 1];
   if (w.held >= 0 && put_back(w, ins, val)) {
@@ -2795,7 +2318,6 @@ function apply_store(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken
   return spend(p, w, val, block, "stored into a box");
 }
 
-// put_back: `st` stores `val` back where it was read (Walk.kept).
 function put_back(w: Walk, st: ssa.SInst, val: i32): boolean {
   if (st.kind_tag != 41 || val < 0 || val >= w.kept.len() || !w.kept[w.root[val]] || st.args.len() < 2 || w.root[st.args[0]] != w.held) {
     return false;
@@ -2803,12 +2325,6 @@ function put_back(w: Walk, st: ssa.SInst, val: i32): boolean {
   return def_of(w.f, w.defs, w.root[val]).imm == st.imm;
 }
 
-// put_backs marks the borrows read off the held box whose every store back
-// into the slot they were read from has no reload of the slot and no
-// children-only drop of the box between: the slot's unit is still the
-// value's, and the store keeps it there. A reload between released the
-// slot's unit (an overwritten slot's child), so the store spends one; and a
-// child's unit is the frame's, which the store hands back to the slot.
 function put_backs(w: Walk, st: Stores, dom: ssadeps.Dom): boolean[] {
   if (w.held < 0) {
     return [];
@@ -2861,8 +2377,6 @@ function apply(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken: i32[
   return define(p, w, ins.result, block);
 }
 
-// taken_by lists, for a null store, the load roots it empties the slot of.
-// Computed once per store position rather than per round.
 struct Takes { block: i32[], at: i32[], roots: i32[][], first: i32[] }
 
 function no_takes(): Takes {
@@ -2879,8 +2393,6 @@ function takes_of(w: Walk, dom: ssadeps.Dom): Takes {
   return out;
 }
 
-// block_takes adds block `sb`'s takes, finding the blocks reached from it
-// once for all of them.
 function block_takes(own out: Takes, w: Walk, dom: ssadeps.Dom, sb: i32): Takes {
   let insts: ssa.SInst[] = w.f.blocks[sb].insts;
   let after: boolean[] = [];
@@ -2907,9 +2419,6 @@ function block_takes(own out: Takes, w: Walk, dom: ssadeps.Dom, sb: i32): Takes 
   return out;
 }
 
-// taken_at is the take at instruction `at` of block `block`, found through
-// `t.first`: the index of the block's first take, its takes being listed in
-// block order and position order.
 function taken_at(t: Takes, block: i32, at: i32): i32[] {
   let i: i32 = t.first[block];
   while (i >= 0 && i < t.block.len() && t.block[i] == block) {
@@ -2921,7 +2430,6 @@ function taken_at(t: Takes, block: i32, at: i32): i32[] {
   return [];
 }
 
-// exits reports a block that ends the process, whose return is never run.
 function exits(b: ssa.SBlock): boolean {
   for ins in b.insts {
     if (ins.kind_tag == 50 && ins.str == "exit") {
@@ -2931,11 +2439,6 @@ function exits(b: ssa.SBlock): boolean {
   return false;
 }
 
-// entry_row meets the predecessors' rows for the slots live at block bi's
-// entry. A count the paths disagree on becomes unproved rather than a
-// finding: the lowering pairs a retain on one arm of a test with a consume
-// on a later arm of the same test, so disagreement at a join is routine,
-// and a unit still held shows where the value dies instead.
 function entry_row(own p: Progress, w: Walk, lv: Live, bi: i32): Progress {
   let b: ssa.SBlock = w.f.blocks[bi];
   let bases: i32[] = [];
@@ -2961,8 +2464,6 @@ function entry_row(own p: Progress, w: Walk, lv: Live, bi: i32): Progress {
   return p;
 }
 
-// met_maybe records that block bi's entry met slot k at maybe: the first
-// block of the round to do so is the slot's maybe_at.
 function met_maybe(own p: Progress, k: i32, bi: i32): Progress {
   if (p.maybe_at[k] < 0) {
     p = Progress { ...p, maybe_at: p.maybe_at.with(k, bi) };
@@ -2970,7 +2471,6 @@ function met_maybe(own p: Progress, k: i32, bi: i32): Progress {
   return Progress { ...p, mlog: p.mlog.append(k) };
 }
 
-// edge_base is where block pb's row for the edge into block `id` starts.
 function edge_base(w: Walk, lv: Live, pb: i32, id: i32): i32 {
   let t: ssa.STerm = w.f.blocks[pb].term;
   let e: i32 = 0;
@@ -3011,10 +2511,6 @@ function enter_phis(own p: Progress, w: Walk, bi: i32): Progress {
   return p;
 }
 
-// null_on_edge is the value a branch proves null on the edge to `sid`: the
-// `x == 0` arm, the `x != 0` fall-through, or a `brif x` fall-through. A
-// null holds no unit whatever its count said, since every release guards
-// it, so on that edge the value is absent: a word, not a spent box.
 function null_on_edge(w: Walk, bi: i32, sid: i32): i32 {
   let tg: Tag = tag_on_edge(w, bi, sid);
   if (tg.word >= 0 && tg.c == 0 && tg.equal) {
@@ -3023,12 +2519,8 @@ function null_on_edge(w: Walk, bi: i32, sid: i32): i32 {
   return -1;
 }
 
-// Tag is what a branch settles about a word on one edge: `word == c` or
-// `word != c`; `word` -1 when it settles nothing.
 struct Tag { word: i32, c: i32, equal: boolean }
 
-// compared reads `x == c` / `x != c` against a constant: the word and the
-// constant, word -1 when neither side is one.
 function compared(w: Walk, ins: ssa.SInst): Tag {
   let a: ssa.SInst = def_at(w, ins.args[1]);
   if (a.kind_tag == 1) {
@@ -3058,8 +2550,6 @@ function tag_on_edge(w: Walk, bi: i32, sid: i32): Tag {
   return Tag { word: t.cond, c: 0, equal: sid == t.f };
 }
 
-// settle_edge applies what the branch into `sid` proves: a null word, and
-// the tag a pair word's unit hangs on.
 function settle_edge(own p: Progress, w: Walk, bi: i32, sid: i32): Progress {
   let null_v: i32 = null_on_edge(w, bi, sid);
   if (null_v >= 0 && w.idx[w.root[null_v]] >= 0) {
@@ -3071,10 +2561,6 @@ function settle_edge(own p: Progress, w: Walk, bi: i32, sid: i32): Progress {
   return p;
 }
 
-// settle_pair_words clears a paired call's second word on the edge where the
-// first word is settled to a tag whose payload is no reference, or away from
-// the last tag whose payload is, counting the tags the branches dominating
-// this one already settled it away from.
 function settle_pair_words(own p: Progress, w: Walk, bi: i32, sid: i32): Progress {
   let tg: Tag = tag_on_edge(w, bi, sid);
   if (tg.word < 0 || tg.c < 0 || tg.c >= 31) {
@@ -3104,9 +2590,6 @@ function settle_pair_words(own p: Progress, w: Walk, bi: i32, sid: i32): Progres
   return p;
 }
 
-// excluded_tags is the set of tags the branches dominating `bi` have settled
-// `word` away from: each a compare whose unequal successor has that branch
-// as its only predecessor and dominates `bi`.
 function excluded_tags(w: Walk, bi: i32, word: i32): i32 {
   let out: i32 = 0;
   let d: i32 = 0;
@@ -3132,10 +2615,6 @@ function excluded_on(w: Walk, bi: i32, d: i32, sid: i32, word: i32): i32 {
   return 1 << tg.c;
 }
 
-// feed hands each tracked phi of successor `sid` its input on the edge from
-// block `bi`, and spends the unit on the value that feeds it.
-// Fed is a phi's input on one edge, with the unit moved off the value that
-// feeds it.
 struct Fed { p: Progress, input: i32 }
 
 function phi_input(own p: Progress, w: Walk, a: i32): Fed {
@@ -3179,12 +2658,8 @@ function feed(own p: Progress, w: Walk, bi: i32, sid: i32): Progress {
   return p;
 }
 
-// block_round runs one block's transfer and stores its edge rows. Returns
-// whether a row changed.
 struct RoundResult { p: Progress, changed: boolean }
 
-// apply_return spends what the return hands out and retires the block's
-// row: every value dies here.
 function apply_return(own p: Progress, w: Walk, lv: Live, bi: i32): Progress {
   let b: ssa.SBlock = w.f.blocks[bi];
   let t: ssa.STerm = b.term;
@@ -3204,8 +2679,6 @@ function apply_return(own p: Progress, w: Walk, lv: Live, bi: i32): Progress {
   return retire(p, w, lv, lv.row_at[bi], lv.row_n[bi], b.id, "leaked at return");
 }
 
-// retire reports a unit still held on a slot whose value has no further
-// read, and marks a count it could not settle unproved.
 function retire(own p: Progress, w: Walk, lv: Live, at: i32, n: i32, block: i32, kind: string): Progress {
   let j: i32 = 0;
   while (j < n) {
@@ -3223,8 +2696,6 @@ function retire(own p: Progress, w: Walk, lv: Live, at: i32, n: i32, block: i32,
   return p;
 }
 
-// hand_edges hands the block's row to each successor, the second from the
-// same state as the first.
 function hand_edges(own p: Progress, w: Walk, lv: Live, bi: i32): RoundResult {
   let t: ssa.STerm = w.f.blocks[bi].term;
   let saved: i32[] = row_values(p, lv, bi);
@@ -3244,9 +2715,6 @@ function hand_edges(own p: Progress, w: Walk, lv: Live, bi: i32): RoundResult {
   return RoundResult { p: p, changed: changed };
 }
 
-// hand_edge feeds the successor's phis on edge `e` (feed settles what the
-// branch proves on the edge first), retires what dies on the edge, and
-// stores the row the successor reads. Returns whether that row changed.
 function hand_edge(own p: Progress, w: Walk, lv: Live, bi: i32, e: i32): RoundResult {
   let sid: i32 = ssa.successor_id(w.f.blocks[bi].term, e);
   let si: i32 = w.at[sid];
@@ -3266,8 +2734,6 @@ function hand_edge(own p: Progress, w: Walk, lv: Live, bi: i32, e: i32): RoundRe
   return RoundResult { p: p, changed: changed };
 }
 
-// row_values copies the block's row out of the state; restore_row puts it
-// back; clear_row returns the row's slots to absent for the next block.
 function row_values(p: Progress, lv: Live, bi: i32): i32[] {
   let out: i32[] = [];
   let j: i32 = 0;
@@ -3302,7 +2768,6 @@ function block_round(own p: Progress, w: Walk, lv: Live, bi: i32, takes: Takes):
   p = apply_block(p, w, bi, takes);
   let changed: boolean = false;
   if (exits(b)) {} else if (b.term.kind_tag == 1) {
-    // The process ends here: nothing flows on to a successor or a return.
     p = apply_return(p, w, lv, bi);
   } else {
     let r: RoundResult = hand_edges(p, w, lv, bi);
@@ -3317,8 +2782,6 @@ function block_round(own p: Progress, w: Walk, lv: Live, bi: i32, takes: Takes):
   return RoundResult { p: p, changed: changed };
 }
 
-// apply_block defines the parameters at the entry, reads the phis, and
-// applies each instruction.
 function apply_block(own p: Progress, w: Walk, bi: i32, takes: Takes): Progress {
   let f: ssa.SFunc = w.f;
   let b: ssa.SBlock = f.blocks[bi];
@@ -3341,7 +2804,6 @@ function apply_block(own p: Progress, w: Walk, bi: i32, takes: Takes): Progress 
   return p;
 }
 
-// root_at is the root value at tracked index k.
 function root_at(w: Walk, k: i32): i32 {
   let v: i32 = 0;
   while (v < w.idx.len()) {
@@ -3353,7 +2815,6 @@ function root_at(w: Walk, k: i32): i32 {
   return -1;
 }
 
-// rpo is the reachable blocks in reverse postorder over successors.
 function rpo(f: ssa.SFunc, at: i32[]): i32[] {
   let n: i32 = f.blocks.len();
   let entry: i32 = at[f.entry];
@@ -3390,9 +2851,6 @@ function rpo(f: ssa.SFunc, at: i32[]): i32[] {
   return out;
 }
 
-// pushed writes `v` at `sp` of a stack whose live part is `stack[0..sp]`,
-// growing it when `sp` is at its end: a pop is `sp - 1`, with nothing to
-// copy.
 function pushed(own stack: i32[], sp: i32, v: i32): i32[] {
   if (sp < stack.len()) {
     return stack.with(sp, v);
@@ -3400,13 +2858,10 @@ function pushed(own stack: i32[], sp: i32, v: i32): i32[] {
   return stack.append(v);
 }
 
-// The round limit is a safety net, not a bound the lattice needs: counts
-// climb to the cap and then to maybe, so every row settles.
 function round_limit(): i32 {
   return 64;
 }
 
-// certify walks `f` against its boundary and the module's tables.
 function use_counts(f: ssa.SFunc): i32[] {
   let uses: i32[] = __alloc_i32(f.nvals);
   for b in f.blocks {
@@ -3430,11 +2885,6 @@ function count_use(own uses: i32[], v: i32): i32[] {
   return uses.with(v, uses[v] + 1);
 }
 
-// resumes: the body is an async frame that re-enters through the task
-// stack (`__fern_task_mode`). Its boxes and reuse tokens come back as popped
-// words, and whether a token is null is decided by a word of the frame the
-// certifier cannot read, so a child released under it reads as a borrow
-// released. Such a body is not certified; the census says so.
 function resumes(f: ssa.SFunc): boolean {
   for b in f.blocks {
     for ins in b.insts {
@@ -3446,18 +2896,11 @@ function resumes(f: ssa.SFunc): boolean {
   return false;
 }
 
-// walk_of builds the walk's tables over `f`: roots, origins, the tracked
-// slots.
-// `hold` is what a walk under a token's value holds (walk_assuming), and
-// `base` the walk without one, whose tables stand in for what the region
-// walked does not define.
 function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable, at: i32[], dom: ssadeps.Dom, reach: boolean[], hold: Hold, base: Base): Walk {
   let defs: Defs = definitions(f);
   let local: i32[] = region_values(f, base.on);
   let rt: Roots = roots_over(f, defs, sigs, starting_roots(f, local, base));
   let uses: i32[] = base.uses;
-  // A region keeps the whole function's paired-return convention. Pruning
-  // removes instructions and edges; it cannot introduce a second return word.
   let paired: boolean = base.paired;
   if (!base.on) {
     uses = use_counts(f);
@@ -3483,11 +2926,6 @@ function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: 
   return Walk { ...w, tracked: tracked };
 }
 
-// Base is the walk without an assumption, as a walk under one reads it
-// (walk_assuming): the tables of the values the region's blocks use but do
-// not define, the regions its tests opened, and its null stores' takes.
-// `at` maps a block id to its position in it. `on` is false for the walk
-// without an assumption itself.
 struct Base { on: boolean, at: i32[], root: i32[], derived: boolean[], origin: i32[], why: i32[], opened: i32[], pair_tag: i32[], pair_mask: i32[], pair_words: i32[], children: boolean[], regions: i32[][], openers: i32[][], uses: i32[], paired: boolean, takes: Takes, defs: Defs, f: ssa.SFunc, phis: i32[] }
 
 function no_base(): Base {
@@ -3498,8 +2936,6 @@ function base_of(w: Walk): Base {
   return Base { on: true, at: w.at, root: w.root, derived: w.derived, origin: w.origin, why: w.why, opened: w.opened, pair_tag: w.pair_tag, pair_mask: w.pair_mask, pair_words: w.pair_words, children: w.children, regions: w.regions, openers: w.openers, uses: w.uses, paired: w.paired, takes: w.takes, defs: w.defs, f: w.f, phis: w.phis };
 }
 
-// Outer is the base walk's tables as a walk under an assumption reads a
-// phi its region uses but does not define (carries).
 struct Outer { on: boolean, f: ssa.SFunc, defs: Defs, root: i32[], derived: boolean[], phis: i32[] }
 
 function outer_of(base: Base): Outer {
@@ -3518,16 +2954,10 @@ function phis_of(f: ssa.SFunc): i32[] {
   return out;
 }
 
-// outside: value `v` is one the walked region uses but does not define: a
-// base's table answers for it.
 function outside(f: ssa.SFunc, defs: Defs, v: i32): boolean {
   return v >= f.nparams && v < defs.block.len() && defs.block[v] < 0;
 }
 
-// Parameters and local definitions are the complement of outside(). Sharing
-// the parent's facts and replacing these slots avoids walking every value of
-// the whole function for each small region. Alias resolution still starts
-// local values at their own roots, exactly as in the walk without a base.
 function region_values(f: ssa.SFunc, on: boolean): i32[] {
   let out: i32[] = [];
   if (!on) {
@@ -3565,9 +2995,6 @@ function starting_roots(f: ssa.SFunc, local: i32[], base: Base): Roots {
   return Roots { root: root, derived: derived };
 }
 
-// inherited_regions adds the base's regions to the region walk's: the
-// pruning only removes edges, so a block an arm dominated it still
-// dominates, and the token's own tests, jumps now, opened some of them.
 function inherited_regions(own rg: Regions, f: ssa.SFunc, reach: boolean[], base: Base): Regions {
   if (!base.on) {
     return rg;
@@ -3594,8 +3021,6 @@ function inherited_children(local_children: boolean[], local: i32[], base: Base)
   if (!base.on) {
     return local_children;
   }
-  // children_boxes sets only parameters and locally defined phi results;
-  // every outside slot of local_children is false.
   let out: boolean[] = base.children;
   for v in local {
     if (out[v] != local_children[v]) {
@@ -3630,8 +3055,6 @@ function inherited_origins(o: Origins, f: ssa.SFunc, defs: Defs, base: Base, loc
   return inherited_pair_words(out, f, defs, base);
 }
 
-// Keep the original order: local paired words first, then outside words in
-// ascending value order. Most functions contain no paired words at all.
 function inherited_pair_words(own o: Origins, f: ssa.SFunc, defs: Defs, base: Base): Origins {
   if (base.pair_words.len() == 0) {
     return o;
@@ -3646,9 +3069,6 @@ function inherited_pair_words(own o: Origins, f: ssa.SFunc, defs: Defs, base: Ba
   return o;
 }
 
-// inherited_takes gives a null store in the region the load the base
-// walk found for it where that load is outside the region, which the
-// region's own search cannot reach.
 function inherited_takes(own t: Takes, w: Walk, base: Base): Takes {
   if (!base.on) {
     return t;
@@ -3674,10 +3094,6 @@ function inherited_takes(own t: Takes, w: Walk, base: Base): Takes {
   return t;
 }
 
-// debts marks the loads a null store takes the slot's unit for (`taken`)
-// that read the box the walk's token holds, in a block the token's (id
-// `from_id`) dominates, where the hold is a fact. Empty in a walk that
-// holds nothing.
 function debts(w: Walk, taken: boolean[], from_id: i32): boolean[] {
   if (w.held < 0 || from_id < 0 || from_id >= w.at.len() || w.at[from_id] < 0) {
     return [];
@@ -3701,7 +3117,6 @@ function in_debt(w: Walk, r: i32): boolean {
   return r >= 0 && r < w.debt.len() && w.debt[r];
 }
 
-// progress_of lays out the out rows and the phi input rows, all absent.
 function progress_of(w: Walk, lv: Live): Progress {
   let f: ssa.SFunc = w.f;
   let phi_at: i32[] = util.minus_ones(f.nvals);
@@ -3717,8 +3132,6 @@ function progress_of(w: Walk, lv: Live): Progress {
   return Progress { out: filled(lv.nout, absent()), done: __alloc_bool(f.blocks.len()), phi_at: phi_at, phin: filled(nphin, absent()), state: filled(w.tracked, absent()), findings: [], opaque: [], unproved: __alloc_bool(w.tracked), maybe_at: util.minus_ones(w.tracked), ulog: [], mlog: [] };
 }
 
-// Settled is the walk's progress once no row changes, or `changed` still
-// true at the round limit.
 struct Settled { p: Progress, changed: boolean }
 
 function settle(own p: Progress, w: Walk, lv: Live, order: i32[], reach: boolean[], takes: Takes): Settled {
@@ -3728,8 +3141,6 @@ function settle(own p: Progress, w: Walk, lv: Live, order: i32[], reach: boolean
   let memos: Memo[] = no_memos(memo_count(w.f.blocks.len(), once));
   while (changed && rounds < round_limit()) {
     changed = false;
-    // Findings and the census accumulate across rounds; only the final
-    // round's are kept, since an earlier round reads rows not yet settled.
     p = Progress { ...p, findings: [], opaque: [], unproved: __alloc_bool(w.tracked), maybe_at: util.minus_ones(w.tracked) };
     for bi in order {
       if (reach[bi] && !once && memos[bi].ran && inputs_match(p, w, lv, bi, memos[bi].inputs)) {
@@ -3753,9 +3164,6 @@ function settle(own p: Progress, w: Walk, lv: Live, order: i32[], reach: boolean
       }
     }
     rounds = rounds + 1;
-    // Without a back edge every predecessor's row is final when its
-    // successor reads it, so the first round in reverse postorder is the
-    // fixpoint.
     if (once) {
       changed = false;
     }
@@ -3763,13 +3171,8 @@ function settle(own p: Progress, w: Walk, lv: Live, order: i32[], reach: boolean
   return Settled { p: p, changed: changed };
 }
 
-// Memo is a block's last run in a settle: the inputs it read and what it
-// added to the round. A block whose inputs are those of its last run would
-// redo exactly that run, so settle replays it instead.
 struct Memo { ran: boolean, inputs: i32[], findings: Finding[], opaque: string[], unproved: i32[], maybe: i32[] }
 
-// memo_count is how many memos a settle keeps: one per block in a cyclic
-// settle, none in an acyclic one, whose single round never reads them.
 function memo_count(n: i32, once: boolean): i32 {
   if (once) {
     return 0;
@@ -3787,11 +3190,6 @@ function no_memos(n: i32): Memo[] {
   return out;
 }
 
-// block_inputs is what block bi's run reads from other blocks' rows: whether
-// each predecessor has run, and if so the row on its edge, then the inputs
-// of each tracked phi. The run also reads maybe_at, which replay reproduces
-// by re-applying the memo's slots in block order. The rest of a run reads
-// only the walk's tables and the block's own scratch row.
 function block_inputs(p: Progress, w: Walk, lv: Live, bi: i32): i32[] {
   let b: ssa.SBlock = w.f.blocks[bi];
   let out: i32[] = [];
@@ -3822,7 +3220,6 @@ function block_inputs(p: Progress, w: Walk, lv: Live, bi: i32): i32[] {
   return out;
 }
 
-// replayed adds to the round what block bi's memoized run added.
 function replayed(own p: Progress, m: Memo, bi: i32): Progress {
   for x in m.findings {
     p = Progress { ...p, findings: p.findings.append(x) };
@@ -3861,7 +3258,6 @@ function strings_from(xs: string[], at: i32): string[] {
   return out;
 }
 
-// inputs_match is `block_inputs(p, w, lv, bi) == old`, read in place.
 function inputs_match(p: Progress, w: Walk, lv: Live, bi: i32, old: i32[]): boolean {
   let b: ssa.SBlock = w.f.blocks[bi];
   let at: i32 = 0;
@@ -3900,7 +3296,6 @@ function inputs_match(p: Progress, w: Walk, lv: Live, bi: i32, old: i32[]): bool
   return at == old.len();
 }
 
-// acyclic: no edge leads to a block at or before its source in `order`.
 function acyclic(w: Walk, order: i32[]): boolean {
   let rank: i32[] = util.minus_ones(w.f.blocks.len());
   let i: i32 = 0;
@@ -3922,8 +3317,6 @@ function acyclic(w: Walk, order: i32[]): boolean {
   return true;
 }
 
-// token_word is the rename root of the reuse token a branch tests, -1 for
-// a branch on anything else.
 function token_word(w: Walk, t: ssa.STerm): i32 {
   if (t.kind_tag != 3 || t.t == t.f) {
     return -1;
@@ -3935,10 +3328,6 @@ function token_word(w: Walk, t: ssa.STerm): i32 {
   return w.root[ts.word];
 }
 
-// tested_tokens lists the reuse tokens the function branches on, each
-// once. A token defined in a loop is a value per time round; a walk under
-// one value takes it every time round, which is a path the lowering has to
-// balance like any other.
 function tested_tokens(w: Walk, reach: boolean[]): i32[] {
   let out: i32[] = [];
   let bi: i32 = 0;
@@ -3954,40 +3343,16 @@ function tested_tokens(w: Walk, reach: boolean[]): i32[] {
   return out;
 }
 
-// Pruned is a function copy under construction: per block, the successor
-// whose edge is dropped (-1 for none; a block losing every successor is
-// dropped from its own predecessors), the terminators as rewritten, and the
-// token phis to rewrite as the token's value.
 struct Pruned { dropped: i32[], terms: ssa.STerm[], phis: i32[] }
 
-// prune_token is the function with every branch on token `tok` taking the
-// arm its value selects, and every edge that would give the token the other
-// value removed: the token's phi takes its null inputs only where the token
-// is null and its box inputs only where it holds. A branch losing an arm
-// becomes a jump; a jump losing its target loses its block, which loses its
-// own incoming edges in turn. Each dropped edge takes the predecessor and
-// the phi inputs it brought out of its successor. The token's phi, and the
-// token phis it is built from, become the value the token has: a copy of the
-// box where it holds, so a spend through the token is a spend of the box's
-// unit and the box keeps its unit through the phi, and null otherwise.
 struct PrunedFunc { f: ssa.SFunc, phis: i32[], hold: Hold }
 
-// Hold is what a walk under a token's value holds: the box, -1 for none,
-// the block the token is defined in, and, per value, whether it is the
-// box reused as a construction's block (box_ops): a null store into it
-// sets a slot, it takes nothing out of one.
-// `from` is the id of the block the token is defined in.
 struct Hold { box: i32, from: i32, reused: boolean[] }
 
 function no_hold(): Hold {
   return Hold { box: -1, from: -1, reused: [] };
 }
 
-// Where the token holds the box's release is a shell, since the box was
-// unique and the release frees its block alone, so a payload the frame read
-// before and did not read again is the frame's; and a reuse the box is
-// handed to is the box, so a slot the construction keeps stays the box's
-// and one it replaces was the frame's to release first.
 function prune_token(w: Walk, tok: i32, hold: boolean): PrunedFunc {
   let f: ssa.SFunc = w.f;
   let pr: Pruned = Pruned { dropped: util.minus_ones(f.blocks.len()), terms: [], phis: [] };
@@ -3996,8 +3361,6 @@ function prune_token(w: Walk, tok: i32, hold: boolean): PrunedFunc {
   }
   let box: i32 = token_root(w, w.regions, tok);
   pr = drop_phi_edges(w, pr, tok, box, hold, 0);
-  // A phi the pruning leaves the box, or null, is tested the way the token
-  // is, and dropping its other arm can fix another.
   let reach: boolean[] = reached_over(w, pr.terms);
   let fixed: i32[] = fixed_phis(w, pr, reach, box);
   let changed: boolean = true;
@@ -4045,7 +3408,6 @@ function prune_token(w: Walk, tok: i32, hold: boolean): PrunedFunc {
   while (bi < f.blocks.len()) {
     let term: ssa.STerm = pr.terms[bi];
     if (!reach[bi]) {
-      // Unreached, so no edge of its own: its successors do not list it.
       term = ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: -1 };
     }
     let b: ssa.SBlock = ssa.SBlock { ...f.blocks[bi], term: term };
@@ -4060,9 +3422,6 @@ function prune_token(w: Walk, tok: i32, hold: boolean): PrunedFunc {
   return PrunedFunc { f: ops.f, phis: pr.phis, hold: Hold { box: box, from: f.blocks[w.defs.block[tok]].id, reused: ops.reused } };
 }
 
-// fixed_phis: what the pruning leaves each reached phi, through phis of
-// each other: the box (1), null (0), or undecided (-1). An input round a
-// loop to the phi itself decides nothing.
 function fixed_phis(w: Walk, pr: Pruned, reach: boolean[], box: i32): i32[] {
   let out: i32[] = util.minus_ones(w.f.nvals);
   let changed: boolean = true;
@@ -4107,12 +3466,8 @@ function fixed_phi(w: Walk, pr: Pruned, reach: boolean[], out: i32[], b: ssa.SBl
   return found;
 }
 
-// BoxOps is box_ops' answer: the function, and the values that are the box
-// reused.
 struct BoxOps { f: ssa.SFunc, reused: boolean[] }
 
-// token_phis rewrites the token phis in block `b` as the token's value: a
-// copy of the box where it holds, null otherwise.
 function token_phis(b: ssa.SBlock, phis: i32[], box: i32, hold: boolean): ssa.SBlock {
   let insts: ssa.SInst[] = [];
   let any: boolean = false;
@@ -4134,15 +3489,7 @@ function token_phis(b: ssa.SBlock, phis: i32[], box: i32, hold: boolean): ssa.SB
   return ssa.SBlock { ...b, insts: insts };
 }
 
-// box_ops rewrites the held box's reuse as the box itself, reading the box
-// through the pruned function's own aliases (a phi of the box and null past
-// the test is a copy of the box there), and its shallow
-// release as a shell where the box was proved unique: elsewhere a call may
-// have kept a unit of it, and the release is the decrement the lowering
-// emitted for that. A payload read before the box's children-only drop is
-// not the shell's (shell_taken): the drop released it.
 function box_ops(w: Walk, f: ssa.SFunc, box: i32): BoxOps {
-  // Pruning changes instructions in place and preserves every result position.
   let root: i32[] = roots(f, w.defs, w.sigs).root;
   let ops: BoxOps = BoxOps { f: f, reused: __alloc_bool(f.nvals) };
   let bi: i32 = 0;
@@ -4165,8 +3512,6 @@ function box_ops_in(own ops: BoxOps, bi: i32, root: i32[], box: i32, unique: boo
       any = true;
       insts = insts.append(ssa.SInst { ...ins, imm: 2 });
     } else if (on_box && ins.str == "__fern_alloc_reuse" && ins.result >= 0) {
-      // The box is handed on as the construction's block: its unit goes
-      // with it, and its slots stay its own until a store replaces them.
       any = true;
       insts = insts.append(ssa.SInst { kind_tag: 7, result: ins.result, args: [box], imm: 0, str: "" });
       ops = BoxOps { ...ops, reused: ops.reused.with(ins.result, true) };
@@ -4189,11 +3534,6 @@ function calls_on_box(b: ssa.SBlock, root: i32[], box: i32): boolean {
   return false;
 }
 
-// drop_phi_edges drops the edges into the token's phi that would give it
-// the other value, through the token phis of the same box it is built from.
-// A box input that comes from the box's unique region is dropped at the
-// branch that opened the region, the test the token reads, so the whole arm
-// goes rather than its last edge, which would leave the arm a dead end.
 function drop_phi_edges(w: Walk, own pr: Pruned, phi: i32, box: i32, hold: boolean, depth: i32): Pruned {
   let ins: ssa.SInst = def_of(w.f, w.defs, phi);
   let bi: i32 = w.defs.block[phi];
@@ -4219,8 +3559,6 @@ function drop_phi_edges(w: Walk, own pr: Pruned, phi: i32, box: i32, hold: boole
   return pr;
 }
 
-// drop_arm drops the edge from `pb` to `sid`, or, for a box input out of
-// the box's unique region, the opener's edge into that region's arm.
 function drop_arm(w: Walk, own pr: Pruned, pb: i32, sid: i32, box: i32, zero: boolean): Pruned {
   if (!zero) {
     let at: i32 = util.index_of_i32(w.regions[pb], box);
@@ -4240,9 +3578,6 @@ function drop_arm(w: Walk, own pr: Pruned, pb: i32, sid: i32, box: i32, zero: bo
   return drop_edge(w, pr, pb, sid);
 }
 
-// drop_edge removes the edge from block `pb` to the block `sid`: a branch
-// keeps its other arm as a jump, and a jump's block, left with no way on,
-// loses its own incoming edges.
 function drop_edge(w: Walk, own pr: Pruned, pb: i32, sid: i32): Pruned {
   if (pr.dropped[pb] == sid) {
     return pr;
@@ -4259,7 +3594,6 @@ function drop_edge(w: Walk, own pr: Pruned, pb: i32, sid: i32): Pruned {
   if (ssa.successor_id(t, 0) != sid) {
     return pr;
   }
-  // The block has no way on: it ends, and loses its own incoming edges.
   let end: ssa.STerm = ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: -1 };
   pr = Pruned { ...pr, dropped: pr.dropped.with(pb, sid), terms: pr.terms.with(pb, end) };
   for pid in w.f.blocks[pb].preds {
@@ -4271,8 +3605,6 @@ function drop_edge(w: Walk, own pr: Pruned, pb: i32, sid: i32): Pruned {
   return pr;
 }
 
-// reached_over is the blocks reached from the entry over the terminators
-// `terms`.
 function reached_over(w: Walk, terms: ssa.STerm[]): boolean[] {
   let out: boolean[] = __alloc_bool(terms.len());
   let entry: i32 = w.at[w.f.entry];
@@ -4296,10 +3628,6 @@ function reached_over(w: Walk, terms: ssa.STerm[]): boolean[] {
   return out;
 }
 
-// without_dropped_preds removes from block `b` each predecessor whose edge
-// to it was dropped or that is no longer reached, with every phi's input on
-// that edge. A phi left with one input is that input: a copy, which aliases
-// it, so a box that reaches the join by one edge is the same box past it.
 function without_dropped_preds(w: Walk, b: ssa.SBlock, dropped: i32[], reach: boolean[]): ssa.SBlock {
   let keep: boolean[] = [];
   let any: boolean = false;
@@ -4345,20 +3673,8 @@ function without_dropped_preds(w: Walk, b: ssa.SBlock, dropped: i32[], reach: bo
   return ssa.SBlock { ...b, preds: preds, insts: insts };
 }
 
-// Assumed is one walk under a token's value: its tables, and its progress
-// once settled. `ok` is false where the walk could not be run or did not
-// settle, and nothing is read from it then.
 struct Assumed { ok: boolean, w: Walk, p: Progress }
 
-// walk_assuming walks the token's region of the pruned function, the
-// blocks its definition reaches, which is where its value decides a path,
-// as a function of its own (extracted): the region's blocks and a stub for
-// each block outside it that enters it. An edge in from a stub carries the
-// row the walk without an assumption settled for it (seeded), so the region
-// starts from the counts the function holds there, and the tables of the
-// values it uses but does not define are the base's (walk_of). A token
-// whose block the value leaves unreached decides no path, and the walk is
-// empty.
 function walk_assuming(w: Walk, lv: Live, p0: Progress, tok: i32, hold: boolean): Assumed {
   let pf: PrunedFunc = prune_token(w, tok, hold);
   let from: i32 = w.defs.block[tok];
@@ -4379,11 +3695,6 @@ function walk_assuming(w: Walk, lv: Live, p0: Progress, tok: i32, hold: boolean)
   return Assumed { ok: !done.changed, w: wa, p: done.p };
 }
 
-// extracted is the function of the blocks `from` reaches in `f`, `from`
-// first as the entry, and a stub for each other block that enters one of
-// them: the stub keeps the block's id and terminator and has no
-// instructions and no predecessors, so the edge exists and nothing runs
-// in it. Block ids and value numbers are `f`'s.
 function extracted(f: ssa.SFunc, at: i32[], from: i32): ssa.SFunc {
   let region: boolean[] = reached_in(f, at, from, -1).with(from, true);
   let blocks: ssa.SBlock[] = [];
@@ -4411,8 +3722,6 @@ function extracted(f: ssa.SFunc, at: i32[], from: i32): ssa.SFunc {
   return ssa.SFunc { ...f, blocks: blocks, entry: f.blocks[from].id };
 }
 
-// into_region is a stub's terminator with the arm that leaves the region
-// dropped, so the function names no block it does not hold.
 function into_region(t: ssa.STerm, at: i32[], region: boolean[]): ssa.STerm {
   if (t.kind_tag != 3 || t.t == t.f) {
     return t;
@@ -4426,11 +3735,6 @@ function into_region(t: ssa.STerm, at: i32[], region: boolean[]): ssa.STerm {
   return t;
 }
 
-// seeded fills, for each edge into a walked block from a stub, the row and
-// the phi inputs the walk without an assumption settled there, and marks
-// the stub done. A phi the pruning made a copy of the box adds the unit the
-// base handed it on the edge to the box's count: under the token's value
-// they are one object.
 function seeded(own pa: Progress, wa: Walk, lva: Live, region: boolean[], w: Walk, lv: Live, p0: Progress): Progress {
   let roots: i32[] = slot_roots(wa);
   let bi: i32 = 0;
@@ -4459,8 +3763,6 @@ function seed_edge(own pa: Progress, wa: Walk, lva: Live, roots: i32[], bi: i32,
   let bb: i32 = w.at[b.id];
   let pb0: i32 = util.index_of_i32(w.f.blocks[bb].preds, pid);
   let base0: i32 = edge_base(w, lv, w.at[pid], b.id);
-  // The phi inputs first: a phi the base tracked hands its input on; one it
-  // did not is maybe. The copies' inputs are added to the box below.
   for ins in b.insts {
     if (ins.kind_tag == 8 && ins.result >= 0 && wa.idx[ins.result] >= 0) {
       let v: i32 = maybe();
@@ -4494,9 +3796,6 @@ function is_phi(w: Walk, v: i32): boolean {
   return def_of(w.f, w.defs, v).kind_tag == 8;
 }
 
-// base_count is root `r`'s count on the base walk's row for the edge at
-// `base0` into block `bi`: the row's entry when the base tracks `r` there, 0
-// for a borrow it did not track, absent otherwise.
 function base_count(w: Walk, lv: Live, p0: Progress, base0: i32, bi: i32, r: i32): i32 {
   let kb: i32 = -1;
   if (r >= 0 && r < w.idx.len()) {
@@ -4521,7 +3820,6 @@ function base_count(w: Walk, lv: Live, p0: Progress, base0: i32, bi: i32, r: i32
   return absent();
 }
 
-// add_counts sums two counts: absent adds nothing, maybe is maybe.
 function add_counts(a: i32, b: i32): i32 {
   if (a == absent()) {
     return b;
@@ -4538,8 +3836,6 @@ function add_counts(a: i32, b: i32): i32 {
   return a + b;
 }
 
-// with_findings adds the findings of a walk under an assumption that the
-// walks before it did not already report.
 function with_findings(own out: Finding[], more: Finding[]): Finding[] {
   for x in more {
     let seen: boolean = false;
@@ -4558,7 +3854,6 @@ function with_findings(own out: Finding[], more: Finding[]): Finding[] {
   return out;
 }
 
-// slot_roots is each tracked slot's root value.
 function slot_roots(w: Walk): i32[] {
   let out: i32[] = util.minus_ones(w.tracked);
   let v: i32 = 0;
@@ -4571,16 +3866,11 @@ function slot_roots(w: Walk): i32[] {
   return out;
 }
 
-// unproved_under reads whether the walk under an assumption left root `v`
-// unproved: a root it did not track is on no path it walked.
 function unproved_under(a: Assumed, v: i32): boolean {
   let k: i32 = a.w.idx[v];
   return k >= 0 && a.p.unproved[k];
 }
 
-// still_unproved keeps a slot the token decides unproved only where one of
-// the two walks under its values left it so: a count both settled is
-// settled, and a join one walk pruned away is on no path under that value.
 function still_unproved(own flags: boolean[], decides: boolean[], roots: i32[], a: Assumed, b: Assumed): boolean[] {
   let k: i32 = 0;
   while (k < flags.len()) {
@@ -4592,9 +3882,6 @@ function still_unproved(own flags: boolean[], decides: boolean[], roots: i32[], 
   return flags;
 }
 
-// decided_by marks the slots still unproved that met their count to maybe
-// at a join the token's value can decide, one at or after the token's
-// definition. A walk under the token's values settles nothing else.
 function decided_by(w: Walk, tok: i32, unproved: boolean[], maybe_at: i32[]): boolean[] {
   let out: boolean[] = __alloc_bool(unproved.len());
   let from: i32 = w.defs.block[tok];

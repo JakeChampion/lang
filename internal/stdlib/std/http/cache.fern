@@ -1,32 +1,9 @@
-// std/http/cache — a response's validators and the conditional requests
-// they answer (RFC 9110 §8.8, §13), and the `Cache-Control` and `Vary`
-// fields a response carries for the caches in front of it (RFC 9111 §5.2,
-// RFC 9110 §12.5.5).
-//
-//     import "std/http/cache";
-//
-//     function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
-//       let now: Instant = time.instant_from_unix(plat.now_ms() / 1000 as i64);
-//       let v: cache.Validators = cache.Validators { etag: Some(cache.strong("v42")), last_modified: Some(changed) };
-//       let cc: cache.CacheControl = cache.CacheControl { ...cache.cache_control(), max_age: Some(60 as i64) };
-//       return cache.respond(req, v, now, http.ok(page())).with_cache_control(cc);
-//     }
-//
-// `respond` answers 304 when the client's copy is current and 412 when a
-// precondition fails, and otherwise sends the response with its `ETag` and
-// `Last-Modified`. A handler that would rather not build the full response
-// first asks `evaluate` and builds only for `Proceed`. The current time is
-// the caller's, from its platform: an RFC 850 date's two-digit year is read
-// against it, and a `Last-Modified` is never sent later than it.
+// This module evaluates conditional requests and constructs HTTP cache headers.
 
 import "std/http";
 import "std/time";
 import "std/headers";
 
-// `ETag` — an entity tag (RFC 9110 §8.8.3): `opaque`, the characters
-// between the quotes, and whether it is `weak`. The opaque part is
-// `etagc` bytes only (`!`, `#` to `~`, and bytes from 0x80): no space,
-// no `"`, no control.
 pub struct ETag { weak: boolean, opaque: string }
 
 pub function strong(opaque: string): ETag {
@@ -37,8 +14,6 @@ pub function weak(opaque: string): ETag {
   return ETag { weak: true, opaque: opaque };
 }
 
-// `(e).to_string()` — the tag as a field carries it: `"v42"`, or
-// `W/"v42"` when weak.
 pub function (e: ETag) to_string(): string {
   if (e.weak) {
     return "W/\"" + e.opaque + "\"";
@@ -46,8 +21,6 @@ pub function (e: ETag) to_string(): string {
   return "\"" + e.opaque + "\"";
 }
 
-// `parse_etag(s)` — one entity tag, the whitespace around it ignored; None
-// when `s` is not one.
 pub function parse_etag(s: string): Option[ETag] {
   let t: string = s.trim();
   let is_weak: boolean = t.starts_with("W/");
@@ -76,36 +49,22 @@ function __etagc_only(s: string): boolean {
   return true;
 }
 
-// `(a).strong_eq(b)` — the strong comparison (RFC 9110 §8.8.3.2): both
-// strong and alike.
 pub function (a: ETag) strong_eq(b: ETag): boolean {
   return !a.weak && !b.weak && a.opaque == b.opaque;
 }
 
-// `(a).weak_eq(b)` — the weak comparison: alike, weak or not.
 pub function (a: ETag) weak_eq(b: ETag): boolean {
   return a.opaque == b.opaque;
 }
 
-// `Validators` — what identifies the selected representation's current
-// state: its entity tag and its last modification time, each when known.
 pub struct Validators { etag: Option[ETag], last_modified: Option[Instant] }
 
 pub function validators(): Validators {
   return Validators { etag: None, last_modified: None };
 }
 
-// `Precondition` — what a request's conditions ask of the response:
-// `Proceed` with the method, answer `NotModified` (304), or answer
-// `PreconditionFailed` (412).
 pub enum Precondition { Proceed, NotModified, PreconditionFailed }
 
-// `evaluate(req, v, now)` — the request's preconditions against the
-// selected representation, in RFC 9110 §13.2.2's order: `If-Match`, else
-// `If-Unmodified-Since`; then `If-None-Match`, else `If-Modified-Since` for
-// a GET or HEAD. An `If-None-Match` that matches is a 304 for a GET or HEAD
-// and a 412 for any other method. A date that is not a valid HTTP-date, or
-// two of them, is ignored, as is a date when `v` has no modification time.
 pub function evaluate(req: HttpRequest, v: Validators, now: Instant): Precondition {
   if (req.headers.has("if-match")) {
     if (!__matches_strong(req.headers.get_list("if-match"), v)) {
@@ -129,9 +88,6 @@ pub function evaluate(req: HttpRequest, v: Validators, now: Instant): Preconditi
   return Proceed;
 }
 
-// `evaluate_absent(req)` — the preconditions when there is no current
-// representation, a method about to create one: any `If-Match` fails, and
-// nothing else can.
 pub function evaluate_absent(req: HttpRequest): Precondition {
   if (req.headers.has("if-match")) {
     return PreconditionFailed;
@@ -143,8 +99,6 @@ function __safe(method: string): boolean {
   return method == "GET" || method == "HEAD";
 }
 
-// `__matches_strong(members, v)` — whether `If-Match` holds: `*`, or a tag
-// strongly alike the representation's.
 function __matches_strong(members: string[], v: Validators): boolean {
   for m in members {
     if (m == "*" || __tag_matches(m, v, true)) {
@@ -154,9 +108,6 @@ function __matches_strong(members: string[], v: Validators): boolean {
   return false;
 }
 
-// `__matches_weak(members, v)` — whether a tag in `If-None-Match` matches
-// (`*`, or one weakly alike the representation's), which makes the
-// condition false.
 function __matches_weak(members: string[], v: Validators): boolean {
   for m in members {
     if (m == "*" || __tag_matches(m, v, false)) {
@@ -187,9 +138,6 @@ function __tag_matches(member: string, v: Validators, strong_cmp: boolean): bool
   }
 }
 
-// `__modified_after(h, name, v, now)` — whether the representation changed
-// after the one valid date in field `name`: the failure of
-// `If-Unmodified-Since`.
 function __modified_after(h: HeaderMap, name: string, v: Validators, now: Instant): boolean {
   match (__field_date(h, name, now)) {
     Some(d) => {
@@ -208,8 +156,6 @@ function __modified_after(h: HeaderMap, name: string, v: Validators, now: Instan
   }
 }
 
-// `__modified_by(h, v, now)` — whether the representation is unchanged
-// since `If-Modified-Since`'s one valid date: a 304.
 function __modified_by(h: HeaderMap, v: Validators, now: Instant): boolean {
   match (__field_date(h, "if-modified-since", now)) {
     Some(d) => {
@@ -228,8 +174,6 @@ function __modified_by(h: HeaderMap, v: Validators, now: Instant): boolean {
   }
 }
 
-// `__field_date(h, name, now)` — the HTTP-date in field `name` when it
-// appears once and is valid.
 function __field_date(h: HeaderMap, name: string, now: Instant): Option[Instant] {
   let values: string[] = h.get_all(name);
   if (values.len() != 1) {
@@ -238,10 +182,6 @@ function __field_date(h: HeaderMap, name: string, now: Instant): Option[Instant]
   return time.http_date_parse_at(values[0].trim(), now);
 }
 
-// `if_range(req, v, now)` — whether a `Range` in `req` is to be honoured
-// (RFC 9110 §13.1.5): yes with no `If-Range`; otherwise only when its
-// entity tag strongly matches the representation's, or its date is
-// exactly the representation's modification time. A weak tag never does.
 pub function if_range(req: HttpRequest, v: Validators, now: Instant): boolean {
   let values: string[] = req.headers.get_all("if-range");
   if (values.len() == 0) {
@@ -271,10 +211,6 @@ pub function if_range(req: HttpRequest, v: Validators, now: Instant): boolean {
   }
 }
 
-// `respond(req, v, now, resp)` — `resp` answered under the request's
-// preconditions: a 412 when one fails, `not_modified(resp)` when the client's
-// copy is current, else `resp` carrying its validators. A `resp` that is not
-// a 2xx goes as it is, its preconditions ignored (RFC 9110 §13.2.1).
 pub function respond(req: HttpRequest, v: Validators, now: Instant, resp: HttpResponse): HttpResponse {
   if (resp.status < 200 || resp.status > 299) {
     return resp;
@@ -293,9 +229,6 @@ pub function respond(req: HttpRequest, v: Validators, now: Instant, resp: HttpRe
   }
 }
 
-// `(r).with_validators(v, now)` — `r` carrying `ETag` and `Last-Modified`
-// for what `v` knows, a modification time later than `now` sent as `now`
-// (RFC 9110 §8.8.2.1).
 pub function (r: HttpResponse) with_validators(v: Validators, now: Instant): HttpResponse {
   let out: HttpResponse = r;
   match (v.etag) {
@@ -317,10 +250,6 @@ pub function (r: HttpResponse) with_validators(v: Validators, now: Instant): Htt
   return out;
 }
 
-// `not_modified(resp)` — the 304 for the 200 `resp` would be: no body, and
-// of its fields the ones RFC 9110 §15.4.5 has a 304 repeat
-// (`Cache-Control`, `Content-Location`, `ETag`, `Expires`, `Vary`), with
-// `Last-Modified` too when there is no `ETag` to revalidate against.
 pub function not_modified(resp: HttpResponse): HttpResponse {
   let out: HttpResponse = HttpResponse { status: 304, body: BodyText(""), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
   for name in ["Cache-Control", "Content-Location", "ETag", "Expires", "Vary"] {
@@ -340,22 +269,12 @@ function __carry(out: HttpResponse, from: HttpResponse, name: string): HttpRespo
   return r;
 }
 
-// `precondition_failed()` — 412 Precondition Failed, no body.
 pub function precondition_failed(): HttpResponse {
   return HttpResponse { status: 412, body: BodyText(""), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
 }
 
-// The value a delta-seconds caps at (RFC 9111 §1.2.2), and what a bare
-// `max-stale` means: any staleness.
 pub const DELTA_MAX: i64 = 2147483648;
 
-// `CacheControl` — the directives of `Cache-Control` (RFC 9111 §5.2):
-// delta-seconds as `Some(n)` when given, the flags, and the field names
-// a qualified `no-cache` or `private` limits itself to (empty for the
-// unqualified form). The request directives (`max-stale`, `min-fresh`,
-// `only-if-cached`) and the response ones share the one struct;
-// `stale-while-revalidate` and `stale-if-error` are RFC 5861's and
-// `immutable` RFC 8246's. An extension directive is not kept.
 pub struct CacheControl {
   max_age: Option[i64],
   s_maxage: Option[i64],
@@ -377,7 +296,6 @@ pub struct CacheControl {
   only_if_cached: boolean,
 }
 
-// `cache_control()` — no directives; build on it with a struct spread.
 pub function cache_control(): CacheControl {
   let none: string[] = [];
   return CacheControl {
@@ -402,9 +320,6 @@ pub function cache_control(): CacheControl {
   };
 }
 
-// `(c).to_string()` — the field value, its directives in a fixed order;
-// a qualified `no-cache` or `private` lists its field names in a quoted
-// string, and `max-stale` at `DELTA_MAX` goes bare.
 pub function (c: CacheControl) to_string(): string {
   let out: string[] = [];
   out = __flag(out, "no-store", c.no_store);
@@ -479,11 +394,6 @@ function __join(parts: string[]): string {
   return out;
 }
 
-// `parse_cache_control(h)` — the directives of every `Cache-Control` line
-// in `h`. Names are case-insensitive and a value may be a token or a
-// quoted string; when a directive appears twice the first counts (RFC 9111
-// §4.2.1), a delta-seconds that is not digits drops its directive, and one
-// past `DELTA_MAX` is `DELTA_MAX`.
 pub function parse_cache_control(h: HeaderMap): CacheControl {
   let c: CacheControl = cache_control();
   for member in h.get_list("cache-control") {
@@ -558,8 +468,6 @@ function __is_none(n: Option[i64]): boolean {
   }
 }
 
-// `__delta_seconds(s)` — a delta-seconds value, None when `s` is not one
-// or more digits, capped at `DELTA_MAX`.
 function __delta_seconds(s: string): Option[i64] {
   if (s.len() == 0) {
     return None;
@@ -628,8 +536,6 @@ function __flag_directive_more(c: CacheControl, name: string): CacheControl {
   return c;
 }
 
-// `(r).with_cache_control(c)` — `r` with `Cache-Control` set to `c`, or
-// without one when `c` has no directives.
 pub function (r: HttpResponse) with_cache_control(c: CacheControl): HttpResponse {
   let v: string = c.to_string();
   if (v.len() == 0) {
@@ -638,10 +544,6 @@ pub function (r: HttpResponse) with_cache_control(c: CacheControl): HttpResponse
   return r.with_header("Cache-Control", v);
 }
 
-// `(r).with_vary(field)` — `r` with `field` among the request fields its
-// `Vary` names (RFC 9110 §12.5.5), its lines folded into one: unchanged
-// when the field is already there or `Vary` is `*`, and `*` alone when
-// `field` is.
 pub function (r: HttpResponse) with_vary(field: string): HttpResponse {
   let present: string[] = r.headers.get_list("vary");
   if (field == "*") {

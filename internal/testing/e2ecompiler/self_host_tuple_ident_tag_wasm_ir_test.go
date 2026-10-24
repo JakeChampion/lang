@@ -8,22 +8,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostTupleIdentTagWasmIR pins #9468: an i64 tuple element named by a
-// match-arm payload binding must be stored 64 bits wide.
-//
-// emit_wasm_tuple_make selects each element's store instruction from the
-// tuple's element kinds. A payload binding has no local slot, and classified
-// wrongly — as a function value, one 4-byte pointer — an i64 payload is emitted
-// with i32.store and the module fails validation with "type mismatch: expected
-// i32, found i64".
-//
-// wasm alone, because the register backends ignore the kind list and read the
-// element's own width.
-//
-// Both cases build the same tuple from a match-arm binding, one bound by `%?`'s
-// desugaring and one by a plain Option match, since the cause is the unresolved
-// ident rather than either binder. The exit code is oracle-checked against the
-// interpreter, and an invalid module fails before that: wasmtime cannot run it.
 func TestSelfHostTupleIdentTagWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host tuple ident-tag wasm IR e2e")
@@ -34,9 +18,6 @@ func TestSelfHostTupleIdentTagWasmIR(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
-	// 9000000000000000007 % 4000000000000000000 is 1000000000000000007, which
-	// needs all 64 bits: read back 32 bits wide it loses the high half, so the
-	// division below answers 0 instead of 31.
 	cases := []struct{ name, src string }{
 		{"try_op_payload_binding", `function mk(a: i64, b: i64): (i32, i64) {
     return (7i32, (match (a %? b) { Some(v) => v, None => 0i64 }));

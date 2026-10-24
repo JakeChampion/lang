@@ -16,11 +16,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// std/http/multipart and std/http/form under std/serve's loop, as Go's
-// mime/multipart and a browser send them: a form with two fields and a file
-// read a piece at a time, a urlencoded form, and the refusals a handler
-// answers with. Once with bodies read whole and once streamed as they
-// arrive (`stream_bodies`), on the interpreter and the x86-64 backend.
 func TestUploadServeInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	for _, streamed := range []bool{false, true} {
@@ -163,7 +158,6 @@ func checkUploadServe(t *testing.T, addr string) {
 		t.Errorf("multipart upload: %d %q, want 200 %q", resp.status, resp.body, want)
 	}
 
-	// Five parts against a cap of four: 413 with the problem's detail.
 	var many bytes.Buffer
 	mw := multipart.NewWriter(&many)
 	for _, name := range []string{"a", "b", "c", "d", "e"} {
@@ -175,13 +169,11 @@ func checkUploadServe(t *testing.T, addr string) {
 		t.Errorf("too many parts: %d %q, want 413 naming the cap", resp.status, resp.body)
 	}
 
-	// A JSON body at the upload route: 415.
 	resp = post(t, addr, "/upload", "application/json", []byte("{}"))
 	if resp.status != 415 {
 		t.Errorf("json at /upload: %d %q, want 415", resp.status, resp.body)
 	}
 
-	// A urlencoded form, a repeated field and a plus for a space.
 	resp = post(t, addr, "/login", "application/x-www-form-urlencoded", []byte("user=ann+b&lang=fern&lang=go"))
 	if resp.status != 200 || resp.body != "user=ann b;langs=fern,go" {
 		t.Errorf("form: %d %q", resp.status, resp.body)

@@ -7,34 +7,22 @@ import (
 	"testing"
 )
 
-// annotateTupleCases extend the typed-IR annotation (#5531) to tuple-valued
-// calls. type_to_irtag serialises a TypeTuple to its canonical "(t0, t1, …)"
-// tag, which is what types a `f().N` read of a STRUCT- or nested-tuple-typed
-// element of a tuple-returning call, so `f().N.field` / `f().N.m()` lower. The
-// test checks the result against the interpreter and that `-decide` reports
-// "ir"; `-decide` annotates as emit_module does, so it fails if the annotation
-// stops reaching these calls.
 var annotateTupleCases = []struct {
 	name string
 	src  string
 }{
-	// field read of a struct-typed element of a tuple-returning call.
 	{"call_elem_field", `struct P { x: i32, y: i32 }
 function mk(): (P, i32) { return (P { x: 5, y: 9 }, 3); }
-function main(): i32 { return mk().0.y; }`}, // 9
-	// method call on a struct-typed element of a tuple-returning call.
+function main(): i32 { return mk().0.y; }`},
 	{"call_elem_method", `struct P { x: i32, y: i32 }
 function (p: P) s(): i32 { return p.x + p.y; }
 function mk(): (P, i32) { return (P { x: 4, y: 6 }, 1); }
-function main(): i32 { return mk().0.s(); }`}, // 10
-	// two struct-typed elements of a tuple-returning call.
+function main(): i32 { return mk().0.s(); }`},
 	{"call_elem_both", `struct P { x: i32, y: i32 }
 function mk(): (P, P) { return (P { x: 1, y: 2 }, P { x: 3, y: 4 }); }
-function main(): i32 { return mk().0.y + mk().1.x; }`}, // 2 + 3 = 5
+function main(): i32 { return mk().0.y + mk().1.x; }`},
 }
 
-// TestSelfHostAnnotateTupleIR_X86_64 pins the checker-stamped tuple result type
-// feeding the lowering through the IR path (#5531).
 func TestSelfHostAnnotateTupleIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 	for _, tc := range annotateTupleCases {

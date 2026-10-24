@@ -1,29 +1,3 @@
-// compiler/modloader.fern — the self-host compiler's file-based
-// module loader, shared by the import-driven drivers (asm_modload_run,
-// checker_modload_run, …). Extracted so each driver differs only in what
-// it does with the merged module (emit asm / run the checker / probe IR),
-// not in how it resolves and bundles modules from disk.
-//
-// Given an entry file path, load_graph follows the entry's `import` graph
-// (transitively), parses each module, and returns them as
-// flatten.LoadedModule[] for flatten.bundle. Resolution:
-//
-//   * `std/` and `core/` imports resolve under the stdlib root and nowhere
-//     else (`import "std/io"` → `<root>/std/io.fern`); every other import
-//     resolves beside the file that wrote it, keeping its sub-path, and a
-//     bare one that is not there resolves through the governing fern.toml's
-//     declared dependencies (try_manifest);
-//   * a module's IDENTITY is the file it resolves to, so two modules sharing
-//     a basename both load and flatten gives each its own prefix;
-//   * a `.fern` that is not there is read from its literate `.fern.md`
-//     sibling, tangled (read_module);
-//   * a `std/` or `core/` import is skipped when no stdlib was given (see
-//     stdlib_not_given); any other import that resolves to no readable file
-//     is returned as a diagnostic for the driver to report.
-//
-// Uses only features the self-hosted emitter supports (read_file → Result,
-// match), so it builds with either compiler.
-
 import "./lexer";
 import "./parser";
 import "./flatten";
@@ -33,8 +7,6 @@ import "./util";
 import "core/map";
 import "std/error";
 
-// dirname returns everything up to and including the last '/', or "" when
-// the path has no directory part ("a/b/c.fern" → "a/b/", "main.fern" → "").
 pub function dirname(path: string): string {
   let cut: i32 = 0;
   let i: i32 = 0;
@@ -47,8 +19,6 @@ pub function dirname(path: string): string {
   return slice_unchecked(path, 0, cut) + "";
 }
 
-// base_name strips the directory and the import-relative `./` prefix from
-// an import path: "./lexer" → "lexer", "std/io" → "io".
 pub function base_name(path: string): string {
   let start: i32 = 0;
   let i: i32 = 0;
@@ -61,9 +31,6 @@ pub function base_name(path: string): string {
   return slice_unchecked(path, start, path.len()) + "";
 }
 
-// rel_path strips a leading import-relative `./` and a `.fern` so the path
-// joins cleanly onto the entry directory: "./lexer.fern" → "lexer", "std/io" →
-// "std/io".
 function rel_path(path: string): string {
   if (path.len() >= 2 && slice_unchecked(path, 0, 2) == "./") {
     return util.without_fern_ext(slice_unchecked(path, 2, path.len()) + "");
@@ -71,8 +38,6 @@ function rel_path(path: string): string {
   return util.without_fern_ext(path);
 }
 
-// unreadable reports whether a failed read found the file there but could not
-// read it; not finding it is the one error a search goes on past.
 function unreadable(e: IoError): boolean {
   if let NotFound(_) = e {
     return false;
@@ -80,32 +45,22 @@ function unreadable(e: IoError): boolean {
   return true;
 }
 
-// Resolved is a module's source. `err` is set when a candidate was present but
-// unreadable, and `err_path` names it; it ends the search rather than letting a
-// later candidate shadow the file (#10142). `shown` names the module: the file
-// it was read from, or `stdlib://<path>` for an overlay hit. A module's own
-// imports resolve beside the file `shown` names. `map` leads a module tangled
-// from a literate document back to it.
 pub struct Resolved { src: string, ok: boolean, err: string, err_path: string, shown: string, map: util.LineMap }
 
 function res_none(): Resolved {
   return Resolved { src: "", ok: false, err: "", err_path: "", shown: "", map: util.no_line_map() };
 }
 
-// res_read reads a module with one .fern extension, from its buffer when present.
 function res_read(ov: Overlay, dir: string, rel: string): Resolved {
   return read_module(ov.files, dir + util.without_fern_ext(rel) + ".fern");
 }
 
-// Buffers is the text of the files an editor holds open, keyed by file path,
-// read in place of what is on disk (the language server's unsaved buffers).
 pub struct Buffers { paths: string[], srcs: string[] }
 
 pub function no_buffers(): Buffers {
   return Buffers { paths: [], srcs: [] };
 }
 
-// read_text is file `path`'s text: its buffer when one is open, else the disk's.
 function read_text(bufs: Buffers, path: string): Result[string, IoError] {
   let i: i32 = util.index_of_str(bufs.paths, util.clean_path(path));
   if (i >= 0) {
@@ -114,10 +69,6 @@ function read_text(bufs: Buffers, path: string): Result[string, IoError] {
   return read_file(path);
 }
 
-// read_module reads the module file `path`, a `.fern`, or — when there is no
-// such file — the literate document `path.md`, tangled to one module, each
-// from its buffer in `bufs` when one is open. A plain `.fern` wins over a
-// `.fern.md` of the same name.
 pub function read_module(bufs: Buffers, path: string): Resolved {
   match (read_text(bufs, path)) {
     Ok(s) => {
@@ -143,8 +94,6 @@ pub function read_module(bufs: Buffers, path: string): Resolved {
   return Resolved { ...res_none(), err_path: path };
 }
 
-// tangle_module is the module `path` read from the literate document `doc`
-// holding `src`. A `file=` document is several modules, so it is refused.
 function tangle_module(path: string, doc: string, src: string): Resolved {
   if (literate.parse_file_pieces(src).len() > 0) {
     return Resolved { ...res_none(), err: "a multi-file literate document tangles to several modules, not one importable module", err_path: doc };
@@ -160,55 +109,12 @@ function tangle_module(path: string, doc: string, src: string): Resolved {
   return res_none();
 }
 
-// Overlay is an in-memory source table consulted BEFORE disk, keyed by the
-// import path as written — `std/io`, `core/map` — with no extension and no
-// basename flattening. It is how a compiler with no filesystem under it
-// resolves imports: a wasm-hosted driver carries its stdlib as `-embed`
-// assets and hands them over as one of these (#6643).
-//
-// Native has had the same thing since the prelude was retired, in two pieces:
-// `stdlib.Resolve` for the embedded std/ + core/ tree and `LoadWith`'s
-// override map for the LSP's unsaved buffers, both consulted before the
-// filesystem resolver (`internal/pkg/modload/modload.go`).
-//
-// `srcs` is parallel to `paths` — the tree's idiom for a small keyed table
-// (embed.Assets, fern.fern's VendorSet), and a linear scan over a few dozen
-// modules is not worth a map.
-//
-// `sealed` says the overlay IS the filesystem: a miss is a miss, with no disk
-// read and no manifest probe behind it. Without it an unresolved import in a
-// stdin-fed program falls through to `res_read("", …)`, which reads a
-// CWD-RELATIVE path, and then to try_manifest, which opens `fern.toml` and can
-// reach the user's package cache. For a playground that is not a fallback, it
-// is an escape.
-//
-// `files` is the other half of native's override map: the editor's unsaved
-// buffers, keyed by FILE path and read in place of those files wherever the
-// disk resolution below reaches.
 pub struct Overlay { paths: string[], srcs: string[], sealed: boolean, files: Buffers }
 
-// no_overlay is the "resolve from disk exactly as before" value. Every caller
-// that has a real filesystem passes it, and it costs one `len()` per import:
-// util.index_of_str returns -1 on an empty array without entering its loop,
-// and `sealed` is false, so control reaches res_read with the same arguments
-// it had before this existed.
 pub function no_overlay(): Overlay {
   return Overlay { paths: [], srcs: [], sealed: false, files: no_buffers() };
 }
 
-// resolve_module finds the source for import `path`, written against `dir`
-// (the stdlib root for a `std/` or `core/` import). The overlay comes first,
-// then `<dir><path>.fern`, then the manifest's declared dependencies.
-//
-// The overlay is keyed by the path as WRITTEN, which is why it is consulted
-// here rather than inside res_read: by then the path has already been split
-// two ways, and load_lib calls res_read with a stem of its own. Native draws
-// the line in the same place — `stdlib.ModuleKey(importPath)` runs before any
-// path join.
-//
-// An overlay module has no directory of its own. Stdlib modules import each
-// other package-root-relative (`import "std/string"`, never `./string`), so
-// those re-enter the overlay wherever they are written.
 pub function resolve_module(ov: Overlay, dir: string, path: string): Resolved {
   let oi: i32 = util.index_of_str(ov.paths, rel_path(path));
   if (oi >= 0) {
@@ -225,18 +131,9 @@ pub function resolve_module(ov: Overlay, dir: string, path: string): Resolved {
   if (man.ok || man.err.len() > 0) {
     return man;
   }
-  // Not found anywhere: `err_path` names the first candidate.
   return direct;
 }
 
-// try_manifest resolves a bare import of a DECLARED dependency from the
-// manifest governing `from` (manifest_dir): the import's first segment names
-// the dependency, and the rest is a module inside it — `helper` is the
-// package's lib module, `helper/extra` its `extra.fern`. The forms are path,
-// workspace member, lock, vendor tree and the content-addressed store. Not-ok
-// for a stdlib or relative import, which never names a dependency, and when
-// there is no manifest or the dependency's form is not disk-resolvable; an
-// error when the manifest declares no such dependency.
 pub function try_manifest(ov: Overlay, from: string, path: string): Resolved {
   if (util.is_stdlib_path(path) || util.is_local(path)) {
     return res_none();
@@ -250,9 +147,6 @@ pub function try_manifest(ov: Overlay, from: string, path: string): Resolved {
       }
       match (dep_dir(m, dir, util.dep_name(path))) {
         Some(dd) => {
-          // A url dependency's directory is in the store, which only
-          // `fern -fetch` fills: say so rather than fall through to a
-          // relative path that was never meant.
           if (!util.is_dir(dd) && util.str_has_prefix(dd, store_root() + "/")) {
             return Resolved { ...res_none(), err: "dependency \"" + util.dep_name(path) + "\" is not in the package store — run `fern -fetch " + dir + "fern.toml` to download and verify it", err_path: dd };
           }
@@ -270,17 +164,11 @@ pub function try_manifest(ov: Overlay, from: string, path: string): Resolved {
   return res_none();
 }
 
-// dep_dir is the package directory of the dependency `name` that manifest `m`
-// (read from `dir`) declares, slash-terminated, or None when it declares no
-// such dependency or its form is not disk-resolvable.
 function dep_dir(m: fern_toml.Manifest, dir: string, name: string): Option[string] {
   let kind: string = fern_toml.dep_kind(m, name);
   if (kind.len() == 0) {
     return None;
   }
-  // Vendored mode: a declared dep resolves from <vendor-root>/vendor/<name>/
-  // when that tree exists — offline, form-agnostic, taking precedence (mirrors
-  // the native vendored-mode rule).
   match (vendor_dir(dir, name)) {
     Some(vd) => {
       return Some(vd);
@@ -299,9 +187,6 @@ function dep_dir(m: fern_toml.Manifest, dir: string, name: string): Option[strin
   } else if (kind == "version") {
     return locked_dir(dir, name);
   } else if (kind == "url") {
-    // url+hash dep (#4949): the content-addressed store, by the manifest's
-    // declared hash. Read-only — `fern -fetch` populates and sha256-verifies
-    // it; the loader trusts it as the native loader does at build time.
     match (fern_toml.dep_hash(m, name)) {
       Some(h) => {
         return store_dir(h);
@@ -312,15 +197,10 @@ function dep_dir(m: fern_toml.Manifest, dir: string, name: string): Option[strin
   return None;
 }
 
-// dependency_dir is the loader's declared-dependency identity, shared with
-// package grant attenuation so path, workspace, lock, store and vendor
-// resolution cannot disagree about the package a grant governs.
 pub function dependency_dir(m: fern_toml.Manifest, dir: string, name: string): Option[string] {
   return dep_dir(m, dir, name);
 }
 
-// manifest_dir is the nearest directory at or above `dir` holding a fern.toml,
-// as native's manifest.FindForDir walks, or `dir` itself when none does.
 pub function manifest_dir(dir: string): string {
   match (find_manifest(dir)) {
     Some(d) => {
@@ -333,8 +213,6 @@ pub function manifest_dir(dir: string): string {
   return dir;
 }
 
-// find_manifest is the nearest directory at or above `dir` holding a fern.toml,
-// or None when none does.
 pub function find_manifest(dir: string): Option[string] {
   let d: string = dir;
   let steps: i32 = 0;
@@ -358,8 +236,6 @@ pub function find_manifest(dir: string): Option[string] {
   return None;
 }
 
-// load_lib reads a dependency directory's own fern.toml for its `lib`
-// module (default lib.fern) and loads that file.
 function load_lib(ov: Overlay, depdir: string): Resolved {
   let deplib: string = "lib.fern";
   match (read_file(depdir + "fern.toml")) {
@@ -371,10 +247,6 @@ function load_lib(ov: Overlay, depdir: string): Resolved {
   return res_read(ov, depdir, util.without_fern_ext(deplib));
 }
 
-// up_dir is the directory above `dir` (both end in '/', "" naming the working
-// directory), or None at the filesystem root. Past a relative path's own
-// segments it climbs on through `../`, so a walk from a relative path reaches
-// the ancestors the same walk from its absolute path does.
 pub function up_dir(dir: string): Option[string] {
   if (dir == "/") {
     return None;
@@ -393,8 +265,6 @@ pub function up_dir(dir: string): Option[string] {
   return Some(up);
 }
 
-// same_dir is true when directories `a` and `b` are one directory, or either
-// cannot be read: above the root, `../` names the root again.
 function same_dir(a: string, b: string): boolean {
   match (stat(a + ".")) {
     Ok(sa) => {
@@ -410,9 +280,6 @@ function same_dir(a: string, b: string): boolean {
   return true;
 }
 
-// vendor_dir is `<vendor-root>/vendor/<name>/` when such a tree governs `dir`
-// — either dir's own vendor/ or an ancestor's (a workspace member sharing the
-// root vendor/). Walks up reading each level.
 function vendor_dir(dir: string, name: string): Option[string] {
   let d: string = dir;
   let steps: i32 = 0;
@@ -433,9 +300,6 @@ function vendor_dir(dir: string, name: string): Option[string] {
   return None;
 }
 
-// workspace_member_dir finds the enclosing [workspace] root (the nearest
-// ancestor fern.toml with a members list) and returns the directory of the
-// member whose package name == `name`.
 function workspace_member_dir(dir: string, name: string): Option[string] {
   let d: string = dir;
   let steps: i32 = 0;
@@ -452,7 +316,7 @@ function workspace_member_dir(dir: string, name: string): Option[string] {
             }
             mi = mi + 1;
           }
-          return None;  // workspace found, no such member
+          return None;
         }
       },
       Err(e) => {}
@@ -470,8 +334,6 @@ function workspace_member_dir(dir: string, name: string): Option[string] {
   return None;
 }
 
-// member_name returns a package directory's declared [package] name, or ""
-// when it has no readable manifest.
 function member_name(memdir: string): string {
   match (read_file(memdir + "fern.toml")) {
     Ok(src) => {
@@ -484,9 +346,6 @@ function member_name(memdir: string): string {
   return "";
 }
 
-// locked_dir resolves a versioned dep `name` through `<dir>fern.lock` to the
-// pinned version's directory when its source is a local `path`. A url-sourced
-// lock entry resolves through the store.
 function locked_dir(dir: string, name: string): Option[string] {
   match (read_file(dir + "fern.lock")) {
     Ok(src) => {
@@ -501,8 +360,6 @@ function locked_dir(dir: string, name: string): Option[string] {
         },
         None => {}
       }
-      // url-sourced lock entry (#4949): the pinned source lives in
-      // the content-addressed store, keyed by the lock's hash.
       match (fern_toml.lock_hash_of(entries, name)) {
         Some(h) => {
           return store_dir(h);
@@ -515,10 +372,6 @@ function locked_dir(dir: string, name: string): Option[string] {
   return None;
 }
 
-// store_root is the per-machine content-addressed store of url dependencies,
-// one directory per archive named by its sha256, or "" when there is no
-// cache directory. `fern -fetch` populates it, sha256-verified; a build only
-// reads it (#4949 — no build-time network).
 pub function store_root(): string {
   let base: string = util.cache_base();
   if (base.len() == 0) {
@@ -527,11 +380,6 @@ pub function store_root(): string {
   return base + "/pkgs";
 }
 
-// store_dir is a url/hash dependency's directory in the store, with a
-// trailing `/`, present or not. The hash is re-validated here even though
-// every parse boundary already does: the hex is joined onto the store root,
-// so a later route reaching this unchecked would be a directory traversal
-// (#8464).
 pub function store_dir(hash: string): Option[string] {
   let hr: fern_toml.HashResult = fern_toml.validate_hash(hash);
   let root: string = store_root();
@@ -541,8 +389,6 @@ pub function store_dir(hash: string): Option[string] {
   return Some(root + "/" + hr.hex + "/");
 }
 
-// unresolved_import is E086's message for an import that resolves to no
-// module file: "not found", or the file `tried` and why it failed.
 pub function unresolved_import(path: string, tried: string, reason: string): string {
   if (reason.len() == 0) {
     return "cannot resolve import \"" + path + "\": not found";
@@ -553,25 +399,18 @@ pub function unresolved_import(path: string, tried: string, reason: string): str
   return "cannot resolve import \"" + path + "\": " + tried + ": " + reason;
 }
 
-// undeclared_dependency is why a bare import under the manifest `toml` that
-// names no module file fails: `seg` is not one of its dependencies.
 function undeclared_dependency(seg: string, toml: string): string {
   return "not found, and \"" + seg + "\" is not a declared dependency in " + toml + " (add it under [dependencies], e.g. " + seg + " = { path = \"../" + seg + "\" })";
 }
 
-// import_cycle_message is E086's message for the import that closes a cycle.
 pub function import_cycle_message(path: string): string {
   return "import \"" + path + "\" closes an import cycle";
 }
 
-// unknown_stdlib_module is the message for a `std/` or `core/` import that
-// names no module of the stdlib that was given.
 pub function unknown_stdlib_module(path: string): string {
   return "unknown stdlib module \"" + path + "\"";
 }
 
-// report_unresolved prints each of `missing` (unresolved_import lines) under
-// `driver`'s name and reports whether there were any.
 pub function report_unresolved(missing: string[], driver: string): boolean {
   for m in missing {
     eprint(driver + ": " + m);
@@ -579,12 +418,6 @@ pub function report_unresolved(missing: string[], driver: string): boolean {
   return missing.len() > 0;
 }
 
-// stdlib_not_given is true for a `std/` or `core/` import made where no stdlib
-// was given: the overlay carries no modules, and the import's tree (`std/` or
-// `core/`) is not a directory under `dir`. Such an import is expected to
-// resolve to nothing — a driver run without a vendored stdlib, on a program
-// that imports `core/map` and uses the builtin Map — so it is skipped, not
-// reported. A call into it still dangles, and the call gate reports that.
 function stdlib_not_given(ov: Overlay, dir: string, path: string): boolean {
   if (overlay_gives_stdlib(ov) || !util.is_stdlib_path(path)) {
     return false;
@@ -596,21 +429,8 @@ function stdlib_not_given(ov: Overlay, dir: string, path: string): boolean {
   return !util.is_dir(dir + tree);
 }
 
-// Graph is a program's import closure as load_graph reads it. `entry` is the
-// entry module with each import's resolved identity recorded, as every loaded
-// module's are, so flatten prefixes a reference the same wherever it is
-// written. `files` is each loaded module's display path in load order — the
-// table util.pos_str reads a diagnostic's file from, since each module is
-// tokenized from its own util.line_base. `missing` holds a line for each
-// import that resolved to no file — unknown_stdlib_module at the import for a
-// stdlib one, unresolved_import for any other — except those stdlib_not_given
-// expects to be absent; the driver reports them with report_unresolved and
-// fails.
 pub struct Graph { entry: parser.Module, loaded: flatten.LoadedModule[], files: string[], missing: string[] }
 
-// import_base is the directory an import written in a file under `dir`
-// resolves against: the stdlib root for `std/` and `core/`, else `dir`.
-// Both end in '/' or are empty.
 function import_base(path: string, dir: string, root: string): string {
   if (util.is_stdlib_path(path)) {
     return root;
@@ -618,9 +438,6 @@ function import_base(path: string, dir: string, root: string): string {
   return dir;
 }
 
-// import_key names the module an import written in a file under `dir` refers
-// to, before it is read: the overlay key for an overlay hit, else the cleaned
-// path it resolves to, without `.fern`. Two spellings of one file share a key.
 function import_key(ov: Overlay, path: string, dir: string, root: string): string {
   if (util.index_of_str(ov.paths, rel_path(path)) >= 0) {
     return "stdlib://" + rel_path(path);
@@ -628,8 +445,6 @@ function import_key(ov: Overlay, path: string, dir: string, root: string): strin
   return util.clean_path(import_base(path, dir, root) + rel_path(path));
 }
 
-// resolved_ident is the identity of the module `r` read: the file, cleaned and
-// without `.fern`, or the overlay key.
 function resolved_ident(r: Resolved): string {
   if (util.str_has_prefix(r.shown, "stdlib://")) {
     return flatten.module_ident(r.shown);
@@ -637,8 +452,6 @@ function resolved_ident(r: Resolved): string {
   return flatten.module_ident(util.clean_path(r.shown));
 }
 
-// stamp_imports records on each of `mod`'s imports the identity load_graph
-// resolved it to, "" for one that resolved to nothing.
 function stamp_imports(ov: Overlay, mod: parser.Module, dir: string, root: string, keys: string[], idents: string[]): parser.Module {
   let out: parser.Import[] = [];
   for imp in mod.imports {
@@ -652,17 +465,10 @@ function stamp_imports(ov: Overlay, mod: parser.Module, dir: string, root: strin
   return parser.Module { ...mod, imports: out };
 }
 
-// overlay_gives_stdlib is true when `std/` and `core/` come from the overlay,
-// so the stdlib is never looked for on disk. A sealed overlay is the whole
-// filesystem: in the browser playground a disk probe is a trap, not a miss.
 function overlay_gives_stdlib(ov: Overlay): boolean {
   return ov.sealed || ov.paths.len() > 0;
 }
 
-// vendored_stdlib_dir is the nearest directory at or above `dir` holding a
-// `std/` or `core/` tree, or `dir` itself when none does or the overlay gives
-// the stdlib: a driver's project vendors the stdlib at its root, and the driver
-// may sit in a sub-directory.
 function vendored_stdlib_dir(ov: Overlay, dir: string): string {
   if (overlay_gives_stdlib(ov)) {
     return dir;
@@ -686,10 +492,6 @@ function vendored_stdlib_dir(ov: Overlay, dir: string): string {
   return dir;
 }
 
-// missing_line is load_graph's E086 for import `imp`, resolved against `base`,
-// that read as `r` rather than as a module, or "" when stdlib_not_given
-// expects it to be absent. It is reported at the import, as util.pos_str
-// places it among `files`.
 function missing_line(ov: Overlay, imp: parser.Import, base: string, r: Resolved, entry_path: string, files: string[]): string {
   let msg: string = unresolved_import(imp.path, r.err_path, r.err);
   if (r.err.len() == 0 && util.is_stdlib_path(imp.path)) {
@@ -701,11 +503,6 @@ function missing_line(ov: Overlay, imp: parser.Import, base: string, r: Resolved
   return util.pos_str(entry_path, files, imp.line, imp.col) + ": error[E086]: " + msg;
 }
 
-// load_graph walks the entry module's import graph breadth-first, reading and
-// parsing each module once. `root` is the stdlib root `std/` and `core/`
-// resolve under; empty means the driver's vendored stdlib
-// (vendored_stdlib_dir). A module found through a manifest is read from its
-// package, and its own imports still resolve beside it.
 pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, root: string): Graph {
   let edir: string = dirname(entry_path);
   let sroot: string = root;
@@ -719,7 +516,6 @@ pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, r
   let mod_dirs: string[] = [];
   let files: string[] = [];
   let missing: string[] = [];
-  // keys[i] is an import key already looked up, idents[i] what it resolved to.
   let keys: string[] = [];
   let idents: string[] = [];
   let imps: parser.Import[] = [];
@@ -751,18 +547,14 @@ pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, r
     }
     let ident: string = resolved_ident(r);
     idents = idents.append(ident);
-    // A fallback can reach a file another spelling already loaded.
     if (util.has_str(loaded_ids, ident)) {
       continue;
     }
-    // A module found through the manifest is not the standard library.
     let origin: string = "";
     if (r.shown == "stdlib://" + rel_path(path) + ".fern" || r.shown == base + rel_path(path) + ".fern") {
       origin = path;
     }
     let m: parser.Module = parser.with_stdlib_origin(parser.parse_module(lexer.tokenize_from(r.src, util.line_base(files.len()) + 1)), origin);
-    // An overlay module has no directory of its own; its imports are all
-    // stdlib paths, which resolve under the root wherever they are written.
     let mdir: string = dir;
     if (!util.str_has_prefix(r.shown, "stdlib://")) {
       mdir = dirname(util.clean_path(r.shown));
@@ -785,18 +577,6 @@ pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, r
   return Graph { entry: stamp_imports(ov, entry, edir, sroot, keys, idents), loaded: stamped, files: files, missing: missing };
 }
 
-// merge_builtins reads `<dir>builtins.fern` (the real built-in-type
-// module) and appends its struct + enum decls to `merged`, unmangled, so
-// the program's references to IoError / FileStat / … resolve.
-// When the file is absent the program is returned unchanged and
-// module_with_builtins' idempotent synthetic injection fills the types in.
-// fern.fern never calls this: the compiler's IoError layout is the injection's.
-//
-// Deliberately NOT overlay-aware, unlike its neighbours: builtins.fern lives
-// beside the compiler sources, not under a package root, so it is not a module
-// any import names and there is no import path to key it by. A caller with no
-// filesystem — a wasm-hosted driver — skips this and lets module_with_builtins
-// inject, which is what checker_modload_run already does.
 pub function merge_builtins(dir: string, merged: parser.Module): parser.Module {
   match (read_file(dir + "builtins.fern")) {
     Ok(bsrc) => {
@@ -820,34 +600,6 @@ pub function merge_builtins(dir: string, merged: parser.Module): parser.Module {
   }
   return merged;
 }
-
-// ---- incremental-codegen cache keys (#3451 step 6 / #3458, #5331) -----------
-// Shared by every per-module driver (asm_modload_run, wasm_modload_run): the
-// fingerprints an out-of-process build orchestrator uses to decide which modules
-// must be re-emitted and which can be served from an object cache.
-//
-// These live here rather than in one driver because the RULE they encode is
-// subtle and must not drift between backends: a module's key is its own source
-// hash folded with the SIGNATURE hash of every module it depends on. src_hash
-// makes a body-only edit re-emit that module (its own codegen changed); sig_hash
-// makes a signature edit re-emit that module AND its dependents (their call-site
-// tagging changed) — while a body-only edit to a dependency leaves dependents
-// untouched, since their sig_hash input is unchanged. That asymmetry is the whole
-// basis of correct invalidation; keying on source alone would ship stale codegen
-// when a depended-on return type changes.
-//
-// "Depends on" is the TRANSITIVE import closure, not the direct edges. A unit is
-// lowered under the whole-program function and struct view, so a module reaches
-// declarations it never imported: `main` importing only `mid` can read a field of
-// a struct `leaf` declares (field OFFSETS come from leaf) and can call a receiver
-// method leaf declares on it (call-site tagging comes from leaf's signature).
-// Neither shows up in mid's own signature — `get(): Thing` is unchanged when
-// Thing's field list moves — so a direct-edge key leaves main stale.
-//
-// The closure is a sound over-approximation, not a precise dependency set: a
-// signature change low in the graph invalidates everything above it, whether or
-// not those units name anything that moved. Narrowing it means computing the
-// declarations each unit actually references; correctness comes first.
 
 pub function module_sig_string(mod: parser.Module): string {
   let out: string = "";
@@ -878,17 +630,6 @@ pub function module_sig_string(mod: parser.Module): string {
   return out;
 }
 
-// module_dep_ns joins (comma-separated, in parts order) the namespaces module
-// `idx` depends on — the dependency list the incremental cache keys it against.
-// A key folds in the SIGNATURE hash of each name here, so a signature change in
-// anything it depends on invalidates it.
-//
-// This is the TRANSITIVE closure, and it is what the manifest reports for a
-// reason: the manifest exists so an out-of-process orchestrator can compute the
-// keys the driver computes. Reporting direct edges instead would hand it a
-// weaker rule than the driver's, so it would reuse a unit the driver would have
-// re-emitted — the same stale codegen, one layer out. Only loaded modules are
-// listed; an import that resolved to no part contributes no signature.
 pub function module_dep_ns(parts: flatten.PerModule[], infmods: parser.Module[], idx: i32): string {
   let deps: string[] = import_closure_ns(parts, infmods, idx);
   let out: string = "";
@@ -905,8 +646,6 @@ pub function module_dep_ns(parts: flatten.PerModule[], infmods: parser.Module[],
   return out;
 }
 
-// module_src reads module `idx`'s own source: the entry from entry_path, an
-// overlay module from the overlay, any other from the file its identity names.
 pub function module_src(ov: Overlay, entry_path: string, parts: flatten.PerModule[], idx: i32): Option[string] {
   let path: string = entry_path;
   if (!parts[idx].is_entry) {
@@ -931,9 +670,6 @@ pub function module_src(ov: Overlay, entry_path: string, parts: flatten.PerModul
   return None;
 }
 
-// module_src_hash fingerprints a module's own source, or is "?" when it cannot
-// be read, which callers MUST treat as always-rebuild: sound (never reuses
-// stale codegen), just not incremental for that module.
 pub function module_src_hash(ov: Overlay, entry_path: string, parts: flatten.PerModule[], idx: i32): string {
   match (module_src(ov, entry_path, parts, idx)) {
     Some(src) => {
@@ -946,9 +682,6 @@ pub function module_src_hash(ov: Overlay, entry_path: string, parts: flatten.Per
   return "?";
 }
 
-// import_part_ns is the ns of the part `imp` resolved to, or "" when it names
-// no loaded part. An import with no recorded identity is matched by the prefix
-// its basename would get.
 function import_part_ns(parts: flatten.PerModule[], imp: parser.Import): string {
   let k: i32 = 0;
   while (k < parts.len()) {
@@ -964,14 +697,6 @@ function import_part_ns(parts: flatten.PerModule[], imp: parser.Import): string 
   return "";
 }
 
-// import_closure_ns returns the namespaces module `idx` depends on transitively
-// — the dependency set the cache key folds signatures over (see the section
-// header for why direct edges are not enough). An import that resolved to no
-// loaded part contributes nothing.
-//
-// A fixed point over `parts` rather than a worklist: the module count is small
-// (tens), and re-scanning is what makes an import CYCLE terminate instead of
-// revisiting forever.
 pub function import_closure_ns(parts: flatten.PerModule[], infmods: parser.Module[], idx: i32): string[] {
   let seen: string[] = [];
   let grew: boolean = true;
@@ -994,12 +719,6 @@ pub function import_closure_ns(parts: flatten.PerModule[], infmods: parser.Modul
   return seen;
 }
 
-// FactHashes splits the typed lowering's contract rows (ircore.unit_keys) by
-// module. per_mod[j] hashes every row that names one of module j's functions;
-// global hashes the rows that name none. A row naming functions of several
-// modules lands in each, and a function name that also appears in an unrelated
-// row only over-attributes it, so an edit can re-emit too much but never too
-// little.
 pub struct FactHashes { per_mod: string[], global: string }
 
 function ident_tokens(s: string): string[] {
@@ -1024,7 +743,6 @@ function ident_tokens(s: string): string[] {
   return out;
 }
 
-// roll131 is hash_key's second polynomial roll, kept numeric so it can be summed.
 function roll131(s: string): i32 {
   let b: i32 = 5381;
   let i: i32 = 0;
@@ -1044,9 +762,6 @@ pub function module_fact_hashes(infmods: parser.Module[], rows: string[]): FactH
     }
     names = names.append(ns);
   }
-  // Bucket infmods.len() is the global one. A registry can list a row more than
-  // once, and in an order that depends on its bucket layout, so each bucket
-  // folds its DISTINCT rows with an order-independent sum.
   let nb: i32 = infmods.len() + 1;
   let sa: i32[] = [];
   let sb: i32[] = [];
@@ -1094,9 +809,6 @@ pub function module_fact_hashes(infmods: parser.Module[], rows: string[]): FactH
   return FactHashes { per_mod: per, global: util.i32_to_string(sa[infmods.len()]) + "_" + util.i32_to_string(sb[infmods.len()]) };
 }
 
-// fact_sig_hashes is each module's signature hash with its facts folded in, so a
-// dependent's key moves when a fact about a function it can call moves, the way
-// it does for that function's signature.
 pub function fact_sig_hashes(infmods: parser.Module[], fh: FactHashes): string[] {
   let out: string[] = [];
   let j: i32 = 0;
@@ -1107,14 +819,6 @@ pub function fact_sig_hashes(infmods: parser.Module[], fh: FactHashes): string[]
   return out;
 }
 
-// module_cache_key builds the content-addressed key for module `idx`: its own
-// src_hash, folded with the SIGNATURE hash of every module it depends on
-// transitively (walked in parts order, so the key is deterministic without a
-// sort). The entry also folds in the runtime-need set it was asked to emit
-// (pm_extra), since that set is part of the entry unit's codegen inputs. `ns` is
-// included so two modules with byte-identical source but different namespaces
-// (hence different mangled output) never share a key. Returns "" when src_hash is
-// "?" — the signal to skip the cache and always emit.
 pub function module_cache_key(parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], idx: i32, src_hash: string, extra: string[]): string {
   if (src_hash == "?") {
     return "";
@@ -1140,18 +844,6 @@ pub function module_cache_key(parts: flatten.PerModule[], infmods: parser.Module
   return key;
 }
 
-// module_unit_cache_key is module_cache_key for ONE emitted unit: the same key
-// with the function window [lo,hi) folded in, so two shards of a module never
-// share an entry. `hi < 0` means "to the end", which is how a whole-module emit
-// spells its window; a caller that knows the module's function count must
-// normalise a full window to -1 or the same bytes get two keys.
-//
-// Every driver goes through this rather than appending the window itself: the
-// window is part of what the cached bytes ARE, so a driver that forgot it would
-// serve one shard's asm for another. `sighashes` must come from fact_sig_hashes
-// and `fh` from module_fact_hashes: lowering reads facts derived from function
-// bodies, the module's own and the global ones included, which neither its
-// source nor its dependencies' signatures cover.
 pub function module_unit_cache_key(parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], idx: i32, src_hash: string, extra: string[], lo: i32, hi: i32, fh: FactHashes): string {
   let key: string = module_cache_key(parts, infmods, sighashes, idx, src_hash, extra);
   if (key.len() == 0) {

@@ -1,22 +1,3 @@
-// `mknod` end to end on every backend that provides it — the four
-// natives. Neither WASI preview can create an entry that is neither a
-// file nor a directory, so E066 refuses the builtin there (capability
-// `fsnode`) and the last test in this file is that refusal rather than a
-// wasm probe.
-//
-// What no unit test can assert: each backend packs the major / minor pair
-// into the kernel's dev_t by hand — three hand-written assembly sequences
-// and one Go one — and Linux SPLITS the minor around the major. The
-// legacy 8+8 layout agrees with the real one for every pair below 256, so
-// a wrong packing is invisible until a minor exceeds 255, which is why
-// the probe creates a (1, 256) node and reads its raw st_rdev back
-// through Go's own Lstat rather than through Fern's `stat`.
-//
-// PRIVILEGE. A FIFO needs none. A character or block node generally needs
-// CAP_MKNOD, so the harness MEASURES what it can do rather than assuming:
-// the Go side tries `syscall.Mknod` itself in the same directory, and the
-// probe then either asserts the node was created with the exact rdev or
-// asserts the same refusal. There is no arm that silently skips.
 package e2e
 
 import (
@@ -29,40 +10,25 @@ import (
 	"testing"
 )
 
-// The three S_IFMT types the builtin reaches, as the raw st_mode word
-// `stat` reports: S_IFIFO 0o010000, S_IFCHR 0o020000, S_IFBLK 0o060000.
 const (
 	mknodFifo0666 = 0o010666
 	mknodChr0600  = 0o020600
 	mknodBlk0600  = 0o060600
 )
 
-// The device pairs. (12, 34) fits the legacy 8+8 layout; (1, 256) does
-// not, and is the one that tells the two apart.
 const (
-	mknodChrMajor = 12
-	mknodChrMinor = 34
-	mknodBigMajor = 1
-	mknodBigMinor = 256
-	// Every bit of both fields: the widest pair the encoding holds, and
-	// the only one that exercises the major above 8 bits. Without it a
-	// major narrowed to a byte passes every other case here.
+	mknodChrMajor  = 12
+	mknodChrMinor  = 34
+	mknodBigMajor  = 1
+	mknodBigMinor  = 256
 	mknodWideMajor = 4095
 	mknodWideMinor = 1048575
 )
 
-// linuxRdev is the dev_t Linux packs a pair into, measured by creating
-// nodes with mknod(1) and reading st_rdev back: minor[7:0], then
-// major[11:0] from bit 8, then minor[19:8] from bit 20.
 func linuxRdev(major, minor uint64) uint64 {
 	return minor&0xff | (major&0xfff)<<8 | (minor&0xfff00)<<12
 }
 
-// mknodSource is the probe. `withDev` says whether the harness has
-// established that this process may create a device node; when it is
-// false the probe asserts the REFUSAL instead of dropping the case.
-//
-// Every failure returns its own exit code, so the number names the step.
 func mknodSource(dir string, withDev bool) string {
 	p := func(name string) string { return filepath.Join(dir, name) }
 	src := fmt.Sprintf(`function main(): i32 {
@@ -130,9 +96,6 @@ func mknodSource(dir string, withDev bool) string {
 	return src
 }
 
-// mknodCheckTree reads the tree back through Go's own Lstat — the kind
-// bits and the raw st_rdev — so a `stat` that agreed with a broken
-// `mknod` about the wrong number cannot make the probe self-consistent.
 func mknodCheckTree(t *testing.T, dir string, withDev bool) {
 	t.Helper()
 	lstat := func(name string) *syscall.Stat_t {
@@ -189,10 +152,6 @@ func mknodCheckTree(t *testing.T, dir string, withDev bool) {
 	}
 }
 
-// mknodDevAllowed measures whether THIS process may create a device node
-// in `dir`, by creating one. A harness that assumed either way would
-// either skip the device cases on a runner that could run them or fail on
-// one that could not; this asks.
 func mknodDevAllowed(t *testing.T, dir string) bool {
 	t.Helper()
 	probe := filepath.Join(dir, ".devprobe")
@@ -240,12 +199,6 @@ func TestInterpMknod(t *testing.T) {
 	mknodCheckTree(t, dir, dev)
 }
 
-// Neither WASI preview can create a FIFO or a device node, and the
-// nearest stand-in — a regular file where a FIFO was asked for — reads
-// back as the wrong KIND rather than as a missing entry. So the answer on
-// that target is a named refusal at check time, not a backend stub: no
-// wasi profile grants `fsnode`, and E066 says so with the builtin's name
-// and the call site's position.
 func TestWASMMknodRefused(t *testing.T) {
 	dir := t.TempDir()
 	bin := buildFernCLI(t)

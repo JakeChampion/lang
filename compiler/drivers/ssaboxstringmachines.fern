@@ -5,7 +5,6 @@ import "std/string";
 function require(ok: boolean, group: string): void {
   if (!ok) {
     print("boxed-string machine controls failed: " + group);
-    // Native status is shared; the printed module and case identify failure.
     exit(180);
   }
 }
@@ -60,7 +59,6 @@ function reads(s: string): void {
   mutation(s, "leaq __fern_freelist(%rip), %r8", "leaq __fern_large_freelist(%rip), %r8", false);
   mutation(s, "movq 24(%r8), %rsi", "movq 28(%r8), %rsi", false);
   mutation(s, "movq 24(%r8), %rsi", "movl 24(%r8), %esi", false);
-  // A derived index must select the same slot, without leaking its temporary.
   for index in [2, 3, 4] {
     mutation(s, "movq 24(%r8), %rsi", "movq $" + index.to_string() + ", %rcx\nmovq (%r8,%rcx,8), %rsi\nmovq $1, %rcx", index == 3);
   }
@@ -90,7 +88,6 @@ function identities(s: string): void {
   let i = 0;
   while (i < regs.len()) {
     mutation(s, "    ret\n", "movq " + regs[i] + ", " + regs[i] + "\nret\n", true);
-    // CX is the known zero-extended count 1; all other halves are identities.
     mutation(s, "    ret\n", "movl " + words[i] + ", " + words[i] + "\nret\n", i == 1);
     mutation(s, "    ret\n", "movq " + regs[(i + 1) % regs.len()] + ", " + regs[i] + "\nret\n", false);
     i = i + 1;
@@ -113,7 +110,6 @@ function flag_case(s: string, a: i32, b: i32, width: i32): void {
   let sign = if (over) { difference > 0 } else { difference < 0 };
   let ua = if (a < 0) { a as i64 + 4294967296 as i64 } else { a as i64 };
   let ub = if (b < 0) { b as i64 + 4294967296 as i64 } else { b as i64 };
-  // Sign extension preserves unsigned order among these signed32 operands.
   let conditions = [a == b, a != b, ua < ub, ua >= ub, a < b, a >= b, a <= b, a > b, sign, !sign, over, !over];
   let names = ["je", "jne", "jb", "jae", "jl", "jge", "jle", "jg", "js", "jns", "jo", "jno"];
   let ax = if (width == 32) { "%ecx" } else { "%rcx" };

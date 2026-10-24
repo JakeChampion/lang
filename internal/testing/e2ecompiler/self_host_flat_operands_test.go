@@ -9,12 +9,6 @@ import (
 	"testing"
 )
 
-// An op the register path runs through the stack machine's own arm takes the
-// operands the arm pops in the registers the pops name, rather than pushing
-// them for it (ssa_flat_op). `nl` is __count_byte, whose arm also ends in one
-// push, so its result comes back in that register and the function moves
-// nothing through the stack. `stop` is __scan_set, whose arm pushes its result
-// on two paths: the operands still skip the stack.
 const flatOperandsProg = `@noinline function stop(s: string, from: i32, set: u8[]): i32 { return __scan_set(s, from, set); }
 @noinline function nl(s: string): i32 { return __count_byte(s, 10); }
 function main(): i32 {
@@ -48,8 +42,6 @@ func TestSelfHostFlatOperandsInRegisters(t *testing.T) {
 		}
 		nl := condBranchBody(t, string(asm), "nl")
 		for _, m := range stack[target].FindAllStringSubmatch(nl, -1) {
-			// The frame's own saves: %rbp, or a push or pop the CFI tracks,
-			// which a function with no frame pointer makes of its pad.
 			if len(m) > 3 && (m[2] == "%rbp" || m[3] != "") {
 				continue
 			}

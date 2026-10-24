@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// An associated-type pin belongs to a `dyn` type (`dyn P[Item = i32]`); a
-// generic bound refuses one at the parse, in both front ends (#12760).
 func TestSelfHostBoundPinRefused(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	const decls = "trait P { type Item; function get(self: Self): Self::Item; }\n"

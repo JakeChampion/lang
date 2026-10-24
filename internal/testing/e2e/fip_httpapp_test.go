@@ -22,10 +22,8 @@ func runFipHttpApp(t *testing.T, fern, dir, variant string, runner []string) e2e
 	return e2eharness.ParseFipHttpAppReport(t, variant, out)
 }
 
-// The HTTP-like application pipeline experiment (#9586), built by the Go
-// compiler: see e2eharness.CheckFipHttpAppReports for what it pins.
 func TestFipHttpAppDisciplinesAgreeAndDoNotAllocate(t *testing.T) {
-	runner := x86NativeRunner(t) // SKIPs if neither native amd64 nor qemu-x86_64
+	runner := x86NativeRunner(t)
 	fern := buildFernCLI(t)
 	dir := t.TempDir()
 	e2eharness.CheckFipHttpAppReports(t,

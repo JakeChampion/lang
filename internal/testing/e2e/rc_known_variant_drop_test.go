@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-// A dying value whose variant a payload read has fixed is released by what
-// that variant holds: a `Val` box alone, with no test of its variant. Each
-// shape runs on unique operands and on ones an array still holds.
 const knownVariantDropSrc = `enum Expr { Val(i32), Neg(Expr) }
 
 @noinline

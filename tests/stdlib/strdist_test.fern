@@ -1,10 +1,6 @@
 import "std/test";
 import "std/strdist" as strdist;
 
-// tests/stdlib/strdist_test.fern — pure-Fern coverage of std/strdist:
-// Levenshtein edit distance (classic reference cases + code-point
-// awareness) and the normalised similarity ratio.
-
 function test_levenshtein_basic(): test.TestOutcome {
   if (strdist.levenshtein("", "") != 0) {
     return test.fail("empty/empty");
@@ -22,7 +18,6 @@ function test_levenshtein_basic(): test.TestOutcome {
 }
 
 function test_levenshtein_reference(): test.TestOutcome {
-  // The canonical worked examples.
   if (strdist.levenshtein("kitten", "sitting") != 3) {
     return test.fail("kitten/sitting");
   }
@@ -33,7 +28,6 @@ function test_levenshtein_reference(): test.TestOutcome {
 }
 
 function test_codepoint_aware(): test.TestOutcome {
-  // 'é' vs 'e' is ONE substitution over code points (not two bytes).
   if (strdist.levenshtein("café", "cafe") != 1) {
     return test.fail("café/cafe");
   }
@@ -50,7 +44,6 @@ function test_similarity(): test.TestOutcome {
   if (strdist.similarity("abc", "xyz") != 0.0) {
     return test.fail("disjoint != 0");
   }
-  // kitten/sitting → 1 - 3/7 ≈ 0.5714
   return test.assert_eq_f64_near(strdist.similarity("kitten", "sitting"), 0.5714, 0.001);
 }
 

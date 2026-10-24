@@ -9,21 +9,6 @@ import (
 	"testing"
 )
 
-// The self-host front end (parser.fern) carries its own copy of "which type
-// names are reserved", because it has no access to builtinStructDecls /
-// builtinEnumDecls. Two copies of one list drift, and the drift is silent in
-// the direction that matters: a name added here and not there means the
-// self-host quietly ACCEPTS a redeclaration native refuses, which is how the
-// struct half came to be missing entirely — E010 existed in the self-host for
-// enums only, and `struct HttpRequest {}` compiled.
-//
-// So the lists are pinned to each other, exactly and in both directions. A
-// builtin added to either side fails here until both carry it.
-//
-// This reads the self-host source rather than running its checker: the
-// question is whether the two DECLARATIONS agree, which a behavioural test
-// can only sample one name at a time.
-
 var (
 	selfHostReservedStructsRE = regexp.MustCompile(
 		`(?s)function is_reserved_struct_name\(name: string\): boolean \{.*?let reserved: string\[\] = \[(.*?)\]`)
@@ -46,9 +31,6 @@ func selfHostReservedNamesSource(t *testing.T) string {
 	return string(b)
 }
 
-// namesIn pulls the quoted names out of one matched self-host construct,
-// failing when the pattern no longer matches — an unreadable list is an
-// unchecked list, not an empty one.
 func namesIn(t *testing.T, src string, re *regexp.Regexp, what string) []string {
 	t.Helper()
 	m := re.FindStringSubmatch(src)
@@ -76,8 +58,6 @@ func TestSelfHostReservedTypeNamesMatchBuiltins(t *testing.T) {
 		if strings.Join(got, ",") != strings.Join(want, ",") {
 			t.Errorf("is_reserved_struct_name disagrees with builtinStructDecls()\n self-host: %v\n    native: %v\na name in native but not the self-host is a redeclaration the self-host accepts and native refuses", got, want)
 		}
-		// is_reserved_struct_name answers false before its list for a name
-		// not starting with an uppercase ASCII letter.
 		for _, name := range want {
 			if name == "" || name[0] < 'A' || name[0] > 'Z' {
 				t.Errorf("builtin struct %q does not start with A-Z, which is_reserved_struct_name's fast path assumes", name)
@@ -118,8 +98,6 @@ func TestSelfHostReservedTypeNamesMatchBuiltins(t *testing.T) {
 	})
 }
 
-// checkReservedTParams compares the arms of the self-host table `fn` against
-// the generic built-ins `native` declares.
 func checkReservedTParams(t *testing.T, src string, re *regexp.Regexp, fn, native string, want map[string]string) {
 	t.Helper()
 	m := re.FindStringSubmatch(src)

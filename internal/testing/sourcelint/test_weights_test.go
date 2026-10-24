@@ -9,7 +9,6 @@ import (
 	"testing"
 )
 
-// weightScript locates scripts/ci-test-weights from this package dir.
 func weightScript(t *testing.T) string {
 	t.Helper()
 	p, err := filepath.Abs(filepath.Join("..", "..", "..", "scripts", "ci-test-weights"))
@@ -22,17 +21,6 @@ func weightScript(t *testing.T) string {
 	return p
 }
 
-// ciEnv builds a child environment with every variable that these scripts key
-// their behaviour off removed, then applies `extra`.
-//
-// Both scripts CHOOSE AN OUTPUT CHANNEL from the environment: with
-// GITHUB_ACTIONS set they emit `::warning` workflow commands, without it a plain
-// `WARNING:` line, and GITHUB_STEP_SUMMARY duplicates the report into a file.
-// Inheriting the ambient values means a test asserts one code path on a laptop
-// and a different one on a runner — which is exactly how the two "ran blind"
-// tests passed locally and failed in CI, asserting the `WARNING:` fallback while
-// the runner's GITHUB_ACTIONS=true produced `::warning`. Stripping the whole
-// family makes each test name the channel it is testing.
 func ciEnv(extra ...string) []string {
 	var env []string
 	for _, kv := range os.Environ() {
@@ -47,8 +35,6 @@ func ciEnv(extra ...string) []string {
 	return append(env, extra...)
 }
 
-// runWeights invokes the script with `env` overrides and returns exit code plus
-// combined output.
 func runWeights(t *testing.T, env []string, args ...string) (int, string) {
 	t.Helper()
 	cmd := exec.Command("bash", append([]string{weightScript(t)}, args...)...)
@@ -65,7 +51,6 @@ func runWeights(t *testing.T, env []string, args ...string) (int, string) {
 	return code, string(out)
 }
 
-// seed writes `files` (name → contents) into a fresh temp dir and returns it.
 func seed(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -77,7 +62,6 @@ func seed(t *testing.T, files map[string]string) string {
 	return dir
 }
 
-// weightsFile writes a weights file and returns its path.
 func weightsFile(t *testing.T, body string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "weights.txt")
@@ -87,9 +71,6 @@ func weightsFile(t *testing.T, body string) string {
 	return p
 }
 
-// Measure completed top-level lifetimes from full gotestsum JSON. The span
-// includes parallel children; parent Elapsed does not. Output that resembles
-// a JSON result must remain ordinary output.
 func TestCITestWeightsExtractPicksTopLevelDurations(t *testing.T) {
 	dir := seed(t, map[string]string{"run.json": strings.Join([]string{
 		`{"Time":"2026-08-14T10:00:00Z","Action":"run","Package":"e2ecompiler","Test":"TestSelfHostHeavy"}`,
@@ -113,10 +94,6 @@ func TestCITestWeightsExtractPicksTopLevelDurations(t *testing.T) {
 	}
 }
 
-// Weights that match what the shards measured must produce no findings at all —
-// otherwise the annotation channel fills with noise and stops being read. Run in
-// both environments, since quiet has a different spelling in each and the one
-// that matters is the runner.
 func TestCITestWeightsQuietOnAccurateWeights(t *testing.T) {
 	timings := seed(t, map[string]string{
 		"x86_64-11.timings": "TestSelfHostHeavy\t482.00\nTestSelfHostTiny\t0.40\n",
@@ -140,7 +117,6 @@ func TestCITestWeightsQuietOnAccurateWeights(t *testing.T) {
 	}
 }
 
-// The #6823 shape: a multi-minute test with NO entry, partitioned as 1 s.
 func TestCITestWeightsFlagsUnweightedHeavyTest(t *testing.T) {
 	timings := seed(t, map[string]string{
 		"x86_64-11.timings": "TestSelfHostHeavy\t482.00\n",
@@ -157,20 +133,14 @@ func TestCITestWeightsFlagsUnweightedHeavyTest(t *testing.T) {
 	if !strings.Contains(out, "::warning title=unweighted heavy test: TestSelfHostHeavy::") {
 		t.Errorf("missing the GitHub annotation:\n%s", out)
 	}
-	// The MESSAGE must name the test too, not just the title: GitHub renders the
-	// title only in its annotations UI, so a raw log line reads
-	// "measured 482s but has no entry" with no subject.
 	if !strings.Contains(out, "::TestSelfHostHeavy measured 482s but has no entry") {
 		t.Errorf("the annotation message must name the test, not only the title:\n%s", out)
 	}
-	// 482 * 1.5, rounded up: the suggestion carries the pessimism band rather
-	// than the raw measurement.
 	if !strings.Contains(out, "TestSelfHostHeavy 723") {
 		t.Errorf("missing the copy-pasteable corrected weight:\n%s", out)
 	}
 }
 
-// The #5914 shape: an entry that exists and is wildly under the real cost.
 func TestCITestWeightsFlagsUnderWeightedTest(t *testing.T) {
 	timings := seed(t, map[string]string{
 		"x86_64-11.timings": "TestSelfHostInterp\t170.50\n",
@@ -189,8 +159,6 @@ func TestCITestWeightsFlagsUnderWeightedTest(t *testing.T) {
 	}
 }
 
-// A cheap test cannot be flagged however wrong its entry is: below the
-// threshold no weight error can threaten the shard's timeout.
 func TestCITestWeightsIgnoresCheapTests(t *testing.T) {
 	timings := seed(t, map[string]string{
 		"x86_64-1.timings": "TestSelfHostCheap\t12.00\n",
@@ -206,8 +174,6 @@ func TestCITestWeightsIgnoresCheapTests(t *testing.T) {
 	}
 }
 
-// Measurements swing ~50% run to run, so a suggestion must never LOWER a
-// weight: a generously-weighted test is safe, a meanly-weighted one is the bug.
 func TestCITestWeightsSuggestionsOnlyRaise(t *testing.T) {
 	timings := seed(t, map[string]string{
 		"x86_64-11.timings": "TestSelfHostHeavy\t100.00\n",
@@ -223,19 +189,12 @@ func TestCITestWeightsSuggestionsOnlyRaise(t *testing.T) {
 	}
 }
 
-// The failure this whole check predicts: a shard's total measured cost close to
-// its own -test.timeout, which one partition reshuffle turns into a timeout.
 func TestCITestWeightsFlagsShardNearBudget(t *testing.T) {
 	timings := seed(t, map[string]string{
 		"x86_64-11.timings": "TestSelfHostHeavy\t738.00\nTestSelfHostMid\t190.00\nTestSelfHostAlso\t54.00\n",
 	})
 	w := weightsFile(t, "TestSelfHostHeavy 738\nTestSelfHostMid 130\nTestSelfHostAlso 54\n")
 
-	// The budget is pinned explicitly rather than left to the script's default:
-	// this test is about the near-budget arithmetic, and the default tracks the
-	// workflow's -test.timeout (TestSelfHostWeightGateBudgetMatchesShardTimeout
-	// is what holds those two together). Without this the fixture's numbers
-	// would have to be restated every time the shard timeout moves.
 	code, out := runWeights(t, []string{"GITHUB_ACTIONS=1", "FERN_WEIGHT_SHARD_BUDGET_SECONDS=1080"}, "check", timings, w)
 	if code != 0 {
 		t.Fatalf("want exit 0, got %d: %s", code, out)
@@ -248,11 +207,6 @@ func TestCITestWeightsFlagsShardNearBudget(t *testing.T) {
 	}
 }
 
-// A gate that silently no-ops is worse than none, so losing the timing
-// artifacts has to be loud rather than green-and-quiet — on BOTH channels. The
-// annotation wording differs by environment, so each is asserted under the
-// environment that selects it rather than under whatever the test host happens
-// to export.
 func TestCITestWeightsReportsWhenItRanBlind(t *testing.T) {
 	weights := weightsFile(t, "TestSelfHostHeavy 738\n")
 
@@ -279,9 +233,6 @@ func TestCITestWeightsReportsWhenItRanBlind(t *testing.T) {
 	}
 }
 
-// Timing files that exist but hold no rows are as blind as no files at all. This
-// is the quieter half of the no-data case: the artifacts arrive, the glob matches,
-// and without a check the run reports the all-clear having compared nothing.
 func TestCITestWeightsReportsEmptyTimingFiles(t *testing.T) {
 	timings := seed(t, map[string]string{
 		"x86_64-1.timings": "",
@@ -304,8 +255,6 @@ func TestCITestWeightsReportsEmptyTimingFiles(t *testing.T) {
 	}
 }
 
-// The escalation to a hard failure is one variable, so that it stays a
-// follow-up decision rather than a rewrite.
 func TestCITestWeightsStrictModeIsFatal(t *testing.T) {
 	timings := seed(t, map[string]string{
 		"x86_64-11.timings": "TestSelfHostHeavy\t482.00\n",
@@ -321,9 +270,6 @@ func TestCITestWeightsStrictModeIsFatal(t *testing.T) {
 	}
 }
 
-// The report has to reach the job summary, which is where a green run's numbers
-// are readable at all — and it has to reach stdout whether or not a summary file
-// exists, so the script is usable by hand.
 func TestCITestWeightsWritesJobSummary(t *testing.T) {
 	timings := seed(t, map[string]string{
 		"x86_64-11.timings": "TestSelfHostHeavy\t482.00\n",
@@ -370,7 +316,6 @@ func TestCITestWeightsWritesJobSummary(t *testing.T) {
 	})
 }
 
-// A bad invocation must not pass vacuously.
 func TestCITestWeightsBadUsage(t *testing.T) {
 	for _, args := range [][]string{{}, {"nonsense"}, {"check"}, {"check", "/nonexistent-dir", "/nonexistent-weights"}, {"merge"}, {"merge", "a", "b"}, {"merge", "/nonexistent-dir"}} {
 		code, out := runWeights(t, nil, args...)
@@ -380,9 +325,6 @@ func TestCITestWeightsBadUsage(t *testing.T) {
 	}
 }
 
-// The script's shard budget is the shards' own -test.timeout. If the workflow
-// raises that timeout and the script keeps the old number, every percentage the
-// audit reports is wrong.
 func TestSelfHostWeightGateBudgetMatchesShardTimeout(t *testing.T) {
 	script, err := os.ReadFile(filepath.Join("..", "..", "..", "scripts", "ci-test-weights"))
 	if err != nil {
@@ -399,8 +341,6 @@ func TestSelfHostWeightGateBudgetMatchesShardTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read workflow: %v", err)
 	}
-	// The shards hand their selection to ci-test-workers, whose -timeout is
-	// each worker's -test.timeout.
 	timeoutRe := regexp.MustCompile(`-timeout (\d+)m -run "\$PAT"`)
 	var mins []int
 	for _, line := range strings.Split(string(wf), "\n") {

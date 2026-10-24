@@ -28,8 +28,6 @@ func TestNumericJoinSettlesLiteralArms(t *testing.T) {
 							a, b = b, a
 						}
 						expr := fmt.Sprintf(shape.expr, selector, a, b)
-						// Both branches have the same numeric value. Only their source
-						// types differ: one is polymorphic, the other concrete f32.
 						src := fmt.Sprintf("%s function main(): i32 { let narrow: f32 = 16777216.0; let v = %s; if (%s + 1.0 == %s) { return 7; } return 99; }", shape.decl, expr, value.projection, value.projection)
 						got := evalProgramValue(t, src)
 						if n, ok := got.(Number); !ok || n != 7 {

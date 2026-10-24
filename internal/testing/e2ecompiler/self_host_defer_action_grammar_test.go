@@ -9,10 +9,6 @@ import (
 	"testing"
 )
 
-// The action after `defer` or `errdefer` is a block, an expression or an
-// assignment, as the native parser has it (#11602); `assert(...)` is an
-// expression there, which the self-host parses to its desugared `if`. Any
-// other statement is a P001 at its first token, from both front ends.
 func TestSelfHostDeferActionGrammar(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	const prog = "struct P { x: i32 }\nfunction f(): i32 { return 1; }\nfunction main(): i32 {\n  let s: i32 = 0;\n  loop {\n    %s %s\n    break;\n  }\n  return s;\n}\n"

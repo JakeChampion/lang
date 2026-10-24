@@ -16,11 +16,6 @@ func init() {
 	registerCorpus("dd", ddCases)
 }
 
-// ddSeed is the tree every case works over: a ten-byte input whose bytes
-// are all distinct (so a skip or a seek that lands one byte off is
-// visible), a five-thousand-byte one for the block arithmetic, a file
-// already holding ten bytes for the cases that write INTO something, and
-// a directory for the open failures.
 func ddSeed(t *testing.T, dir string) {
 	t.Helper()
 	write := func(name, content string) {
@@ -34,18 +29,9 @@ func ddSeed(t *testing.T, dir string) {
 	write("pre", "0123456789")
 	write("lines", "a\nbcdef\nghi\n")
 	write("recs", "ab  cd  ef  ")
-	// An empty line, one longer than any cbs below, trailing spaces kept
-	// by block, and a last line with no newline.
 	write("lines2", "a\n\nlonger than ten bytes\nxy  \nend")
-	// Records of all spaces, of inner spaces, of none, and a short last one.
 	write("recs2", "ab      a b abcdx")
-	// Bytes that are not ASCII letters and one that is not UTF-8 at all,
-	// for the case conversions: in the C locale neither is a letter, so
-	// both have to reach the output untouched.
 	write("mixed", "caf\xc3\xa9 A\xffz Z\n")
-	// Every byte once, for the charset tables, and `ab  cd  ` in EBCDIC
-	// (0x81 0x82 are `ab`, 0x40 is the space) for the records `ascii`
-	// unblocks.
 	all := make([]byte, 256)
 	for i := range all {
 		all[i] = byte(i)
@@ -56,16 +42,11 @@ func ddSeed(t *testing.T, dir string) {
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// A symlink to the ten bytes, for the `nofollow` flag.
 	if err := os.Symlink("in10", filepath.Join(dir, "lnk")); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// ddSparseSeed adds the `conv=sparse` inputs: NULs around a little data,
-// data then a NUL tail (the case where only the length records the
-// hole), all NULs, and a 20 KiB file of data for the cases that write
-// INTO something.
 func ddSparseSeed(t *testing.T, dir string) {
 	t.Helper()
 	ddSeed(t, dir)
@@ -82,34 +63,15 @@ func ddSparseSeed(t *testing.T, dir string) {
 	}
 }
 
-// ddCases is dd(1)'s corpus.
-//
-// Every case names `status=noxfer` or `status=none`, and that is not a
-// preference: dd's third report line carries the elapsed TIME and a rate
-// derived from it, which two correct implementations cannot agree on. A
-// mask cannot help — the harness applies one to stdout and to the tree,
-// never to stderr, and the whole report is on stderr — so the third line
-// is pinned by shape instead, in TestDDTransferLine below.
-//
-// What is left is fully comparable, and it is most of dd: the record
-// counts, every byte of the output file, the operand grammar with its
-// five separate diagnostics, and what each `conv=` does to the bytes.
 func ddCases(t *testing.T) []invocation {
 	var cases []invocation
 	add := func(name string, args ...string) {
 		cases = append(cases, invocation{name: name, args: args, seedTree: ddSeed})
 	}
-	// A hole reads back as NULs, so only the block count shows the seek.
 	addSparse := func(name string, args ...string) {
 		cases = append(cases, invocation{name: name, args: args, seedTree: ddSparseSeed, sparse: true})
 	}
 
-	// --- the report's two comparable lines ---------------------------------
-	//
-	// `N+M records in` counts reads: full when one returned `ibs` bytes
-	// and partial when it returned fewer, which is why ten bytes through
-	// the default 512-byte block is `0+1`. Records OUT are the writes,
-	// and `ibs=3 obs=4` is what separates the two counts.
 	add("plain", "if=in10", "of=out", "status=noxfer")
 	add("bs-4", "if=in10", "of=out", "bs=4", "status=noxfer")
 	add("bs-4096-short-last", "if=in5000", "of=out", "bs=4096", "status=noxfer")
@@ -120,33 +82,20 @@ func ddCases(t *testing.T) []invocation {
 	add("count-bytes", "if=in5000", "of=out", "bs=1024", "count=100", "iflag=count_bytes", "status=noxfer")
 	add("count-multiplied", "if=in10", "of=out", "bs=1", "count=2x3", "status=noxfer")
 	add("bs-multiplied", "if=in10", "of=out", "bs=1kx2", "count=1", "status=noxfer")
-	// `bs=` overrides `ibs=` and `obs=` wherever they appear.
 	add("bs-overrides-later-obs", "if=in10", "of=out", "bs=3", "obs=7", "status=noxfer")
 	add("bs-overrides-later-ibs", "if=lines", "of=out", "bs=3", "ibs=5", "status=noxfer")
 
-	// --- skip and seek -----------------------------------------------------
 	add("skip-and-seek", "if=in10", "of=out", "bs=1", "skip=3", "seek=2", "status=noxfer")
 	add("skip-bytes", "if=in10", "of=out", "bs=4", "skip=3", "iflag=skip_bytes", "status=noxfer")
 	add("seek-bytes", "if=in10", "of=out", "bs=4", "seek=3", "oflag=seek_bytes", "status=noxfer")
 	add("skip-to-eof", "if=in10", "of=out", "bs=1", "skip=10", "status=noxfer")
 	add("skip-past-eof", "if=in10", "of=out", "bs=1", "skip=11", "status=noxfer")
 	add("skip-far-past-eof", "if=in10", "of=out", "bs=1", "skip=50", "status=noxfer")
-	// A seek without conv=notrunc cuts the output at the seek offset, so
-	// the bytes before it survive and everything after is gone.
 	add("seek-truncates", "if=in10", "of=pre", "bs=1", "seek=2", "count=3", "status=noxfer")
 	add("seek-notrunc", "if=in10", "of=pre", "bs=1", "seek=2", "count=3", "conv=notrunc", "status=noxfer")
 	add("notrunc-shorter", "if=in10", "of=pre", "bs=1", "count=3", "conv=notrunc", "status=noxfer")
 	add("append", "if=in10", "of=pre", "oflag=append", "conv=notrunc", "status=noxfer")
 
-	// --- the open-time flags (#9242) ---------------------------------------
-	//
-	// Each is one bit of open_reader_with / open_writer_with's flags word,
-	// so both sides issue the same open(2) and the kernel's verdict is the
-	// comparable part: `directory` on a regular file, `nofollow` on a
-	// symlink. `direct` and `noatime` are not here because their answer is
-	// the filesystem's (O_DIRECT is EINVAL on an older tmpfs) and the mount
-	// option's; the e2e suites pin their words. `fullblock` is an input
-	// flag only, as GNU takes it.
 	add("iflag-directory-regular", "if=in10", "of=out", "iflag=directory", "status=noxfer")
 	add("iflag-directory-dir", "if=d", "of=out", "iflag=directory", "status=noxfer")
 	add("iflag-nofollow-symlink", "if=lnk", "of=out", "iflag=nofollow", "status=noxfer")
@@ -157,10 +106,6 @@ func ddCases(t *testing.T) []invocation {
 	add("oflag-nofollow-symlink", "if=in10", "of=lnk", "oflag=nofollow", "conv=notrunc", "status=noxfer")
 	add("oflag-fullblock-invalid", "if=in10", "oflag=fullblock")
 
-	// --- iseek and oseek ---------------------------------------------------
-	//
-	// Aliases, so the pair is one operand for the last-wins rule: naming
-	// both takes the second of them.
 	add("iseek", "if=in10", "of=out", "bs=1", "iseek=3", "status=noxfer")
 	add("oseek", "if=in10", "of=out", "bs=2", "oseek=1", "status=noxfer")
 	add("skip-then-iseek", "if=in10", "of=out", "bs=1", "skip=1", "iseek=3", "status=noxfer")
@@ -168,12 +113,6 @@ func ddCases(t *testing.T) []invocation {
 	add("oseek-notrunc", "if=in10", "of=pre", "bs=1", "oseek=2", "count=3", "conv=notrunc", "status=noxfer")
 	add("iseek-invalid-number", "if=in10", "iseek=q")
 
-	// --- the number grammar ------------------------------------------------
-	//
-	// `c` is 1 and `w` is 2, neither takes the `iB` form or a second
-	// multiplier, and a `B` on the END of any piece makes the operand a
-	// BYTE count — which attaches to the multiplier grammar's own endings, so
-	// `1kB` is 1000 bytes where `1k` is 1024 blocks.
 	add("suffix-c", "if=in10", "of=out", "bs=1", "count=1cx7", "status=noxfer")
 	add("suffix-c-bare", "if=in10", "of=out", "bs=1", "count=c", "status=noxfer")
 	add("suffix-w", "if=in10", "of=out", "bs=1", "count=3w", "status=noxfer")
@@ -198,52 +137,36 @@ func ddCases(t *testing.T) []invocation {
 	add("invalid-number-lowercase-b-after-k", "if=in10", "count=1kb")
 	add("invalid-number-double-b", "if=in10", "count=1BB")
 	add("invalid-number-bare-b", "if=in10", "count=B")
-	// A value past INTMAX_MAX is a DIFFERENT line from a value that is
-	// not a number: the errno text comes after the quoted operand.
 	add("number-overflow", "if=in10", "count=9223372036854775808")
 	add("number-overflow-unsigned", "if=in10", "count=18446744073709551616")
 	add("number-overflow-product", "if=in10", "count=9223372036854775807x9223372036854775807")
 	add("number-at-intmax", "if=in10", "of=out", "count=9223372036854775807", "status=noxfer")
-	// `0x` is a warning rather than a refusal, since a reader may have
-	// meant hexadecimal — one per operand, and the zero still wins.
 	add("zero-multiplier", "if=in10", "of=out", "count=0x3", "status=noxfer")
 	add("zero-multiplier-twice", "if=in10", "of=out", "count=0x0x3", "status=noxfer")
 	add("zero-multiplier-spelled-out", "if=in10", "of=out", "count=00x3", "status=noxfer")
 	add("zero-multiplier-on-bs", "if=in10", "bs=0x3")
 	add("zero-multiplier-trailing", "if=in10", "of=out", "count=3x0", "status=noxfer")
 
-	// --- the byte conversions ----------------------------------------------
 	add("conv-ucase", "if=in10", "of=out", "conv=ucase", "status=noxfer")
 	add("conv-lcase", "if=in10", "of=out", "conv=lcase", "bs=4", "status=noxfer")
 	add("conv-swab", "if=in10", "of=out", "conv=swab", "status=noxfer")
 	add("conv-swab-odd", "if=in10", "of=out", "bs=3", "conv=swab", "status=noxfer")
 	add("conv-sync-pads", "if=in10", "of=out", "ibs=4", "conv=sync", "status=noxfer")
 	add("conv-two", "if=in10", "of=out", "bs=4", "conv=ucase,swab", "status=noxfer")
-	// Pairs are swapped eight bytes at a time, so these put a held byte and
-	// a short read on either side of a word.
 	add("conv-swab-words", "if=all256", "of=out", "conv=swab", "status=noxfer")
 	add("conv-swab-words-bs5", "if=all256", "of=out", "bs=5", "conv=swab", "status=noxfer")
 	add("conv-swab-words-bs9", "if=all256", "of=out", "bs=9", "conv=swab", "status=noxfer")
 	add("conv-swab-words-bs17", "if=all256", "of=out", "ibs=17", "obs=8", "conv=swab", "status=noxfer")
-	// The case conversions are C-locale tolower/toupper: the 26 ASCII
-	// letters and nothing else, so a byte over 0x7F and a byte that is
-	// not UTF-8 both pass through as they stand.
 	add("conv-ucase-non-ascii", "if=mixed", "of=out", "conv=ucase", "status=noxfer")
 	add("conv-lcase-non-ascii", "if=mixed", "of=out", "conv=lcase", "status=noxfer")
 	add("conv-ucase-small-blocks", "if=mixed", "of=out", "bs=3", "conv=ucase", "status=noxfer")
 	add("conv-lcase-and-swab", "if=mixed", "of=out", "bs=3", "conv=lcase,swab", "status=noxfer")
 
-	// --- the record conversions --------------------------------------------
-	//
-	// `conv=block` turns lines into cbs-sized records and counts the ones
-	// it had to cut; `conv=unblock` turns them back. Neither is on without
-	// a `cbs`, which is why the bare flag copies the bytes through.
 	add("conv-block", "if=lines", "of=out", "conv=block", "cbs=4", "status=noxfer")
 	add("conv-block-truncates", "if=lines", "of=out", "conv=block", "cbs=2", "status=noxfer")
 	add("conv-block-no-cbs", "if=lines", "of=out", "conv=block", "status=noxfer")
 	add("conv-unblock", "if=recs", "of=out", "conv=unblock", "cbs=4", "status=noxfer")
 	add("conv-unblock-partial", "if=recs", "of=out", "conv=unblock", "cbs=5", "status=noxfer")
-	// A line or a record split across reads is held until it completes.
 	add("conv-block-split-reads", "if=lines2", "of=out", "bs=3", "conv=block", "cbs=10", "status=noxfer")
 	add("conv-block-split-truncates", "if=lines2", "of=out", "bs=4", "conv=block", "cbs=3", "status=noxfer")
 	add("conv-block-one-byte-reads", "if=lines2", "of=out", "bs=1", "conv=block", "cbs=6", "status=noxfer")
@@ -252,22 +175,11 @@ func ddCases(t *testing.T) []invocation {
 	add("conv-unblock-one-byte-reads", "if=recs2", "of=out", "bs=1", "conv=unblock", "cbs=4", "status=noxfer")
 	add("conv-unblock-whole", "if=recs2", "of=out", "conv=unblock", "cbs=4", "status=noxfer")
 	add("conv-block-and-unblock", "if=lines", "of=out", "conv=block,unblock", "cbs=4", "status=noxfer")
-	// Without a `cbs` the flags are dropped before the conflict check.
 	add("conv-block-and-unblock-no-cbs", "if=lines", "of=out", "conv=block,unblock", "status=noxfer")
-	// The sync pad is a space only when a record conversion is ON.
 	add("conv-block-sync-no-cbs", "if=in10", "of=out", "ibs=4", "conv=block,sync", "status=noxfer")
-	// A byte swab is holding at the end still goes through the record
-	// conversion, after the line it is holding.
 	add("conv-swab-unblock-held-byte", "if=in5", "of=out", "conv=swab,unblock", "cbs=3", "status=noxfer")
-	// sync pads BEFORE swab pairs, so the last byte pairs with a pad.
 	add("conv-swab-sync-order", "if=in5", "of=out", "ibs=4", "conv=swab,sync", "status=noxfer")
 
-	// --- the charsets ------------------------------------------------------
-	//
-	// Each is a 256-entry table, so a run over every byte pins all of it.
-	// `ascii` unblocks and `ebcdic` / `ibm` block, which a `cbs` turns on;
-	// a case conversion runs after `ascii` and before `ebcdic` / `ibm`,
-	// whichever order the names come in.
 	add("conv-ascii-all-bytes", "if=all256", "of=out", "conv=ascii", "status=noxfer")
 	add("conv-ebcdic-all-bytes", "if=all256", "of=out", "conv=ebcdic", "status=noxfer")
 	add("conv-ibm-all-bytes", "if=all256", "of=out", "conv=ibm", "status=noxfer")
@@ -281,13 +193,6 @@ func ddCases(t *testing.T) []invocation {
 	add("conv-ebcdic-sync-no-cbs", "if=in10", "of=out", "ibs=4", "conv=ebcdic,sync", "status=noxfer")
 	add("conv-ascii-with-block-no-cbs", "if=in10", "of=out", "conv=ascii,block", "status=noxfer")
 
-	// --- conv=sparse --------------------------------------------------------
-	//
-	// An all-NUL output block is a seek rather than a write, and still a
-	// record out. A run ENDING on a seek extends the file to the offset,
-	// so the length matches a dense copy. Over existing bytes a seek
-	// leaves them in place, and under `oflag=append` the skipped blocks
-	// vanish until the final extension.
 	addSparse("conv-sparse-middle", "if=zmid", "of=out", "bs=4096", "conv=sparse", "status=noxfer")
 	addSparse("conv-sparse-tail", "if=zend", "of=out", "bs=4096", "conv=sparse", "status=noxfer")
 	addSparse("conv-sparse-all-nul", "if=zall", "of=out", "bs=4096", "conv=sparse", "status=noxfer")
@@ -297,14 +202,8 @@ func ddCases(t *testing.T) []invocation {
 	addSparse("conv-sparse-truncates", "if=zmid", "of=pre20", "bs=4096", "conv=sparse", "status=noxfer")
 	addSparse("conv-sparse-append", "if=zmid", "of=pre20", "bs=4096", "oflag=append", "conv=sparse,notrunc", "status=noxfer")
 	addSparse("conv-sparse-append-all-nul", "if=zall", "of=pre20", "bs=4096", "oflag=append", "conv=sparse,notrunc", "status=noxfer")
-	// Standard output is a pipe here, which cannot seek: sparse turns
-	// itself off and the NULs are written.
 	addSparse("conv-sparse-pipe", "if=zmid", "bs=4096", "conv=sparse", "status=noxfer")
 
-	// --- conversions that cannot combine -----------------------------------
-	//
-	// Checked in a fixed order — charsets, records, case, opens — so a
-	// set with several conflicts reports the first group.
 	add("conv-ascii-and-ebcdic", "if=in10", "conv=ascii,ebcdic")
 	add("conv-ebcdic-and-ibm", "if=in10", "conv=ebcdic,ibm")
 	add("conv-ascii-and-block", "if=in10", "conv=ascii,block", "cbs=4")
@@ -313,27 +212,19 @@ func ddCases(t *testing.T) []invocation {
 	add("conv-records-before-case", "if=in10", "conv=lcase,ucase,block,unblock", "cbs=4")
 	add("conv-charsets-first", "if=in10", "conv=ascii,ebcdic,lcase,ucase,block", "cbs=4")
 
-	// --- the opens ---------------------------------------------------------
 	add("no-such-input", "if=nosuch", "of=out", "status=noxfer")
 	add("input-is-a-directory", "if=d", "of=out", "status=noxfer")
 	add("output-is-a-directory", "if=in10", "of=d", "status=noxfer")
-	// `conv=excl` on a name that is TAKEN refuses; on a fresh one it
-	// creates, and the tree compare holds the mode to GNU's 0666 through
-	// the umask, which the exclusive bit of the flags word gives (#9237).
 	add("conv-excl-exists", "if=in10", "of=pre", "conv=excl", "status=noxfer")
 	add("conv-excl-fresh", "if=in10", "of=fresh", "conv=excl", "status=noxfer")
 	add("conv-nocreat-missing", "if=in10", "of=nosuch2", "conv=nocreat", "status=noxfer")
 	add("conv-nocreat-exists", "if=in10", "of=pre", "conv=nocreat", "status=noxfer")
 	add("conv-fsync", "if=in10", "of=out", "conv=fsync", "status=noxfer")
 	add("conv-fdatasync", "if=in10", "of=out", "conv=fdatasync", "status=noxfer")
-	// A descriptor with no data-only sync answers EINVAL, which is not a
-	// failure to report: the fall-back is a full fsync, so what a run
-	// over /dev/null reports is `fsync failed`.
 	add("conv-fdatasync-no-data-sync", "if=in10", "of=/dev/null", "conv=fdatasync", "status=noxfer")
 	add("conv-fsync-no-sync", "if=in10", "of=/dev/null", "conv=fsync", "status=noxfer")
 	add("conv-both-syncs-no-sync", "if=in10", "of=/dev/null", "conv=fdatasync,fsync", "status=noxfer")
 
-	// --- the grammar's five diagnostics ------------------------------------
 	add("unrecognized-operand", "bogus=1")
 	add("operand-without-equals", "in10")
 	add("bare-dash", "-")
@@ -348,20 +239,13 @@ func ddCases(t *testing.T) []invocation {
 	add("invalid-input-flag", "if=in10", "iflag=bogus")
 	add("invalid-output-flag", "if=in10", "oflag=bogus")
 	add("invalid-status", "if=in10", "status=bogus")
-	// `nocache` drops the copied range's cached pages (#11248). A dropped
-	// page is not observable, so what compares is the copy and the exit;
-	// with `count=0` the whole-file drop is the run, and on a pipe it is
-	// GNU's `failed to discard cache for:` and exit 1.
 	add("nocache-input", "if=in5000", "of=out", "bs=1024", "iflag=nocache", "status=noxfer")
 	add("nocache-output", "if=in5000", "of=out", "bs=1024", "oflag=nocache", "status=noxfer")
 	add("nocache-both-count0", "if=in10", "of=out", "iflag=nocache", "oflag=nocache", "count=0", "status=noxfer")
 	add("nocache-stdout-count0", "if=in10", "oflag=nocache", "count=0", "status=noxfer")
-	// The last operand of a repeated name wins.
 	add("last-name-wins", "if=pre", "if=in10", "of=out", "status=noxfer")
-	// `if=-` is a file called `-`, not standard input.
 	add("dash-is-a-name", "if=-", "of=out", "status=noxfer")
 
-	// --- standard input and output -----------------------------------------
 	cases = append(cases,
 		invocation{name: "stdin-to-stdout", args: []string{"status=noxfer"}, stdin: "hello dd", seedTree: ddSeed},
 		invocation{name: "stdin-skip", args: []string{"bs=1", "skip=3", "status=noxfer"}, stdin: "abcdefghij", seedTree: ddSeed},
@@ -379,24 +263,7 @@ func TestDD(t *testing.T) {
 	requireParity(t, "dd", ddCases(t))
 }
 
-// `status=progress` writes one `\r`-prefixed transfer line per second,
-// then the newline that separates the last of them from the report. It
-// cannot be a corpus case, because the run it describes always ends in
-// the third report line and that line carries a duration — so this
-// compares the two implementations' stderr with the DURATIONS masked
-// and everything else, the progress lines' own whole-second counts
-// included, byte for byte.
-//
-// The seconds on a progress line are ROUNDED: GNU reads an elapsed
-// 1.7 s as `2 s`. The input is a FIFO fed one byte and then another
-// after a sleep, which is what makes that observable and makes both
-// sides have copied the same two bytes when the tick lands. A record
-// that outlasts several seconds still produces one line rather than one
-// per second, since GNU's alarm handler only raises a flag that the
-// copy loop reads at a record boundary.
 func TestDDProgress(t *testing.T) {
-	// Only a duration is masked: a whole number of seconds with no `.`
-	// or `e` in it is a progress line's own count and stays compared.
 	duration := regexp.MustCompile(`copied, [0-9]+[.e][0-9e.+-]* s,`)
 	run := func(bin string, sleep time.Duration) string {
 		t.Helper()
@@ -408,9 +275,6 @@ func TestDDProgress(t *testing.T) {
 		fed := make(chan struct{})
 		go func() {
 			defer close(fed)
-			// Opening for writing blocks until dd opens the read end,
-			// so the sleep is the gap BETWEEN the two bytes rather
-			// than before the first.
 			f, err := os.OpenFile(fifo, os.O_WRONLY, 0)
 			if err != nil {
 				return
@@ -431,7 +295,6 @@ func TestDDProgress(t *testing.T) {
 	for _, c := range []struct {
 		name  string
 		sleep time.Duration
-		// lines is how many `\r` progress lines the gap produces.
 		lines int
 	}{
 		{"no tick", 100 * time.Millisecond, 0},
@@ -451,20 +314,10 @@ func TestDDProgress(t *testing.T) {
 	}
 }
 
-// The info signal mid-copy (#9243): GNU's SIGINFO, which is SIGUSR1 on Linux.
-// It writes the statistics report and the copy carries on.
-//
-// dd reads three bytes from a FIFO and blocks on the next read; the signal
-// arrives there, and the writer closes the FIFO only after it. GNU's handler
-// interrupts the read and prints at once; Fern's raises a flag the copy loop
-// reads at the record boundary, which here is the end of input. Either way
-// the report holds the one record read before the signal, so the two stderrs
-// match with only the durations masked — and a dd the signal killed, or one
-// whose read failed with EINTR, would not finish at all.
 func TestDDInfoSignal(t *testing.T) {
 	info := syscall.SIGUSR1
 	if runtime.GOOS == "darwin" {
-		info = syscall.Signal(29) // SIGINFO, which GNU catches where it exists
+		info = syscall.Signal(29)
 	}
 	duration := regexp.MustCompile(`copied, [0-9.e+-]+ s, [0-9.]+ [kMGTPE]?B/s`)
 	run := func(bin string, env []string, args ...string) (string, *os.ProcessState) {
@@ -477,7 +330,6 @@ func TestDDInfoSignal(t *testing.T) {
 		wrote := make(chan struct{})
 		release := make(chan struct{})
 		go func() {
-			// Opening for writing blocks until dd opens the read end.
 			f, err := os.OpenFile(fifo, os.O_WRONLY, 0)
 			if err != nil {
 				close(wrote)
@@ -498,8 +350,6 @@ func TestDDInfoSignal(t *testing.T) {
 			t.Fatal(err)
 		}
 		<-wrote
-		// Long enough for dd to have read the three bytes and to be
-		// waiting on the next read, under qemu too.
 		time.Sleep(500 * time.Millisecond)
 		if err := cmd.Process.Signal(info); err != nil {
 			t.Fatal(err)
@@ -521,10 +371,9 @@ func TestDDInfoSignal(t *testing.T) {
 		return duration.ReplaceAllString(stderr.String(), "copied, T s, R/s"), cmd.ProcessState
 	}
 	for _, c := range []struct {
-		name string
-		env  []string
-		args []string
-		// reports is how many record-count reports stderr carries.
+		name    string
+		env     []string
+		args    []string
 		reports int
 	}{
 		{"noxfer", nil, []string{"status=noxfer"}, 2},
@@ -545,8 +394,6 @@ func TestDDInfoSignal(t *testing.T) {
 			}
 		})
 	}
-	// POSIX leaves SIGUSR1 its default action, and GNU follows it under
-	// POSIXLY_CORRECT where SIGUSR1 stands in for SIGINFO: the signal kills.
 	t.Run("POSIXLY_CORRECT", func(t *testing.T) {
 		if runtime.GOOS == "darwin" {
 			t.Skip("Darwin has SIGINFO, which POSIXLY_CORRECT does not touch")
@@ -569,12 +416,6 @@ func TestDDVersion(t *testing.T) {
 	requireVersion(t, "dd", []string{"--version"}, 0)
 }
 
-// The third report line is the one part of dd nothing can compare: it
-// carries the elapsed time and a rate computed from it. Its SHAPE is
-// still a contract — GNU writes `10 bytes copied, 6.3384e-05 s, 158
-// kB/s`, and the human-readable pair appears in parentheses once the
-// count reaches 1000 — so that is what this pins, on our own output
-// rather than against GNU's.
 var ddTransferSmall = regexp.MustCompile(`^10 bytes copied, [0-9.e+-]+ s, [0-9.]+ [kMGTPE]B/s\n$`)
 
 var ddTransferLarge = regexp.MustCompile(`^2048 bytes \(2\.0 kB, 2\.0 KiB\) copied, [0-9.e+-]+ s, [0-9.]+ [kMGTPE]B/s\n$`)

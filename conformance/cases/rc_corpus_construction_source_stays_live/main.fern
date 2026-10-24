@@ -1,12 +1,12 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// A container literal built from a bare-ident source that STAYS LIVE
-// afterwards: the construction retains the buffer, so the box and the
-// local are co-owners and each release must land exactly once. The
-// discarded-statement form runs the box's drop first, which is what
-// separates the two releases; the bound form and the escaping form
-// exercise the other two orders. 4 rounds × (2i+1) summed = 16.
+
+
+
+
+
+
+
+
+
 struct Holder { a: i32[], b: i32[] }
 function escaping(i: i32): (i32[], i32[]) {
     let xs: i32[] = [i, i + 1];

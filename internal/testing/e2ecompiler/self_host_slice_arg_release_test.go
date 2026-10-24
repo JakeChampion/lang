@@ -6,10 +6,6 @@ import (
 	"testing"
 )
 
-// An array slice passed straight to a borrowing callee is released by the
-// caller (#9843): `arr_slice` copies the window into a fresh buffer, which
-// must not leak once per call. i32, i64 and f64
-// elements cover both slice widths.
 const sliceArgReleaseSrc = `function sum(xs: [i32]): i32 { let t: i32 = 0; let i: i32 = 0; while (i < xs.len()) { t = t + xs[i]; i = i + 1; } return t; }
 function sum64(xs: [i64]): i64 { let t: i64 = 0 as i64; for x in xs { t = t + x; } return t; }
 function sumf(xs: [f64]): f64 { let t: f64 = 0.0; for x in xs { t = t + x; } return t; }
@@ -27,7 +23,6 @@ function main(): i32 {
 }
 `
 
-// 150 from the i32 slices, 6 from the i64 slices, 2 + 4 + 6 from the f64 ones.
 const sliceArgReleaseWant = 168
 
 func TestSelfHostSliceArgRelease(t *testing.T) {

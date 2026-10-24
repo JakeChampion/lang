@@ -11,23 +11,6 @@ import (
 	"time"
 )
 
-// TestExternImportWithBuiltinUDPViaCLI is the parity gate for the
-// world-driven composer's coverage of the UDP socket surface
-// (docs/WIT-BRING-YOUR-OWN.md). Sockets had only ever composed through the
-// bespoke native registry (component.Compose with req.Udp); routing them
-// through ComposeFromWorldAuto is new ground — it must wire the whole UDP
-// flow generically: create-udp-socket, udp-socket.start-bind / finish-bind /
-// stream, outgoing-datagram-stream.check-send / send / subscribe, plus the
-// three resource-drops (udp-socket, outgoing-datagram-stream,
-// incoming-datagram-stream). Before `wasi:sockets/udp` was added to the
-// `fern` world, an extern program that also sent a datagram failed to
-// compose with "core imports interface \"wasi:sockets/udp@0.2.0\" not
-// declared by the world".
-//
-// The extern is get-random-bytes (a composite-result import the legacy
-// registry doesn't recognise, so its presence forces the whole module
-// through the world path). A real UDP listener confirms the datagram the
-// world-composed component sends actually lands.
 func TestExternImportWithBuiltinUDPViaCLI(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

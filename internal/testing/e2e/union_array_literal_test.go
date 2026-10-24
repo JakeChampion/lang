@@ -4,23 +4,6 @@ import (
 	"testing"
 )
 
-// Union-of-structs array literals must wrap each element into the union, the
-// same way a single `let n: N = A { … }`, a `return`, or an `arr.append(A { … })`
-// argument is. Before the fix the checker's ArrayLit case had no union-wrap:
-// `let xs: N[] = [A { … }, B { … }]` stored bare, un-tagged structs, so a later
-// `match` misfired (the interpreter reported "match scrutinee is *interp.Struct,
-// expected enum value"; the native backends segfaulted). The `.push` path was
-// unaffected because it coerces through the Call-argument path. The fix wraps
-// each element when the array's element-type hint is a union enum — which also
-// makes a mixed-variant literal `[A { … }, B { … }]` type-check rather than
-// being rejected with E034 "array element: expected A, got B".
-//
-// Each program reads every element back through a match and returns 0 only when
-// all values are correct (a mismatch returns the 99 sentinel, surviving the
-// 8-bit native exit code).
-
-// Mixed variants in one literal — exercises both the wrap and the
-// cross-variant element typing.
 const unionArrMixed = `struct A { x: i32 }
 struct B { y: i32 }
 type N = A | B;
@@ -36,8 +19,6 @@ function main(): i32 {
     return 0;
 }`
 
-// Same-variant literal — the original repro shape (all elements type A, the
-// checker infers A[] then coerces to N[]).
 const unionArrSame = `struct A { x: i32 }
 struct B { y: i32 }
 type N = A | B;

@@ -1,4 +1,3 @@
-// Internal runtime compilation uses the explicit primitive-admission entry.
 import "../fern";
 
 function main(): i32 {

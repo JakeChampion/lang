@@ -8,25 +8,6 @@ import (
 	"testing"
 )
 
-// --- Reclaim verdicts are keyed on the binding, not the name (#7253) ---------
-//
-// A name has no scope, so two same-named locals in sibling blocks must each
-// keep their own reclaim verdict. A collision shows as a release landing on a
-// box the other local still owns (exit 99 on __rc_underflow_count()), a stray
-// release masking a leak, or a denied release; the census alone cannot see the
-// first. Every row is therefore asserted on the exit code AND on exact counts,
-// and each colliding row must match its rename control: every pair has
-// identical, balanced censuses.
-//
-// `arrenum_collide` needs an rc-bearing payload: the `A(i32)` version of the
-// same program never reaches the credit at all.
-//
-// The `credited_*` rows pin that every class still reclaims where there is no
-// collision.
-//
-// Every want was confirmed against bin/fern -interp, never read off the
-// self-host run.
-
 type finalKeyCase struct {
 	name   string
 	src    string
@@ -38,9 +19,6 @@ type finalKeyCase struct {
 func finalKeyCases() []finalKeyCase {
 	return []finalKeyCase{
 		{
-			// THE FAULT on "ARRTUP:". Two same-named locals in sibling `if`
-			// arms — one a fresh array-of-tuples literal that earns the credit, one
-			// a bare alias of a local that outlives the block.
 			name: "arrtup_collide",
 			src: `function round(i: i32): i32 {
     let keep: (i32, i32[])[] = [(i, [i, i + 1]), (i + 1, [i + 2, i + 3])];
@@ -53,8 +31,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 18, allocs: 650, frees: 650,
 		},
 		{
-			// Its pairwise control — the same program with the second local
-			// renamed. The colliding row must match these exact numbers.
 			name: "arrtup_renamed",
 			src: `function round(i: i32): i32 {
     let keep: (i32, i32[])[] = [(i, [i, i + 1]), (i + 1, [i + 2, i + 3])];
@@ -67,8 +43,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 18, allocs: 650, frees: 650,
 		},
 		{
-			// The same fault on "ARRSTRUCT:" (a struct with an rc-array field).
-			//
 			name: "arrstruct_collide",
 			src: `struct P { xs: i32[] }
 function round(i: i32): i32 {
@@ -82,8 +56,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 18, allocs: 650, frees: 650,
 		},
 		{
-			// Its pairwise control — the same program with the second local
-			// renamed. The colliding row must match these exact numbers.
 			name: "arrstruct_renamed",
 			src: `struct P { xs: i32[] }
 function round(i: i32): i32 {
@@ -97,7 +69,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 18, allocs: 650, frees: 650,
 		},
 		{
-			// The same shape on a scalar-field struct array.
 			name: "structarr_collide",
 			src: `struct N { a: i32, b: i32 }
 function round(i: i32): i32 {
@@ -111,8 +82,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 18, allocs: 400, frees: 400,
 		},
 		{
-			// Its pairwise control — the same program with the second local
-			// renamed. The colliding row must match these exact numbers.
 			name: "structarr_renamed",
 			src: `struct N { a: i32, b: i32 }
 function round(i: i32): i32 {
@@ -126,9 +95,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 18, allocs: 400, frees: 400,
 		},
 		{
-			// The APPEND-BUILT sibling, "STRUCTARRA:". Its entry and its "A|"
-			// marker row are the same key, so the self-lookup that separates
-			// append-built from literal-built stays key-to-key.
 			name: "structarra_collide",
 			src: `struct N { a: i32, b: i32 }
 function round(i: i32): i32 {
@@ -143,8 +109,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 34, allocs: 300, frees: 300,
 		},
 		{
-			// Its pairwise control — the same program with the second local
-			// renamed. The colliding row must match these exact numbers.
 			name: "structarra_renamed",
 			src: `struct N { a: i32, b: i32 }
 function round(i: i32): i32 {
@@ -159,8 +123,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 34, allocs: 300, frees: 300,
 		},
 		{
-			// The same shape on an enum array. The payload must be rc-bearing:
-			// an `A(i32)` version of this program never reaches the credit.
 			name: "arrenum_collide",
 			src: `enum E { A(string), B }
 function round(pre: string, i: i32): i32 {
@@ -174,8 +136,6 @@ function main(): i32 { let pre: string = "ab"; let t: i32 = 0; let i: i32 = 0; w
 			want: 68, allocs: 450, frees: 450,
 		},
 		{
-			// Its pairwise control — the same program with the second local
-			// renamed. The colliding row must match these exact numbers.
 			name: "arrenum_renamed",
 			src: `enum E { A(string), B }
 function round(pre: string, i: i32): i32 {
@@ -189,7 +149,6 @@ function main(): i32 { let pre: string = "ab"; let t: i32 = 0; let i: i32 = 0; w
 			want: 68, allocs: 450, frees: 450,
 		},
 		{
-			// The same shape on a scalar-enum array source.
 			name: "scenum_collide",
 			src: `enum S { P(i32), Q }
 @noinline function hold(o: S): i32 { return 0; }
@@ -205,8 +164,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 37, allocs: 150, frees: 150,
 		},
 		{
-			// Its pairwise control — the same program with the second local
-			// renamed. The colliding row must match these exact numbers.
 			name: "scenum_renamed",
 			src: `enum S { P(i32), Q }
 @noinline function hold(o: S): i32 { return 0; }
@@ -222,8 +179,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 37, allocs: 150, frees: 150,
 		},
 		{
-			// The same shape on a `dyn` value, where a collision would DENY
-			// a release rather than grant a stray one.
 			name: "dyn_collide",
 			src: `trait Show { function id(self: Self): i32; }
 struct A { v: i32 }
@@ -239,8 +194,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 73, allocs: 150, frees: 150,
 		},
 		{
-			// Its pairwise control — the same program with the second local
-			// renamed. The colliding row must match these exact numbers.
 			name: "dyn_renamed",
 			src: `trait Show { function id(self: Self): i32; }
 struct A { v: i32 }
@@ -256,9 +209,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 73, allocs: 150, frees: 150,
 		},
 		{
-			// POSITIVE CONTROL — a single credited binding with no sibling. The
-			// silent half of a key migration: a site key that resolves to nothing
-			// denies the credit, which no exit code would show.
 			name: "credited_arrtup",
 			src: `function round(i: i32): i32 {
     let o: (i32, i32[])[] = [(i, [i, i + 1])];
@@ -268,9 +218,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 17, allocs: 300, frees: 300,
 		},
 		{
-			// POSITIVE CONTROL — a single credited binding with no sibling. The
-			// silent half of a key migration: a site key that resolves to nothing
-			// denies the credit, which no exit code would show.
 			name: "credited_arrstruct",
 			src: `struct P { xs: i32[] }
 function round(i: i32): i32 {
@@ -281,9 +228,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 17, allocs: 300, frees: 300,
 		},
 		{
-			// POSITIVE CONTROL — a single credited binding with no sibling. The
-			// silent half of a key migration: a site key that resolves to nothing
-			// denies the credit, which no exit code would show.
 			name: "credited_structarr",
 			src: `struct N { a: i32, b: i32 }
 function round(i: i32): i32 {
@@ -294,9 +238,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 17, allocs: 200, frees: 200,
 		},
 		{
-			// POSITIVE CONTROL — a single credited binding with no sibling. The
-			// silent half of a key migration: a site key that resolves to nothing
-			// denies the credit, which no exit code would show.
 			name: "credited_structarra",
 			src: `struct N { a: i32, b: i32 }
 function round(i: i32): i32 {
@@ -308,9 +249,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 17, allocs: 200, frees: 200,
 		},
 		{
-			// POSITIVE CONTROL — a single credited binding with no sibling. The
-			// silent half of a key migration: a site key that resolves to nothing
-			// denies the credit, which no exit code would show.
 			name: "credited_arrenum",
 			src: `enum E { A(string), B }
 function round(pre: string, i: i32): i32 {
@@ -321,9 +259,6 @@ function main(): i32 { let pre: string = "ab"; let t: i32 = 0; let i: i32 = 0; w
 			want: 34, allocs: 300, frees: 300,
 		},
 		{
-			// POSITIVE CONTROL — a single credited binding with no sibling. The
-			// silent half of a key migration: a site key that resolves to nothing
-			// denies the credit, which no exit code would show.
 			name: "credited_rcenum",
 			src: `enum R { Full(i32[]), Empty }
 function round(i: i32): i32 {
@@ -336,9 +271,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 53, allocs: 200, frees: 200,
 		},
 		{
-			// POSITIVE CONTROL — a single credited binding with no sibling. The
-			// silent half of a key migration: a site key that resolves to nothing
-			// denies the credit, which no exit code would show.
 			name: "credited_scenum",
 			src: `enum S { P(i32), Q }
 @noinline function hold(o: S): i32 { return 0; }
@@ -350,9 +282,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 70, allocs: 100, frees: 100,
 		},
 		{
-			// POSITIVE CONTROL — a single credited binding with no sibling. The
-			// silent half of a key migration: a site key that resolves to nothing
-			// denies the credit, which no exit code would show.
 			name: "credited_dyn",
 			src: `trait Show { function id(self: Self): i32; }
 struct A { v: i32 }
@@ -366,8 +295,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 		}}
 }
 
-// TestSelfHostFinalCreditSiteKeyX86_64 — each binding resolves the credit it
-// earned itself, across the last name-keyed families.
 func TestSelfHostFinalCreditSiteKeyX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -406,8 +333,6 @@ func TestSelfHostFinalCreditSiteKeyX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFinalCreditSiteKeyWasmIR — the wasm sibling. Exit codes only,
-// which is the whole signal for the five faulting rows.
 func TestSelfHostFinalCreditSiteKeyWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping final credit site-key wasm IR e2e")
@@ -446,7 +371,6 @@ func TestSelfHostFinalCreditSiteKeyWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostFinalCreditSiteKeyIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostFinalCreditSiteKeyIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

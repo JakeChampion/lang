@@ -1,5 +1,5 @@
-// A method core/map declares checks its arity and its arguments against the
-// receiver's key and value types, as a builtin Map method does.
+
+
 import "core/map";
 function main(): i32 {
   let m: Map[i32, string] = map_new(0);

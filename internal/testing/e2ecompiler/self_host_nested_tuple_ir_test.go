@@ -2,35 +2,18 @@ package e2ecompiler
 
 import "testing"
 
-// nestedTupleIRCases pin a tuple element that is itself a tuple —
-// `(1, (2, 3))`, accessed `t.1.1` — on the IR path. The tuple-element tag
-// decoders count `(`/`[` … `)`/`]` depth so an inner element's commas do not
-// split the outer tag, a nested element carries its own `(t0,t1,…)`
-// spelling, and `t.N.M` recovers the inner element's type.
-//
-// Each case is oracle-checked against the interpreter and returns a value
-// <= 126 (cf. the wasmtime exit-code gap #2908).
 var nestedTupleIRCases = []struct {
 	name string
 	main string
 }{
-	// Right-nested: element 1 is (i32, i32); read its element 1.
 	{"right-nest", `function main(): i32 { let t: (i32, (i32, i32)) = (1, (2, 3)); return t.1.1; }`},
-	// Sum across the nesting boundary.
 	{"sum-across", `function main(): i32 { let t: (i32, (i32, i32)) = (1, (2, 3)); return t.0 + t.1.0 + t.1.1; }`},
-	// Left-nested: element 0 is the inner tuple.
 	{"left-nest", `function main(): i32 { let t: ((i32, i32), i32) = ((4, 5), 6); return t.0.0 + t.0.1 + t.1; }`},
-	// Triple nesting: t.1.1.1.
 	{"triple-nest", `function main(): i32 { let t: (i32, (i32, (i32, i32))) = (1, (2, (3, 4))); return t.1.1.1; }`},
-	// A string inside a nested tuple (pointer element) round-trips.
 	{"nest-with-string", `function main(): i32 { let t: (i32, (string, i32)) = (1, ("ab", 9)); return t.1.0.len() + t.1.1; }`},
-	// An i64 sibling after a nested tuple element exercises the depth-aware kind
-	// decode (the nested element must not shift the i64's store width).
 	{"nest-then-i64", `function main(): i32 { let t: ((i32, i32), i64) = ((1, 2), 5000000000); return t.0.0 + t.0.1 + (t.1 / 1000000000) as i32; }`},
 }
 
-// TestSelfHostNestedTupleIR compiles each case with the self-host CLI for
-// x86-64 and wasm and checks the exit code against the interpreter.
 func TestSelfHostNestedTupleIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)

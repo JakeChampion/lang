@@ -7,12 +7,6 @@ import (
 	"testing"
 )
 
-// A fresh owned enum box is freed after the match that consumed it
-// (reclaimableMatchScrutinee, #6417): a `_` payload position is eligible, and
-// so is a NAMED payload moved into a variant construction (#9180).
-
-// A boxed enum whose Err-side payload is a string, matched directly on the
-// call.
 const matchCallWildcardSrc = `enum E { A(i32), B(string) }
 function mk(i: i32): E {
     if (i < 0) { return B("x"); }
@@ -34,7 +28,6 @@ function main(): i32 {
     return x % 83;
 }`
 
-// The Result spelling of the same shape.
 const matchCallResultSrc = `function make(i: i32): Result[i32, string] {
     if (i < 0) { return Err("neg"); }
     return Ok(i);
@@ -55,7 +48,6 @@ function main(): i32 {
     return x % 83;
 }`
 
-// Control: an all-scalar boxed enum is eligible and must stay so.
 const matchCallScalarSrc = `enum E { A(i32, i32, i32), B(i32) }
 function mk(i: i32): E {
     if (i < 0) { return B(0); }
@@ -77,10 +69,6 @@ function main(): i32 {
     return x % 83;
 }`
 
-// The string payload is bound to a real name and re-wrapped, so the binding
-// outlives the arm: the new Err takes the payload's reference and the old box
-// goes shell-only. Every other iteration takes the Err arm and reads the
-// payload back after the free.
 const matchCallBoundPayloadSrc = `function make(i: i32): Result[i32, string] {
     if (i % 2 == 1) { return Err("neg" + "ative"); }
     return Ok(i);
@@ -104,8 +92,6 @@ function main(): i32 {
     return x % 83;
 }`
 
-// leakCounts compiles src with the leak census on, runs it, and returns the
-// summary's three numbers after asserting the exit code.
 func leakCounts(t *testing.T, name, src string, wantExit int) (int64, int64, int64) {
 	t.Helper()
 	stdout, stderr, code := runLeakCheckX86_64(t, src)

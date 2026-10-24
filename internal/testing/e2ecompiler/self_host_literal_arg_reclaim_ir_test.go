@@ -5,13 +5,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostLiteralArgReclaimIRX86_64 pins #4355 slice 6: a string-LITERAL
-// call arg allocates a fresh 16-byte rc-headered box per evaluation
-// (const_str; its .rodata data is heap-guard-skipped). At a parameter the
-// callee only reads — so it cannot retain or return the arg — the box must be
-// freed right after the call, keeping a loop that passes literal args flat. An
-// arg the callee returns, stores or forwards is not freed at the call site —
-// pinned below.
 func TestSelfHostLiteralArgReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	l := newStdlibLoader(t)
@@ -36,7 +29,6 @@ func TestSelfHostLiteralArgReclaimIRX86_64(t *testing.T) {
 		}
 	}
 
-	// Literal arg at a borrowable position — churn flat at detector zero.
 	run(t, `function readit(nm: string): i32 { return nm.len(); }
 function main(): i32 {
     let acc: i32 = 0;
@@ -52,10 +44,6 @@ function main(): i32 {
     return 0;
 }`, "literal-arg-borrowable-flat", 0)
 
-	// NON-borrowable position (callee RETURNS its param): the literal box is
-	// retained by the binding, so it must NOT be freed at the call edge — the
-	// bound value stays readable at detector zero (the box keeps its prior
-	// sound leak).
 	run(t, `@noinline function keepit(nm: string): string { return nm; }
 function main(): i32 {
     let bad: i32 = 0;
@@ -70,9 +58,6 @@ function main(): i32 {
     return 0;
 }`, "literal-arg-retained-safe", 0)
 
-	// FRESH CONCAT arg (#4355 slice 7): `readit(base + "bc")` — the concat
-	// byte-copies into a fresh anonymous temp, freed after the call. base (an
-	// operand, only read) stays readable; churn flat at detector zero.
 	run(t, `function readit(nm: string): i32 { return nm.len(); }
 function main(): i32 {
     let base: string = "a";
@@ -90,9 +75,6 @@ function main(): i32 {
     return 0;
 }`, "fresh-concat-arg-flat", 0)
 
-	// FRESH PRODUCER-METHOD arg (#4355 slice 7): `readit(src.to_ascii_upper())` —
-	// a copying string method's result is a fresh temp; reclaimed after the
-	// call, the receiver survives, churn flat at detector zero.
 	run(t, `import "std/string";
 function readit(nm: string): i32 { return nm.len(); }
 function main(): i32 {
@@ -111,9 +93,6 @@ function main(): i32 {
     return 0;
 }`, "fresh-producer-arg-flat", 0)
 
-	// BARE-IDENT arg trap: `readit(src)` aliases a live local, so NO free
-	// is emitted after the call; src stays readable across every call at
-	// detector zero.
 	run(t, `function readit(nm: string): i32 { return nm.len(); }
 function main(): i32 {
     let src: string = "aa" + "bb";
@@ -129,8 +108,6 @@ function main(): i32 {
     return 0;
 }`, "bare-ident-arg-safe", 0)
 
-	// MIXED args: the literal frees, the LIVE ident arg is untouched (a
-	// borrowed read — no stash, no free) and stays readable; churn flat.
 	run(t, `function pick(a: string, b: string): i32 { return a.len() + b.len(); }
 function main(): i32 {
     let live: string = "aa" + "bb";
@@ -148,13 +125,6 @@ function main(): i32 {
     return 0;
 }`, "literal-arg-mixed-flat", 0)
 
-	// #6544: the same reclaim at a METHOD call. It was wired at the free-call
-	// site only, so `x.m("lit")` leaked a box per call where `m(x, "lit")` did
-	// not — measured 23 B/round on a string receiver and 24 on an i32 one, in
-	// every program that passes a literal to a method. The borrowability
-	// registry already keyed methods "<Type>.<method>"; what was missing was
-	// the stash at the three user-method arms and a census that can see a
-	// method callee at all.
 	run(t, `function (s: string) readit(nm: string): i32 { return s.len() + nm.len(); }
 function main(): i32 {
     let recv: string = "rr";
@@ -172,7 +142,6 @@ function main(): i32 {
     return 0;
 }`, "method-literal-arg-borrowable-flat", 0)
 
-	// The PRIMITIVE-receiver arm is a separate site from the struct one.
 	run(t, `function (k: i32) tally(nm: string): i32 { return k + nm.len(); }
 function main(): i32 {
     let acc: i32 = 0;
@@ -188,8 +157,6 @@ function main(): i32 {
     return 0;
 }`, "method-literal-arg-prim-recv-flat", 0)
 
-	// A fresh anonymous temp at a method call — the concat shape, not just a
-	// literal.
 	run(t, `function (s: string) readit(nm: string): i32 { return nm.len(); }
 function main(): i32 {
     let recv: string = "rr";
@@ -209,8 +176,6 @@ function main(): i32 {
     return 0;
 }`, "method-fresh-concat-arg-flat", 0)
 
-	// NON-borrowable method param — the callee RETURNS it. Freeing at the call
-	// edge would free what the binding now holds.
 	run(t, `function (s: string) keepit(nm: string): string { return nm; }
 function main(): i32 {
     let recv: string = "rr";
@@ -226,11 +191,6 @@ function main(): i32 {
     return 0;
 }`, "method-literal-arg-retained-safe", 0)
 
-	// The other non-borrowable direction, and the shape
-	// conformance/cases/alloc_flat_method_identity_return is built from: the
-	// param is MOVED into a struct field, so the field owns it after the call.
-	// Freeing the literal at the call site would free the tag out from under
-	// the result.
 	run(t, `struct Box { tag: string, n: i32 }
 function (b: Box) relabel(t: string): Box {
     if (t.len() == 0) { return b; }
@@ -251,11 +211,6 @@ function main(): i32 {
     return 0;
 }`, "method-literal-arg-consumed-safe", 0)
 
-	// A fresh PRODUCER CALL in the same argument position: `size(mks(i))`
-	// passes the sole-owned box mks returns, and it must be freed after the
-	// call like a literal, a concat or a scalar `.to_string()` (70 B/round
-	// leaked otherwise). The producer is the ordinary way to build the
-	// argument.
 	run(t, `import "std/i32";
 function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function size(s: string): i32 { return s.len(); }
@@ -273,10 +228,6 @@ function main(): i32 {
     return 0;
 }`, "producer-call-arg-borrowable-flat", 0)
 
-	// REFUSED — the callee RETURNS the argument, so the result aliases the
-	// temp and the caller reads it after. Freeing at the call would be a
-	// use-after-free rather than a leak, which is why this reads the result
-	// back rather than only counting bytes.
 	run(t, `import "std/i32";
 function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 @noinline function pick(s: string): string { return s; }
@@ -294,9 +245,6 @@ function main(): i32 {
     return 0;
 }`, "producer-call-arg-returned-safe", 0)
 
-	// REFUSED — the callee MOVES the argument into a struct field, so the
-	// returned box owns it. The field is read back after churn has recycled
-	// the freed bytes.
 	run(t, `import "std/i32";
 struct Box { name: string, k: i32 }
 function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
@@ -315,9 +263,6 @@ function main(): i32 {
     return 0;
 }`, "producer-call-arg-stored-safe", 0)
 
-	// A LOCAL at the same borrowable position is NOT a temp — `nm` is read
-	// after the call and its own scope-exit release owns it. A stash here
-	// would double-free.
 	run(t, `import "std/i32";
 function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function size(s: string): i32 { return s.len(); }
@@ -335,9 +280,6 @@ function main(): i32 {
     return 0;
 }`, "producer-call-arg-bound-local-safe", 0)
 
-	// The ARRAY sibling of the producer-call arg: a loop-built array returned
-	// by a call and passed straight to a reading param must be freed after the
-	// call, as an array literal is (55 B/round leaked otherwise).
 	run(t, `function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
 function size(d: i32[]): i32 { return d.len(); }
 function main(): i32 {
@@ -354,8 +296,6 @@ function main(): i32 {
     return 0;
 }`, "producer-call-arr-arg-borrowable-flat", 0)
 
-	// REFUSED — the callee RETURNS the array, so the result aliases the temp and
-	// is read after. Freeing at the call would be a use-after-free.
 	run(t, `function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
 @noinline function pick(d: i32[]): i32[] { return d; }
 function main(): i32 {
@@ -372,9 +312,6 @@ function main(): i32 {
     return 0;
 }`, "producer-call-arr-arg-returned-safe", 0)
 
-	// REFUSED — a constructor STORES the array, so the returned struct owns it
-	// and the call site must not free it. This is the shape
-	// conformance/cases/alloc_flat_fresh_array_arg is built from.
 	run(t, `struct Node { deps: i32[], k: i32 }
 function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
 function node(deps: i32[], k: i32): Node { return Node { deps: deps, k: k }; }
@@ -392,8 +329,6 @@ function main(): i32 {
     return 0;
 }`, "producer-call-arr-arg-stored-safe", 0)
 
-	// A bound LOCAL at the same position is not a temp — it is read after the
-	// call and its own scope-exit release owns it.
 	run(t, `function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
 function size(d: i32[]): i32 { return d.len(); }
 function main(): i32 {
@@ -410,12 +345,6 @@ function main(): i32 {
     return 0;
 }`, "producer-call-arr-arg-bound-local-safe", 0)
 
-	// COUNTED-RETAIN: `keep` STORES the array in a struct, so its parameter is
-	// not borrowable and the stash above declines — yet every appearance of that
-	// parameter is a counted store, so the temp is rc 2 on the escaping path and
-	// rc 1 otherwise and one post-call dec nets it to a single owner either way.
-	// That is native's paramCountedRetain, and it is what admits here. 55 B/round
-	// before.
 	run(t, `struct Node { deps: i32[], k: i32 }
 function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
 function keep(deps: i32[], k: i32): i32 { let n: Node = Node { deps: deps, k: k }; return n.k + n.deps.len(); }
@@ -433,11 +362,6 @@ function main(): i32 {
     return 0;
 }`, "counted-retain-arr-arg-flat", 0)
 
-	// REFUSED on the RESULT TYPE, not on the parameter. `both`'s parameter is
-	// counted-retain exactly like `keep`'s, but it returns `i32[]` — the result
-	// can BE the argument, and the dec fires immediately after the call, so
-	// releasing would hand the caller freed memory. The elements are re-read, so
-	// a wrongly admitted release shows as a wrong value rather than a byte count.
 	run(t, `struct Node { deps: i32[], k: i32 }
 function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
 function both(deps: i32[], k: i32): i32[] { let n: Node = Node { deps: deps, k: k }; return n.deps; }
@@ -455,8 +379,6 @@ function main(): i32 {
     return 0;
 }`, "counted-retain-arr-arg-pointer-result-safe", 0)
 
-	// REFUSED on the PARAMETER: `hand` returns its argument, so the appearance
-	// in return position is not a counted store and the param is never credited.
 	run(t, `function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
 function hand(deps: i32[]): i32 { let keepit: i32[] = deps; return keepit.len() + deps[0]; }
 function main(): i32 {
@@ -468,12 +390,6 @@ function main(): i32 {
     return 0;
 }`, "counted-retain-arr-arg-aliased-param-safe", 0)
 
-	// The STRING tier of the same admission (#6544). `mkq` stores its string
-	// parameter in the struct it returns, so the parameter is not borrowable and
-	// the literal-arg stash declined — the caller's argument box was released by
-	// nothing at all and leaked per call, 24 B/round measured, where native is
-	// flat. Every appearance of that parameter is a counted store, so one
-	// post-call free nets the temp to the single owner the returned struct holds.
 	run(t, `struct Q { tag: string, k: i32 }
 function mkq(t: string, k: i32): Q { return Q { tag: t, k: k }; }
 function main(): i32 {
@@ -490,12 +406,6 @@ function main(): i32 {
     return 0;
 }`, "counted-retain-str-arg-flat", 0)
 
-	// REFUSED on the RESULT TYPE — the string tier's `resultCannotAliasArg`.
-	// `both`'s parameter is counted exactly like `mkq`'s, but the result is a
-	// `string`: it can BE the argument, and the free fires immediately after the
-	// call, so releasing would hand the caller freed memory. The result is
-	// re-read and a long string is built between the reads so a wrongly freed
-	// block is really recycled first.
 	run(t, `struct Q { tag: string, k: i32 }
 function both(t: string, k: i32): string { let n: Q = Q { tag: t, k: k }; return n.tag; }
 function main(): i32 {
@@ -513,9 +423,6 @@ function main(): i32 {
     return 0;
 }`, "counted-retain-str-arg-result-aliases-safe", 0)
 
-	// A LIVE LOCAL at the counted position is not a temp: the stash admits only a
-	// fresh argument, so nothing is released here and `live` survives every call
-	// to be read after the loop.
 	run(t, `struct Q { tag: string, k: i32 }
 function mkq(t: string, k: i32): Q { return Q { tag: t, k: k }; }
 function main(): i32 {
@@ -535,13 +442,6 @@ function main(): i32 {
     return 0;
 }`, "counted-retain-str-arg-live-local-safe", 0)
 
-	// The string vocabulary's BYTE INDEX arm. `t` is stored AND read as `t[0]`,
-	// which yields a u8 value copy referencing nothing — so the read creates no
-	// uncounted alias and the parameter stays credited. The array vocabulary
-	// must not credit the same shape (an element may BE a reference), which is
-	// the line native draws too: stringParamCounted has the Index arm,
-	// arrayParamCounted does not. Without it one read of a byte cost the whole
-	// parameter its credit: 24 B/round before.
 	run(t, `struct Q { tag: string, k: i32 }
 function mkq2(t: string, k: i32): Q { return Q { tag: t, k: k + (t[0] as i32) }; }
 function main(): i32 {
@@ -558,13 +458,6 @@ function main(): i32 {
     return 0;
 }`, "counted-retain-str-arg-index-read-flat", 0)
 
-	// The regression test for the gate that makes the whole string tier sound.
-	// A string field is retained on construction only for a type whose string
-	// reads are all provable transient borrows (struct_routes_field_reclaim_at /
-	// the STRFLDOK scan) — those are the types whose drop decs it back. `esc`
-	// hands `c.name` out of the frame, which disqualifies C, so the literal is
-	// stored with NO retain and the caller's box is the field's only reference.
-	// SEGFAULTS with that gate removed.
 	run(t, `struct C { name: string, args: string }
 function mk(name: string, args: string): C { return C { name: name, args: args }; }
 function esc(c: C): string[] { let o: string[] = []; return o.append(c.name); }

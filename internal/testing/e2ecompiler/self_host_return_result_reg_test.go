@@ -9,10 +9,6 @@ import (
 	"testing"
 )
 
-// A value a function returns asks the allocator for the result register, and
-// a phi passes the ask to the values it merges, so neither is moved into
-// %rax on the way out. pick returns a merge of two arms; bucket returns the
-// sign extension of a division's remainder.
 const returnInResultProg = `@noinline function pick(a: i64, b: i64): i64 {
     let r: i64 = 0i64;
     if (a > b) {
@@ -46,9 +42,6 @@ function main(): i32 {
 
 var movIntoRax = regexp.MustCompile(`^movq %r\w+, %rax$`)
 
-// lastBeforeRet is the instruction a function body runs last before each
-// ret, past the labels, unwind notes, register restores and frame teardown
-// between them.
 func lastBeforeRet(body string) []string {
 	var lines []string
 	for _, l := range strings.Split(body, "\n") {

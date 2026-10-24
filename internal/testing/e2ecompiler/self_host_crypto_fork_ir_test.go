@@ -9,10 +9,6 @@ import (
 	"testing"
 )
 
-// #8874: each streaming hasher calls __bytes_into(own dst) with a buffer that
-// can still belong to a retained state. Fork before completing the block,
-// update both branches, and check both digests after both writes. Expected
-// digests are independently generated with Python hashlib for abc and abd.
 var cryptoForkCases = []struct {
 	name, constructor, abc, abd string
 }{
@@ -66,7 +62,6 @@ func testSelfHostCryptoForkIR(t *testing.T, target string) {
 		}
 	}
 	dir := copySelfHostTree(t)
-	// The production CLI routes all three targets through IR-or-error emitters.
 	driver := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 	root, err := filepath.Abs("../../stdlib")
 	if err != nil {

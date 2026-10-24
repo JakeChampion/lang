@@ -1,9 +1,3 @@
-// Command tzdatagen regenerates the IANA zone table embedded in std/tz
-// from the pinned tzdata release (internal/tables/tzdata).
-//
-// Usage, from the repository root:
-//
-//	go run ./cmd/tzdatagen
 package main
 
 import (

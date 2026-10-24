@@ -2,14 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/csv's full-document parser (csv_parse)
-// and its inverse (csv_serialize) — the RFC 4180 multi-record surface
-// beyond the single-record csv_parse_line. Returns 42 iff every case
-// holds across backends: multi-record split, a quoted field with an
-// embedded comma AND newline, doubled-quote escaping, CRLF endings with
-// a trailing terminator (no spurious empty record), a trailing empty
-// field, empty input, and a serialize→parse round-trip. Each leg skips
-// itself when its toolchain is absent.
 const csvDocProg = `
 import "std/csv" as csv;
 function main(): i32 {

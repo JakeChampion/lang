@@ -5,10 +5,6 @@ import (
 	"testing"
 )
 
-// E067 — `@must_consume` obligation checking (docs/MUST-CONSUME.md).
-// These pin both directions per shape: the consuming forms pass, the
-// leaking forms produce E067 with the expected message flavour.
-
 func wantE067(t *testing.T, name, src, msgFragment string) {
 	t.Helper()
 	err := checkSource(t, src)
@@ -20,11 +16,6 @@ func wantE067(t *testing.T, name, src, msgFragment string) {
 	}
 }
 
-// sink consumes by passing the obligation back out (`return t`) —
-// its own caller-side discard is the documented discarded-result
-// hole. `own` params only accept fresh constructions / other own
-// params (the owned-argument rule), so the own-sink shape is tested
-// separately with a fresh construction.
 const ticketDecl = `@must_consume
 struct Ticket { id: i32 }
 function sink(t: Ticket): Ticket { return t; }

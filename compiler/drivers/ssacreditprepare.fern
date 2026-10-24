@@ -1,5 +1,4 @@
 import "../sourcepos";
-// Preparation retains the supplied effects and debug mappings, not an old body.
 import "../ir";
 import "../irtables";
 import "../ircore";

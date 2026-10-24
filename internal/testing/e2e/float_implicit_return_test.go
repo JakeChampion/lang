@@ -1,26 +1,5 @@
 package e2e
 
-// A float-returning function whose body falls off the end gets an implicit
-// zero return. The IR emitted `OpConstF32` for that zero regardless of the
-// declared float width, so an **f64**-returning function got an `f32.const 0`
-// against an f64 result.
-//
-// The natives don't care — the value is unreachable and both widths land in
-// the same register file. wasm does: its stack is typed, so the whole module
-// was rejected at instantiation with
-//
-//	Invalid input WebAssembly code: type mismatch: expected f64, found f32
-//
-// That broke every program with an f64-returning `match` — which is most
-// programs handling `Option[f64]`, and therefore `std/test`, whose float
-// assertion family is built on exactly that shape (#6192). It is also why
-// TestArrayStatsWasm and TestArrayMedianRangeWasm skipped rather than ran.
-//
-// "Falls off the end" here does NOT mean the function can return nothing. The
-// checker proves each of these exhaustive; the IR builder still has to emit a
-// well-typed value on the path after the last arm, because the backends
-// validate the shape rather than the reachability.
-
 import "testing"
 
 const floatImplicitReturnProg = `
@@ -88,11 +67,6 @@ func TestFloatImplicitReturnX86_64(t *testing.T) {
 	}
 }
 
-// NOTE: this leg does not by itself guard the regression. The harness treats a
-// wasm validator rejection as a wasmbin COVERAGE GAP and skips — the failure is
-// indistinguishable from an unimplemented op — so re-breaking the width would
-// turn this green-by-skip rather than red. This leg is here for the end-to-end value check, and to keep the wasm
-// path exercised on the shape.
 func TestFloatImplicitReturnWasm(t *testing.T) {
 	if got := compileAndRunWasmbinMain(t, floatImplicitReturnProg); got != 42 {
 		t.Fatalf("wasm got %d, want 42", got)

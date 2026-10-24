@@ -1,21 +1,3 @@
-// High-heap arm64 gate.
-//
-// arm64-darwin runs with every heap pointer above 4 GiB: macOS ignores the
-// arena's mmap address hint and relocates the mapping, while Linux honours
-// the hint and puts the arena at 256 MiB. A load, store or compare that
-// handles a heap pointer 32 bits wide is therefore correct on every lane the
-// project can run cheaply and wrong only on Apple hardware — which is how a
-// 4-byte deref of the Map handle in the IR's wide keys()/values() builders
-// reached main and crashed the `map_keys_values_header_churn_free` rc-corpus
-// case on the macos-15 runner.
-//
-// FERN_HIGH_HEAP=1 in the compiler's environment raises the hint to 8 GiB,
-// and qemu-aarch64 honours it, so the same address regime is reachable here.
-// The tests below re-run the map half of the rc corpus plus a set of shapes
-// that round-trip a pointer through memory, under that hint. They are
-// ordinary `TestArm64…` tests: the default `go test ./internal/testing/e2e -run
-// TestArm64` selection runs them. TestSelfHostArm64HighHeapProbeRaisesTheHint
-// pins the knob itself.
 package e2e
 
 import (
@@ -27,11 +9,6 @@ import (
 
 var compileAndRunArm64HighHeap = e2eharness.CompileAndRunArm64HighHeap
 
-// TestArm64HighHeapMapCorpus re-runs every map-shaped rc-corpus case with the
-// arena above 4 GiB. The Map runtime is the densest pointer-round-trip
-// surface in the language — handle → buffer → entries → cell → value — so it
-// is where a truncation shows first, and selecting the corpus by name means a
-// map case added later joins this gate without anyone remembering to.
 func TestArm64HighHeapMapCorpus(t *testing.T) {
 	ran := 0
 	for _, c := range rcCorpusCases(t) {
@@ -45,32 +22,16 @@ func TestArm64HighHeapMapCorpus(t *testing.T) {
 			}
 		})
 	}
-	// A rename that empties the selection would leave a green test proving
-	// nothing.
 	if ran < 20 {
 		t.Fatalf("high-heap map selection matched only %d corpus cases — the name filter has gone stale", ran)
 	}
 }
 
-// highHeapRoundTrips are pointer-round-trip shapes outside the map runtime:
-// each stores a heap pointer into memory and reads it back, so a narrow
-// slot / load / store loses the high half and the program either faults or
-// returns the wrong value. Every case returns 0 on success, on either heap —
-// TestArm64HighHeapRoundTripControl runs the same set at the default hint so
-// a high-heap failure is attributable to the address regime.
-//
-// Strings are built by concatenation with a long literal prefix: a short
-// string stays inline (no buffer), and a literal alone lives in .rodata,
-// which the arena hint does not move.
 var highHeapRoundTrips = []struct {
 	name string
 	src  string
 }{
 	{
-		// Wide-key and wide-value column snapshots — the shape that
-		// crashed. keys()/values() on Map[i64, i64] dereference the map
-		// handle to reach the entries table; the value column follows a
-		// cell pointer on top of that.
 		name: "map_wide_column_snapshot",
 		src: `
 import "core/int";
@@ -92,8 +53,6 @@ function main(): i32 {
 }`,
 	},
 	{
-		// f64 travels the same wide-column path as i64 — a truncated
-		// cell pointer is a wild read either way.
 		name: "map_f64_column_snapshot",
 		src: `
 import "core/int";
@@ -111,9 +70,6 @@ function main(): i32 {
 }`,
 	},
 	{
-		// Heap strings into and out of a map: keys and values are built at
-		// runtime and long enough to need a buffer, so nothing the map
-		// holds lives in .rodata below 4 GiB.
 		name: "map_heap_string_kv",
 		src: `
 import "core/int";
@@ -138,8 +94,6 @@ function main(): i32 {
 }`,
 	},
 	{
-		// Array of heap strings, grown well past its initial capacity so
-		// the buffer is reallocated and every element pointer is copied.
 		name: "string_array_grow_copy",
 		src: `
 import "core/int";
@@ -163,8 +117,6 @@ function main(): i32 {
 }`,
 	},
 	{
-		// Struct fields and enum payloads hold pointers in slots the
-		// layout sizes by type; a nested read walks three of them.
 		name: "struct_enum_pointer_slots",
 		src: `
 import "core/int";
@@ -188,8 +140,6 @@ function main(): i32 {
 }`,
 	},
 	{
-		// A closure environment is a heap box of captured pointers, read
-		// back through the env pointer on every call.
 		name: "closure_env_pointer_capture",
 		src: `
 import "core/int";
@@ -204,8 +154,6 @@ function main(): i32 {
 }`,
 	},
 	{
-		// Nested arrays: the outer buffer holds pointers to inner buffers,
-		// which hold pointers to heap strings.
 		name: "nested_array_pointer_columns",
 		src: `
 import "core/int";
@@ -230,10 +178,6 @@ function main(): i32 {
 }`,
 	},
 	{
-		// Sustained churn: hundreds of maps built and dropped, so the
-		// bump allocator hands out many distinct addresses and the
-		// CoW / overwrite identity tests (pointer compares) see live
-		// pointers that are close in the low half and differ higher up.
 		name: "map_churn_across_wide_span",
 		src: `
 import "core/int";
@@ -259,10 +203,6 @@ function main(): i32 {
 	},
 }
 
-// TestArm64HighHeapPointerRoundTrip runs the shapes above with the arena
-// above 4 GiB. Each stores a heap pointer into memory and reads it back, so a
-// slot / load / store / compare that is 32 bits wide either faults or returns
-// a wrong answer here while staying green on the 256 MiB heap.
 func TestArm64HighHeapPointerRoundTrip(t *testing.T) {
 	for _, c := range highHeapRoundTrips {
 		t.Run(c.name, func(t *testing.T) {
@@ -273,9 +213,6 @@ func TestArm64HighHeapPointerRoundTrip(t *testing.T) {
 	}
 }
 
-// TestArm64HighHeapRoundTripControl is the same set at the DEFAULT hint. It
-// is what makes a failure above attributable: green here and red there means
-// the address regime, not the program.
 func TestArm64HighHeapRoundTripControl(t *testing.T) {
 	for _, c := range highHeapRoundTrips {
 		t.Run(c.name, func(t *testing.T) {

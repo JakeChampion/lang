@@ -1,9 +1,9 @@
 import "std/i32";
 
-// A generic function's type parameter binds through a parameter that is an
-// array of closures, so a generic call passing the array on instantiates
-// its callee without a let annotation naming the result, nested in another
-// call or not.
+
+
+
+
 struct Slot[T] { f: () => T, n: i32 }
 
 function start[T](entries: (() => T)[]): Slot[T][] {

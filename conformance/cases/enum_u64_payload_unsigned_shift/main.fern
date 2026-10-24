@@ -1,10 +1,10 @@
 import "core/int";
-// Regression guard for #5187: an enum u64 payload bound in a match arm and
-// chained through an unsigned shift must use a LOGICAL (unsigned) shift on
-// every backend. 18000000000000000000 = 0xF9CCD8A1C5080000 has its top bit
-// set, so `>> 57` differs signed (arithmetic, sign-extends) vs unsigned
-// (logical): unsigned yields 124, signed does not. All four backends must
-// agree on the unsigned result — interp / x86-64 / arm64 / wasm.
+
+
+
+
+
+
 enum E { U(u64), N }
 function f(e: E): i32 {
     match (e) {

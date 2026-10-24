@@ -1,15 +1,3 @@
-// `open_reader_with` / `open_writer_with` end to end on every native
-// backend: the create bit creates without truncating, its absence is
-// NotFound, and the non-blocking bit is what makes a FIFO with no peer
-// openable at all — the reader's open returns at once where it would
-// wait for a writer, and the writer's is ENXIO where it would wait for a
-// reader. A backend that dropped the bit would hang the reader's open
-// here rather than fail it, which is why no step past it is reachable
-// without it. The seven open-time bits after exclusive (#9242) are
-// checked by the kernel's own verdict where it has one — directory on a
-// regular file, nofollow on a symlink — and by being accepted where it
-// does not; a bit the target has no word for must come back Unsupported,
-// which is what the direct and noatime steps pin on XNU.
 package e2e
 
 import (
@@ -20,7 +8,6 @@ import (
 	"testing"
 )
 
-// Every failure returns its own exit code, so the number names the step.
 func openWithSource(dir string) string {
 	p := func(name string) string { return filepath.Join(dir, name) }
 	return fmt.Sprintf(`function main(): i32 {
@@ -78,9 +65,6 @@ func openWithSource(dir string) string {
 `, p("w.txt"), p("missing.txt"), p("fifo"), mknodFifo0666, p("excl.txt"), dir, p("lnk"))
 }
 
-// openWithCheckTree reads the tree back through Go: the bytes the two
-// writes left, the FIFO the probe made, and no file where create was not
-// asked for.
 func openWithCheckTree(t *testing.T, dir string) {
 	t.Helper()
 	got, err := os.ReadFile(filepath.Join(dir, "w.txt"))
@@ -103,9 +87,6 @@ func openWithCheckTree(t *testing.T, dir string) {
 	checkExclusiveCreate(t, dir)
 }
 
-// checkExclusiveCreate reads back the file the exclusive open made: its
-// byte, and its mode, which is the create bit's 0666 through the umask and
-// not open_exclusive's 0600 — the distinction #9237 exists for.
 func checkExclusiveCreate(t *testing.T, dir string) {
 	t.Helper()
 	got, err := os.ReadFile(filepath.Join(dir, "excl.txt"))
@@ -152,17 +133,6 @@ func TestInterpOpenWith(t *testing.T) {
 	openWithCheckTree(t, dir)
 }
 
-// Neither WASI preview has a FIFO, so the wasm probe is the file half
-// only: create without truncation, NotFound without the bit, and the
-// non-blocking bit accepted on a regular file — a preview-1 fdflag,
-// nothing at all on preview 2. Of the seven open-time bits, directory
-// and nofollow are the host's verdict; dsync and sync are spelled (the
-// DSYNC and SYNC fdflags, the two integrity-sync descriptor-flags) and
-// then refused by wasmtime itself, which answers ENOTSUP for either sync
-// flag on an open — the host's refusal, carried as Other with ENOTSUP (95), so
-// a wasmtime that starts honouring them flips step 19 and says so here;
-// direct, noatime and noctty — which neither preview can spell — are
-// Unsupported before the host is asked.
 const openWithWasmSrc = `function main(): i32 {
     match (open_writer_with("w.txt", 1)) { Ok(w) => { w.write("abc"); w.close(); }, Err(_) => { return 1; } }
     match (open_writer_with("w.txt", 1)) { Ok(w) => { w.write("Z"); w.close(); }, Err(_) => { return 2; } }

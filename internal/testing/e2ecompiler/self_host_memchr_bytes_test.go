@@ -18,9 +18,6 @@ func TestSelfHostScanSetBytes(t *testing.T) {
 	selfHostRunOnEveryTarget(t, e2eharness.ScanSetBytesSource(true))
 }
 
-// selfHostRunOnEveryTarget compiles src with the self-host CLI under the
-// strict IR path, the sanitizer and the leak census, for each target, and
-// requires a clean exit and a balanced census.
 func selfHostRunOnEveryTarget(t *testing.T, src string) {
 	t.Helper()
 	cli := buildSelfHostCLI(t)

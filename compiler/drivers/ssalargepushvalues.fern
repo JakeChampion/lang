@@ -4,8 +4,6 @@ import "../ssalargepushvalue" as value;
 function require(ok: boolean, group: string): void {
   if (!ok) {
     print("large-push arithmetic controls failed: " + group);
-    // All nonzero native statuses are occupied; the printed case identifies
-    // this shared status, including on targets with collapsed exit codes.
     exit(180);
   }
 }
@@ -90,8 +88,6 @@ function masks(): void {
   require(value.bit_scan(cross, value.original(cross)) == -1, "highest-bit crossing");
 }
 
-// Derive the actual arithmetic expression, then compare against the ordered
-// bin and ceiling-division specifications. Expected class is never an input.
 function row(r: ranges.Interval): void {
   let n = value.original(r);
   let clamp = value.compare(r, n, 524288 as i64);

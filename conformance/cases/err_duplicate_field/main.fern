@@ -1,4 +1,4 @@
-// Struct literal initialising the same field twice.
+
 struct Point { x: i32, y: i32 }
 
 function main(): i32 {

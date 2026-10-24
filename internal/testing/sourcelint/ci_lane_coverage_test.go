@@ -16,29 +16,8 @@ import (
 	"testing"
 )
 
-// The inverse of scripts/testname_gate.sh, and the gap that gate could not see.
-//
-// testname_gate asks "does every selector a lane names resolve to a test?".
-// This file asks the other half: "is every test selected by some lane?". The
-// two questions are inverses and only one of them was ever asked, which is how
-// four independent coverage holes existed at once — internal/testing/e2eharness's 20
-// tests in no lane (#8470), seven internal/testing/e2ecompiler tests matching no shard
-// selector (#8471), and two more one axis over (#8472, #8474).
-//
-// Every meta-gate in the repo checked that a selector resolves. None checked
-// that a test is selected.
-
-// laneFile is a workflow filename under .github/workflows.
 type laneFile = string
 
-// selectorLanes maps a package to the lane files whose test-name selectors
-// reach it. Only packages OUTSIDE the unit lane's derived set need an entry:
-// everything the unit lane runs is selected wholesale.
-//
-// The patterns themselves are NOT written here — they are read out of the
-// named files, so a lane that changes its `-run` cannot leave a stale copy
-// behind in this test. What lives here is the mapping from a lane to the
-// package it points at, which the YAML expresses only as a shell argument.
 var selectorLanes = map[string][]laneFile{
 	"internal/testing/e2e": {
 		"test-e2e-arm64.yml",
@@ -54,12 +33,6 @@ var selectorLanes = map[string][]laneFile{
 	},
 }
 
-// TestEveryGoTestIsSelectedByALane fails when a `func Test*` in the tree is
-// run by no CI lane.
-//
-// A test nothing runs is worse than a missing test: it reads as coverage, it
-// is maintained as coverage, and it reports nothing. The four holes this gate
-// was written for had stood for months apiece behind green checks.
 func TestEveryGoTestIsSelectedByALane(t *testing.T) {
 	root := mustRepoRoot(t)
 	tests := collectGoTests(t, root)
@@ -107,7 +80,7 @@ func TestEveryGoTestIsSelectedByALane(t *testing.T) {
 		}
 		for _, pkg := range sortedKeys(byPkg) {
 			if unclaimedPkgs[pkg] {
-				continue // already reported as a whole-package hole
+				continue
 			}
 			for _, o := range byPkg[pkg] {
 				t.Errorf("%s is selected by no lane (%s). The lanes that reach %s are %v — "+
@@ -119,24 +92,17 @@ func TestEveryGoTestIsSelectedByALane(t *testing.T) {
 	}
 }
 
-// goTest is one top-level `func Test*` in the tree.
 type goTest struct {
-	pkg  string // package dir relative to the repo root, e.g. "internal/testing/e2e"
+	pkg  string
 	name string
-	pos  string // "internal/testing/e2e/arm64_test.go:42"
+	pos  string
 }
 
-// lane is one CI job's selection: a set of packages plus what it runs in them.
 type lane struct {
-	name string
-	pkgs []string
-	// all lanes run every test in pkgs except those matching exclude.
-	all     bool
-	exclude *regexp.Regexp
-	// name lanes run the tests their selectors match. Two kinds, because
-	// lanes select two ways: a resolved `-run` regex, and a bare test name
-	// classified the way scripts/testname_gate.sh classifies one (terminated by
-	// $, | or ) means exact; anything else is a prefix filter).
+	name     string
+	pkgs     []string
+	all      bool
+	exclude  *regexp.Regexp
 	patterns []*regexp.Regexp
 	exact    map[string]bool
 	prefixes []string
@@ -182,9 +148,6 @@ func buildLanes(t *testing.T, root string) []lane {
 	return lanes
 }
 
-// unitLane is the lane that runs `$(scripts/unit-test-packages)` with no -run.
-// Its package set is DERIVED by running that script, so this gate and the lane
-// cannot disagree about what the unit lane covers.
 func unitLane(t *testing.T, root string) lane {
 	t.Helper()
 	const file = "test-units.yml"
@@ -203,10 +166,6 @@ func unitLane(t *testing.T, root string) lane {
 		}
 	}
 
-	// A filtered environment (ciEnv drops FERN_*): the units lane sets
-	// FERN_CI_UNIT_PACKAGE_GROUP for its test step, and this gate runs inside
-	// that step. Inherited, the script would print one group and this gate
-	// would read the other as unselected.
 	cmd := exec.Command("bash", filepath.Join(root, "scripts", "unit-test-packages"))
 	cmd.Env = ciEnv()
 	out, err := cmd.Output()
@@ -225,7 +184,6 @@ func unitLane(t *testing.T, root string) lane {
 	return lane{name: file, pkgs: pkgs, all: true}
 }
 
-// wholePackageLane models a lane that runs one package with no -run filter.
 func wholePackageLane(t *testing.T, root, file, mustContain, pkg string) lane {
 	t.Helper()
 	src := readWorkflow(t, root, file)
@@ -235,9 +193,6 @@ func wholePackageLane(t *testing.T, root, file, mustContain, pkg string) lane {
 	return lane{name: file, pkgs: []string{pkg}, all: true}
 }
 
-// e2eCatchAllLane models test-e2e-other.yml: it lists the whole package and
-// removes the prefixes that have a workflow of their own, so anything
-// uncategorised lands in one of its shards.
 func e2eCatchAllLane(t *testing.T, root string) lane {
 	t.Helper()
 	const file = "test-e2e-other.yml"
@@ -256,22 +211,10 @@ func e2eCatchAllLane(t *testing.T, root string) lane {
 	}
 }
 
-// selfHostShardLane models the `test` shards of test-e2e-selfhost.yml. They
-// list the whole internal/testing/e2ecompiler binary and remove the names that have a
-// job of their own (which this gate then re-covers through those jobs' own
-// -test.run selectors) plus anything quarantined.
-//
-// QUARANTINED_TESTS is the one sanctioned way for a test to be selected by no
-// lane. It is read from the workflow rather than written here, so the reason
-// stays where the mandatory issue reference is, and it is empty today.
 func selfHostShardLane(t *testing.T, root string) lane {
 	t.Helper()
 	const file = "test-e2e-selfhost.yml"
 	src := readWorkflow(t, root, file)
-	// `^Test` and `.` both select the whole binary here — every Go test name
-	// begins with Test — so accept either spelling. What this pin is for is
-	// the narrower prefix (`^TestSelfHost`) that dropped seven tests (#8471);
-	// TestSelfHostShardsSelectEveryTest pins the exact wording separately.
 	if !strings.Contains(src, `-test.list '^Test'`) && !strings.Contains(src, `-test.list '.'`) {
 		t.Fatalf("%s no longer lists the whole internal/testing/e2ecompiler binary; a test that "+
 			"does not follow the TestSelfHost naming convention would run nowhere (#8471)", file)
@@ -292,16 +235,6 @@ func selfHostShardLane(t *testing.T, root string) lane {
 	}
 }
 
-// coreutilsShardLane models test-coreutils.yml, which runs the whole of
-// internal/testing/coreutils across four shards in two invocations each: whole
-// top-level tests in one, its slice of TestSelfHostCoreutilsParity's subtests
-// in the other. The union is the whole package, so the lane is modelled as
-// covering it entirely — but only because BOTH lists are derived, which is
-// what this pins. An enumerated list is a list that goes stale silently, and
-// a narrowed `-test.list` prefix is what dropped seven tests in #8471.
-//
-// TestCoreutilsShardCountMatchesTheMatrix pins the other half: a partition
-// into more buckets than the matrix runs drops a whole shard's tests.
 func coreutilsShardLane(t *testing.T, root string) lane {
 	t.Helper()
 	const file = "test-coreutils.yml"
@@ -321,11 +254,6 @@ func coreutilsShardLane(t *testing.T, root string) lane {
 		t.Fatalf("%s no longer partitions with scripts/shard-tests, which is what guarantees "+
 			"every listed name lands in exactly one bucket", file)
 	}
-	// `-run` is a REGEXP and a utility name is not an identifier: coreutils/[.fern
-	// is in the catalogue, and its bare name opens an unterminated character class
-	// that makes the whole alternation invalid, so the shard holding it exits at
-	// regexp parse having run nothing. Both lists are escaped, and both patterns
-	// are compiled before either runs.
 	if !strings.Contains(src, "re_escape") {
 		t.Fatalf("%s joins derived names into a -run alternation without escaping them; "+
 			"coreutils/[.fern alone makes that pattern an invalid regexp and its shard "+
@@ -339,12 +267,6 @@ func coreutilsShardLane(t *testing.T, root string) lane {
 	return lane{name: file + " (shards)", pkgs: []string{"internal/testing/coreutils"}, all: true}
 }
 
-// TestCoreutilsShardCountMatchesTheMatrix pins NSHARD against the matrix.
-//
-// The partition is into NSHARD buckets and the matrix runs one job per listed
-// shard, so the two disagreeing is a silent hole rather than an error: with
-// NSHARD=5 and a four-entry matrix, every name LPT assigns to bucket 4 is
-// selected by no job, reported by nothing, and simply never runs.
 func TestCoreutilsShardCountMatchesTheMatrix(t *testing.T) {
 	src := workflowSource(t, "test-coreutils.yml")
 	m := regexp.MustCompile(`(?m)^\s+NSHARD:\s*"(\d+)"`).FindStringSubmatch(src)
@@ -386,18 +308,6 @@ func TestCoreutilsShardCountMatchesTheMatrix(t *testing.T) {
 	}
 }
 
-// nameSelectorLane reads what a lane file selects, two ways.
-//
-// The `-run` / `-test.run` / `-test.list` REGEX is the accurate reading, and
-// the only one that gets an alternation like `^Test(WASM|Wasm)` right. It is
-// used whenever it resolves: a `${{ matrix.test }}` or a shell variable
-// computed at run time does not, and is skipped rather than guessed — under-
-// reading a selector can only make this gate stricter.
-//
-// The bare NAME reading, classified the way scripts/testname_gate.sh classifies
-// one, is what covers those: a matrix that expands into `-run` spells its
-// names out as literals elsewhere in the same file. Whole-line comments are
-// prose and select nothing.
 func nameSelectorLane(t *testing.T, root, file, pkg string) lane {
 	t.Helper()
 	src := readWorkflow(t, root, file)
@@ -423,8 +333,6 @@ func nameSelectorLane(t *testing.T, root, file, pkg string) lane {
 			}
 		}
 	}
-	// An exact name is also a legitimate prefix of itself; drop the duplicate
-	// so the prefix list only carries genuine prefix filters.
 	var kept []string
 	for _, p := range prefixes {
 		if !exact[p] {
@@ -434,26 +342,18 @@ func nameSelectorLane(t *testing.T, root, file, pkg string) lane {
 	return lane{name: file, pkgs: []string{pkg}, exact: exact, prefixes: kept, patterns: patterns}
 }
 
-// testNameRe matches a test name plus, when present, the character that
-// terminates it — the same two shapes scripts/testname_gate.sh reads.
 var testNameRe = regexp.MustCompile(`\bTest[A-Za-z0-9_]+[$|)]?`)
 
-// selectorFlagRe captures the argument of a test-selection flag.
 var selectorFlagRe = regexp.MustCompile(`-(?:test\.)?(?:run|list)[ =]+('[^']*'|"[^"]*"|[^\s]+)`)
 
-// resolveSelector turns one selector argument into a regexp, or nil when it
-// cannot be resolved statically or is too broad to be a name filter.
 func resolveSelector(src, arg string) *regexp.Regexp {
 	arg = strings.Trim(arg, `'"`)
-	// Shell variables holding a name alternation are workflow-level env.
 	for _, m := range envRefRe.FindAllStringSubmatch(arg, -1) {
 		if v, ok := lookupEnv(src, m[1]); ok {
 			arg = strings.ReplaceAll(arg, m[0], v)
 		}
 	}
 	arg = strings.ReplaceAll(arg, `\$`, `$`)
-	// A run-time-computed filter (`$PAT`) or a matrix expansion resolves to
-	// nothing readable here; the bare-name reading covers those.
 	if strings.Contains(arg, "$") && !strings.HasSuffix(arg, "$") {
 		return nil
 	}
@@ -464,8 +364,6 @@ func resolveSelector(src, arg string) *regexp.Regexp {
 	if err != nil {
 		return nil
 	}
-	// A catch-all (`.`) is not a name filter; the lanes that select by
-	// negation are modelled explicitly, with their exclusions.
 	if re.MatchString("ZzNotATestNameAtAll") {
 		return nil
 	}
@@ -474,8 +372,6 @@ func resolveSelector(src, arg string) *regexp.Regexp {
 
 var envRefRe = regexp.MustCompile(`\$\{?([A-Z_][A-Z0-9_]*)\}?`)
 
-// lookupEnv reads a top-level `  KEY: "value"` entry, reporting whether it
-// exists — envValue's non-fatal sibling.
 func lookupEnv(src, key string) (string, bool) {
 	re := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(key) + `:\s*(?:"([^"]*)"|'([^']*)')\s*$`)
 	m := re.FindStringSubmatch(src)
@@ -485,10 +381,8 @@ func lookupEnv(src, key string) (string, bool) {
 	return m[1] + m[2], true
 }
 
-// envValue reads a top-level `  KEY: "value"` / `  KEY: 'value'` entry.
 func envValue(t *testing.T, src, key string) string {
 	t.Helper()
-	// RE2 has no backreferences, so the two quote styles are separate arms.
 	re := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(key) + `:\s*(?:"([^"]*)"|'([^']*)')\s*$`)
 	m := re.FindStringSubmatch(src)
 	if m == nil {
@@ -497,26 +391,13 @@ func envValue(t *testing.T, src, key string) string {
 	return m[1] + m[2]
 }
 
-// TestMacOSLaneFilterCoversWhatTheLaneBuilds pins macos.yml's `paths:` filter
-// to the packages the job actually compiles.
-//
-// The lane is the only one that executes an arm64-darwin binary. A package
-// missing from the filter is a package whose changes land with that check
-// never firing, and the filter had drifted to name ten packages out of the 62
-// the binary is built from — internal/pkg/platforms, the target-capability gate
-// whose entire job is telling darwin from linux, among the omissions — while
-// still listing internal/prelude, deleted long enough ago that CLAUDE.md
-// records its absence (#8474).
 func TestMacOSLaneFilterCoversWhatTheLaneBuilds(t *testing.T) {
 	root := mustRepoRoot(t)
-	// One list, read by both events: the lane table in ci.yml.
 	entries := pathFilterEntries(t, "macos.yml")
 	if len(entries) == 0 {
 		t.Fatal("macos.yml has no `paths` filter in ci.yml's lane table — this gate assumes one")
 	}
 
-	// Every entry must match something on disk. This is what catches an entry
-	// left behind by a deletion, which matches nothing and says nothing.
 	for _, e := range entries {
 		pat := strings.TrimPrefix(e, "!")
 		if !pathPatternMatchesSomething(t, root, pat) {
@@ -525,8 +406,6 @@ func TestMacOSLaneFilterCoversWhatTheLaneBuilds(t *testing.T) {
 		}
 	}
 
-	// Every package the lane compiles must be selected. The closure is the
-	// driver plus the two test packages the job runs.
 	closure := goListDeps(t, root, "./cmd/fern", "./internal/testing/e2e", "./internal/testing/e2ecompiler")
 	for _, pkg := range closure {
 		if !pathFilterSelects(entries, pkg+"/x.go") {
@@ -536,8 +415,6 @@ func TestMacOSLaneFilterCoversWhatTheLaneBuilds(t *testing.T) {
 	}
 }
 
-// pathFilterSelects applies GitHub's `paths:` semantics to one path: the last
-// matching pattern wins, and a `!` pattern excludes.
 func pathFilterSelects(entries []string, path string) bool {
 	selected := false
 	for _, e := range entries {
@@ -550,9 +427,6 @@ func pathFilterSelects(entries []string, path string) bool {
 	return selected
 }
 
-// globMatches implements GitHub's filter-pattern grammar, the same way the
-// `changes` job in ci.yml does: `**` crosses `/`, `*` does not, `?` and `+`
-// quantify the character or class before them, `[…]` is a class.
 func globMatches(pattern, path string) bool {
 	var b strings.Builder
 	b.WriteString("^")
@@ -584,31 +458,21 @@ func globMatches(pattern, path string) bool {
 	return regexp.MustCompile(b.String()).MatchString(path)
 }
 
-// The grammar has two copies — globMatches here and `compile` in ci.yml's
-// `changes` job — and the lane filters in use exercise only `*`, `**` and
-// literals, so the other arms would drift from GitHub's documented meaning,
-// and from each other, with nothing failing. scripts/ci-changes-selftest.mjs
-// runs the same cases against the JS copy, from the lint lane.
 func TestGlobMatchesFollowsGitHubGrammar(t *testing.T) {
 	for _, c := range []struct {
 		pattern, path string
 		want          bool
 	}{
-		// `?`: zero or one of the character before it.
 		{"src/x?.txt", "src/.txt", true},
 		{"src/x?.txt", "src/x.txt", true},
 		{"src/x?.txt", "src/xx.txt", false},
-		// `+`: one or more of the character before it.
 		{"a+b.txt", "aab.txt", true},
 		{"a+b.txt", "b.txt", false},
-		// A class quantifies too.
 		{"[ab]+.go", "abba.go", true},
 		{"[ab]x.go", "cx.go", false},
-		// A quantifier with nothing before it is literal, as is an unclosed class.
 		{"?x", "?x", true},
 		{"+x", "+x", true},
 		{"[a", "[a", true},
-		// `*` stops at `/`, `**` does not, `.` is literal.
 		{"*.md", "README.md", true},
 		{"*.md", "docs/a.md", false},
 		{"docs/**", "docs/a/b.md", true},
@@ -649,8 +513,6 @@ func pathPatternMatchesSomething(t *testing.T, root, pattern string) bool {
 	return found
 }
 
-// goListDeps returns the repo-relative package dirs in the transitive closure
-// of the named packages, tests included.
 func goListDeps(t *testing.T, root string, pkgs ...string) []string {
 	t.Helper()
 	cmd := exec.Command("go", append([]string{"list", "-deps", "-test"}, pkgs...)...)
@@ -667,7 +529,6 @@ func goListDeps(t *testing.T, root string, pkgs ...string) []string {
 			continue
 		}
 		p = strings.TrimPrefix(p, modulePath+"/")
-		// `go list -test` names the synthesised test binaries too.
 		if strings.ContainsAny(p, " [") || strings.HasSuffix(p, ".test") {
 			continue
 		}
@@ -703,11 +564,6 @@ func readWorkflow(t *testing.T, root, file string) string {
 	return string(b)
 }
 
-// collectGoTests parses every _test.go the go tool would compile and returns
-// its top-level test functions. Source parsing rather than `go test -list`
-// because listing means building every test binary in the repo, internal/testing/e2e
-// and internal/testing/e2ecompiler included — minutes of compile to answer a question
-// the syntax already answers.
 func collectGoTests(t *testing.T, root string) []goTest {
 	t.Helper()
 	var out []goTest
@@ -718,8 +574,6 @@ func collectGoTests(t *testing.T, root string) []goTest {
 		}
 		name := d.Name()
 		if d.IsDir() {
-			// The go tool ignores these; so must the census, or a fixture
-			// would be counted as an unrun test.
 			if name == "testdata" || name == "vendor" ||
 				(p != root && (strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_"))) {
 				return filepath.SkipDir
@@ -757,8 +611,6 @@ func collectGoTests(t *testing.T, root string) []goTest {
 	return out
 }
 
-// isTestFuncName reports whether n is a name `go test` runs. TestMain is the
-// package's entry point, not a test.
 func isTestFuncName(n string) bool {
 	if n == "TestMain" || !strings.HasPrefix(n, "Test") || len(n) == len("Test") {
 		return false

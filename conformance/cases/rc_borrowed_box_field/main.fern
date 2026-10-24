@@ -1,21 +1,21 @@
-// #6049, cause 1 (fixed by #6120, `enum_field_read_type`): an ENUM-typed struct
-// FIELD READ that escapes into a container.
-//
-// `first` owns its `node` and `__struct_drop`'s k_enum arm decs it, so
-// `[first.node]` / `branches.append(nxt.node)` need a Perceus dup — otherwise
-// the array holds a freed cell and the NEXT allocation reuses it. This is
-// std/regex's `__rx_alt` reduced to its bare shape: the parser returns each
-// sub-tree in an `RParse` struct, so an alternation of multi-byte branches
-// built a tree whose enclosing group had landed on its own grandchild's cell.
-// `__rx_match` then recursed Grp -> Alt -> Grp until the stack ran out.
-//
-// #6120 pins this on x86-64 (TestSelfHostEnumPayloadBorrowIRX86_64). The defect
-// is in irlower, which all three self-host backends share, so this fixture
-// carries the same shape onto the wasm and arm64 legs as well.
-//
-// The walk is depth-capped so the corrupt shape ANSWERS (90 for a cycle)
-// instead of segfaulting: a wrong exit code is a readable failure, a SIGSEGV
-// on one backend is not.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 struct GD { idx: i32, node: N }
 
@@ -55,6 +55,6 @@ function walk(n: N, d: i32): i32 {
 
 function main(): i32 {
     let r: P = mkgroup();
-    // Grp 60 + Alt 20 + two Seqs (10 + 1 + 1) each = 104.
+
     return walk(r.node, 0);
 }

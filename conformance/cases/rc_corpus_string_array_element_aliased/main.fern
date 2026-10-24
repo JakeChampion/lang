@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// string[] whose elements alias a live local. Exercises the native
-// single-word x86-64 string[] element reclaim (__fern_drop_arr_str:
-// per-element __fern_str_dec then free the buffer); elements are
-// retained on store, so the per-element frees balance the shared
-// buffer. 3 × 4 = 12.
+
+
+
+
+
+
+
+
 import "core/int";
 import "std/string";
 function cat(a: string, b: string): string { return a + b; }

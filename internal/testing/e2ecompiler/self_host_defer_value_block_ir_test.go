@@ -9,23 +9,10 @@ import (
 	"testing"
 )
 
-// deferValueBlockCases pin a `defer` written inside a value-position `{ … }`
-// block through the self-host IR path (#6857). The self-host parses such a
-// block into an immediately-invoked zero-parameter lambda that the lowering inlines,
-// so the parse-time defer rewrite — which walked statements only — never reached
-// the defer and the whole module refused to lower.
-//
-// Scope is native's rule (#6851/#6852): a block expression is neither a function
-// nor a loop, so the defer belongs to the innermost enclosing loop body if there
-// is one and to the function otherwise. Each case is oracle-checked against the
-// interpreter, which is what separates "it lowers" from "it lowers correctly".
 var deferValueBlockCases = []struct {
 	name string
 	src  string
 }{
-	// The main shape: a defer in a `let` initialiser's value block runs at
-	// the enclosing function's exit, so the return expression still reads the
-	// pre-cleanup value.
 	{"var_value_block", `function g(a: Cell[i32]): i32 {
     let x: i32 = { defer a.set(a.get() + 1); 3 };
     return x * 10 + a.get();
@@ -35,8 +22,6 @@ function main(): i32 {
     let inside: i32 = g(a);
     return inside + a.get();
 }`},
-	// A value block in a loop body: the defer is lexically inside that body, so
-	// it fires per iteration and its flag is cleared at each iteration's end.
 	{"loop_body_value_block", `function g(a: Cell[i32]): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
@@ -50,8 +35,6 @@ function main(): i32 {
     let a: Cell[i32] = cell_new(0);
     return g(a) + a.get();
 }`},
-	// A `return` INSIDE the value block is a real function return and has to
-	// replay the cleanup in front of it.
 	{"return_inside_value_block", `function g(a: Cell[i32], c: boolean): i32 {
     defer a.set(a.get() + 5);
     let x: i32 = { if (c) { return 7; } 3 };
@@ -65,8 +48,6 @@ function main(): i32 {
     let f: i32 = g(b, false);
     return e * 1000 + s1 * 100 + f * 10 + b.get();
 }`},
-	// A `break` inside a value block is an edge out of the iteration, so the
-	// per-iteration cleanup runs before it.
 	{"break_inside_value_block", `function g(a: Cell[i32]): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
@@ -81,8 +62,6 @@ function main(): i32 {
     let a: Cell[i32] = cell_new(0);
     return g(a) + a.get();
 }`},
-	// A match-EXPRESSION arm desugars to the same zero-parameter IIFE, so an
-	// arm's defer takes the same path.
 	{"match_expression_arm", `function g(a: Cell[i32], n: i32): i32 {
     let x: i32 = match (n) {
         0 => { defer a.set(a.get() + 1); 10 },
@@ -97,7 +76,6 @@ function main(): i32 {
     let q: i32 = g(b, 1);
     return p * 1000 + a.get() * 100 + q + b.get();
 }`},
-	// An errdefer inside a value block fires only on the failure return.
 	{"errdefer_in_value_block", `function g(a: Cell[i32], ok: boolean): Option[i32] {
     let x: i32 = { errdefer a.set(a.get() + 1); 3 };
     if (ok) { return Some(x); }
@@ -115,7 +93,6 @@ function main(): i32 {
 }`},
 }
 
-// These cases keep their observable status below 126 for the Wasm runner.
 func deferValueBlockBindingCases(t *testing.T) []struct{ name, src string } {
 	t.Helper()
 	source, err := os.ReadFile(filepath.Join("..", "..", "..", "conformance", "cases", "defer_binding_value_block", "main.fern"))
@@ -167,8 +144,6 @@ function main(): i32 {
     let value: i32 = f(a);
     return value * 10 + a.get();
 }`},
-		// A lifted binding whose type has no zero the source can spell: it
-		// starts at the zero word and the block's assignment overwrites it.
 		{"record_block_binding", `struct P { a: i32 }
 function main(): i32 {
     let seen: i32 = 1;
@@ -182,8 +157,6 @@ function main(): i32 {
     }
     return seen;
 }`},
-		// No value block at all: a plain `if` body is a block the replay
-		// leaves, and the binding it declares is lifted the same way.
 		{"conditional_block_binding", `function main(): i32 {
     let seen: i32 = 1;
     loop {
@@ -196,8 +169,6 @@ function main(): i32 {
     }
     return seen;
 }`},
-		// The expansion's shared return temp carries a reference type here,
-		// not the i32 its untyped declaration used to give it.
 		{"array_return_through_the_defer_temp", `function snapshot(): i32[] {
     let items: i32[] = [7];
     defer items = [9];
@@ -228,9 +199,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostDeferValueBlockIR_X86_64 drives deferValueBlockCases through the
-// self-host x86-64 IR path under FERN_STRICT_IR, so a per-function bail is a
-// hard failure rather than a route that quietly reaches the same answer.
 func TestSelfHostDeferValueBlockIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 
@@ -327,8 +295,6 @@ func TestSelfHostDeferValueBlockBindingsIRWasm(t *testing.T) {
 	}
 }
 
-// exitStderr surfaces the strict-IR bail message, which the driver writes to
-// stderr and exec.Command's error string drops.
 func exitStderr(err error) string {
 	if ee, ok := err.(*exec.ExitError); ok {
 		return string(ee.Stderr)

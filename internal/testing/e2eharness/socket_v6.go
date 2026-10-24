@@ -1,18 +1,5 @@
 package e2eharness
 
-// SocketV6Probe exercises the socket primitives over IPv6 loopback (#9853):
-// a listener bound to ::1, a dial to it and the reply read back, then two
-// datagram sockets on ::1 exchanging datagrams, the sender reported with
-// the family byte 6 and its sixteen address bytes, and a connected reply;
-// then a `::` listener taking a 127.0.0.1 peer, reported v4-mapped by
-// op 10, and a `::` datagram socket from udp_bind_with taking a 127.0.0.1
-// sender the same way (neither on wasi:sockets, whose IPv6 socket stays
-// IPv6-only).
-// Exit 42 with "ok" on stdout when every check holds; when the host has no
-// IPv6 the first bind answers -EAFNOSUPPORT (wasmtime reports the missing
-// family as not-supported, -ENOTSUP) and the probe prints "nov6" and
-// exits 43, which the test accepts only where Go cannot listen on ::1
-// either.
 func SocketV6Probe() string {
 	return `import "core/int";
 import "std/net";
@@ -146,11 +133,6 @@ function main(): i32 {
 `
 }
 
-// NetV6Probe is SocketV6Probe through std/net: `listen_at` on an IPv6
-// `SocketAddr`, `connect` to it, `udp_socket`, `send_to` and `recv_from`
-// with the sender read back as the `::1` address, and `set_peer` with
-// `send`, then the `::` listener's IPv4 peer as `peer_addr` and
-// `peer_key` report it. The same "nov6" answer where the host has no IPv6.
 func NetV6Probe() string {
 	return `import "core/int";
 import "std/net";

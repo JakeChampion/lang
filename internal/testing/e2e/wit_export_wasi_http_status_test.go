@@ -5,19 +5,6 @@ import (
 	"testing"
 )
 
-// httpHandlerStatusProg is a bring-your-own wasi:http handler that sets a
-// non-default status (404) on its response — exercising set-status-code (a
-// resource method whose WIT param is `status-code: u16` — cmd/fern/wit/deps/http/types.wit
-// — and result<_,_> return, both flattening to a single i32 core value at the
-// canonical ABI) on top of the response constructors — and hands the response
-// back via a `set_response_ok` helper that hides response-outparam.set's 9
-// flattened canonical params behind a 2-arg Ok call. This is the ergonomic
-// shape of a bring-your-own handler (docs/WIT-BRING-YOUR-OWN.md). The Fern-
-// side @import binding below declares the param as `i32`, not `u16`: i8/i16/u16
-// were removed from the language (#4408), so a Fern function signature can no
-// longer mirror a WIT u16 byte-for-byte — only the wire-compatible canonical
-// i32 core type is expressible now. The .wit file itself keeps the real WASI
-// spec type (`u16`) unchanged; only the Fern-side signature widened.
 const httpHandlerStatusProg = `@import("wasi:http/types@0.2.0", "incoming-request")
 resource IncomingRequest;
 @import("wasi:http/types@0.2.0", "response-outparam")
@@ -54,9 +41,6 @@ function on_request(request: own IncomingRequest, response_out: own ResponseOutp
 	return;
 }`
 
-// TestExportWasiHttpHandlerStatusServes proves a bring-your-own handler can set
-// a response status (404) and serve it — set-status-code + the ergonomic
-// new_response / set_response_ok helpers, end-to-end under `wasmtime serve`.
 func TestExportWasiHttpHandlerStatusServes(t *testing.T) {
 	if got := serveHttpHandlerStatus(t, httpHandlerStatusProg); got != http.StatusNotFound {
 		t.Fatalf("status = %d; want 404", got)

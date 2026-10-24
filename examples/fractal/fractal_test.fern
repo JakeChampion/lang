@@ -29,7 +29,6 @@ function test_binary_fields(): test.TestOutcome {
   return test.assert_eq_array(output, expected);
 }
 
-// The original renderer at commit 3968020c9 supplies the PNG checksums.
 function check_tile(z: i32, x: i64, y: i64, iterations: i64, bytes: i32, checksum: u32): test.TestOutcome {
   match (fractal.render_reference(z, x, y)) {
     Ok(tile) => {

@@ -7,27 +7,6 @@ import (
 	"testing"
 )
 
-// __sum_bytes is the sixth kernel of docs/ATLAS-PLATFORM-PLAN.md §3, and the
-// family's first true reduction: __count_byte reduces over a predicate, where
-// this one carries the bytes themselves into a 32-bit accumulator.
-//
-// It ships SCALAR on all eight backends at once, which is §3.4's step 1, and
-// this corpus is written while every body is still a byte loop so that it is
-// not written to fit whatever the vector code later does.
-//
-// Three things a port of this kernel gets wrong, and none of them is the clamp
-// its cursored siblings fail on, because there is no cursor:
-//
-//   - the ACCUMULATOR lost across a block boundary. Every case here is a sum,
-//     so any block whose contribution is dropped changes the answer — unlike a
-//     search, where only the block holding the hit matters.
-//   - SIGN EXTENSION. A byte is unsigned: 0xff contributes 255, not -1. A body
-//     that loads with a sign-extending move passes every case whose bytes are
-//     ASCII and fails every case above 0x7f, so the corpus is deliberately
-//     half high-byte.
-//   - the WRAP. The result is exact modulo 2^32, so a backend accumulating in
-//     64 bits and returning without truncating agrees on every short string.
-//     TestSumBytesWraps is the case that separates them.
 func sumBytesRef(s string) int32 {
 	var sum uint32
 	for i := 0; i < len(s); i++ {
@@ -39,11 +18,6 @@ func sumBytesRef(s string) int32 {
 func sumBytesCases() []string {
 	var out []string
 
-	// Exhaustive over length, straddling the 16-byte block a vector version
-	// uses (0..40 is two full blocks plus a partial tail either side). Each
-	// length appears all-ASCII, all-high-byte, and with one high byte planted
-	// at every offset — the last of which is what a lost block contribution
-	// and a sign-extending load both show up in.
 	for n := 0; n <= 40; n++ {
 		base := strings.Repeat("a", n)
 		out = append(out, base, strings.Repeat("\xff", n))
@@ -53,9 +27,6 @@ func sumBytesCases() []string {
 		}
 	}
 
-	// The x86-64 sibling widens to a 32-byte AVX2 main loop with a 16-byte
-	// SSE2 tail, so the boundary between the two loops needs the same sweep:
-	// lengths just below, at and above one and two 32-byte blocks.
 	for _, n := range []int{31, 32, 33, 47, 48, 49, 63, 64, 65, 79, 80, 81} {
 		base := strings.Repeat("a", n)
 		out = append(out, base, strings.Repeat("\xff", n))
@@ -64,8 +35,6 @@ func sumBytesCases() []string {
 		}
 	}
 
-	// Dense mixed patterns: every block contributes a different partial total,
-	// which is the shape an accumulator reset at a block boundary fails.
 	for _, n := range []int{15, 16, 17, 31, 32, 33, 47, 48, 64, 300} {
 		var asc, hi strings.Builder
 		for i := 0; i < n; i++ {
@@ -75,22 +44,19 @@ func sumBytesCases() []string {
 		out = append(out, asc.String(), hi.String())
 	}
 
-	// Edge cases the sweep cannot express.
 	out = append(out,
-		"",                              // empty sums to 0
-		"\x00",                          // NUL is an ordinary byte, not a terminator
-		"\x00\x00\x00\x00",              // ... and a whole run of them still sums to 0
-		"a\x00b",                        // an interior NUL does not truncate the walk
-		"\xff",                          // the maximum single byte
-		"\x7f\x80",                      // the sign-bit boundary, either side
-		"\x80\x80\x80\x80",              // every byte with the high bit set
-		strings.Repeat("\xff", 300),     // long and entirely maximal
-		strings.Repeat("\x00", 300),     // long and entirely zero
-		strings.Repeat("a", 255)+"\xff", // one high byte past several whole blocks
+		"",
+		"\x00",
+		"\x00\x00\x00\x00",
+		"a\x00b",
+		"\xff",
+		"\x7f\x80",
+		"\x80\x80\x80\x80",
+		strings.Repeat("\xff", 300),
+		strings.Repeat("\x00", 300),
+		strings.Repeat("a", 255)+"\xff",
 	)
 
-	// Deterministic randoms over the full byte range, so high bytes are dense
-	// and land at irregular offsets.
 	rng := rand.New(rand.NewSource(20260911))
 	for i := 0; i < 60; i++ {
 		n := rng.Intn(70)
@@ -103,9 +69,6 @@ func sumBytesCases() []string {
 	return out
 }
 
-// runSumBytesCorpus drives the corpus through one backend and compares every
-// answer against sumBytesRef. Shared by every leg: what differs between
-// backends is the kernel, not the expectation.
 func runSumBytesCorpus(t *testing.T, run func(t *testing.T, src string) string) {
 	t.Helper()
 	cases := sumBytesCases()
@@ -166,9 +129,6 @@ func TestArm64SumBytes(t *testing.T) {
 	})
 }
 
-// The wasm leg adds a case class neither native leg has: a SHORT string lives
-// in its two words with no address at all, so the kernel reads it through
-// __fern_str_byte. Every input under 8 bytes here exercises that.
 func TestWASMSumBytes(t *testing.T) {
 	runSumBytesCorpus(t, func(t *testing.T, src string) string {
 		out, _ := invokeWasmtime(t, src)
@@ -180,15 +140,6 @@ func TestWASMSumBytes(t *testing.T) {
 	})
 }
 
-// The wrap, which no case in the corpus above can reach: 2^32 needs more than
-// 16 MiB of high bytes, so the input is built at run time rather than written
-// as a literal. U+FFFF is EF BF BF, 621 a copy, and 621 * 6916212 is
-// 2^32 + 356, so the kernel must return 356 and a backend that accumulates in
-// 64 bits without truncating returns 4294967652.
-//
-// It allocates the string, so it is not folded into the corpus runner: the
-// heap assertion below is about the KERNEL allocating nothing, and a 16 MiB
-// haystack in the same program would hide it.
 const sumBytesWrapSrc = `import "std/i32";
 
 function main(): i32 {
@@ -223,9 +174,6 @@ func TestArm64SumBytesWraps(t *testing.T) {
 	}
 }
 
-// Rule 5 of §3.1 in its allocation form: the kernel reads the string it is
-// given and builds nothing. A body that reached for a slice or a copy would
-// move the bump pointer, and nothing else in this program does.
 const sumBytesNoAllocSrc = `import "std/i32";
 
 function main(): i32 {

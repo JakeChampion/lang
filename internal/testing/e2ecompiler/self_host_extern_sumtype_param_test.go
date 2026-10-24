@@ -11,16 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternSumTypeParamCustomProvider is the self-host port of the
-// sum-type `@import` parameter (docs/WIT-BRING-YOUR-OWN.md): the self-hosted
-// wasm backend flattens an Option/Result param to (disc, payload). A self-host
-// enum is a heap box `[tag:i32 @0][payload:i32 @4]` (Some/Ok=0, None/Err=1) —
-// identical to the Go backend — so the wrapper pushes the discriminant (tag,
-// remapped 1-tag for option since canonical none=0/some=1 reverses Fern's
-// Some=0/None=1; result matches) then the payload. No alignment constraint (it
-// flattens to values, like records). Tested via the custom-provider harness:
-// check-result(result<s32,s32>) (ok→v, err→-v) and peek-option(option<s32>)
-// (some→v, none→-1). Mirror of the Go TestExternSumTypeParamCustomProvider.
 func TestSelfHostExternSumTypeParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

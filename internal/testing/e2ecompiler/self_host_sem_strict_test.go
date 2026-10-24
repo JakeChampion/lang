@@ -9,9 +9,6 @@ import (
 	"testing"
 )
 
-// A module the typed lowering refuses fails the compile: exit 3, after a
-// `FERN_SEM_IR:` line naming each refusal. Every compile here runs with no
-// FERN_ variable of the caller's (childEnv).
 func TestSelfHostSemIRStrict(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	stdlibRoot, err := filepath.Abs("../../stdlib")
@@ -49,8 +46,6 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 	if code, out := compile(produced); code != 0 {
 		t.Fatalf("a module produced whole: exit %d\n%s", code, out)
 	}
-	// A trait method implemented for `str` in an imported module: the call
-	// names `string.shout`, which the contract is keyed by too (#10883).
 	strTrait := t.TempDir()
 	if err := os.WriteFile(filepath.Join(strTrait, "leaf.fern"), []byte("pub trait Shout { function shout(self: Self): i32; }\nimpl Shout for str { function shout(self: Self): i32 { return self.len() + 1; } }\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -73,8 +68,6 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 		t.Fatalf("an async function: exit %d\n%s", code, out)
 	}
 
-	// Each target spells the clock, id and termios helpers' sources on its own
-	// syscalls. termios_get calls the fs bundle's __fern_io_error.
 	helpers := `function main(): i32 {
     let ids: u32 = geteuid() + getegid() + getuid() + getgid();
     let t: i64 = monotonic_ns() + now_unix_ms() + now_ns();
@@ -91,8 +84,6 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 		}
 	}
 
-	// A read of a view map value owns a unit of the column's box, so the
-	// typed lowering takes it (#10701).
 	viewRead := `import "core/map";
 function main(): i32 {
     let b: string = "abcdefgh";
@@ -116,11 +107,6 @@ function main(): i32 {
 		t.Fatalf("a view map value read: %v, want exit 4", err)
 	}
 
-	// A function value whose type no declaration spells (`fs[0]`) keys no
-	// clone, so a generic bound only through a fn-typed parameter stays
-	// erased, and each typed instance builds `Slot__0_T` at its own binding
-	// (#10827). An erased generic forwarding its function parameter calls the
-	// clone keyed at its own variable, `hold__0_U`, a template the same way.
 	run := func(src string, want int) {
 		t.Helper()
 		path := filepath.Join(t.TempDir(), "main.fern")
@@ -162,16 +148,12 @@ pub function wrap[U](g: () => U): i32 { return hold(g); }
 function main(): i32 { return wrap((): i32 => 7) + wrap((): string => "x"); }
 `, 2)
 
-	// The same call from a top-level statement: the scan reads the module's
-	// statements as well as its functions.
 	run(`struct Slot[T] { v: T }
 pub function hold[T](f: () => T): i32 { let c: Slot[T] = Slot[T] { v: f() }; return 1; }
 let fs: (() => i32)[] = [(): i32 => 7];
 return hold(fs[0]) + hold((): string => "x");
 `, 2)
 
-	// A generic callee's result spells the callee's own variable, so it binds
-	// nothing: no clone is keyed on `0_K`, and hold stays erased as above.
 	genericPick := `struct Slot[T] { v: T }
 
 pub function pick[K](x: K): () => K { return (): K => x; }
@@ -198,10 +180,6 @@ function main(): i32 { return hold(pick(1)) + hold((): string => "x"); }
 		t.Fatalf("a generic callee's function result: %v, want no clone keyed on its variable", err)
 	}
 
-	// A stream handle's `fd` is the handle's own descriptor, read as the i32
-	// through a parameter, a local and an enum payload binding alike (std/serve
-	// hands a file body's fd to tcp_sendfile). It was an unsupported
-	// projection: a handle wears a record's nominal but has no schema.
 	handleFd := `enum Tail { NoTail, FileTail(Reader, i64) }
 function fd_of(t: Tail): i32 {
     match (t) {
@@ -223,9 +201,6 @@ function main(): i32 {
 		}
 	}
 
-	// The records an instance builds at its binding, on every target: a wide
-	// binding a wasm field stores at 8 bytes, a record holding one, and one
-	// holding itself, each held to its pinned answer.
 	for _, c := range []struct{ name, src, want string }{
 		{"wide-and-nested", `import "std/i32";
 import "std/i64";
@@ -275,11 +250,6 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostSemIRRuntimeHelperRefusal pins the runtime-helper half: a helper
-// source the typed lowering refuses fails the compile with exit 3, naming the
-// helper, with no FERN_ variable set. No shipped helper is refused, so the
-// driver is built from a copy whose `str_concat` source holds its block in an
-// i32, which does not type-check.
 func TestSelfHostSemIRRuntimeHelperRefusal(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -299,8 +269,6 @@ func TestSelfHostSemIRRuntimeHelperRefusal(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
-	// A literal on the left keeps the exact concatenation, which the broken
-	// helper builds; a consumed left operand would take the grow instead.
 	const prog = "@noinline function ids(s: string): string { return s; } function main(): i32 { let s: string = \"b\" + ids(\"a\"); return s.len(); }\n"
 	emit := func() (string, int) {
 		var cmd *exec.Cmd

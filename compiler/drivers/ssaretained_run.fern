@@ -188,8 +188,6 @@ function main(): i32 {
   debug_body(g, true, true);
   debug_body(g, false, false);
   debug_body(g, true, false);
-  // The need probe has no retained-result API and must not contaminate a
-  // subsequent real emission through a shared accumulator.
   let needs = asm_ir.module_runtime_needs(g.im, g.im.funcs, g.stab, g.cache, g.physical);
   require(needs.len() == 0, 33);
   let after = retained.emit(g, g.cache, g.physical, false, true, false, 0, 1);

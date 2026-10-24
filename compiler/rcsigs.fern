@@ -1,99 +1,49 @@
-// compiler/rcsigs.fern — the ownership signatures of the runtime helpers and
-// the IR operations the physical lowering emits, for the emitted-RC certifier
-// (rccertify.fern, #11908).
-//
-// A Fern function's ownership is its contract (ssasem.Contract: one mode per
-// parameter, a result the caller owns when it is a reference). The runtime
-// helpers and the IR's own operations have no contract: their count
-// movements are written in the backends' runtimes, so every analysis over
-// the emitted ops has to be told. This table is that record, in two halves:
-//
-//   - `sig(name)`: what a `call_direct` of a runtime helper does to the
-//     caller's unit on ONE operand, and what its result is;
-//   - `op_sig(kind)`: the same for an IR operation the lift carries by its
-//     kind name (ssa kinds 49 rt_call, 50 str_call and 59 flat_op).
-//
-// Every entry was read off the helper's body in asm_ir.fern / asm_arm64_ir.fern
-// / wasm_ir.fern or off the op's constructor comment in ir.fern. The result
-// axis matters as much as the argument one: a result classed owned that the
-// runtime never counts is a leak the certifier reports on every call, and one
-// classed none that is counted is a release it refuses.
-//
-// A name neither half knows is `unknown`: the certifier poisons the call's
-// operands and result rather than guess, and counts the name, so the census
-// over the compiler names what is still unclassified.
-
 import "./util";
 
-// ---- effects on an operand ----------------------------------------------
-
-// The caller's unit on the operand is untouched: a borrow.
 pub function effect_none(): i32 {
   return 0;
 }
 
-// A unit is added; the caller keeps its own.
 pub function effect_retain(): i32 {
   return 1;
 }
 
-// The caller's unit is consumed.
 pub function effect_release(): i32 {
   return 2;
 }
 
-// The count is read and nothing moves.
 pub function effect_inspect(): i32 {
   return 3;
 }
 
-// The caller's unit is consumed and the result carries one, at the same
-// address or a replacement: the copy-on-write moves.
 pub function effect_move(): i32 {
   return 4;
 }
 
-// The caller's unit is consumed where it holds one and nothing happens where
-// it does not: the reuse allocator, whose token is a dying box or null.
 pub function effect_move_if_held(): i32 {
   return 5;
 }
 
-// The call leaves the caller's unit on the operand in a state the lowering
-// settles afterwards by comparing addresses — core/map's copy-on-write hands
-// back the receiver or a copy, and the caller releases the receiver only on
-// the copy — so the operand is unproved from the call on.
 pub function effect_unsure(): i32 {
   return 6;
 }
 
-// ---- what the result is ---------------------------------------------------
-
-// Not a counted reference: a scalar, a void, a raw or immortal block.
 pub function result_none(): i32 {
   return 0;
 }
 
-// A fresh unit the caller holds.
 pub function result_fresh(): i32 {
   return 1;
 }
 
-// An address into something the caller already holds, or static memory.
 pub function result_borrow(): i32 {
   return 2;
 }
 
-// No single answer; the certifier treats the result as unproved.
 pub function result_unknown(): i32 {
   return 3;
 }
 
-// The operand the effect names, under a new name.
-// The result is what the call site's mark says: a fresh unit under
-// ir.counted, a borrow under ir.lent, else a word. core/map's get_or answers
-// a column's value, retained by core/map for a box column, as stored for a
-// text one, and as a number for the rest; only the lowering knows which.
 pub function result_marked(): i32 {
   return 5;
 }
@@ -102,12 +52,6 @@ pub function result_operand(): i32 {
   return 4;
 }
 
-// Sig is one callee's signature: `known` false for a name the table does not
-// carry. `arg` is the operand `effect` acts on, -1 when none does; `also`
-// lists further operands the call consumes outright, as a map insert
-// consumes its value, and `unsure` operands it may or may not consume, as
-// the insert its key: taken by a new entry, left to the caller by one that
-// was already there.
 pub struct Sig { known: boolean, arg: i32, effect: i32, result: i32, also: i32[], unsure: i32[] }
 
 pub function unknown_sig(): Sig {
@@ -126,7 +70,6 @@ function inert(result: i32): Sig {
   return sig(-1, effect_none(), result);
 }
 
-// Table is the helper half with a bucket index over the names.
 pub struct Table { names: util.NameIndex, sigs: Sig[] }
 
 struct Rows { names: string[], sigs: Sig[] }
@@ -138,63 +81,28 @@ function add(own rows: Rows, names: string[], s: Sig): Rows {
   return rows;
 }
 
-// table builds the helper half once per module.
 pub function table(): Table {
   let rows: Rows = Rows { names: [], sigs: [] };
-  // The retains hand their operand back, so the result is the operand under
-  // a new name and the caller's unit count on it has grown by one.
   rows = add(rows, ["__fern_rc_inc", "__fern_str_inc", "__fern_arr_share_inc"], sig(0, effect_retain(), result_operand()));
-  // The releases. Each hands back a word the lowering discards (`drop`), so
-  // nothing names the result; `__fern_box_free` and `__free` take the block
-  // and its size.
   rows = add(rows, release_helpers(), sig(0, effect_release(), result_none()));
   rows = add(rows, ["__fern_rc_is_unique", "__fern_rc_underflow_get", "__rc_get"], sig(0, effect_inspect(), result_none()));
-  // The copy-on-write moves: the receiver's unit is consumed and the result
-  // carries one, in place when unique and on a fresh box otherwise.
   rows = add(rows, move_helpers(), sig(0, effect_move(), result_fresh()));
   rows = add(rows, ["__fern_bytes_append_range"], sig(3, effect_move(), result_fresh()));
   rows = add(rows, ["__fern_bytes_write_range"], sig(4, effect_move(), result_fresh()));
-  // The reuse allocator consumes a token — a dying box the lowering has
-  // already stopped counting, or null — and hands back a fresh box.
   rows = add(rows, ["__fern_alloc_reuse"], sig(0, effect_move_if_held(), result_fresh()));
-  // __bytes_into consumes the array it writes and hands it, or a copy, back.
   rows = add(rows, ["__fern_bytes_into"], sig(0, effect_move(), result_fresh()));
-  // The in-place string grow answers whether it appended; the unit movement
-  // it implies is spelled by the lowering around it, in the moves it emits
-  // on each answer, so the call itself touches nothing.
   rows = add(rows, ["__fern_str_grow", "__fern_str_grow_range"], inert(result_none()));
   rows = add(rows, ["__fern_str_grow_fresh", "__fern_str_grow_fresh_range"], inert(result_fresh()));
-  // The element retains walk the array's elements and leave the array's own
-  // count alone.
   rows = add(rows, ["__fern_arr_inc_elems", "__fern_arr_own_elems", "__fern_set_args"], inert(result_none()));
-  // A unit of a string's own, or a counted box over bytes it does not own.
   rows = add(rows, ["__fern_str_own", "__fern_str_borrow", "__fern_arr_str_join", "__fern_bytes_owned", "__fern_bytes_range", "__fern_i32_to_string", "__fern_u32_to_string", "__fern_i64_to_string", "__fern_u64_to_string"], inert(result_fresh()));
-  // The scalar concat takes (width, ys, xs), xs on top, and hands xs's own
-  // block or a fresh one back, freeing nothing: the lowering settles xs's
-  // unit by comparing addresses, as core/map's copy-on-write caller does, and
-  // marks the call counted where the frame holds the receiver's unit, so the
-  // result is one of the frame's own; unmarked, onto a box the frame holds no
-  // unit of, the result is a word the certifier does not count, and the
-  // retain the lowering adds on identity is what makes it the frame's.
   rows = add(rows, ["__fern_arr_concat"], sig(2, effect_unsure(), result_marked()));
-  // A cursor's map, read through core/map: the cursor holds the unit.
   rows = add(rows, ["__mapiter_map_impl"], inert(result_borrow()));
   rows = add(rows, ["__fern_oob_abort", "__fern_slice_abort", "__fern_account_entry", "__fern_vdso_clock"], inert(result_none()));
-  // The byte-view helpers ssabytes writes in Fern: a length and a data
-  // pointer read off a borrowed view, and a sub-range as a counted box.
   rows = add(rows, ["__sem_byte_view_len", "__sem_byte_view_data"], inert(result_none()));
   rows = add(rows, ["__sem_byte_view_slice"], inert(result_fresh()));
-  // core/map's entry points, as the lowering's map operations call them
-  // (ssarc.routed_map_site and its callees): the contracts spell them over
-  // raw words, so what each does to a count is this table's to say.
   rows = add(rows, ["map_new_impl", "__map_get_impl", "__map_get_keyed_impl", "__map_bool_column", "__map_u8_column", "__map_cell_column", "__map_string_column", "__map_box_column"], inert(result_fresh()));
-  // A wide key or value crosses core/map as a raw eight-byte cell, made and
-  // freed outside any count.
   rows = add(rows, ["__map_cell", "__map_cell_free"], inert(result_none()));
   rows = add(rows, ["__map_set_impl", "__map_set_keyed_impl"], sig_also(0, effect_move(), result_fresh(), [2], [1]));
-  // The set into a map the caller already holds alone: the map keeps the
-  // caller's unit, the value is consumed, and the answer is the box the entry
-  // held before, which the caller releases.
   rows = add(rows, ["__map_put_impl", "__map_put_keyed"], sig_also(2, effect_release(), result_unknown(), [], [1]));
   rows = add(rows, ["__map_iter_impl"], sig(0, effect_move(), result_fresh()));
   rows = add(rows, ["__map_cow_inplace"], sig(0, effect_unsure(), result_fresh()));
@@ -204,15 +112,6 @@ pub function table(): Table {
   return Table { names: util.name_index(rows.names), sigs: rows.sigs };
 }
 
-// The per-type helpers the lowering generates, matched by prefix. A children-
-// only drop (`__sem_drop_<T>`) releases the box's children and not the box:
-// its caller proved the box unique and releases it after. `__sem_release_<T>`
-// releases one unit of the value whole. The closed `__drop_*` family is
-// native's spelling of the same, listed so a stream either compiler produced
-// reads the same.
-// The runtime's releases: each takes the object as argument 0 and the
-// caller's unit on it ends there. `__fern_box_free` and `__free` take the
-// block and its size; the `__map_*` rows are core/map's, written in Fern.
 function release_helpers(): string[] {
   return [
     "__fern_rc_dec", "__fern_arr_dec", "__fern_arr_share_dec", "__fern_str_free", "__fern_str_dec", "__fern_str_rc_dec",
@@ -223,9 +122,6 @@ function release_helpers(): string[] {
   ];
 }
 
-// The copy-on-write moves: the receiver on the shared path is released and
-// a replacement handed back, so the caller's unit on the operand is gone
-// either way.
 function move_helpers(): string[] {
   return [
     "__fern_arr_cow_inplace", "__fern_arr_cow_inplace_ptr", "__fern_arr_cow_inplace_str", "__fern_str_append",
@@ -233,11 +129,6 @@ function move_helpers(): string[] {
   ];
 }
 
-// The generated whole-value releases, by the prefix the lowering names them
-// with. The list is closed rather than a "__drop_" rule: `std/async.fern`
-// defines `__drop_losers(drv, fs, winner)`, which releases none of its
-// three arguments, and the corpus holds user functions called `mk_free`,
-// `map_inc` and `hex_decode`.
 function release_prefixes(): string[] {
   return [
     "__sem_release_", "__closure_drop_", "__drop_struct_flat_", "__drop_struct_", "__drop_enum_", "__drop_tuple_",
@@ -246,13 +137,10 @@ function release_prefixes(): string[] {
   ];
 }
 
-// The generated releases whose name carries no type suffix.
 function release_names(): string[] {
   return ["__drop_arr_closure", "__drop_closure_value"];
 }
 
-// releases_operand: a call to `name` gives up the caller's unit on its
-// argument 0 — a release, a move or a generated whole-value drop.
 pub function releases_operand(name: string): boolean {
   return util.index_of_str(release_helpers(), name) >= 0 || util.index_of_str(move_helpers(), name) >= 0 || is_generated_release(name);
 }
@@ -261,14 +149,10 @@ pub function children_drop_prefix(): string {
   return "__sem_drop_";
 }
 
-// has_prefix requires a non-empty suffix: a drop's suffix is the type it
-// drops, so a bare prefix names nothing.
 function has_prefix(name: string, prefix: string): boolean {
   return name.len() > prefix.len() && util.str_has_prefix(name, prefix);
 }
 
-// is_generated_release reports whether `name` is a generated whole-value
-// release, which consumes its argument 0.
 pub function is_generated_release(name: string): boolean {
   for p in release_prefixes() {
     if (has_prefix(name, p)) {
@@ -278,16 +162,10 @@ pub function is_generated_release(name: string): boolean {
   return util.index_of_str(release_names(), name) >= 0;
 }
 
-// is_children_drop reports whether `name` is a generated children-only drop:
-// argument 0 is a box the caller proved unique, whose children the helper
-// releases and whose own unit the caller keeps.
 pub function is_children_drop(name: string): boolean {
   return has_prefix(name, children_drop_prefix());
 }
 
-// lookup is the signature of a `call_direct` callee the table knows, else
-// the unknown signature. A Fern function with a contract is the caller's to
-// resolve first; this answers for the names no contract carries.
 pub function (t: Table) lookup(name: string): Sig {
   let at: i32 = t.names.find(name);
   if (at >= 0) {
@@ -302,15 +180,6 @@ pub function (t: Table) lookup(name: string): Sig {
   return unknown_sig();
 }
 
-// ---- the IR operations ----------------------------------------------------
-
-// The ops whose result is a fresh unit the frame holds: the string producers,
-// the fresh arrays and the per-call Option / Result boxes of the host surface.
-// Each was read off ir.fern's constructor and the runtime body it names.
-// The producers the lowering emits by structure rather than by a builtin's
-// name: a fresh box or string from parts. A builtin's own op is marked at
-// its emission (ir.counted) when its result is a reference, so it needs no
-// row here; an op in neither place hands back a word nothing counts.
 function fresh_ops(): string[] {
   return [
     "alloc_u8", "raw_arr_box", "tuple_make_k", "dyn_box", "str_concat", "str_from_bytes", "str_from_bytes_range",
@@ -318,47 +187,27 @@ function fresh_ops(): string[] {
   ];
 }
 
-// The op whose result is the operand it consumed: the in-place scale hands
-// its sole-owned buffer back as the result.
 function move_ops(): string[] {
   return ["scale_f64_in_place"];
 }
 
-// OpTable is the IR-op half, built once beside `table`.
 pub struct OpTable { names: util.NameIndex, sigs: Sig[] }
 
 pub function op_table(): OpTable {
   let rows: Rows = Rows { names: [], sigs: [] };
   rows = add(rows, fresh_ops(), inert(result_fresh()));
   rows = add(rows, move_ops(), sig(0, effect_move(), result_fresh()));
-  // A paired return (sempair): the callee hands its second word over as a
-  // unit of the caller's, and the caller reads it as one whose kind the
-  // contract alone could say, so it is unproved here.
   rows = add(rows, ["ret_word"], inert(result_none()));
   rows = add(rows, ["call_word"], inert(result_unknown()));
-  // The consuming pushes take the receiver's unit and hand back the grown
-  // array; the element rides in as a store does (rccertify reads the
-  // element operand as stored). The borrowed pushes leave the receiver's
-  // count alone and answer the receiver's box or a fresh copy, which the
-  // lowering tells apart by address afterwards.
   rows = add(rows, ["arr_push_owned", "arr_push_owned_i64", "arr_push_owned_f64", "arr_push_owned_u8"], sig(0, effect_move(), result_fresh()));
   rows = add(rows, ["arr_push", "arr_push_i64", "arr_push_f64", "arr_push_u8"], inert(result_unknown()));
-  // The dynamic element loads of the stack machine's arms are borrows.
   rows = add(rows, ["arr_get_i64", "arr_get_i64_nc", "tuple_get_w", "struct_get_i64", "opt_payload_w"], inert(result_borrow()));
   rows = add(rows, ["opt_make_w", "arr_make_i64", "const_option", "const_struct", "const_closure"], inert(result_none()));
-  // The argument vector is built once and cached: fresh on the first call
-  // and a borrow after, so no single answer.
   rows = add(rows, ["args", "environ"], inert(result_unknown()));
-  // A raw block's count is whatever the program stores in it: core/map
-  // builds its handles this way, so a release of one is unproved.
   rows = add(rows, ["alloc", "raw_alloc"], inert(result_unknown()));
   return OpTable { names: util.name_index(rows.names), sigs: rows.sigs };
 }
 
-// op_lookup is the signature of an IR op the lift carries by kind name,
-// else unknown, which is the common case: an op with no row consumes nothing
-// and its result is what its mark says. A packed byte form (`_u8`) is the
-// same op.
 pub function (t: OpTable) op_lookup(kind: string): Sig {
   let at: i32 = t.names.find(kind);
   if (at >= 0) {
@@ -371,13 +220,10 @@ pub function (t: OpTable) op_lookup(kind: string): Sig {
   return unknown_sig();
 }
 
-// pushes_element: the op stores its last operand into the container its
-// first names, as a field store does.
 pub function pushes_element(kind: string): boolean {
   return util.str_has_prefix(kind, "arr_push") && kind != "arr_push_shared_bytes" && kind != "arr_push_shared_count";
 }
 
-// boxes_operands: every operand is moved into the box the op builds.
 pub function boxes_operands(kind: string): boolean {
   return kind == "tuple_make_k" || kind == "dyn_box" || kind == "opt_make_w" || kind == "arr_make_i64";
 }

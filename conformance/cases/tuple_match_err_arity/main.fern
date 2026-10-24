@@ -1,4 +1,4 @@
-// A tuple pattern's arity must match the scrutinee tuple's.
+
 function main(): i32 {
     let p = (1, 2);
     match (p) {

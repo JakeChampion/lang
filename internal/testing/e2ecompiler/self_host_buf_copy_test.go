@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// The byte-buffer and string-builder helpers copy in bulk: through the
-// size-classed __fern_memcpy on x86-64, and on arm64 through the word loop the
-// memcpy op uses, whose last word overlaps the one before it. The program
-// pushes every length from 0 to 40, which reaches every size class, through a
-// builder that starts at one byte, so each reserve copies too. A second builder
-// is appended past its first 64 KiB, then every byte it gives back is checked.
 const bufCopyProg = `function matches(out: string, at: i32, alpha: string, lo: i32, n: i32): boolean {
     let i: i32 = 0;
     while (i < n) {
@@ -89,9 +83,6 @@ func TestSelfHostBufCopy(t *testing.T) {
 				t.Fatalf("%s: %s not in the listing", target, name)
 			}
 			if name == "__fern_buf_take" {
-				// The register-ABI entry now delegates text validation and
-				// copying to the shared Fern helper. Check the delegation and
-				// its whole body, including the path after the empty return.
 				call := regexp.MustCompile(`\n\s+(call|bl) __fn___fern_buf_take_text\n`)
 				if !call.MatchString(m[0]) {
 					t.Fatalf("%s: text extraction does not call its shared helper", target)
@@ -100,8 +91,6 @@ func TestSelfHostBufCopy(t *testing.T) {
 				if m == nil {
 					t.Fatalf("%s: shared text extraction body missing", target)
 				}
-				// Typed IR lowers __memcpy to rep movsb on x86 and to a
-				// word load/store loop on ARM, using its own scratch registers.
 				if target == "x86-64-linux" {
 					copyPattern = regexp.MustCompile(`\n\s+rep movsb\n`)
 				} else {

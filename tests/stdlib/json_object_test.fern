@@ -3,11 +3,6 @@ import "std/json";
 import "std/i32";
 import "std/option";
 
-// tests/stdlib/json_object_test.fern — std/json's JsonObject: members in
-// document order, one per key, searched linearly up to JSON_LINEAR_MAX (8)
-// members and through the hash index beyond. Each lookup case runs on both
-// sides of that line.
-
 function parsed(text: string): json.JsonObject {
   match (json.json_parse(text)) {
     Some(v) => {
@@ -26,7 +21,6 @@ function parsed(text: string): json.JsonObject {
   }
 }
 
-// keyed is an object of `n` members k0..k(n-1), each bound to its index.
 function keyed(n: i32): json.JsonObject {
   let o: json.JsonObject = json.object();
   let i: i32 = 0;
@@ -99,7 +93,6 @@ function test_insert_replaces_in_place(): test.TestOutcome {
   return test.assert_eq(json.json_encode(JObject(small)), "{\"k0\":0,\"k1\":100,\"k2\":2}");
 }
 
-// The ninth insert builds the index; the ones after it extend or regrow it.
 function test_insert_across_the_index_threshold(): test.TestOutcome {
   let o: json.JsonObject = keyed(8);
   o = o.insert("k8", JNumber("8"));
@@ -121,8 +114,6 @@ function test_get_or(): test.TestOutcome {
   return test.assert_eq(num(Some(o.get_or("k1", JNull))), "1");
 }
 
-// A repeated key keeps its first position and takes its last value, in a
-// small object and an indexed one alike.
 function test_parse_repeated_keys(): test.TestOutcome {
   let small: json.JsonObject = parsed("{\"a\":1,\"b\":2,\"a\":3}");
   if (json.json_encode(JObject(small)) != "{\"a\":3,\"b\":2}") {

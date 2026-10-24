@@ -1,35 +1,3 @@
-// ptx.fern — GNU-compatible `ptx`.
-//
-//   ptx [OPTION]... [INPUT]...            (without -G)
-//   ptx -G [OPTION]... [INPUT [OUTPUT]]
-//
-// A permuted index: every WORD of the input is a keyword, and each
-// keyword gets a line showing it inside the CONTEXT it came from, the
-// whole set sorted by keyword. The context is a sentence without -G and
-// a line with it; the word alphabet is letters without -G and
-// non-whitespace with it, and -b, -W and -S replace each of those.
-//
-// The output line of the default (column) format is a rotation of the
-// context around the keyword:
-//
-//   [tail]        [before]   [keyword after]        [head]
-//
-// `before` and `keyafter` are the text either side of the keyword;
-// `tail` is what ran off the end of `keyafter`, wrapped to the left,
-// and `head` is what ran off the start of `before`, wrapped to the
-// right. `-F` marks a field that lost text. The column arithmetic —
-// which field ends where, and how many bytes each may hold — is in
-// `Geom` below and in `cut_fields`; every number there was measured
-// against the reference binary rather than derived, and the head's
-// share is the one that cannot be guessed: it is the WIDEST keyword in
-// the whole input plus the gap, counted from the keyword rather than
-// from the end of the before field.
-//
-// -W and -S are compiled with glibc's DEFAULT syntax, which is syntax 0
-// (Emacs) rather than POSIX basic: `+` `?` `*` are operators unescaped,
-// `\|` is alternation, `\(` `\)` group, and there are no intervals and
-// no character classes. That is `lib/bre.fern`'s `emacs_syntax()`, the
-// dialect tac(1) already needed.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
@@ -37,9 +5,6 @@ import "./lib/gnu";
 import "./lib/bre";
 import "./lib/radix";
 
-// ---- options ---------------------------------------------------------------
-// Declared in GNU's order: the ambiguity list prints its candidates in
-// it (`ptx --=x`).
 function opt_auto(): i32 {
   return 1;
 }
@@ -144,13 +109,6 @@ function help_text(): string {
   return out;
 }
 
-// ---- the -F / -S / -W escape table -----------------------------------------
-//
-// Not C's table and not gnulib's: octal needs the leading zero (`\101`
-// is four literal characters, `\0101` is `A`), hex takes at most three
-// digits and keeps the low byte, `\c` TRUNCATES the string, `\e` is not
-// an escape, and an unknown escape keeps its backslash. `\0` yields a
-// NUL, which makes a flag string empty.
 function unescape(s: string): u8[] {
   let out: u8[] = [];
   let i: i32 = 0;
@@ -222,8 +180,6 @@ function unescape(s: string): u8[] {
   return out;
 }
 
-// A flag string is a C string, so a NUL inside it ends it — `-F '\0'`
-// is `-F ''`.
 function cut_at_nul(s: u8[]): u8[] {
   let i: i32 = 0;
   while (i < s.len()) {
@@ -256,7 +212,6 @@ function copy_range(bytes: u8[], lo: i32, hi: i32): u8[] {
   return out;
 }
 
-// ---- character classes ------------------------------------------------------
 function is_alpha(c: i32): boolean {
   return c >= 65 && c <= 90 || c >= 97 && c <= 122;
 }
@@ -272,14 +227,12 @@ function upper(c: i32): i32 {
   return c;
 }
 
-// ---- settings ---------------------------------------------------------------
 struct Opts {
   gnu_ext: boolean,
   auto_ref: boolean,
   input_ref: boolean,
   right_ref: boolean,
   fold: boolean,
-  // 0 dumb (columns), 1 roff, 2 tex.
   format: i32,
   trunc: u8[],
   macro: string,
@@ -298,40 +251,14 @@ struct Opts {
   have_only: boolean,
 }
 
-// `Geom` — every width the formatter uses, fixed once per run.
-//
-//   half      the column the `before` field ends at
-//   ka_max    bytes the keyword-and-after field may hold
-//   bef_max   bytes the `before` field may hold
-//   tail_base tail bytes before the `before` field's own length is
-//             taken off it
-//   head_base head bytes, which is the WIDEST KEYWORD in the whole
-//             input plus the gap — GNU reserves room for it there
-//   room_adj  one column -G takes off the head's share of `before`
-//
-// -G is not the same layout one column narrower: it drops the
-// truncation string's reserve from `before` and the tail and adds it to
-// the head, and takes one byte off `keyafter`.
 struct Geom { half: i32, col_half: i32, gap: i32, tlen: i32, ka_max: i32, bef_max: i32, tail_base: i32, head_base: i32, room_adj: i32, refw: i32, refs_left: boolean, has_ref: boolean }
 
-// ---- word and context spans -------------------------------------------------
-// The occurrences, the words and the line table are parallel arrays
-// rather than arrays of structs: only the sort moves anything, and it
-// moves 4-byte indices.
 struct Words { starts: i32[], ends: i32[] }
 
 struct Lines { starts: i32[], ends: i32[], ref_end: i32[], text: i32[], nums: i32[] }
 
 struct Occ { kw_start: i32, kw_end: i32, ctx_start: i32, ctx_end: i32, ref: u8[], wi: i32 }
 
-// `word_at(w, p)` — the word STRICTLY containing `p` (start < p < end),
-// or (-1, -1). A cut landing there is moved out of the word; a cut on a
-// word's own boundary is already clean.
-// The word `p` falls strictly inside, as its start in the high word and
-// its end in the low, or -1 when `p` is between words; a pair would be
-// a heap cell on every call. `wi` is a word near `p` — the keyword's,
-// since every cut point is within a half line of it — so the walk is a
-// few steps where a search from scratch was seventeen.
 function word_at(w: Words, p: i32, wi: i32): i64 {
   let n: i32 = w.starts.len();
   let k: i32 = wi;
@@ -357,13 +284,10 @@ function word_end(wa: i64): i32 {
   return (wa & 4294967295 as i64) as i32;
 }
 
-// ---- input ------------------------------------------------------------------
 function read_size(): i32 {
   return 262144;
 }
 
-// Every byte of `path`; "-" and "" are standard input. A failure is
-// GNU's `ptx: NAME: <strerror>`, exit 1, with nothing written yet.
 function slurp(path: string, w: io_buffered.BufWriter): u8[] {
   let r: Reader = stdin();
   if (path != "-" && path != "") {
@@ -399,8 +323,6 @@ function slurp(path: string, w: io_buffered.BufWriter): u8[] {
   return out;
 }
 
-// A word list: one word per LINE, so a line holding two words is one
-// entry that can never match. Empty lines are dropped.
 function word_list(path: string, w: io_buffered.BufWriter): u8[][] {
   let text: u8[] = slurp(path, w);
   let out: u8[][] = [];
@@ -442,10 +364,6 @@ function in_list(list: u8[][], buf: u8[], lo: i32, hi: i32, fold: boolean): bool
   return false;
 }
 
-// ---- numeric options --------------------------------------------------------
-// GNU's numeric options accept decimal, leading-zero octal and 0x hex.
-// Linux's C23 parser also accepts 0b/0B; Darwin's parser rejects it.
-// The value must be positive and inside intmax_t.
 function parse_num(v: string, what: string): i64 {
   let i: i32 = 0;
   while (i < v.len() && gnu.is_blank(v[i] as i32)) {
@@ -495,7 +413,6 @@ function parse_num(v: string, what: string): i64 {
   }
   let bad: boolean = i != v.len() || over || mag > 9223372036854775807 as u64;
   if (base == 8 && digits == 0 && !bad) {
-    // A bare `0`: the leading zero was the whole number.
     bad = false;
   } else if (digits == 0) {
     bad = true;
@@ -515,10 +432,6 @@ function parse_num(v: string, what: string): i64 {
   return val;
 }
 
-// ---- regexps ----------------------------------------------------------------
-// The sentence that ends a context without -G: one of `.?!`, any run of
-// the closers, then end of line, a tab, or two spaces, and the blanks
-// after it, so the next context starts at its first word.
 function default_sentence(): string {
   return "[.?!][]\"')}]*\\($\\|\t\\|  \\)[ \t\n]*";
 }
@@ -531,11 +444,8 @@ function compile(pat: u8[], w: io_buffered.BufWriter): bre.Bre {
   return re;
 }
 
-// ---- the run ----------------------------------------------------------------
 struct Run { buf: u8[], words: Words, lines: Lines, occs: Occ[], maxword: i32 }
 
-// `find_words` — the occurrences in `buf[lo, hi)`, either every run of
-// non-break bytes or every match of -W's regexp.
 function find_words(buf: u8[], lo: i32, hi: i32, brk: u8[], re: bre.Bre, have_re: boolean, w: Words): Words {
   let starts: i32[] = w.starts;
   let ends: i32[] = w.ends;
@@ -549,7 +459,6 @@ function find_words(buf: u8[], lo: i32, hi: i32, brk: u8[], re: bre.Bre, have_re
       starts = starts.append(m.0);
       ends = ends.append(m.1);
       if (m.1 == m.0) {
-        // An empty match never advances; GNU spins here forever.
         pos = m.0 + 1;
       } else {
         pos = m.1;
@@ -574,9 +483,6 @@ function find_words(buf: u8[], lo: i32, hi: i32, brk: u8[], re: bre.Bre, have_re
   return Words { starts: starts, ends: ends };
 }
 
-// The line table of `buf[lo, hi)`: where each line starts, where its
-// reference ends, where its text begins after the blanks that follow
-// the reference, and its 1-based number inside its own file.
 function find_lines(buf: u8[], lo: i32, hi: i32, l: Lines): Lines {
   let starts: i32[] = l.starts;
   let ends: i32[] = l.ends;
@@ -631,19 +537,6 @@ function line_of(l: Lines, p: i32): i32 {
   return best;
 }
 
-// ---- sorting ----------------------------------------------------------------
-// Byte order over the keyword, folded when -f asks, and ties left in
-// input order. The keyword's first eight bytes order the occurrences
-// with a radix sort, and only the runs of equal words go through a
-// bottom-up stable merge over indices that reads the whole keyword.
-// The sort key is the keyword, and the keyword is a span of the one
-// buffer, so the comparison reads it there. Materialising it cost a
-// string per occurrence whose only use was this, and -f cost a second
-// one; folding the buffer once is the same order.
-// Whether span a orders before span b in `kbuf`, the buffer with case
-// already folded when -f asked for it: the mismatch kernel finds the
-// first differing byte of the common span, and the shorter span wins a
-// tie.
 function key_less(kbuf: u8[], a_start: i32, a_end: i32, b_start: i32, b_end: i32): boolean {
   let an: i32 = a_end - a_start;
   let bn: i32 = b_end - b_start;
@@ -658,8 +551,6 @@ function key_less(kbuf: u8[], a_start: i32, a_end: i32, b_start: i32, b_end: i32
   return an < bn;
 }
 
-// `buf` with every lowercase ASCII letter raised, so a folded comparison
-// is a plain one.
 function fold_buf(buf: u8[]): u8[] {
   let n: i32 = buf.len();
   let out: u8[] = __alloc_u8(n);
@@ -705,7 +596,6 @@ function sort_occs(buf: u8[], occs: Occ[], fold: boolean): i32[] {
   if (fold) {
     kbuf = fold_buf(buf);
   }
-  // The keyword's first eight bytes, as a word.
   let words: i64[] = [];
   if (n >= radix.threshold()) {
     let k: i32 = 0;
@@ -729,10 +619,6 @@ function sort_occs(buf: u8[], occs: Occ[], fold: boolean): i32[] {
         hi = hi + 1;
       }
     }
-    // A bottom-up merge of src[lo..hi), the two buffers alternating;
-    // an odd number of passes leaves the run in dst, and it is copied
-    // back so src holds every run. A run already in order, which one
-    // word repeated through a text is, costs one comparison an element.
     let passes: i32 = 0;
     let width: i32 = hi - lo;
     let c0: i32 = lo + 1;
@@ -810,12 +696,6 @@ function sort_occs(buf: u8[], occs: Occ[], fold: boolean): i32[] {
   return out;
 }
 
-// ---- field text -------------------------------------------------------------
-// Every field is a span of the normalised buffer, written to the output
-// from there: nothing is copied out per occurrence.
-// `buf` with every whitespace byte that is not a space made one, once,
-// so a field is a plain span of it: positions are unchanged, and the
-// space tests the cuts make answer the same on either buffer.
 function norm_all(buf: u8[]): u8[] {
   let n: i32 = buf.len();
   let out: u8[] = __alloc_u8(n);
@@ -831,9 +711,6 @@ function norm_all(buf: u8[]): u8[] {
   return out;
 }
 
-// A span as its start in the high word and its end in the low; a span
-// cut_fields computes with no room left comes out inverted, and is the
-// empty span at its start.
 function span(a: i32, b: i32): i64 {
   let e: i32 = b;
   if (e < a) {
@@ -854,7 +731,6 @@ function span_len(sp: i64): i32 {
   return span_hi(sp) - span_lo(sp);
 }
 
-// `buf[a, b)` without its leading and trailing whitespace.
 function trim_span(buf: u8[], a: i32, b: i32): i64 {
   let i: i32 = a;
   while (i < b && is_space(buf[i] as i32)) {
@@ -867,9 +743,6 @@ function trim_span(buf: u8[], a: i32, b: i32): i64 {
   return span(i, j);
 }
 
-// The keyword begins the keyafter field, so only its tail is trimmed:
-// a -W that matches whitespace makes the keyword itself a blank, and
-// GNU prints it.
 function rtrim_span(buf: u8[], a: i32, b: i32): i64 {
   let j: i32 = b;
   while (j > a && is_space(buf[j - 1] as i32)) {
@@ -889,13 +762,10 @@ function has_text(buf: u8[], a: i32, b: i32): boolean {
   return false;
 }
 
-// `Fields` — one output line's five pieces and which of them lost text.
 struct Fields { tail: i64, before: i64, keyafter: i64, keyword: i64, after: i64, head: i64, tail_flag: boolean, before_flag: boolean, keyafter_flag: boolean, head_flag: boolean, blank_pad: i32 }
 
 function cut_fields(buf: u8[], o: Occ, w: Words, g: Geom, maxword: i32): Fields {
   let t: i32 = g.tlen;
-  // keyafter: the keyword and what follows, cut at ka_max and moved
-  // back out of a word. The keyword itself is never cut.
   let ka_end: i32 = o.kw_start + g.ka_max;
   if (ka_end < o.kw_end) {
     ka_end = o.kw_end;
@@ -913,8 +783,6 @@ function cut_fields(buf: u8[], o: Occ, w: Words, g: Geom, maxword: i32): Fields 
   }
   let ka: i64 = rtrim_span(buf, o.kw_start, ka_end);
 
-  // before: the last bef_max bytes of what precedes the keyword, moved
-  // forward out of a word.
   let bsrc_end: i32 = o.kw_start;
   while (bsrc_end > o.ctx_start && is_space(buf[bsrc_end - 1] as i32)) {
     bsrc_end = bsrc_end - 1;
@@ -933,8 +801,6 @@ function cut_fields(buf: u8[], o: Occ, w: Words, g: Geom, maxword: i32): Fields 
   }
   let before: i64 = trim_span(buf, bef_start, bsrc_end);
 
-  // tail: what keyafter left behind, cut at what the before field left
-  // of the left half.
   let tail: i64 = span(0, 0);
   let tail_flag: boolean = false;
   let rest: boolean = has_text(buf, ka_end, o.ctx_end);
@@ -942,9 +808,6 @@ function cut_fields(buf: u8[], o: Occ, w: Words, g: Geom, maxword: i32): Fields 
   while (t_start < o.ctx_end && is_space(buf[t_start] as i32)) {
     t_start = t_start + 1;
   }
-  // An empty before field puts its truncation flag AT the half-line
-  // column rather than left of it, so the tail keeps the column the
-  // flag would otherwise have taken.
   let tail_room: i32 = g.tail_base - span_len(before);
   if (lost_before && span_len(before) == 0) {
     tail_room = tail_room + 1;
@@ -966,17 +829,11 @@ function cut_fields(buf: u8[], o: Occ, w: Words, g: Geom, maxword: i32): Fields 
   }
   let ka_flag: boolean = rest && span_len(tail) == 0;
 
-  // head: what before left behind, held in the room GNU reserves for
-  // the widest keyword, and never wider than what is left of the before
-  // field once keyafter has taken its share.
   let head: i64 = span(0, 0);
   let head_flag: boolean = false;
   if (lost_before) {
     let head_max: i32 = maxword + g.head_base;
     let room: i32 = g.half - g.gap - 2 * t - span_len(ka) - g.room_adj;
-    // Measured from the keyword rather than from the trimmed end of
-    // the before field: a blank between the two belongs to the head's
-    // share.
     let h: i32 = o.kw_start - g.bef_max - head_max;
     if (h - 1 <= o.ctx_start) {
       h = o.ctx_start;
@@ -1024,7 +881,6 @@ function cut_fields(buf: u8[], o: Occ, w: Words, g: Geom, maxword: i32): Fields 
   return Fields { tail: tail, before: before, keyafter: ka, keyword: keyword, after: after, head: head, tail_flag: tail_flag, before_flag: before_flag, keyafter_flag: ka_flag, head_flag: head_flag, blank_pad: blank_pad };
 }
 
-// ---- output -----------------------------------------------------------------
 function flag_of(on: boolean, opts: Opts): u8[] {
   if (on) {
     return opts.trunc;
@@ -1033,12 +889,6 @@ function flag_of(on: boolean, opts: Opts): u8[] {
   return empty;
 }
 
-// The truncation string bypasses the doubling the field text gets, so
-// `-F '"'` leaves malformed roff exactly as GNU does.
-// One quoted roff argument: `"`, `pre`, `text[a, n)` with every `"`
-// doubled, `post`, `"` — pushed as the runs between the quotes, not a
-// byte at a time. The span sits inside the whole input, so the quote is
-// looked for byte by byte: `__memchr` would read on to the input's end.
 function roff_field(h: usize, text: u8[], a: i32, n: i32, pre: u8[], post: u8[]): void {
   buf_push_byte(h, 34);
   buf_push_bytes_range(h, pre, 0, pre.len());
@@ -1057,9 +907,6 @@ function roff_field(h: usize, text: u8[], a: i32, n: i32, pre: u8[], post: u8[])
   buf_push_byte(h, 34);
 }
 
-// TeX's own eight: the four money-and-comment characters, the
-// underscore, the backslash, and the two braces, which need maths mode.
-// `s[a, n)` with TeX's specials escaped, pushed as the runs between them.
 function tex_quote(h: usize, s: u8[], a: i32, n: i32): void {
   let i: i32 = a;
   let run: i32 = a;
@@ -1096,18 +943,6 @@ function spaces(n: i32): string {
   return " ".repeat(n);
 }
 
-// The column format, written straight into the output buffer. The line
-// is laid out left to right: the reference when it is on the left, the
-// tail at one gap in, the before field ending at the column half, the
-// keyword-and-after starting a gap past it, and the head ending at the
-// second column half; each may carry the truncation marker beside it.
-//
-// `layout` walks the fields once per mode. The check pass proves every
-// write lands past the one before it and inside the width, which is
-// what lets the emit pass stream the pieces with their gaps into the
-// writer and hold back trailing spaces — the rtrim the whole line got
-// before — until a non-space byte follows them. A layout the check
-// refuses goes through the byte buffer the format was defined with.
 const BLANKS: string = "                                                                ";
 
 struct Line { h: usize, width: i32, mode: i32, cursor: i32, pending: i32, emitted: i32, e2: i32, ok: boolean, buf: u8[] }
@@ -1124,7 +959,6 @@ function push_spaces(h: usize, count: i32): void {
   }
 }
 
-// `s[a, b)` at column `at`.
 function put(own l: Line, at: i32, s: u8[], a: i32, b: i32): Line {
   let p: i32 = at;
   if (p < 0) {
@@ -1157,10 +991,6 @@ function put(own l: Line, at: i32, s: u8[], a: i32, b: i32): Line {
   return Line { ...l, cursor: p + n, pending: pending, emitted: emitted };
 }
 
-// A field with the marker that precedes it in the line. The buffer path
-// keeps the order the format was defined with, field then marker over
-// it, because the two overlap once the marker's position clamps at 0;
-// the other modes take them in line order.
 function put_marked(own l: Line, at: i32, s: u8[], sp: i64, mark_at: i32, mark: u8[], flag: boolean): Line {
   if (l.mode == 2) {
     l = put(l, at, s, span_lo(sp), span_hi(sp));
@@ -1197,8 +1027,6 @@ function layout(own l0: Line, text: u8[], f: Fields, ref: u8[], g: Geom, opts: O
     l = put_marked(l, e - bn, text, f.before, e - bn - t, tr, f.before_flag);
   } else {
     if (f.before_flag) {
-      // An oversized marker still follows the initial gap. The keyword
-      // follows the whole marker rather than overwriting its final bytes.
       let marker_at: i32 = e + 1 - t;
       if (marker_at < base + g.gap) {
         marker_at = base + g.gap;
@@ -1221,8 +1049,6 @@ function layout(own l0: Line, text: u8[], f: Fields, ref: u8[], g: Geom, opts: O
   return Line { ...l, e2: e2 };
 }
 
-// One output line, through `l0`, which carries only the writer from one
-// line to the next.
 function render_dumb(own l0: Line, text: u8[], f: Fields, ref: u8[], g: Geom, opts: Opts): Line {
   let h: usize = l0.h;
   let t: i32 = g.tlen;
@@ -1289,8 +1115,6 @@ function render_roff(h: usize, text: u8[], f: Fields, ref: u8[], g: Geom, opts: 
   buf_push_byte(h, 10);
 }
 
-// TeX splits the keyword from what follows it, and prints no
-// truncation flag at all.
 function render_tex(h: usize, text: u8[], f: Fields, ref: u8[], g: Geom, opts: Opts): void {
   buf_push_byte(h, 92);
   buf_push(h, opts.macro);
@@ -1313,7 +1137,6 @@ function render_tex(h: usize, text: u8[], f: Fields, ref: u8[], g: Geom, opts: O
   buf_push_byte(h, 10);
 }
 
-// ---- main -------------------------------------------------------------------
 pub function main(): i32 {
   let argv: string[] = args();
   let opts: gnu.Opt[] = [];
@@ -1401,9 +1224,6 @@ pub function main(): i32 {
     out_name = files[1];
     have_out = true;
   }
-  // The -G output file is created — and truncated — before every check
-  // but the option-parse-time ones, so a run that goes on to report an
-  // extra operand or a bad regexp still empties it.
   let output: Writer = stdout();
   if (have_out) {
     match (open_writer(out_name)) {
@@ -1429,7 +1249,6 @@ pub function main(): i32 {
     files = files.append("-");
   }
 
-  // Regexps beat every file open.
   let word_re: bre.Bre = bre.bre_compile_syntax("", bre.emacs_syntax());
   if (o.have_word) {
     word_re = compile(o.word_pat, w);
@@ -1442,9 +1261,6 @@ pub function main(): i32 {
   }
   let sent_re: bre.Bre = compile(sent_src, w);
 
-  // The break set: -b's bytes, else letters are words without -G and
-  // non-whitespace with it. -G adds space, tab and newline to whatever
-  // -b named.
   let brk: u8[] = __alloc_u8(256);
   if (!o.have_word) {
     let c: i32 = 0;
@@ -1493,8 +1309,6 @@ pub function main(): i32 {
     only = word_list(o.only_file, w);
   }
 
-  // Every operand is read whole, into one buffer; a context never spans
-  // two of them, so each file keeps its own range inside it.
   let buf: u8[] = [];
   let fstart: i32[] = [];
   let fend: i32[] = [];
@@ -1527,15 +1341,9 @@ pub function main(): i32 {
     i = i + 1;
   }
 
-  // The occurrences, file by file and context by context. A context's
-  // words are the ones found inside it, so a word the scan found running
-  // past either end is cut there, and the widest word is measured after
-  // the cut, reference words included.
   let occs: Occ[] = [];
   let maxword: i32 = 0;
   let maxref: i32 = 0;
-  // A line's reference is built once and shared by its occurrences; the
-  // plain-text output's left-side `-A` reference carries its colon.
   let colon: boolean = o.auto_ref && !o.right_ref && o.format != 1 && o.format != 2;
   let no_ref: u8[] = [];
   let line_refs: u8[][] = [];
@@ -1570,7 +1378,6 @@ pub function main(): i32 {
       } else {
         pos = fend[i];
       }
-      // The separator's trailing blanks are not the context's.
       while (ce > cs && is_space(buf[ce - 1] as i32)) {
         ce = ce - 1;
       }
@@ -1647,7 +1454,6 @@ pub function main(): i32 {
     i = i + 1;
   }
 
-  // The geometry, once.
   let gap: i32 = clamp_i32(o.gap);
   let tlen: i32 = o.trunc.len();
   let has_ref: boolean = o.auto_ref || o.input_ref;

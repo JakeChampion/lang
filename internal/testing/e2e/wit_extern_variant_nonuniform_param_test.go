@@ -12,18 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternVariantNonUniformParamCustomProvider is the *non-uniform* `variant`
-// *parameter* gate (docs/WIT-BRING-YOUR-OWN.md): a Fern enum whose payloaded arms
-// carry different scalar types of the same canonical core width —
-// `enum Num { I(i32), F(f32) }` (both 32-bit) — passed to an `@import` extern
-// taking the WIT `variant num { i(s32), f(f32) }`. The canonical join is the
-// i32 bit-container, so the (disc, payload) wrapper pushes the payload's *bits*
-// (`i32.load` of the box slot) regardless of arm; the host reinterprets per disc.
-// The f32 arm's bits survive: the provider recovers the float with
-// `f32.reinterpret_i32`.
-//
-// `take: func(v: num) -> s32`: i(p) → p, f(p) → `(reinterpret(p) * 4) as s32`.
-// The Fern side passes I(7) (→ 7) and F(2.5) (→ 10 only if the f32 bits round-trip).
 func TestExternVariantNonUniformParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -50,8 +38,6 @@ func TestExternVariantNonUniformParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// take receives the variant flattened to (disc:i32, payload:i32-join). The f
-	// arm's payload is the f32 bits, recovered via f32.reinterpret_i32.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (func (export "local:test/sink@0.1.0#take") (param $disc i32) (param $p i32) (result i32)

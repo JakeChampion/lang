@@ -2,14 +2,6 @@ package e2e
 
 import "testing"
 
-// TestDeclaredReturnTypes runs functions across the return-type shapes the
-// backends have to agree on — scalar, string, boolean, struct, Option, and a
-// call chain — on every backend (the IR layer is target-agnostic, so
-// x86-64 / wasm and the interpreter must all agree).
-//
-// Replaces TestReturnInference: the programs are the same, but each function
-// now declares its return type, because omitting it is E081. The inference
-// premise is retired; the multi-backend coverage of these return shapes is not.
 func TestDeclaredReturnTypes(t *testing.T) {
 	cases := []struct {
 		name string
@@ -25,8 +17,6 @@ func TestDeclaredReturnTypes(t *testing.T) {
 		{"option-some", `function find(n: i32): Option[i32] { if (n > 0) { return Some(n); } return None; } function main(): i32 { match (find(5)) { Some(v) => { return v; }, None => { return 0; } } return 9; }`, 5},
 		{"option-none", `function find(n: i32): Option[i32] { if (n > 0) { return Some(n); } return None; } function main(): i32 { match (find(-1)) { Some(v) => { return v; }, None => { return 8; } } return 9; }`, 8},
 		{"nested-call", `function twice(n: i32): i32 { return n + n; } function main(): i32 { return twice(twice(10)) + 2; }`, 42},
-		// `: void` is a real declaration, not an absence: a void function is
-		// callable as a statement and the program still runs on every backend.
 		{"void-fn", `function bump(n: i32): void { let x: i32 = n + 1; } function main(): i32 { bump(1); return 42; }`, 42},
 	}
 	for _, c := range cases {

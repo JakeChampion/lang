@@ -1,28 +1,3 @@
-// ln.fern — GNU-compatible `ln`.
-//
-//   ln [-T] TARGET LINK_NAME    one link, named
-//   ln TARGET                   one link, named ./$(basename TARGET)
-//   ln TARGET... DIRECTORY      one link per TARGET inside DIRECTORY
-//   ln -t DIRECTORY TARGET...   the same with the directory named first
-//
-// Four forms, and which one an argv is depends on the COUNT: with two
-// operands the last is a plain destination unless it happens to be a
-// directory, with three or more it must be one. `-T` pins the first
-// reading and `-t` the last.
-//
-// The destination is replaced rather than refused under `-f` / `-i` /
-// a backup, and the replacement is GNU's: the new link is made under a
-// temporary name in the destination's directory and RENAMED over it, so
-// a failure leaves the old destination where it was and the backup is
-// the old destination MOVED rather than copied. That is why this needs
-// `rename` and the rest of `link`'s primitives are not enough.
-//
-// Two arrow forms appear in the diagnostics and they are not the same
-// rule. A hard link's `'b' => 'a'` is shown unless the errno is one the
-// destination alone explains (EEXIST / ENOSPC / EROFS / EDQUOT); a
-// symbolic link's `'b' -> 'a'` is shown when the TARGET is what the
-// errno is about (a name too long, or an empty target). Both arrows also
-// spell `-v`.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
@@ -30,11 +5,6 @@ import "std/errno";
 import "./lib/gnu";
 import "./lib/canon";
 
-// ---- options ---------------------------------------------------------------
-//
-// Declared in GNU's order, which is visible: the ambiguity list prints
-// candidates in it, so `ln --n` names '--no-dereference' before
-// '--no-target-directory'.
 function opt_backup(): i32 {
   return 1;
 }
@@ -120,14 +90,8 @@ function help_text(): string {
   return out;
 }
 
-// `Cfg` — everything the option scan decided, for the per-operand work.
 struct Cfg { symbolic: boolean, force: boolean, interactive: boolean, no_deref: boolean, deref_src: boolean, hard_dir: boolean, relative: boolean, verbose: boolean, backups: boolean, control: i32, suffix: string }
 
-// ---- paths -----------------------------------------------------------------
-// The absolute resolved form of `p`, with components that do not exist
-// kept verbatim — gnulib's CAN_MISSING, which is `realpath -m`'s walk and
-// `lib/canon.fern`'s MISSING mode. It refuses nothing, so a path that
-// cannot be resolved comes back as itself made absolute.
 function resolved(p: string): string {
   match (canon.canonicalize(p, canon.missing(), false)) {
     Ok(r) => {
@@ -139,17 +103,10 @@ function resolved(p: string): string {
   }
 }
 
-// `--relative`: the text a symbolic link at `dest` should hold to reach
-// `target`, which is `target` said from the link's OWN directory. Both
-// sides are resolved first, so a symbolic link on either path is resolved
-// away and the answer can be `.` or `..`.
 function relativise(target: string, dest: string): string {
   return canon.relative(resolved(target), resolved(gnu.dir_name(dest)));
 }
 
-// ---- stat ------------------------------------------------------------------
-// `StatInfo` — the three facts every caller here wants from a stat, and
-// the strerror text when there was none.
 struct StatInfo { ok: boolean, is_dir: boolean, dev: i64, ino: i64, err: string }
 
 function stat_info(path: string, follow: boolean): StatInfo {
@@ -173,11 +130,6 @@ function stat_info(path: string, follow: boolean): StatInfo {
   }
 }
 
-// Whether `src` and `dest` are the same DIRECTORY ENTRY, not merely the
-// same inode: `ln -f a d/a` relinks a second name to one file silently,
-// where `ln -f ./a a` is the same entry said twice and is refused. The
-// destination is always lstat'd; the source follows its final symbolic
-// link when the link being made would (`-s` or `-L`).
 function same_entry(cfg: Cfg, src: string, dest: string): boolean {
   let s: StatInfo = stat_info(src, cfg.symbolic || cfg.deref_src);
   let d: StatInfo = stat_info(dest, false);
@@ -192,14 +144,10 @@ function same_entry(cfg: Cfg, src: string, dest: string): boolean {
   return sd.ok && dd.ok && sd.dev == dd.dev && sd.ino == dd.ino;
 }
 
-// ---- linking ---------------------------------------------------------------
-// The errnos a hard link's destination alone explains, which are the ones
-// whose diagnostic does NOT name the target.
 function hard_link_no_arrow(n: i32): boolean {
   return n == errno.EEXIST || n == errno.ENOSPC || n == errno.EROFS || n == errno.EDQUOT;
 }
 
-// The whole `failed to create …` line for a failed link, arrow and all.
 function create_failure(cfg: Cfg, dest: string, shown_target: string, e: IoError): string {
   let text: string = gnu.io_error_text(e);
   if (cfg.symbolic) {
@@ -216,8 +164,6 @@ function create_failure(cfg: Cfg, dest: string, shown_target: string, e: IoError
   return "failed to create hard link " + gnu.quotea(dest) + harrow + ": " + text;
 }
 
-// One link at `path`. `src` is the file a hard link reaches, already
-// followed for `-L`; `text` is what a symbolic link stores.
 function make_link(cfg: Cfg, src: string, text: string, path: string): Option[IoError] {
   if (cfg.symbolic) {
     match (create_symlink(text, path)) {
@@ -247,8 +193,6 @@ function make_link(cfg: Cfg, src: string, text: string, path: string): Option[Io
   }
 }
 
-// gnulib's linkat on Darwin answers a trailing slash on either name
-// itself: the source's own stat error, or ENOTDIR unless it is a directory.
 function darwin_slash_refusal(cfg: Cfg, src: string, path: string): Option[IoError] {
   if (!ends_in_slash(src) && !ends_in_slash(path)) {
     return None;
@@ -274,11 +218,6 @@ function ends_in_slash(p: string): boolean {
   return p.len() > 0 && p[p.len() - 1] as i32 == 47;
 }
 
-// `temp_link` makes the link under a name of this program's choosing,
-// ready to be renamed over the destination. GNU replaces a destination
-// that way, so a failure leaves the old destination untouched and a backup
-// is the destination MOVED rather than copied. The temporary name is never
-// visible in the resulting tree.
 function temp_link(cfg: Cfg, src: string, text: string, dest: string): Result[string, IoError] {
   let dir: string = gnu.dir_name(dest);
   let n: i32 = 0;
@@ -299,20 +238,8 @@ function temp_link(cfg: Cfg, src: string, text: string, dest: string): Result[st
   return Err(AlreadyExists(dest));
 }
 
-// `Replaced` — what the occupied-destination path answers: whether the
-// link was made, the backup name if one was taken (which `-v` prints), and
-// the stdout the caller keeps writing to.
 struct Replaced { ok: boolean, backup: string, out: io_buffered.BufWriter }
 
-// The occupied-destination path, reached when the plain link failed with
-// `err` — EEXIST when there is something to replace. `src` is the file a
-// hard link reaches and `text` what a symbolic link stores; `shown` is the
-// operand as typed, which is what a diagnostic names.
-//
-// Without `-f`, `-i` or a backup there is nothing to do but report the
-// EEXIST. With one of them the destination is replaced GNU's way: make the
-// new link beside it, move the old one out, and rename the new one into
-// place — so nothing is lost if any step fails.
 function replace_existing(cfg: Cfg, target: string, src: string, text: string, shown: string, dest: string, err: IoError, o: io_buffered.BufWriter): Replaced {
   let w: io_buffered.BufWriter = o;
   if (errno.of(err) != errno.EEXIST || !cfg.force && !cfg.interactive && !cfg.backups) {
@@ -351,7 +278,6 @@ function replace_existing(cfg: Cfg, target: string, src: string, text: string, s
       Ok(_) => {},
       Err(e) => {
         drop_temp(tmp_path);
-        // GNU then links again without -f, which fails as the first try did.
         if (errno.of(e) == errno.ENOENT) {
           w = gnu.error_out(w, create_failure(cfg, dest, shown, err));
           return Replaced { ok: false, backup: "", out: w };
@@ -361,12 +287,6 @@ function replace_existing(cfg: Cfg, target: string, src: string, text: string, s
       }
     }
   } else {
-    // The destination has to GO before the temporary name takes its
-    // place: rename(2) does nothing at all when both names already reach
-    // one inode, which is exactly what relinking a second name to the
-    // same file looks like (`ln -f d/a a`), and the temporary name would
-    // survive into the tree. The link is already made, so nothing is lost
-    // between the two calls.
     drop_temp(dest);
   }
   match (rename(tmp_path, dest)) {
@@ -380,10 +300,6 @@ function replace_existing(cfg: Cfg, target: string, src: string, text: string, s
   return Replaced { ok: true, backup: backup, out: w };
 }
 
-// Remove a name whose absence is the point and whose errno is not: the
-// temporary link on an abandoned replacement, and the destination the
-// rename is about to recreate. A failure here is reported by the rename
-// that follows, or is moot because the caller is already failing.
 function drop_temp(path: string): void {
   match (remove_file(path)) {
     Ok(_) => {},
@@ -391,21 +307,14 @@ function drop_temp(path: string): void {
   }
 }
 
-// `LinkOut` — one operand's result: the exit contribution and the stdout
-// the caller keeps writing to.
 struct LinkOut { status: i32, out: io_buffered.BufWriter }
 
-// One TARGET linked at one destination: the whole per-operand path, from
-// the source's own access check through the replacement dance to the
-// verbose line.
 function do_link(cfg: Cfg, target: string, dest: string, o: io_buffered.BufWriter): LinkOut {
   let w: io_buffered.BufWriter = o;
   let text: string = target;
   if (cfg.symbolic && cfg.relative) {
     text = relativise(target, dest);
   }
-  // What the diagnostics and `-v` name is always the operand as typed,
-  // never the path `-L` followed it to.
   let shown: string = target;
   if (cfg.symbolic) {
     shown = text;
@@ -422,9 +331,6 @@ function do_link(cfg: Cfg, target: string, dest: string, o: io_buffered.BufWrite
       return LinkOut { status: 1, out: w };
     }
     if (cfg.deref_src) {
-      // `create_link` is linkat with no AT_SYMLINK_FOLLOW — it links the
-      // link itself — so `-L` follows the source here, on the path,
-      // before the link is made.
       src = resolved(target);
     }
   }
@@ -455,11 +361,6 @@ function do_link(cfg: Cfg, target: string, dest: string, o: io_buffered.BufWrite
   return LinkOut { status: 0, out: w };
 }
 
-// ---- the target directory --------------------------------------------------
-// The check every DIRECTORY operand meets before a link is made in it —
-// the last of three or more operands, and `-t`'s argument once `-n` has
-// made the stat an lstat. A name that exists but is not a directory is
-// ENOTDIR here, worded as the errno rather than as prose.
 function require_directory(dir: string, follow: boolean): void {
   let st: StatInfo = stat_info(dir, follow);
   if (!st.ok) {
@@ -472,12 +373,6 @@ function require_directory(dir: string, follow: boolean): void {
   }
 }
 
-// `-t`'s own check, made where the option is READ: it runs before the
-// `--no-target-directory` conflict is noticed and it always follows
-// symbolic links, so `-t` on a link to a directory is accepted here and
-// refused later when `-n` says not to follow it. Its wording is prose
-// where `require_directory`'s is an errno — two messages for one fault
-// reached two ways, which is GNU's.
 function check_target_directory(dir: string): void {
   let st: StatInfo = stat_info(dir, true);
   if (!st.ok) {
@@ -490,7 +385,6 @@ function check_target_directory(dir: string): void {
   }
 }
 
-// ---- main ------------------------------------------------------------------
 function option_table(): gnu.Opt[] {
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.optional_long("b", "backup", opt_backup()));
@@ -510,13 +404,9 @@ function option_table(): gnu.Opt[] {
   return opts;
 }
 
-// `Scan` — the option scan's answers, before the environment fills in
-// what no option said.
 struct Scan { cfg: Cfg, control_given: boolean, control_text: string, suffix_given: boolean, target_dir: string, have_target_dir: boolean, no_target_dir: boolean }
 
 function scan_options(argv: string[]): (Scan, string[]) {
-  // GNU's default is LINK_FOLLOWS_SYMLINKS, whether link(2) follows a
-  // symbolic link: it does on Darwin, so there `-L` is the default.
   let cfg: Cfg = Cfg { symbolic: false, force: false, interactive: false, no_deref: false, deref_src: target_os() == "darwin", hard_dir: false, relative: false, verbose: false, backups: false, control: gnu.backup_existing(), suffix: "~" };
   let s: Scan = Scan { cfg: cfg, control_given: false, control_text: "", suffix_given: false, target_dir: "", have_target_dir: false, no_target_dir: false };
   let g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "ln", help_text(), 1);
@@ -538,8 +428,6 @@ function scan_options(argv: string[]): (Scan, string[]) {
 function apply_option(s: Scan, m: gnu.OptMatch): Scan {
   let c: Cfg = s.cfg;
   if (m.id == opt_backup()) {
-    // `-b` turns backups on and says nothing about the control;
-    // `--backup=CONTROL` says both, and `--backup` alone is `-b`.
     if (m.has_value) {
       return Scan { ...s, cfg: Cfg { ...c, backups: true }, control_given: true, control_text: m.value };
     }
@@ -561,8 +449,6 @@ function apply_option(s: Scan, m: gnu.OptMatch): Scan {
     return Scan { ...s, cfg: Cfg { ...c, interactive: true, force: false } };
   }
   if (m.id == opt_suffix()) {
-    // A suffix turns backups on by itself, and an unusable one leaves
-    // the default `~` in place rather than being refused.
     let suf: string = c.suffix;
     if (gnu.usable_suffix(m.value)) {
       suf = m.value;
@@ -592,10 +478,6 @@ function apply_option(s: Scan, m: gnu.OptMatch): Scan {
   return Scan { ...s, cfg: Cfg { ...c, verbose: true } };
 }
 
-// The suffix and the control no option supplied. Both environment
-// variables are read only when backups are ON, so `VERSION_CONTROL=bogus
-// ln a b` links without complaint; an empty value of either means the
-// default rather than an empty one.
 function from_environment(s: Scan): Cfg {
   let c: Cfg = s.cfg;
   if (!c.backups) {
@@ -657,8 +539,6 @@ pub function main(): i32 {
   }
   if (s.no_target_dir) {
     if (operands.len() == 1) {
-      // quoteaf, not the C-escaping `quote` link(1) uses for the same
-      // fault: a newline in an ln operand reads `'c'$'\n''d'`.
       gnu.die_usage("missing destination file operand after " + gnu.quotea(operands[0]), 1);
     }
     if (operands.len() > 2) {
@@ -668,8 +548,6 @@ pub function main(): i32 {
     return finish(r1.out, r1.status);
   }
   if (operands.len() == 1) {
-    // The 2nd form's destination is the literal `./` + the target's last
-    // component, which is what the diagnostics and `-v` show.
     let r2: LinkOut = do_link(cfg, operands[0], "./" + gnu.base_name(operands[0]), o);
     return finish(r2.out, r2.status);
   }
@@ -689,8 +567,6 @@ pub function main(): i32 {
   return finish(r5.out, r5.status);
 }
 
-// `operands[0 .. count)` linked inside `dir`, each under its own last
-// component. A failed operand costs the exit status and not the run.
 function link_into(cfg: Cfg, operands: string[], count: i32, dir: string, o: io_buffered.BufWriter): LinkOut {
   let w: io_buffered.BufWriter = o;
   let status: i32 = 0;

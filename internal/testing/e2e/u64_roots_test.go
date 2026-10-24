@@ -2,15 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/u64.sqrt_floor / is_power_of_2 /
-// next_power_of_2 / log2_floor — unsigned root/power helpers. Because they're
-// unsigned they carry no negative-input cases and span the full u64 range:
-// sqrt_floor is exact up to (2^32-1)^2, is_power_of_2 / next_power_of_2 reach
-// 2^63 (the largest power a u64 holds; next_power_of_2 returns 0 above it), and
-// log2_floor spans 0..63. Returns 42 iff every check holds across interp /
-// x86-64 / wasm / arm64; each leg skips itself when its toolchain is absent.
-// 2^63 and (2^32-1)^2 are built by shift / multiplication rather than as bare
-// literals, which would exceed the signed range the lexer stores numbers in.
 const u64RootsProg = `
 import "std/u64" as u64m;
 function two63(): u64 { return (1 as u64) << (63 as u64); }

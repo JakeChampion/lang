@@ -1,32 +1,32 @@
-// std/regex (#2680) word-boundary assertions `\b` / `\B` across the native
-// backends: whole-word matching, boundaries at text edges, the non-boundary
-// `\B`, and `\b` composing with find / find_all / replace_all. Each check
-// sets a bit; all eight hold -> 255.
+
+
+
+
 import "std/regex";
 
 function main(): i32 {
   let r: i32 = 0;
-  if (regex.regex_match("\\bcat\\b", "the cat sat")) {  // whole word
+  if (regex.regex_match("\\bcat\\b", "the cat sat")) {
     r = r + 1;
   }
-  if (!regex.regex_match("\\bcat\\b", "scatter")) {  // inside a word: no
+  if (!regex.regex_match("\\bcat\\b", "scatter")) {
     r = r + 2;
   }
-  if let Some(2) = regex.regex_find("\\bcat\\b", "a cat") {  // boundary position
+  if let Some(2) = regex.regex_find("\\bcat\\b", "a cat") {
     r = r + 4;
   }
-  if (regex.regex_match("\\bword\\b", "word")) {  // boundaries at edges
+  if (regex.regex_match("\\bword\\b", "word")) {
     r = r + 8;
   }
-  if (regex.regex_match("ca\\Bt", "cat")) {  // \B inside a word
+  if (regex.regex_match("ca\\Bt", "cat")) {
     r = r + 16;
   }
-  if (!regex.regex_match("cat\\B", "cat ")) {  // \B is false at a boundary
+  if (!regex.regex_match("cat\\B", "cat ")) {
     r = r + 32;
   }
 
   let ms: regex.RMatch[] = regex.regex_find_all("\\b\\w+\\b", "one two three");
-  if (ms.len() == 3) {  // word tokenisation
+  if (ms.len() == 3) {
     r = r + 64;
   }
 

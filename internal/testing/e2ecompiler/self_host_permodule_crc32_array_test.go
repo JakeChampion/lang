@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// The data entry must be exported when a library calls it and the entry
-// module supplies the runtime. A single-module link cannot detect that gap.
 func TestSelfHostPerModuleArm64CRC32ArrayLinks(t *testing.T) {
 	armgcc, qemu := arm64Tooling(t)
 	x86gcc, runner := x86_64Tooling(t)

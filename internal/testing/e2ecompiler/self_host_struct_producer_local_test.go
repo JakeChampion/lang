@@ -8,29 +8,6 @@ import (
 	"testing"
 )
 
-// --- A struct producer that returns a LOCAL (#7343) --------------------------
-//
-// `function mk(): P { let p: P = P { xs: [..] }; return p; }` hands its caller
-// a fresh box exactly as the byte-identical producer returning the literal
-// DIRECTLY does, so every `let v: P = mk()` must release the struct, its buffer
-// and its string; missing it leaks 128 B/round, unbounded.
-//
-// The over-release guard is `sibling_alias`: two same-named `v`, one from the
-// producer and one aliasing a parameter. The release must be keyed per binding
-// site, not per name (#7349), or the alias frees the caller's box (exit 139).
-// `sibling_alias` and `sibling_alias_renamed` must measure identically.
-//
-// The hazard rows are half the suite: a returned PARAMETER, an aliased local, a
-// reassigned one, two declarations of the name, and a receiver call that moves
-// a field out. Each must exit its oracle answer, and every row balances.
-//
-// Every want was confirmed against bin/fern -interp, never read off the
-// self-host run.
-//
-// Counts here are ONE block per heap string: #7351 fused the box into the
-// buffer's reserved header. A pre-fusion number quoted in a row note below is
-// twice its pin.
-
 type structProducerCase struct {
 	name   string
 	src    string
@@ -42,10 +19,6 @@ type structProducerCase struct {
 func structProducerCases() []structProducerCase {
 	return []structProducerCase{
 		{
-			// THE REPRO (#7343). `mk()` binds a strict-fresh struct literal to
-			// a local and returns it — the form real code has, since anything that
-			// assembles fields before handing them back cannot use the literal-return
-			// form. Base: allocs=800 frees=0, 25600 over 200 rounds, unbounded.
 			name: "producer_returns_local",
 			src: `struct P { xs: i32[], s: string }
 function w(a: string): string { return a + "!"; }
@@ -55,8 +28,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 200) { t = t +
 			want: 19, allocs: 400, frees: 400,
 		},
 		{
-			// CONTROL — the same producer returning the literal DIRECTLY, which
-			// was already admitted. Unchanged.
 			name: "producer_returns_literal",
 			src: `struct P { xs: i32[], s: string }
 function w(a: string): string { return a + "!"; }
@@ -66,7 +37,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 200) { t = t +
 			want: 19, allocs: 400, frees: 400,
 		},
 		{
-			// CONTROL — no producer at all. Unchanged.
 			name: "inline_no_producer",
 			src: `struct P { xs: i32[], s: string }
 function w(a: string): string { return a + "!"; }
@@ -76,9 +46,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 200) { t = t +
 			want: 19, allocs: 400, frees: 400,
 		},
 		{
-			// The smallest shape: one rc-array field, no string. The array goes
-			// through `id`, which hides the constant from the static-box plan, so P is a heap
-			// box rather than a static one.
 			name: "minimal_array_field",
 			src: `struct P { xs: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
@@ -88,12 +55,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 51, allocs: 100, frees: 100,
 		},
 		{
-			// THE OVER-RELEASE GUARD, and the reason this fix waited for
-			// #7349. Two same-named `v`, one from the producer and one aliasing a
-			// parameter. Applying THIS widening to the name-keyed table SIGSEGVd —
-			// exit 139, not a counter — because the alias inherited the newly
-			// granted credit and freed the caller's box. With the credit site-keyed
-			// it is exit 1 and measures identically to its rename control.
 			name: "sibling_alias",
 			src: `struct P { xs: i32[], s: string }
 function w(a: string): string { return a + "!"; }
@@ -114,11 +75,6 @@ function main(): i32 {
 			want: 1, allocs: 102, frees: 102,
 		},
 		{
-			// Its pairwise witness. The colliding program above matches these
-			// numbers exactly. frees moved 200 -> 204 with the struct routing:
-			// main's `b` is a plain call arg the plan does not taint, so its
-			// sweep is granted (live_bytes 0 where the 120-byte b residual
-			// leaked before) — the callee param alias stays refused per-site.
 			name: "sibling_alias_renamed",
 			src: `struct P { xs: i32[], s: string }
 function w(a: string): string { return a + "!"; }
@@ -139,11 +95,6 @@ function main(): i32 {
 			want: 1, allocs: 102, frees: 102,
 		},
 		{
-			// ADMITTED: `let stolen: i32[] = p.xs;` before `return p` takes a
-			// second reference to the buffer the caller's deep drop frees — but
-			// `stolen` is a local of the producer's own frame and dies at its exit,
-			// so the drop is balanced: 200/200 at live_bytes 0, underflow 0. If
-			// this class ever over-releases, this row is the first suspect.
 			name: "field_read_admitted",
 			src: `struct P { xs: i32[] }
 function mk(i: i32): P { let p: P = P { xs: [i, i + 1] }; let stolen: i32[] = p.xs; return p; }
@@ -152,9 +103,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 34, allocs: 200, frees: 200,
 		},
 		{
-			// A returned PARAMETER — the `return self` shape. The handback is
-			// counted (#9203), so `v` and `src` each release their fields only on
-			// finding rc 1, and the row balances. It leaked 8000 before that.
 			name: "refused_param_returned",
 			src: `struct P { xs: i32[] }
 @noinline function mk(p: P): P { return p; }
@@ -163,8 +111,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 34, allocs: 200, frees: 200,
 		},
 		{
-			// A second binding aliases the local before it is returned, so
-			// two references leave the frame.
 			name: "refused_aliased",
 			src: `struct P { xs: i32[] }
 function keepit(q: P): i32 { return q.xs.len(); }
@@ -174,14 +120,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 34, allocs: 200, frees: 200,
 		},
 		{
-			// ADMITTED — the local is reassigned, but EVERY write is itself a
-			// fresh literal, so the final box is fresh whichever write produced
-			// it: the caller's binding releases it and the callee's rebind frees
-			// the superseded literal. An alias, a second declaration, or a field
-			// move are the refused rows below.
-			// `hold` reads the first literal so it is built (semdead); read and
-			// unique at the rebind, its box is written in place by the second,
-			// so a round allocates three blocks rather than four.
 			name: "admitted_reassigned_all_fresh",
 			src: `struct P { xs: i32[] }
 @noinline function hold(p: P): i32 { return 0; }
@@ -191,8 +129,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 34, allocs: 300, frees: 300,
 		},
 		{
-			// Two declarations of the same spelling in sibling blocks. Each is its
-			// own binding (lexical.fern), so each hands back its own literal.
 			name: "two_declarations",
 			src: `struct P { xs: i32[] }
 function mk(i: i32): P {
@@ -205,8 +141,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 34, allocs: 200, frees: 200,
 		},
 		{
-			// A method call on the local moves a field into the result (`P
-			// { xs: p.xs }`), so the returned box no longer sole-owns it.
 			name: "refused_receiver_field_move",
 			src: `struct P { xs: i32[] }
 function (p: P) grow(): P { return P { xs: p.xs }; }
@@ -217,9 +151,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 		}}
 }
 
-// TestSelfHostStructProducerLocalX86_64 — a producer that returns a local earns
-// its caller the same reclaim credit the literal-returning form does, and the
-// hazard shapes answer correctly.
 func TestSelfHostStructProducerLocalX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -260,8 +191,6 @@ func TestSelfHostStructProducerLocalX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStructProducerLocalWasmIR — the wasm sibling. Exit codes only, so
-// what this leg catches is a release that frees a LIVE box on wasm.
 func TestSelfHostStructProducerLocalWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping struct producer-local wasm IR e2e")
@@ -300,7 +229,6 @@ func TestSelfHostStructProducerLocalWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostStructProducerLocalIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostStructProducerLocalIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

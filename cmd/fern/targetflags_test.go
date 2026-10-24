@@ -16,9 +16,6 @@ func writeFern(t *testing.T, src string) string {
 	return p
 }
 
-// `-check -target arm64-freestanding` is the #6509 deliverable: the target is
-// declared and checkable before any backend emits for it, so E066 names
-// the missing capability instead of a build dying on an undefined label.
 func TestCheckTargetFreestandingRejectsHostBuiltins(t *testing.T) {
 	entry := writeFern(t, "function main(): i32 {\n  print(\"hi\");\n  return 0;\n}\n")
 	err := runCheck(entry, "arm64-freestanding")
@@ -33,8 +30,6 @@ func TestCheckTargetFreestandingRejectsHostBuiltins(t *testing.T) {
 	}
 }
 
-// The complement: a program that only computes checks clean, so the
-// target is usable and not merely restrictive.
 func TestCheckTargetFreestandingAllowsCore(t *testing.T) {
 	entry := writeFern(t, "function main(): i32 {\n  let b: i64 = f64_bits(1.5);\n  return ((b + 1) as i32);\n}\n")
 	if err := runCheck(entry, "arm64-freestanding"); err != nil {
@@ -42,13 +37,7 @@ func TestCheckTargetFreestandingAllowsCore(t *testing.T) {
 	}
 }
 
-// An unrequested check must not gain a capability gate. `-target`
-// defaults to arm64, so passing it through unconditionally would start
-// enforcing that set against every `fern -check` — this pins the
-// empty-target opt-out that prevents it.
 func TestCheckWithoutTargetSkipsEnforcement(t *testing.T) {
-	// `sysctl` is Darwin's alone, so the default target's set would reject
-	// this.
 	entry := writeFern(t, "function main(): i32 {\n  match (sysctl([1, 1])) {\n    Ok(bs) => { return bs.len(); },\n    Err(_) => { return 2; }\n  }\n  return 0;\n}\n")
 	if err := runCheck(entry, ""); err != nil {
 		t.Fatalf("bare -check should not enforce a target: %v", err)
@@ -58,9 +47,6 @@ func TestCheckWithoutTargetSkipsEnforcement(t *testing.T) {
 	}
 }
 
-// `-check -target` names the target the program is checked against, so one
-// no descriptor answers for is refused rather than checked against nothing,
-// for a file and for a workspace alike.
 func TestCheckRefusesUnknownTarget(t *testing.T) {
 	entry := writeFern(t, "function main(): i32 {\n  return 0;\n}\n")
 	ws := t.TempDir()

@@ -2,19 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// coreIntRadixIRCases pin core/int's int_to_string_radix (i32 -> base-N string)
-// on the self-host IR path (x86-64 + wasm). This is the to-string direction the
-// parse-only audit (#3515) left unlowered — but int_to_string_radix does
-// NOT use __memcpy / usize (unlike int_to_string / __int_to_string_u64): it
-// builds its result with __alloc_u8 + .with + string_from_bytes_unchecked, the same
-// IR-eligible builder std/hex / std/base64 use. So it lowers through IR, and
-// these cases prove it (oracle-checked against the interpreter). A round-trip
-// case threads the result back through parse_int_radix (already IR-audited) to
-// confirm the bytes are correct.
-//
-// __radix_digit / __radix_char are core/int helpers, inlined (renamed) rather
-// than imported. Each program returns a small deterministic int (<= 120 for the
-// wasm exit-code clamp, #2908). No compiler change. FEATURE-AUDIT core/int row.
 const coreIntRadixIRPrelude = `function radix_digit(c: i32): i32 {
     if (c >= 48 && c <= 57)  { return c - 48; }
     if (c >= 97 && c <= 122) { return c - 87; }
@@ -75,22 +62,14 @@ var coreIntRadixIRCases = []struct {
 	main string
 	want int
 }{
-	// hex: 255 -> "ff" (len 2).
 	{"hex-len", `let s: string = int_to_string_radix(255, 16); return s.len();`, 2},
-	// hex first byte: 'f' = 102.
 	{"hex-byte", `let s: string = int_to_string_radix(255, 16); return s[0] as i32;`, 102},
-	// binary: 10 -> "1010" (len 4).
 	{"binary-len", `let s: string = int_to_string_radix(10, 2); return s.len();`, 4},
-	// base36: 30 -> "u" = 117.
 	{"base36-byte", `let s: string = int_to_string_radix(30, 36); return s[0] as i32;`, 117},
-	// zero is the early-return "0" (len 1).
 	{"zero", `let s: string = int_to_string_radix(0, 16); return s.len();`, 1},
-	// negative: -255 base 16 -> "-ff" (len 3), first byte '-' = 45.
 	{"neg-len", `let s: string = int_to_string_radix(0 - 255, 16); return s.len();`, 3},
 	{"neg-sign", `let s: string = int_to_string_radix(0 - 255, 16); return s[0] as i32;`, 45},
-	// out-of-range base -> "".
 	{"bad-base", `let s: string = int_to_string_radix(10, 99); return s.len();`, 0},
-	// round-trip through the (IR-audited) parser: parse(to_string(100,16),16) == 100.
 	{"round-trip", `let s: string = int_to_string_radix(100, 16); match (parse_int_radix(s, 16)) { Some(v) => { return v; }, None => { return 0; } } return 0;`, 100},
 }
 
@@ -98,8 +77,6 @@ func coreIntRadixIRSrc(mainBody string) string {
 	return coreIntRadixIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostCoreIntRadixIR compiles each case with the self-host CLI for
-// x86-64 and wasm and checks the exit code.
 func TestSelfHostCoreIntRadixIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {

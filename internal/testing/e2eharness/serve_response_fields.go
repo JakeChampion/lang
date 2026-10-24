@@ -11,9 +11,6 @@ import (
 	"time"
 )
 
-// ResponseFieldsServerSource is a server whose handler writes the
-// request's decoded path into a response header on /echo..., sets a header
-// whose name is not a token on /badname, and answers "ok" otherwise.
 func ResponseFieldsServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/string";
@@ -30,10 +27,6 @@ function main(): i32 {
 `)
 }
 
-// CheckResponseFields drives ResponseFieldsServerSource: a path whose decoded
-// bytes hold CR LF, echoed into a header, and a header name that is not a
-// token are each answered 500 with neither the handler's body nor any field
-// it set, and the connection serves the next request.
 func CheckResponseFields(t *testing.T, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)

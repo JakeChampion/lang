@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// An enum with a Map-typed variant releases every variant's payloads, whether
-// or not the Map variant is ever built (#9304).
 const enumMapDeclaredSrc = `import "core/map";
 enum Rec { Text(string), Pair(string, string), Obj(Map[string, string]) }
 
@@ -29,7 +27,6 @@ function main(): i32 {
 }
 `
 
-// The Map variant constructed on every third round.
 const enumMapBuiltSrc = `import "core/map";
 enum Rec { Text(string), Pair(string, string), Obj(Map[string, string]) }
 function once(v: string, k: i32): i32 {
@@ -53,8 +50,6 @@ function main(): i32 {
 }
 `
 
-// A recursive enum with a Map variant: the payload array's elements are
-// themselves enum boxes, released through the array.
 const enumMapRecursiveSrc = `import "core/map";
 enum Tree3 { Leaf(string), Node(Tree3[]), Obj(Map[string, Tree3]) }
 function once(v: string): i32 {
@@ -73,7 +68,6 @@ function main(): i32 {
 }
 `
 
-// The built maps and the recursive payloads are released as well.
 func TestSelfHostEnumMapPayloadTypedReleaseX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, sc := range []struct {

@@ -2,11 +2,6 @@ package componenttype
 
 import "testing"
 
-// TestSplitComponentSections checks the section walker against both shipped
-// worlds: a component-type payload is an inner component binary whose
-// sections are a wit-component-encoding custom section, exactly one type
-// section, exactly one export section, and a producers custom section — and
-// the section bodies tile the whole payload with nothing left over.
 func TestSplitComponentSections(t *testing.T) {
 	for _, world := range []string{"fern", "http"} {
 		t.Run(world, func(t *testing.T) {
@@ -49,9 +44,6 @@ func TestSplitComponentSections(t *testing.T) {
 				t.Errorf("%s: missing producers custom section", world)
 			}
 
-			// The walker must consume the whole payload: re-measuring each
-			// section's wire size (id + uleb(size) + body, with the name folded
-			// back in for customs) plus the header must equal len(payload).
 			total := len(componentHeader)
 			for _, s := range secs {
 				bodyLen := len(s.Body)
@@ -67,8 +59,6 @@ func TestSplitComponentSections(t *testing.T) {
 	}
 }
 
-// TestTypeSectionBody returns the lone type section's body for each world,
-// and it must be non-empty (it carries the world's Component([...]) type).
 func TestTypeSectionBody(t *testing.T) {
 	for _, world := range []string{"fern", "http"} {
 		body, err := TypeSectionBody(world)
@@ -82,8 +72,6 @@ func TestTypeSectionBody(t *testing.T) {
 }
 
 func TestSplitComponentSectionsRejectsBadHeader(t *testing.T) {
-	// A core-module header (version 1) must be rejected — the payload is a
-	// component (version 13, layer 1), not a core module.
 	core := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}
 	if _, err := SplitComponentSections(core); err == nil {
 		t.Fatal("expected error for core-module header, got nil")

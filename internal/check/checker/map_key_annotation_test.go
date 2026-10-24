@@ -5,13 +5,6 @@ import (
 	"testing"
 )
 
-// mapKeyAnnotationCases are the WRITTEN `Map[K, V]` positions, one per row.
-// `want` is the substring of the expected E045, or "" for a program that must
-// check clean.
-//
-// Only the map-literal paths validated a key type, so every one of the
-// rejecting rows below was accepted and reached codegen — where a float key
-// segfaulted the self-host (#9973).
 var mapKeyAnnotationCases = []struct{ name, src, want string }{
 	{
 		"let annotation",
@@ -68,9 +61,6 @@ function main(): i32 { let m: Map[f64, i32] = Map {}; return 0; }`,
 		"map key type f64 is not yet supported",
 	},
 	{
-		// A tuple or array of scalar keys is compared element by element
-		// (#10020): the interpreter does, and the self-host lowers it
-		// through generated helpers.
 		"tuple key",
 		`import "core/map";
 function take(m: Map[(i32, i32), i32]): i32 { return 0; }
@@ -113,11 +103,6 @@ function main(): i32 { return 0; }`,
 		"a tuple or array used as a key may hold only",
 	},
 	{
-		// boolean and str are not carve-outs — they are keys that WORK, on
-		// the interpreter and the compiled backends alike, and the rule
-		// refused them until that was measured. The literal spelling was
-		// the visible half: `Map { true: 1 }` was E045 while the annotated
-		// `Map[boolean, i32]` was accepted and ran.
 		"boolean key",
 		`import "core/map";
 function main(): i32 {
@@ -185,8 +170,6 @@ function main(): i32 { let m: Map[u8, i32] = map_new(2); return take(m, map_new(
 		"",
 	},
 	{
-		// A type parameter is accepted here and re-checked once it is
-		// instantiated, exactly as the literal path has always treated one.
 		"generic key parameter",
 		`import "core/map";
 function take[T](m: Map[T, i32]): i32 { return 0; }
@@ -195,8 +178,6 @@ function main(): i32 { return 0; }`,
 	},
 }
 
-// TestMapKeyTypeIsCheckedWhereverItIsWritten pins E045 on every position a
-// `Map[K, V]` can be written, not just the literal spelling.
 func TestMapKeyTypeIsCheckedWhereverItIsWritten(t *testing.T) {
 	for _, tc := range mapKeyAnnotationCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -217,12 +198,6 @@ func TestMapKeyTypeIsCheckedWhereverItIsWritten(t *testing.T) {
 	}
 }
 
-// TestMapKeyTypeIsReportedOnce pins that the annotation check and the
-// map-literal check do not both fire on one program. The literal reports at
-// the offending key, which is the better anchor, so the annotation stands
-// down — but only when the literal has a key to report at. `Map {}` has none,
-// and before that distinction every derived-struct-key program in the
-// repository lost its diagnostic.
 func TestMapKeyTypeIsReportedOnce(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{

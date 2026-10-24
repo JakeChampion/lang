@@ -1,9 +1,9 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Childless struct field that ESCAPES (Outer returned): the Pt
-// box must NOT be freed at the constructor's exit; the returned
-// Outer still references it. Churn forces same-size reuse.
+
+
+
+
+
+
 import "core/int";
 struct Pt { x: i32, y: i32 }
 struct Outer { inner: Pt, tag: i32 }

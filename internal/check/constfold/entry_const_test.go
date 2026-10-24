@@ -7,9 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/modload"
 )
 
-// An entry const sharing a name with an imported module's variant must not
-// reach that module's bodies: std/dns builds its `A` record with `A(...)`,
-// which folding the entry's `const A` into turned into a call of an i32 (#11143).
 func TestEntryConstDoesNotReachImportedBodies(t *testing.T) {
 	for _, src := range []string{
 		"import \"std/dns\";\nconst A: i32 = 1;\nfunction main(): i32 { print(A.to_string()); return 0; }\n",

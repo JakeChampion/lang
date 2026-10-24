@@ -1,14 +1,6 @@
 import "std/test";
 import "std/i64" as i64m;
 
-// tests/stdlib/i64_roots_test.fern — pure-Fern coverage of std/i64's
-// sqrt_floor / is_power_of_2 / is_perfect_square: the i64 siblings of the
-// std/i32 root/power predicates, exact into the i64 range where the i32
-// versions would overflow. sqrt_floor is Newton's method (floor of √n),
-// is_power_of_2 is the n&(n-1) bit trick, is_perfect_square is sqrt_floor(n)²==n.
-// The Go-side TestI64Roots pins these across all four backends; this is the
-// migration-shaped companion. Scalar-only, so it's self-host clean.
-
 function test_sqrt_floor_exact(): test.TestOutcome {
   return test.assert_true((100 as i64).sqrt_floor() == 10 as i64);
 }
@@ -18,7 +10,6 @@ function test_sqrt_floor_inexact(): test.TestOutcome {
 }
 
 function test_sqrt_floor_large(): test.TestOutcome {
-  // 10^10, well past the i32 range.
   return test.assert_true((10000000000 as i64).sqrt_floor() == 100000 as i64);
 }
 
@@ -27,7 +18,6 @@ function test_sqrt_floor_zero(): test.TestOutcome {
 }
 
 function test_power_of_2_true(): test.TestOutcome {
-  // 2^62.
   return test.assert_true((4611686018427387904 as i64).is_power_of_2());
 }
 
@@ -45,7 +35,6 @@ function test_power_of_2_false(): test.TestOutcome {
 }
 
 function test_perfect_square_true(): test.TestOutcome {
-  // (10^6)^2 = 10^12, past the i32 range.
   return test.assert_true((1000000000000 as i64).is_perfect_square());
 }
 

@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// loadWithLib writes `src` as the entry and `lib` as a sibling `lib.fern`,
-// then loads the entry. Returns the load error, which is where the
-// visibility and undeclared-name diagnostics surface.
 func loadWithLib(t *testing.T, src, lib string) error {
 	t.Helper()
 	dir := t.TempDir()
@@ -24,17 +21,6 @@ func loadWithLib(t *testing.T, src, lib string) error {
 	return err
 }
 
-// A `mod.X` reference has two distinct failure modes and they used to share
-// one message. `X` may be declared in `mod` without `pub` — in which case
-// "is not exported (declare it as `pub …`)" is exactly right — or `mod` may
-// have no `X` at all, in which case that message sends the reader off to add
-// `pub` to a declaration that does not exist.
-//
-// For a qualified TYPE it was also the ONLY error produced: nothing
-// downstream reports the unknown name, so a typo in `rand.Rnd` and a
-// visibility mistake on `rand.Rand` were indistinguishable. That is how this
-// was found — guessing a `std/rand` type that does not exist and being told
-// to go export it.
 func TestUndeclaredNameIsNotReportedAsUnexported(t *testing.T) {
 	lib := `struct Hidden { v: i32 }
 function hidden_fn(): i32 { return 1; }
@@ -96,9 +82,6 @@ pub function shown_fn(): i32 { return 1; }
 	}
 }
 
-// A near-miss on an exported name gets a suggestion. The threshold is tight
-// on purpose: a wrong suggestion on a name the reader typed correctly costs
-// more than no suggestion, so a name that resembles nothing gets none.
 func TestUndeclaredNameSuggestsAnExportedNeighbour(t *testing.T) {
 	lib := `pub function shown_fn(): i32 { return 1; }
 pub struct Shown { v: i32 }
@@ -132,8 +115,6 @@ pub struct Shown { v: i32 }
 	}
 }
 
-// Nothing close enough gets no suggestion — an unrelated name must not be
-// presented as a typo.
 func TestNoSuggestionWhenNothingIsClose(t *testing.T) {
 	lib := `pub function shown_fn(): i32 { return 1; }` + "\n"
 	err := loadWithLib(t, `import "./lib";`+"\n"+`function main(): i32 { return lib.zzzzzzqqqqq(); }`, lib)
@@ -165,18 +146,6 @@ func TestEditDistance(t *testing.T) {
 	}
 }
 
-// A method is exported under its bare name and lives in the same public set
-// as plain functions, because method dispatch resolves visibility through it.
-// But `mod.method(x)` is not a call anyone can write: the reference mangles to
-// `mod__method`, which nothing declares, so it used to surface as an "undefined
-// identifier" from the checker with no mention of the receiver form.
-//
-// Two paths reach it, and both are covered here. Writing the method's name
-// module-qualified is the common one — the reader knows the name and guesses
-// the syntax. A typo NEAR a method name is the other, and it was the worse
-// failure: the did-you-mean offered the method, and taking that advice landed
-// on the first error again under a different code. Advice that does not work
-// is worse than no advice.
 func TestMethodIsNotOfferedAsAModuleFunction(t *testing.T) {
 	lib := `pub function (n: i32) doubled(): i32 { return n * 2; }
 pub function plain_fn(): i32 { return 1; }
@@ -195,24 +164,18 @@ pub function both(v: i32): i32 { return v; }
 			want: "lib.doubled is a method — call it on the value: `x.doubled(…)`",
 		},
 		{
-			// The regression: the suggestion must not hand back a spelling
-			// that fails, so it names the receiver form instead.
 			name:      "a typo near a method does not suggest a module call",
 			src:       `import "./lib";` + "\n" + `function main(): i32 { return lib.doubld(2); }`,
 			want:      "\"doubled\" is a method, call it on the value: `x.doubled(…)`",
 			notSubstr: `did you mean "doubled"?`,
 		},
 		{
-			// A plain function is unaffected — it keeps the ordinary
-			// suggestion, and must not be described as a method.
 			name:      "a typo near a plain function keeps the ordinary suggestion",
 			src:       `import "./lib";` + "\n" + `function main(): i32 { return lib.plan_fn(); }`,
 			want:      `did you mean "plain_fn"?`,
 			notSubstr: "is a method",
 		},
 		{
-			// A name declared BOTH ways is a real module call, so the
-			// method-only path must not swallow it.
 			name:      "a name that is also a plain function still resolves",
 			src:       `import "./lib";` + "\n" + `function main(): i32 { return lib.both(2); }`,
 			want:      "",

@@ -7,11 +7,6 @@ import (
 	"testing"
 )
 
-// __bsd_sum(s, sum) continues the BSD checksum `sum -r` keeps over s: per
-// byte, rotate the 16 bits right by one and add the byte, modulo 2^16. The
-// corpus sweeps every length to 40 from several starting sums, inline and
-// heap strings, NUL and high bytes, and a starting sum with bits above 16.
-
 func bsdSumRef(s string, sum int) int {
 	v := uint32(sum) & 0xffff
 	for i := 0; i < len(s); i++ {

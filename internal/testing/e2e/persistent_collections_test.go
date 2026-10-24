@@ -2,18 +2,6 @@ package e2e
 
 import "testing"
 
-// The persistent collections (#6794) — std/ordmap, std/ordset, std/pmap,
-// std/pset, std/pvec — are generic enum trees whose correctness is
-// backend-sensitive in one specific way: an update must rebuild the path
-// to the changed node and share the rest, and a compiled backend that
-// takes the in-place path on a node another binding still holds rewrites
-// a value that was supposed to be immutable. The interpreter never does
-// that, so each module is pinned on every backend that compiles it
-// (x86-64 / wasm / arm64-qemu, each skipping when its toolchain is
-// absent) with an exit-coded program: a snapshot is taken, the original
-// is updated through every mutating verb, and the snapshot is checked
-// entry by entry — a distinct exit code per failed check, 42 on success.
-
 const ordmapPersistProg = `
 import "std/ordmap";
 import "std/option";

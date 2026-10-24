@@ -14,34 +14,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostSemanticWholeCompilerX86_64 is the whole-compiler gate for the
-// semantic lowering (docs/SELFHOST-SEMANTIC-SOURCE.md, #9415): the self-host
-// compiler built THROUGH the semantic path has to be a compiler, and the same
-// one.
-//
-// Three things are pinned, in the order they are cheapest to lose:
-//
-//   - Coverage. gen1 is fern.fern compiled by the driver (fern.fern built by
-//     the pinned stage0), and its report must say every declaration and
-//     instance produced.
-//   - Output. gen1 compiles lexer.fern, parser.fern and checker.fern
-//     byte-identically to the driver. This is the primary gate: a fixpoint is
-//     blind to a stable miscompile, this is not.
-//   - The fixpoint. gen1 compiles the whole tree byte-identically to the
-//     driver doing the same, which is gen1's own text: the compiler the path
-//     builds reproduces itself.
-//
-// Measured 2026-09-16 on a 4-core x86-64 container: gen1 3m at 6.5 GB, the
-// emit of the whole tree 2m47s by the driver and 4m34s at 4.4 GB by gen1. It
-// runs in a job of its own (OWN_JOB_TESTS), not in a shard.
-//
-// The phases overlap where nothing orders them, under the harness's RAM
-// reservation (withBuildMemoryMB) so the overlap fits the host: the gen1
-// self-build reserves gen1BuildMB and each whole-tree emit wholeTreeEmitMB,
-// so on a 16 GB runner two whole-tree emits run side by side but neither
-// runs beside the self-build. The single-module emits are unreserved and
-// overlap anything. Which reservation is granted first is the scheduler's
-// choice, not this test's; the reservation forbids the overlap either way.
 func TestSelfHostSemanticWholeCompilerX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -62,7 +34,6 @@ func TestSelfHostSemanticWholeCompilerX86_64(t *testing.T) {
 	work := t.TempDir()
 	gen1 := filepath.Join(work, "fern-gen1")
 
-	// One emit each, keyed by compiler and module; "tree" is the whole tree.
 	type emitKey struct{ compiler, module string }
 	emitted := map[emitKey][]byte{}
 	var mu sync.Mutex
@@ -130,9 +101,6 @@ func TestSelfHostSemanticWholeCompilerX86_64(t *testing.T) {
 		t.Fatal(firstErr)
 	}
 
-	// A divergence names its first differing line and the driver it was
-	// measured against: one was once reported a single byte apart and never
-	// reproduced (#9737), and the sizes alone could not say where.
 	divergence := func(gotName string, got, want []byte) string {
 		bin, err := os.ReadFile(driver)
 		if err != nil {
@@ -151,19 +119,11 @@ func TestSelfHostSemanticWholeCompilerX86_64(t *testing.T) {
 	}
 }
 
-// RAM reservations for the steps above, from their measured peak RSS on
-// 2026-09-22 (4-core x86-64 container): the gen1 self-build was killed at
-// 8.2 GB by a 14 GB cgroup while a whole-tree emit ran beside it, the
-// whole-tree emit peaks 4.2 GB; a module emit
-// stays under 0.5 GB. The margins are what keep the self-build from sharing
-// a 16 GB host's budget with a whole-tree emit while two emits still fit.
 const (
 	gen1BuildMB     = 9500
 	wholeTreeEmitMB = 6000
 )
 
-// semSelfBuild compiles entry to a linked x86-64 binary at out through the
-// semantic lowering, and returns the compiler's report.
 func semSelfBuild(compiler, entry, stdlibRoot, out string) (string, error) {
 	cmd := exec.Command(compiler, "-target", "x86-64-linux", "-o", out, entry, stdlibRoot)
 	cmd.Env = append(os.Environ(), "FERN_SEM_IR_REPORT=1")
@@ -180,8 +140,6 @@ func semSelfBuild(compiler, entry, stdlibRoot, out string) (string, error) {
 
 var semTallyLine = regexp.MustCompile(`module: produced (\d+) of (\d+) declarations and (\d+) of (\d+) instances`)
 
-// semTally sums the produced and total counts, declarations and instances,
-// over every module line of the report.
 func semTally(t *testing.T, report string) (int, int) {
 	t.Helper()
 	lines := semTallyLine.FindAllStringSubmatch(report, -1)
@@ -205,7 +163,6 @@ func semTally(t *testing.T, report string) (int, int) {
 	return produced, total
 }
 
-// emitAsm compiles src to x86-64 assembly text.
 func emitAsm(compiler, src, stdlibRoot, out string) ([]byte, error) {
 	cmd := exec.Command(compiler, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, stdlibRoot)
 	if msg, err := cmd.CombinedOutput(); err != nil {

@@ -4,9 +4,6 @@ import "std/hex";
 import "std/i64";
 import "std/tls/der";
 
-// tests/stdlib/tls_der_test.fern — std/tls/der: lengths, tags and each
-// value type, with every encoding DER forbids refused.
-
 function h(s: string): u8[] {
   return hex.hex_decode(s);
 }
@@ -123,7 +120,6 @@ function test_children(): test.TestOutcome {
       return test.fail(e.message());
     }
   }
-  // The child runs past its parent.
   match (der.children(h("3003020201ff"), first("3003020201ff"))) {
     Ok(c) => {
       return test.fail("accepted");

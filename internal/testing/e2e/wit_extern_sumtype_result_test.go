@@ -12,18 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternSumTypeResultCustomProvider is the P4c sum-type-*result* gate
-// (docs/WIT-BRING-YOUR-OWN.md): an `@import` extern returns `option<T>` /
-// `result<T,E>`, lifted into a Fern Option / Result. The canonical variant
-// flattens to (disc, payload) > 1 core value, so it returns indirectly through
-// a return-area pointer (disc:u8 @0, payload @4); the wrapper materializes a
-// Fern enum box [tag@0][payload@4], remapping the discriminant back (1-disc for
-// option since canonical none=0/some=1 reverses Fern's Some=0/None=1).
-//
-// The provider exports `div: func(a,b: s32) -> result<s32,s32>` (b≠0 → ok(a/b),
-// else err) and `half: func(n: s32) -> option<s32>` (even → some(n/2), else
-// none). The Fern side matches the results: div(20,4)→Ok 5, div(1,0)→Err arm,
-// half(10)→Some 5, half(3)→None arm.
 func TestExternSumTypeResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -50,9 +38,6 @@ func TestExternSumTypeResultCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// Both return the variant indirectly: alloc an 8-byte area (disc:u8 @0,
-	// payload @4) via cabi_realloc and return its pointer. result: ok=disc 0,
-	// err=disc 1. option: none=disc 0, some=disc 1 (canonical order).
 	provCoreWat := filepath.Join(dir, "prov_core.wat")
 	if err := os.WriteFile(provCoreWat, []byte(`(module
   (memory (export "memory") 1)

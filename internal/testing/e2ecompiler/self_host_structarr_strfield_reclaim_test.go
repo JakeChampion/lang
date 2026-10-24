@@ -5,22 +5,6 @@ import (
 	"testing"
 )
 
-// --- String fields of struct-array ELEMENTS (#6127) --------------------------
-//
-// A struct-array local whose element struct has a string field must free each
-// element's string when the array dies, not only each element box and the
-// outer buffer. A shallow element walk leaks every element's string:
-//
-//	bare local            allocs=200  frees=200  live_bytes=0     <- balanced
-//	array, literal-built  allocs=500  frees=300  live_bytes=4800  = 2 elems x 24
-//	array, append-built   allocs=1000 frees=600  live_bytes=9600  = 4 elems x 24
-//	scalar-field elements allocs=600  frees=600  live_bytes=0     <- balanced
-//
-// The other half is soundness: an element string still referenced elsewhere
-// when the array dies (moved into a container, or a parameter the caller
-// still owns) must not be freed with the element. An over-freed string
-// corrupts the freelist rather than crashing cleanly.
-
 const structArrStrFieldSrc = `struct N { name: string, v: i32 }
 
 function round(): i32 {
@@ -37,10 +21,6 @@ function main(): i32 {
     return t % 7;
 }`
 
-// TestSelfHostStructArrStrFieldReclaimX86_64 — the element string fields are
-// freed. allocs == frees is essential: frees short of allocs is the leak this
-// closes; frees ABOVE allocs would mean one string was released twice, which
-// for a string is a freelist corruption rather than a clean crash.
 func TestSelfHostStructArrStrFieldReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -50,8 +30,6 @@ func TestSelfHostStructArrStrFieldReclaimX86_64(t *testing.T) {
 	asm := hevCompile(t, runner, driverBin, structArrStrFieldSrc, []string{"FERN_LEAKCHECK=1"})
 	progBin := buildBin(t, gcc, dir, "structarr_strfield", asm)
 	stderr, exit := hevRun(t, runner, progBin)
-	// 400 % 7 = 1, confirmed against both oracles (bin/fern -interp and native
-	// -target x86-64-linux), not read off the self-host run this test exists to check.
 	if exit != 1 {
 		t.Fatalf("exited %d, want 1", exit)
 	}
@@ -81,11 +59,6 @@ func TestSelfHostStructArrStrFieldReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStructArrStrFieldHazardsX86_64 — shapes whose element strings are
-// still referenced elsewhere when the array dies. A wrongly-granted drop frees a
-// string something else still reads, so the first failure is a wrong answer or a
-// crash; the census must balance as well. Every `want` was confirmed against both
-// the interpreter and the native x86-64 backend.
 func TestSelfHostStructArrStrFieldHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -98,9 +71,6 @@ func TestSelfHostStructArrStrFieldHazardsX86_64(t *testing.T) {
 		want int
 	}{
 		{
-			// The element's string field is moved into a container outliving the
-			// array. Freeing it with the element would dangle the container's copy.
-			// This is the read the whole-program scan exists to catch.
 			name: "field_extracted_to_container",
 			src: `struct N { name: string, v: i32 }
 function round(i: i32): i32 {
@@ -116,8 +86,6 @@ function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t +
 			want: 48,
 		},
 		{
-			// The field value is a PARAM string the caller still owns and reads
-			// afterwards — the element box does not sole-own it.
 			name: "field_is_param_string",
 			src: `struct N { name: string, v: i32 }
 function build(p: string, n: i32): i32 {
@@ -132,8 +100,6 @@ function main(): i32 {
 			want: 42,
 		},
 		{
-			// A bound element (`let q = xs[0]`) holds a box the array's release
-			// must not free while `q` still reads it.
 			name: "element_bound_to_local",
 			src: `struct N { name: string, v: i32 }
 function round(i: i32): i32 {
@@ -145,8 +111,6 @@ function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t +
 			want: 51,
 		},
 		{
-			// The array is built and returned by a callee: the value is moved out,
-			// so the callee must not walk it.
 			name: "array_returned_from_callee",
 			src: `struct N { name: string, v: i32 }
 function mk(i: i32): N[] { return [N { name: "hello_world_long", v: i }]; }
@@ -155,9 +119,6 @@ function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t +
 			want: 51,
 		},
 		{
-			// Every element's string is read (compared and measured) before the
-			// array dies. Pins that whatever the scan decides, the reads still see
-			// the original bytes.
 			name: "fields_read_before_death",
 			src: `struct N { name: string, v: i32 }
 function round(i: i32): i32 {

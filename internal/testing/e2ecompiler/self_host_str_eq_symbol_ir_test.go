@@ -8,16 +8,6 @@ import (
 	"testing"
 )
 
-// `__fern_str_eq(a, b)` is the RUNTIME SYMBOL accepted as surface syntax, the
-// same shape as the `__rc_dec` / `__fern_rc_dec` hooks next to it in the lowering.
-//
-// It exists for helper sources written on the raw-memory floor (#2649). Those
-// hold a string as the usize address of its box — `keys[i]` read back through
-// `__raw_load_ptr` — and `==` on two usizes is an integer compare, so without
-// this spelling there is no way to reach the comparison at all.
-//
-// Only the self-host accepts it; native registers no such builtin, so a source
-// using it is a self-host dialect program, exactly as the RC hooks are.
 const strEqSymbolSrc = `// A string box is {data, len}. box() builds a fresh one over s's bytes, the
 // way a helper holds a key: as the usize address of its box.
 function box(s: string): usize {
@@ -42,7 +32,6 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostStrEqSymbolIRX86_64 runs it end to end on x86-64.
 func TestSelfHostStrEqSymbolIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -53,8 +42,6 @@ func TestSelfHostStrEqSymbolIRX86_64(t *testing.T) {
 	if len(asm) == 0 {
 		t.Fatal("self-host emitted 0 bytes")
 	}
-	// The recognition must reach the shared comparison helper, not open-code
-	// an integer compare — that is the whole point of the spelling.
 	if !strings.Contains(asm, "__fern_str_eq") {
 		t.Errorf("emitted asm never calls __fern_str_eq — the builtin lowered to something else:\n%s", asm)
 	}
@@ -73,9 +60,6 @@ func TestSelfHostStrEqSymbolIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrEqSymbolIRArm64 is the same program on arm64 under qemu. The
-// op is target-independent, but the emitters are not: str_eq is selected
-// separately on each backend.
 func TestSelfHostStrEqSymbolIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -95,12 +79,6 @@ func TestSelfHostStrEqSymbolIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrEqSymbolTypeChecks pins that the runtime checker ACCEPTS the
-// spelling, which the emit drivers cannot show: `asm_ir_run.fern` does not
-// type-check at all, so a program driven through it compiles whatever it is
-// handed. The controls below are what make this assertion mean something. The
-// typed path is pinned on and strict, so a program the checker accepts but the
-// typed path refuses fails here too.
 func TestSelfHostStrEqSymbolTypeChecks(t *testing.T) {
 	runtimeCLI := buildRuntimeCLI(t)
 	runner, cli := runtimeCLI.runner, runtimeCLI.bin
@@ -122,16 +100,12 @@ func TestSelfHostStrEqSymbolTypeChecks(t *testing.T) {
 		return string(out), cmd.ProcessState.ExitCode()
 	}
 
-	// Control: this front end really does reject a type error. Without it, a
-	// pass below would only show that nothing was checked.
 	if out, code := check(t, "control", "function main(): i32 {\n    let x: i32 = \"hello\";\n    return x;\n}\n"); code == 0 {
 		t.Fatalf("the control program type-checked — this front end is not checking, so the assertion below proves nothing (out=%q)", out)
 	} else if !strings.Contains(out, "E003") {
 		t.Fatalf("control rejected but not with E003: %q", out)
 	}
 
-	// A string is not a box address: the checker types the helper's operands
-	// as the table has them.
 	if out, code := check(t, "streq_string", "function main(): i32 {\n    if (__fern_str_eq(\"a\", \"b\")) { return 1; }\n    return 0;\n}\n"); code == 0 {
 		t.Errorf("__fern_str_eq type-checked with string operands; its operands are usize box addresses (out=%q)", out)
 	} else if !strings.Contains(out, "E038") {

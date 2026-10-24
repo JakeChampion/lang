@@ -1,14 +1,14 @@
 import "core/map";
 import "core/cmp";
 import "std/i32";
-// An f32 map VALUE column under a derived struct key: the key runtime's own
-// get_or block converts the fallback going in and the value coming out,
-// separately from the scalar- and string-keyed paths map_f32_column covers
-// (#10458). Insert, get_or's hit and miss, get, values(), a map literal and
-// iteration.
-//
-// It prints its verdict rather than exiting with it, because a WASI component
-// reports every non-zero status as 1.
+
+
+
+
+
+
+
+
 @derive(cmp.Eq, cmp.Hash)
 struct Point { x: i32, y: i32 }
 

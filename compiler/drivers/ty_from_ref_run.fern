@@ -1,18 +1,3 @@
-// compiler/ty_from_ref_run.fern — golden driver for the structured
-// type-name decode (asmcore.fern's ty_from_ref / ty_from_name, SH-021 slice 2 —
-// docs/SELF-HOST-AUDIT.md T2).
-//
-// ty_from_name now decodes a type STRING to the coarse asmcore Ty via
-// ty_from_ref(parser.parse_type_ref(name)) — a structured tree pattern-match —
-// instead of the former hand-rolled byte scan. This driver runs a corpus
-// covering every branch of that decode (scalars, the dedicated scalar arrays vs
-// coarse arrays, Map / MapIter / Cell / Option / Result generics incl. nested
-// and single-arg degradations, the `Map`-prefix bare-name case, unrecognised
-// generics, tuples, and bare / qualified names) and prints ty_tag(ty_from_name s)
-// for each. The companion Go test pins the exact mapping, so a regression in
-// ty_from_ref (or in parse_type_ref feeding it) that changes any decoded Ty
-// fails the golden here rather than silently miscompiling a typed code path.
-
 import "../asmcore";
 import "../util";
 

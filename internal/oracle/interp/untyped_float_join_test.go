@@ -2,12 +2,6 @@ package interp
 
 import "testing"
 
-// An unannotated local whose init joins an integer literal with a float is an
-// f64, the integer arm included: `let x = if (c) { 1 } else { 2.5 }` read back
-// as an integer made `x > 0.5` a runtime error. A value block arm, an
-// arithmetic arm, an array literal's elements, a tuple's float element, a
-// variant payload and a generic call's arguments are the same; a tuple's
-// integer element stays an integer.
 func TestUntypedFloatJoinSettlesIntegerArm(t *testing.T) {
 	v := evalProgramValue(t, `function pick[T](a: T, b: T): T { return a; }
 function main(): i32 {

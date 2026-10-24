@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/i64.to_string_radix(base) — render an i64 in an
-// arbitrary base (2..36, digits 0-9a-z, signed), the wider counterpart to
-// std/i32's. The magnitude is a u64 (unsigned negation), so it exercises
-// unsigned u64 div/rem AND renders i64::MIN cleanly (2^63 -> "-8000000000000000"
-// in hex). Values past the i32 range (2^32, i64::MAX/MIN) exercise the full
-// width. Returns 42 iff every check holds across interp / x86-64 / wasm / arm64;
-// each leg skips itself when its toolchain is absent.
 const i64ToStringRadixProg = `
 import "std/i64";
 function main(): i32 {

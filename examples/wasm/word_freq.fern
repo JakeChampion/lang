@@ -1,30 +1,8 @@
-// word_freq.fern — read text from stdin, print the top-N
-// most-frequent words as `count<TAB>word`, ordered.
-//
-// Showcases: the auto-injected Map[K, V] for the count
-// table (string keys, i32 values), `m.keys()` / `m.values()`
-// for parallel-array snapshots, `s.to_lower` for the
-// case-fold pass, manual whitespace tokenisation via
-// byte-class matching, `defer` for the stdin close, and the
-// immutable-array update idiom (`arr = arr.with(i, value)`)
-// — arrays are values, so `sort_pairs` returns the reordered
-// pair as a tuple rather than mutating in place.
-//
-//   $ printf 'a b a c b a' | wasmtime word_freq.wasm
-//   3\ta
-//   2\tb
-//   1\tc
-// Map runtime for the count table; std/string for
-// (string).to_lower and the tokenisation byte-class methods;
-// std/i32 for the f-string interpolation of counts.
 import "core/map";
 import "std/io";
 import "std/string";
 import "std/i32";
 
-// Tokenize on whitespace. Simplification: ASCII punctuation
-// stays attached to words. A real version would walk bytes
-// and split on the wider whitespace + punctuation classes.
 function tokenize(s: string): string[] {
   let lower: string = s.to_lower();
   let out: string[] = [];
@@ -48,11 +26,6 @@ function tokenize(s: string): string[] {
   return out;
 }
 
-// Sort by count descending via insertion sort on parallel
-// keys / counts arrays. Arrays are immutable, so each swap
-// rebinds the locals through `.with(...)` and the reordered
-// pair is returned to the caller as a tuple — the rebinds
-// inside this function aren't visible outside it.
 function sort_pairs(keys: string[], counts: i32[]): (string[], i32[]) {
   let i: i32 = 1;
   while (i < counts.len()) {
@@ -97,9 +70,6 @@ function main(): i32 {
     }
     i = i + 1;
   }
-  // Snapshot keys + values into parallel arrays for sort.
-  // Insertion-order Map.iter() doesn't guarantee count
-  // order — that's what sort_pairs is for.
   let keys_arr: string[] = counts.keys();
   let vals_arr: i32[] = counts.values();
   let sorted: (string[], i32[]) = sort_pairs(keys_arr, vals_arr);

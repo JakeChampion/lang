@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// A nested function's name belongs to the block that declares it. The
-// checker used to register it program-wide under the bare name, so the
-// top-level `at(p, q)` here resolved to the nested `at(x)` at main's call
-// and drew E004 (#9005). Every engine answers 3*4 + (1+1).
 const nestedFuncNameSrc = `function outer(n: i32): i32 {
     function at(x: i32): i32 { return x + 1; }
     return at(n);

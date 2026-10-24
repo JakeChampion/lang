@@ -1,21 +1,3 @@
-// csv_to_json.fern — read RFC-4180-ish CSV from stdin (header
-// + data rows), emit a JSON array of objects keyed by the
-// header columns.
-//
-// Showcases: building JsonValue trees by hand (JArray /
-// JObject / JString), a json.JsonObject for the
-// per-row object, the pipe operator for the row → JsonValue
-// transform, generic-style dispatch through method receivers
-// on `string` (split / trim).
-//
-// Simplifications: no quoted-field handling (commas inside
-// quoted strings would split). The point is to show the
-// data-flow shape, not ship a hardened CSV parser.
-//
-//   $ printf 'name,age\nada,36\ngrace,85\n' | wasmtime csv_to_json.wasm
-//   [{"name":"ada","age":"36"},{"name":"grace","age":"85"}]
-// json.json_encode for the final emit; std/string for the
-// (string).split / (string).trim methods inside row_to_object.
 import "std/io";
 import "std/json";
 import "std/string";

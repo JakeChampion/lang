@@ -11,15 +11,8 @@ import (
 	"testing"
 )
 
-// localLabelRe matches a self-host control-flow label: the register path's
-// `.Lssa_<fn>_<block>` on both ISAs.
 var localLabelRe = regexp.MustCompile(`\.Lssa_[A-Za-z0-9_.$]+`)
 
-// assertNoDanglingLocalLabels fails if the emitted asm references a `.Lssa_*`
-// control-flow label it never defines — the exact dangling-label link
-// failure of issue #4442 (`undefined reference to .Lssa_main_13`), caught here as
-// a clear test error naming the label instead of a downstream gcc/ld crash. A
-// definition is a line `<label>:`; every other occurrence is a reference.
 func assertNoDanglingLocalLabels(t *testing.T, ctx string, asm []byte) {
 	t.Helper()
 	if dangling := danglingLocalLabels(asm); len(dangling) > 0 {
@@ -27,13 +20,6 @@ func assertNoDanglingLocalLabels(t *testing.T, ctx string, asm []byte) {
 	}
 }
 
-// danglingLocalLabels returns the `.Lssa_*` labels `asm` references without
-// defining, sorted.
-//
-// The character class has to admit `$`: a capturing lambda is hoisted to
-// `<fn>$cloN` and its labels carry that name. Excluding it
-// truncated every REFERENCE at the `$` while each DEFINITION was recorded whole,
-// so a closure label reported as dangling from an assembly that links.
 func danglingLocalLabels(asm []byte) []string {
 	defined := map[string]bool{}
 	referenced := map[string]bool{}
@@ -57,16 +43,8 @@ func danglingLocalLabels(asm []byte) []string {
 	return dangling
 }
 
-// blockLabelRe matches a self-host per-block label, the register path's
-// `.Lssa_*` on both emitters.
 var blockLabelRe = regexp.MustCompile(`\.Lssa_[A-Za-z0-9_.$]+`)
 
-// assertNoDuplicateLocalLabels fails if the emitted asm DEFINES one per-block
-// label twice — gas's "symbol `.Lssa_ssarc__walkable_22' is already defined"
-// (#9685, #9687), where the lift left a loop's terminated tail block as the
-// current one and the function-tail flush appended it again. Caught here as a
-// test error naming the label instead of an assembler error on a 2-million-line
-// listing.
 func assertNoDuplicateLocalLabels(t *testing.T, ctx string, asm []byte) {
 	t.Helper()
 	if dup := duplicateLocalLabels(asm); len(dup) > 0 {
@@ -74,8 +52,6 @@ func assertNoDuplicateLocalLabels(t *testing.T, ctx string, asm []byte) {
 	}
 }
 
-// duplicateLocalLabels returns the per-block labels `asm` defines more than
-// once, sorted.
 func duplicateLocalLabels(asm []byte) []string {
 	seen := map[string]int{}
 	var dup []string
@@ -93,20 +69,9 @@ func duplicateLocalLabels(asm []byte) []string {
 	return dup
 }
 
-// readFileIRCases exercise the `read_file(path)` builtin through the IR path on
-// x86-64, arm64, and wasm (the wasm IR path opens the path under preopen fd 3 —
-// run with `--dir`). read_file lowers to a value IR op that pops the path string box and
-// calls each backend's __fern_read_file helper, pushing a fresh
-// Result[string, IoError] box — so `match (read_file(p)) { Ok(s) => …, Err(e)
-// => … }` lowers like any other Result.
-//
-// The harness writes "hello" (5 bytes, no newline) to rf_data.txt in the run
-// directory. `len` returns the Ok contents' length (exercising the str-tracking
-// that makes `.len()` dispatch to str_len); `echo` writes the contents; `missing`
-// reads a non-existent file and takes the Err arm.
 var readFileIRCases = []struct {
 	name, src, wantOut string
-	wantExit           int // used when wantOut == ""
+	wantExit           int
 }{
 	{"len", `function main(): i32 { match (read_file("rf_data.txt")) { Ok(s) => { return s.len(); }, Err(e) => { return 99; } } return 0; }`, "", 5},
 	{"echo", `function main(): i32 { match (read_file("rf_data.txt")) { Ok(s) => { write(s); return 0; }, Err(e) => { return 1; } } return 0; }`, "hello", 0},
@@ -136,10 +101,6 @@ func TestSelfHostReadFileIRX86_64(t *testing.T) {
 	for _, tc := range readFileIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			// x86-64 read_file is now a Fern runtime function (#2649): op_read_file
-			// calls the stack-ABI __fn___fern_read_file. arm64 migrated too
-			// (#6352) and asserts the same symbol below; only wasm still calls
-			// the register-ABI __fern_read_file, as its own case records.
 			if !bytes.Contains(asm, []byte("call __fn___fern_read_file")) {
 				t.Fatalf("%s: no call to __fn___fern_read_file — did not lower through the IR path", tc.name)
 			}
@@ -170,10 +131,6 @@ func TestSelfHostReadFileIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostReadFileIRWasm runs the same cases through the wasm IR backend
-// under wasmtime, granting the run directory as preopen fd 3 (`--dir=.::/`).
-// wasm_ir emits `call $__fern_read_file` and wasm_ir_run pulls in the
-// path_open / fd_read / fd_close imports + the readfile_func helper.
 func TestSelfHostReadFileIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host read_file wasm IR e2e")
@@ -245,12 +202,6 @@ func TestSelfHostReadFileIRArm64(t *testing.T) {
 			if err != nil || len(asm) == 0 {
 				t.Fatalf("driver failed for %q: %v", tc.src, err)
 			}
-			// arm64's read_file moved onto the Fern helper in #6352, so the
-			// call is to the stack-ABI __fn___fern_read_file, as on x86-64.
-			// This assertion kept naming the pre-migration register-ABI
-			// __fern_read_file, which `bl __fn___fern_read_file` does not
-			// contain — so it failed on every case and never reached the
-			// build-and-run below that actually proves the path works.
 			if !bytes.Contains(asm, []byte("bl __fn___fern_read_file")) {
 				t.Fatalf("%s: no bl __fn___fern_read_file — did not lower through the arm64 IR path", tc.name)
 			}

@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// A generic call nested in another generic call's argument takes the width of
-// the position reading the outer call, as the non-nested call does (#10508).
 func TestNestedGenericCallSettlesToItsReader(t *testing.T) {
 	const head = "function id[T](a: T): T { return a; }\nfunction take(x: i64): i32 { return x as i32; }\n"
 	good := []string{

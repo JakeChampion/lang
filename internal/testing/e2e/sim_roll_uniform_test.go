@@ -1,38 +1,5 @@
 package e2e
 
-// std/sim's `__roll` maps its PRNG onto a range. A Park-Miller step mapped
-// with a bare `x % n` is biased toward small values whenever `n` does not
-// divide the generator's range, and reads exactly the low bits an
-// LCG is worst at. It now takes one PCG32 step from std/rand and maps it with
-// Lemire's multiply-shift-and-reject (#6193).
-//
-// WHAT THIS DOES NOT GUARD, stated up front because it is the obvious reading
-// of the name: it does NOT distinguish the old biased mapping from the new
-// one. Measured — the old Park-Miller + `x % n` implementation passes this
-// test unchanged. It cannot fail: `__roll`'s bias is proportional to n/range,
-// and `__roll` is private with only two call sites, the larger of which passes
-// n=100 against a 2^31 range. That is a skew of ~5e-8, orders of magnitude
-// below what any runnable sample size resolves. The bias was real and worth
-// removing; it is simply not observable through a public surface, so no test
-// can pin it and this one does not pretend to.
-//
-// What it DOES guard is the regression class that is observable: a mapping
-// that collapses (always returns 0 — e.g. an argument swapped at the
-// `rng_below` call), that skews grossly, or that stops being a function of the
-// seed. None of those were covered before: the existing sim tests pin GOLDEN
-// SEQUENCES, and a collapsed mapping produces a perfectly stable golden
-// sequence.
-//
-// `__roll` is private, so the draws are taken through the one public surface
-// that exposes them: a race between N futures ready at the same virtual
-// instant, whose winner is a `__roll(ties.len())`. Over many seeds each slot
-// should win about equally often.
-//
-// The bar is deliberately loose (each bucket within 25% of even for a 3-way
-// tie over 600 seeds). A tight bound on a fixed seed range would be a golden
-// value disguised as a statistic, and would go red on any future
-// generator change for no good reason.
-
 import "testing"
 
 const simRollUniformProg = `

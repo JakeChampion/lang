@@ -2,11 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/i32's abs_diff (absolute difference, ordering-
-// branched so it's the non-negative magnitude directly) and count_zeros (the
-// complement of the existing count_ones — the two sum to 32). Returns 42 iff
-// every check holds across interp / x86-64 / wasm / arm64; each leg skips
-// itself when its toolchain is absent.
 const i32AbsDiffCountZerosProg = `
 import "std/i32";
 function main(): i32 {

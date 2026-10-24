@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// Closing native/P1 stdin makes a subsequent text read fail. P2 can open a
-// new stdin stream resource, so it uses the same-handle raw-reader tests.
 const IOTextReadErrorProgram = `import "std/io";
 function main(): i32 {
     let r: Reader = stdin();
@@ -80,8 +78,6 @@ func CheckIOText(t *testing.T, command func() *exec.Cmd, census bool, invalidExi
 					t.Fatalf("valid text changed: got %d bytes, want %d", out.Len(), len(tc.input))
 				}
 			} else {
-				// WASI P2 CLI maps its failure result to exit1. The marker
-				// proves the exact error arm still ran on that target.
 				if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != invalidExit {
 					t.Fatalf("run: %v, want exit %d\n%s", err, invalidExit, diagnostic.String())
 				}

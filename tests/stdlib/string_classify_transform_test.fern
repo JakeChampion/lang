@@ -1,21 +1,6 @@
 import "std/test";
 import "std/string";
 
-// tests/stdlib/string_classify_transform_test.fern — pure-Fern coverage of
-// the std/string classification predicates and case/format transforms that
-// strings_test (find / split / to_lower / to_upper / rfind) leaves out. These
-// are concrete `string -> boolean` / `string -> string` / `string -> i32`
-// methods (no generics), the everyday validation + formatting surface:
-//   is_int / is_float / is_numeric / is_alpha_only / is_blank
-//   is_email_like / is_url_like                       (shape predicates)
-//   capitalize / title_case / snake_case / kebab_case (case transforms)
-//   word_count                                        (tokenisation)
-//   pad_start / pad_end / truncate / ellipsis         (fitting / padding)
-// The Go-side suite unit-tests these; this is the migration-shaped (pure-Fern,
-// std/test-driven, self-host-gated) companion.
-
-// ---- classification predicates ----
-
 function test_is_int(): test.TestOutcome {
   let ok: boolean = "42".is_int() && "-42".is_int() && "+5".is_int();
   let no: boolean = !"4.5".is_int() && !"abc".is_int() && !"".is_int() && !"-".is_int();
@@ -37,7 +22,6 @@ function test_is_alpha_only(): test.TestOutcome {
 }
 
 function test_is_blank(): test.TestOutcome {
-  // empty and all-whitespace are blank; a non-ws char makes it non-blank.
   return test.assert_true("".is_blank() && "   ".is_blank() && !"  x ".is_blank());
 }
 
@@ -52,8 +36,6 @@ function test_is_url_like(): test.TestOutcome {
   let no: boolean = !"ftp://x.y".is_url_like() && !"http://nodot".is_url_like();
   return test.assert_true(ok && no);
 }
-
-// ---- case transforms ----
 
 function test_capitalize(): test.TestOutcome {
   return test.assert_eq("hello".capitalize(), "Hello");
@@ -75,14 +57,10 @@ function test_kebab_case(): test.TestOutcome {
   return test.assert_eq("camelCase".kebab_case(), "camel-case");
 }
 
-// Consecutive capitals — a leading capital gets no separator, every later one
-// does (each is sep + lowercase). Stresses the two-pass buffer's 2-byte branch.
 function test_snake_case_caps(): test.TestOutcome {
   return test.assert_eq("ABC".snake_case(), "a_b_c");
 }
 
-// A space becomes the separator; a capital right after it adds its own — so a
-// space-then-capital doubles. Exercises both 1- and 2-byte branches adjacently.
 function test_snake_case_space_cap(): test.TestOutcome {
   return test.assert_eq("a B".snake_case(), "a__b");
 }
@@ -96,8 +74,6 @@ function test_word_count(): test.TestOutcome {
   return test.assert_eq(n, 2);
 }
 
-// slugify: free-form text → URL slug (distinct from kebab_case, which
-// only folds camelCase identifiers and keeps punctuation).
 function test_slugify(): test.TestOutcome {
   if ("Hello, World! 2024".slugify() != "hello-world-2024") {
     return test.fail("title");
@@ -109,7 +85,6 @@ function test_slugify(): test.TestOutcome {
 }
 
 function test_slugify_edges(): test.TestOutcome {
-  // No alphanumerics → empty; non-ASCII bytes act as separators.
   if ("!!!".slugify() != "") {
     return test.fail("all separators");
   }
@@ -118,8 +93,6 @@ function test_slugify_edges(): test.TestOutcome {
   }
   return test.assert_eq("café society".slugify(), "caf-society");
 }
-
-// ---- fitting / padding ----
 
 function test_pad_start(): test.TestOutcome {
   return test.assert_eq("7".pad_start(3, "0"), "007");
@@ -130,7 +103,6 @@ function test_pad_end(): test.TestOutcome {
 }
 
 function test_truncate(): test.TestOutcome {
-  // 11 bytes, cap 8, "..." (3) ellipsis → first 5 + "..." → "hello...".
   return test.assert_eq("hello world".truncate(8, "..."), "hello...");
 }
 

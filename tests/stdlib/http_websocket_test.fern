@@ -9,16 +9,6 @@ import "std/option";
 import "std/deflate";
 import "std/utf8";
 
-// tests/stdlib/http_websocket_test.fern — std/http/websocket: the
-// handshake (the RFC's accept key, the refusals, the subprotocol choice,
-// the 101's headers) and the session over a scripted connection, its
-// frames fed a few bytes at a time as a socket would and what it writes
-// captured: an echo of text and bytes, a message in fragments, a ping
-// answered inside one, a 65 KiB message under the 8-byte length, the
-// close handshake both ways, each violation answered with its code, and
-// permessage-deflate: the offer taken or not, a compressed message
-// decoded and the echo compressed, and the refusals.
-
 function handshake(path: string): HttpRequest {
   let r: HttpRequest = http.request("GET", path);
   r = r.with_header("Upgrade", "websocket").with_header("Connection", "keep-alive, Upgrade");
@@ -26,9 +16,6 @@ function handshake(path: string): HttpRequest {
   return r;
 }
 
-// `wired(req, bytes, k)` — the request with its body the scripted
-// connection: `bytes` handed over `k` at a time, and what the session
-// writes kept in the cell answered beside it.
 function wired(req: HttpRequest, bytes: u8[], k: i32): (HttpRequest, Cell[u8[]]) {
   let at: Cell[i32] = cell_new(0);
   let none: u8[] = [];
@@ -87,8 +74,6 @@ function echo(c: websocket.Conn, m: websocket.Message): void {
   }
 }
 
-// `session(bytes, k, opts, h)` — the session run over the scripted
-// connection: the bytes it wrote.
 function session(bytes: u8[], k: i32, opts: websocket.Options, h: websocket.Handlers): u8[] {
   return session_on(handshake("/ws"), bytes, k, opts, h);
 }
@@ -291,8 +276,6 @@ function test_ended_without_close(): test.TestOutcome {
   return test.assert_eq(seen.get() + " " + out, "1006 81026869");
 }
 
-// `compressed(payload)` — the payload as a client compresses it: the
-// flushed stream without its open tail, under RSV1.
 function compressed(fin: boolean, opcode: i32, payload: u8[]): u8[] {
   let packed: u8[] = deflate.deflate_flushed(payload, 15);
   let f: u8[] = masked(fin, opcode, array.take(packed, packed.len() - 4));
@@ -303,8 +286,6 @@ function compressing(): websocket.Options {
   return websocket.Options { ...websocket.options(), compression: true };
 }
 
-// `deflated(bytes, k)` — the session over a connection whose handshake
-// offered permessage-deflate, compression on.
 function deflated(bytes: u8[], k: i32): u8[] {
   let req: HttpRequest = handshake("/ws").with_header("Sec-WebSocket-Extensions", "permessage-deflate; client_max_window_bits");
   return session_on(req, bytes, k, compressing(), websocket.handlers(echo));
@@ -343,11 +324,6 @@ function test_deflate_negotiation(): test.TestOutcome {
   return test.assert_eq(got, taken + "15|-|-|" + taken + "10|-|-|-|-|-|" + taken + "15");
 }
 
-// The session over a compressed connection: a compressed text message
-// echoed compressed (RSV1 set, the stream inflating back to the text),
-// bytes in fragments, the compressed stream split across them and only
-// the first carrying RSV1. What the server writes is decoded here, since the
-// compressor's output is an implementation detail.
 function test_deflate_session(): test.TestOutcome {
   let text: string = "Hello, Hello, Hello, Hello!";
   let packed: u8[] = deflate.deflate_flushed([1 as u8, 2 as u8, 3 as u8], 15);
@@ -359,9 +335,6 @@ function test_deflate_session(): test.TestOutcome {
   return test.assert_eq(frames_of(deflated(bytes, 5)), "193:" + hex(text.bytes()) + "|194:010203|136:03e8|");
 }
 
-// The client keeps its LZ77 window across messages, the server having
-// asked for no reset: zlib's stream for two messages under one sync-flushed
-// context, the second of which is a single match back into the first.
 function test_deflate_context_takeover(): test.TestOutcome {
   let first: u8[] = masked(true, 1, [74 as u8, 206 as u8, 207 as u8, 43 as u8, 73 as u8, 173 as u8, 40 as u8, 81 as u8, 40 as u8, 73 as u8, 204 as u8, 78 as u8, 205 as u8, 47 as u8, 75 as u8, 45 as u8, 210 as u8, 81 as u8, 72 as u8, 70 as u8, 19 as u8, 1 as u8, 0 as u8]);
   first = first.with(0, (first[0] as i32 | 64) as u8);
@@ -371,9 +344,6 @@ function test_deflate_context_takeover(): test.TestOutcome {
   return test.assert_eq(got, "193:" + hex("context takeover, context takeover".bytes()) + "|193:" + hex("context takeover!".bytes()) + "|136:03e8|");
 }
 
-// `frames_of(got)` — the frames a session wrote, each as its first byte and
-// its payload in hex, a compressed one inflated on its own: the server
-// resets its window for every message.
 function frames_of(got: u8[]): string {
   let out: string = "";
   let at: i32 = 0;
@@ -411,11 +381,6 @@ function test_deflate_refusals(): test.TestOutcome {
   return test.assert_eq(got, "880203ea|880203ef|880203ef|880203ea");
 }
 
-// A close reason of a multibyte code point straddling byte 123 is cut back
-// to the last whole code point, so the echoed close stays valid UTF-8
-// (RFC 6455 §5.5.1). The reason here is 61 two-byte code points (122
-// bytes) then one more whose lead byte would land at 123; the server must
-// drop that last one, echoing 122 bytes of reason.
 function test_close_reason_boundary(): test.TestOutcome {
   let rb: u8[] = [];
   let k: i32 = 0;
@@ -436,10 +401,6 @@ function __len_byte(n: i32): string {
   return digits.slice_snap(n >> 4, (n >> 4) + 1) + digits.slice_snap(n & 15, (n & 15) + 1);
 }
 
-// A frame whose length is not encoded in the minimal number of bytes, or
-// whose 8-byte form has the most significant bit set, is a protocol error
-// (RFC 6455 §5.2), closed 1002: a 2-byte length of 1, an 8-byte length of
-// 1, an 8-byte length of 200, and an 8-byte length with bit 63 set.
 function test_length_framing(): test.TestOutcome {
   let m: u8[] = mask();
   let nonmin16: u8[] = [(1 as i32 | 128) as u8, (126 | 128) as u8, 0 as u8, 1 as u8].concat(m).concat(xormask("a".bytes(), m));

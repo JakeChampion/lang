@@ -8,32 +8,24 @@ import (
 	"testing"
 )
 
-// `let (i, v) = ps[0]` over an UNANNOTATED `(i32, f64)[]` local must type its
-// bindings from the element's tuple type (#6165). Read as a 4-byte i32 the f64
-// comes back garbage, with the compiler exiting 0 and FERN_STRICT_IR=1 silent.
-//
-// The controls pin the annotated local and the field read `ps[0].1`, which
-// must agree with the destructure one token apart.
 var tupleDestructureIndexCases = []struct {
 	name string
 	src  string
 }{
 	{"destructure_unannotated_local", `function mk(): (i32, f64)[] { return [(0, 4.5)]; }
-function main(): i32 { let ps = mk(); let (i, v) = ps[0]; return (v * 10.0) as i32 + i; }`}, // 45
+function main(): i32 { let ps = mk(); let (i, v) = ps[0]; return (v * 10.0) as i32 + i; }`},
 	{"destructure_call_index", `function mk(): (i32, f64)[] { return [(0, 4.5)]; }
-function main(): i32 { let (i, v) = mk()[0]; return (v * 10.0) as i32 + i; }`}, // 45 — no local at all
+function main(): i32 { let (i, v) = mk()[0]; return (v * 10.0) as i32 + i; }`},
 	{"destructure_i64_element", `function mk(): (i32, i64)[] { return [(5, 4000000000)]; }
-function main(): i32 { let (i, v) = mk()[0]; return (v / 100000000) as i32 + i; }`}, // 45
+function main(): i32 { let (i, v) = mk()[0]; return (v / 100000000) as i32 + i; }`},
 	{"destructure_string_element", `function mk(): (i32, string)[] { return [(40, "abcde")]; }
-function main(): i32 { let (i, s) = mk()[0]; return s.len() + i; }`}, // 45
+function main(): i32 { let (i, s) = mk()[0]; return s.len() + i; }`},
 	{"annotated_local_control", `function mk(): (i32, f64)[] { return [(0, 4.5)]; }
-function main(): i32 { let ps: (i32, f64)[] = mk(); let (i, v) = ps[0]; return (v * 10.0) as i32 + i; }`}, // 45 — annotated local
+function main(): i32 { let ps: (i32, f64)[] = mk(); let (i, v) = ps[0]; return (v * 10.0) as i32 + i; }`},
 	{"field_read_control", `function mk(): (i32, f64)[] { return [(0, 4.5)]; }
-function main(): i32 { let ps = mk(); return (ps[0].1 * 10.0) as i32; }`}, // 45 — field read, no destructure
+function main(): i32 { let ps = mk(); return (ps[0].1 * 10.0) as i32; }`},
 }
 
-// TestSelfHostTupleDestructureIndexX86_64 asserts values against the interp
-// oracle on the self-host x86-64 backend.
 func TestSelfHostTupleDestructureIndexX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -75,7 +67,6 @@ func TestSelfHostTupleDestructureIndexX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleDestructureIndexWasm is the wasm leg.
 func TestSelfHostTupleDestructureIndexWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping tuple-destructure index wasm cases")

@@ -1,27 +1,9 @@
-// Shared semantic types for the self-hosted compiler.
-// Keep this module independent of AST, parser, checker and physical IR so
-// checked syntax and pre-RC semantic values can carry the same type directly.
-
-// Every integer width shares this variant. Width and signedness participate
-// in type identity; `is_char` distinguishes Unicode scalars from integers
-// even though a char occupies the same physical slot as an i32.
-// `polymorphic` is an inference fact for an unsuffixed constructor payload.
-// Semantic lowering settles it before admitting the type to typed IR.
 pub struct TypeI32 { is_char: boolean, width: i32, unsigned: boolean, polymorphic: boolean }
 
-// The POINTER width, which a `usize` carries: an address, 32 bits on wasm and
-// the whole 64-bit slot on the register backends, resolved by each backend
-// rather than named here (native's ir.WidthPtr).
 pub function width_ptr(): i32 {
   return 0 - 1;
 }
 
-// is_primitive_type_name reports whether `t` is a PRIMITIVE type spelling —
-// one that can never name a struct or an enum, so as a path head
-// (`i32.f(...)`) it names an impl's associated function and never a value.
-// The same set checker.e060_is_primitive_name gates `as?` on, plus `str` (the
-// borrowed-string view: the parser erases a BARE `str` to "string", but the
-// spelling survives verbatim inside a generic argument) and `void`.
 pub function is_primitive_type_name(t: string): boolean {
   return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64" || t == "usize"
     || t == "f32" || t == "f64" || lanes_width(t) > 0
@@ -33,51 +15,18 @@ pub struct TypeBool { tag: i32 }
 
 pub struct TypeString { tag: i32 }
 
-// An uncommitted literal defaults to f64 but may adopt a contextual width.
 pub struct TypeFloat { width: i32, polymorphic: boolean }
 
-// A 128-bit vector of floats: `f64x2` (width 64, two lanes) or `f32x4` (width
-// 32, four lanes). A lane value lives in a local, a parameter or a result,
-// never in a field or an element.
 pub struct TypeLanes { width: i32 }
 
-// Array of homogeneous elements. elem can itself be any Type, so
-// `i32[][]` is representable. An empty literal `[]` defaults to
-// TypeArray { elem: TypeUnknown(...) } — the checker rejects it
-// in inference contexts because it can't infer a concrete elem
-// type.
-// `view` marks a `[T]` window (a slice, a `[T]` binding or return). It is a
-// semantic distinction even while physical lowering copies array slices.
-// Exact identity preserves it; lending an owned array is an explicit operation.
 pub struct TypeArray { elem: Type, view: boolean }
 
-// TypeStruct references a user-declared struct by name. The
-// full field list lives in the StructTable (built once per
-// module); this variant is just the nominal handle.
 pub struct TypeStruct { name: string, args: Type[] }
 
-// TypeTuple carries a fixed-arity heterogeneous element-type
-// list. Field access via `.0` / `.1` / … reads the elem type
-// at that position; out-of-range indices surface unknown.
 pub struct TypeTuple { elements: Type[] }
 
-// TypeFunc is the static type of a callable value — `function
-// (a: T, b: T): RT { … }` or a binding to one. param_types
-// captures the declared parameter types in order; ret_type is
-// the body's declared return type.
-//
-// params_known separates a param list that is genuinely empty (a `() => R`
-// callable) from one that was never recorded: a bare legacy "fn" tag carries
-// no signature, so its TypeFunc has an empty list it cannot vouch for. Retained
-// declaration sidecars do record a signature. Only a known list is an arity.
-// param_own marks the slots this callable CONSUMES — `(own T) => T`. A caller
-// hands its unit over there and does not release it; every other reference
-// argument is lent. The flags are part of the type, so a consuming function
-// value cannot reach a lending position or the reverse. Empty where nothing
-// consumes.
 pub struct TypeFunc { param_types: Type[], param_own: boolean[], ret_type: Type, params_known: boolean }
 
-// fn_own_at reports whether parameter `i` of this callable consumes its argument.
 pub function fn_own_at(f: TypeFunc, i: i32): boolean {
   if (i < 0 || i >= f.param_own.len()) {
     return false;
@@ -85,11 +34,6 @@ pub function fn_own_at(f: TypeFunc, i: i32): boolean {
   return f.param_own[i];
 }
 
-// A slot where CONSUMING says something: a reference, whose unit changes
-// hands, or a template's variable, which may be one at some instantiation. A
-// scalar carries no unit, so `own` on one is not part of the type — dropping
-// it here is what lets a generic `(own T) => T` instantiated at a scalar match
-// the callable a scalar body actually hands out.
 pub function ownable(t: Type): boolean {
   if let TypeI32(_) = t {
     return false;
@@ -109,10 +53,6 @@ pub function ownable(t: Type): boolean {
   return true;
 }
 
-// own_flags normalises a per-parameter consuming mask against the parameter
-// types: a slot that carries no unit drops its flag, and a mask with nothing
-// left is EMPTY — so a callable that owns nothing keeps one spelling and
-// compares equal to one built without the mask.
 pub function own_flags(flags: boolean[], params: Type[]): boolean[] {
   let kept: boolean[] = [];
   let any: boolean = false;
@@ -131,64 +71,20 @@ pub function own_flags(flags: boolean[], params: Type[]): boolean[] {
   return kept;
 }
 
-// TypeMap models `Map[K, V]` — a runtime hash-map keyed by K
-// values yielding V values. The actual runtime + method
-// dispatch is a follow-up; the checker only knows enough to
-// give a Map-typed binding a structural identity and route
-// `==` comparisons / type assignability.
 pub struct TypeMap { key: Type, value: Type }
 
-// TypeUnion references a user-declared type alias by name —
-// `pub type Shape = Circle | Square`. Variant resolution lives
-// in the UnionTable (parallel to StructTable). The checker uses
-// the union name for assignability: a variant value (TypeStruct
-// "Circle") is assignable to a TypeUnion "Shape" if Circle
-// appears in Shape's variant list.
-// `args` carries a builtin generic union's instantiation arguments
-// (`Option[i32]` → TypeUnion{"Option", [i32]}), mirroring TypeStruct.args.
-// type_eq / assignability compare unions by NAME and ignore args, so a
-// name-only union (args=[]) and an instantiated one stay interchangeable
-// everywhere the checker compares them — the field is read only by the
-// typed-IR annotation (type_to_irtag), to reconstruct the "Option[T]" /
-// "Result[T, E]" tag the lowering keys on (#5531).
 pub struct TypeUnion { name: string, args: Type[] }
 
-// A `dyn Trait` object type. `traits` is the trait-set text after the
-// `dyn ` prefix — "Greet" for `dyn Greet`, "A + B" for `dyn A + B`. In this
-// partial type system a dyn value's concrete Self isn't tracked (native
-// resolves it at monomorphisation / vtable-dispatch time), so assignability
-// into a dyn slot is lenient — a value of ANY value type may flow in, exactly
-// as a generic parameter accepts any argument. The coded conformance passes
-// (E021 object-safety, E059/E060 downcast, E062 ambiguous-method) run
-// independently off the annotation TEXT, so real dyn errors still surface;
-// this Type only stops the uncoded silent over-reject of a `dyn` binding
-// (#4346 piece 2). Method dispatch THROUGH a dyn value is not yet typed —
-// `d.hi()` still infers unknown — a deliberately-deferred follow-up.
 pub struct TypeDyn { traits: string }
 
-// A WIT resource handle, `own R` or `borrow R`: the i32 the host names a
-// resource by. A borrowed handle is lent, and its holder never drops it.
 pub struct TypeHandle { resource: string, borrowed: boolean }
 
-// The type of an expression that yields no value: a call of a `: void`
-// function, and a bare `return;`. It is distinct from TypeUnknown, which
-// means "this checker could not work the type out" — conflating the two made
-// void read as an unresolved name, so a void call was an uncoded over-reject
-// in statement position and an invisible wildcard in value position (#6649).
 pub struct TypeVoid { tag: i32 }
 
 pub struct TypeUnknown { reason: string }
 
-// A type VARIABLE of a generic declaration, carrying the name it is written
-// with. It stands in a template's contract, where a call site binds it; the
-// semantic boundary produces a generic body once per instantiation, so no
-// produced value ever carries one (docs/SEMANTIC-GENERICS.md). Distinct from
-// TypeUnknown, which means the checker could not work a type out at all.
 pub struct TypeErased { name: string }
 
-// An uninhabited payload after inference closes: no value can have this type.
-// Unlike void, it cannot be constructed with (). It may name an absent enum
-// payload, but never a produced value or a generic declaration's variable.
 pub struct TypeNever { tag: i32 }
 
 pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeLanes | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeHandle | TypeVoid | TypeUnknown | TypeErased | TypeNever;
@@ -197,8 +93,6 @@ pub function unchecked(): Type {
   return TypeUnknown { reason: "not yet checked" };
 }
 
-// A code point occupies an i32 slot and dispatches its own method surface, so it
-// spells itself only at the one width and signedness that slot has.
 function char_spelling(i: TypeI32): string {
   if (i.width == 32 && !i.unsigned) {
     return "char";
@@ -232,8 +126,6 @@ function signed_spelling(i: TypeI32): string {
   return "";
 }
 
-// Every integer-shaped scalar. A width this vocabulary does not name has no
-// usable declaration spelling.
 function integer_spelling(i: TypeI32): string {
   if (i.is_char) {
     return char_spelling(i);
@@ -244,12 +136,6 @@ function integer_spelling(i: TypeI32): string {
   return signed_spelling(i);
 }
 
-// Exact source-type spelling for interfaces that still consume declarations.
-// This is not the checker's lossy scalar IR tag. Function signatures, generic
-// arguments, view ownership and all supported widths survive the conversion.
-// Unknown and opaque signatures have no usable declaration spelling.
-// A polymorphic float uses Fern's f64 default when no context committed f32;
-// the semantic Type remains on the AST and retains that polymorphism metadata.
 pub function handle_spelling(h: TypeHandle): string {
   if (h.borrowed) {
     return "borrow " + h.resource;
@@ -257,9 +143,6 @@ pub function handle_spelling(h: TypeHandle): string {
   return "own " + h.resource;
 }
 
-// `t` with each struct or enum instantiation `clone_of` gives a name for
-// replaced by that name, carrying no arguments; "" leaves it, and its
-// arguments are renamed in turn.
 pub function renamed_nominals(t: Type, clone_of: (Type) => string): Type {
   if let TypeStruct(s) = t {
     let n: string = "";
@@ -304,8 +187,6 @@ function renamed_list(ts: Type[], clone_of: (Type) => string): Type[] {
   return out;
 }
 
-// lanes_spelling names the lane type of element width `width`: `f64x2` or
-// `f32x4`, and "" for any other width.
 pub function lanes_spelling(width: i32): string {
   if (width == 64) {
     return "f64x2";
@@ -316,8 +197,6 @@ pub function lanes_spelling(width: i32): string {
   return "";
 }
 
-// lanes_width is the element width the lane spelling `t` names, 0 when `t`
-// is not one.
 pub function lanes_width(t: string): i32 {
   if (t == "f64x2") {
     return 64;
@@ -328,8 +207,6 @@ pub function lanes_width(t: string): i32 {
   return 0;
 }
 
-// lane_builtin_width is the element width of a lane builtin's lane type: 64
-// for `__f64x2_*`, 32 for `__f32x4_*` and 0 for any other name.
 pub function lane_builtin_width(name: string): i32 {
   if (name.len() <= 8) {
     return 0;
@@ -344,8 +221,6 @@ pub function lane_builtin_width(name: string): i32 {
   return 0;
 }
 
-// lane_builtin_verb is a lane builtin's name after its `__f64x2_` or
-// `__f32x4_` prefix, "" for a name without one.
 pub function lane_builtin_verb(name: string): string {
   if (lane_builtin_width(name) == 0) {
     return "";
@@ -353,10 +228,6 @@ pub function lane_builtin_verb(name: string): string {
   return slice_unchecked(name, 8, name.len()) + "";
 }
 
-// lane_builtin_params is the parameter list of the lane builtin `name`
-// (docs/SIMD-GENERIC-KERNELS.md §6). `of` takes one element per lane, `lane`
-// a lane value and an index, `load` an array and an index, and `with` an
-// array, an index and a lane value.
 pub function lane_builtin_params(name: string): Type[] {
   let w: i32 = lane_builtin_width(name);
   let lt: Type = TypeLanes { width: w };
@@ -386,8 +257,6 @@ pub function lane_builtin_params(name: string): Type[] {
   return lane_operands(v, lt);
 }
 
-// lane_operands is the parameter list of a lane builtin whose operands are
-// all lane values.
 function lane_operands(v: string, lt: Type): Type[] {
   if (v == "mul_add" || v == "select") {
     return [lt, lt, lt];
@@ -398,8 +267,6 @@ function lane_operands(v: string, lt: Type): Type[] {
   return [lt, lt];
 }
 
-// lane_builtin_result is the result type of the lane builtin `name`: an
-// element for `lane`, the array for `with` and the lane type otherwise.
 pub function lane_builtin_result(name: string): Type {
   let w: i32 = lane_builtin_width(name);
   let v: string = lane_builtin_verb(name);
@@ -482,8 +349,6 @@ pub function spelling(t: Type): string {
       if (ret.len() == 0) {
         return "";
       }
-      // Group the entire arrow type, so array suffixes and enclosing tuples
-      // cannot attach to its return type instead of to the function value.
       return "((" + params + ") => " + ret + ")";
     },
     TypeMap(m) => {
@@ -519,8 +384,6 @@ pub function spelling(t: Type): string {
   return "";
 }
 
-// A consuming slot spells its `own`, so a callable's spelling round-trips the
-// whole type rather than the lending half of it.
 function param_list_spelling(f: TypeFunc): string {
   let out: string = "";
   let i: i32 = 0;

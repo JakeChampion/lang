@@ -2,11 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// structMethodReorderCases pin #11847: a generic-struct method cloned per
-// receiver instantiation that builds a DIFFERENT instantiation of its own
-// struct. The clone substitutes the receiver's spelled variables, and a bare
-// struct literal in its body takes its instantiation from its destination or
-// the typed lowering, never from the receiver.
 var structMethodReorderCases = []struct {
 	name    string
 	main    string
@@ -24,7 +19,6 @@ function main(): i32 {
     if (q.second != 1) { return 1; }
     return 0;
 }`, "s\n"},
-	// The literal reaches the return through an unannotated local.
 	{"swap-through-local",
 		`struct Pair[A, B] { first: A, second: B }
 function (p: Pair[A, B]) swap(): Pair[B, A] {
@@ -36,7 +30,6 @@ function main(): i32 {
     print(p.swap().first);
     return 0;
 }`, "t\n"},
-	// The receiver names its variables differently from the declaration.
 	{"receiver-spells-own-names",
 		`struct Pair[A, B] { first: A, second: B }
 function (p: Pair[X, Y]) swap[X, Y](): Pair[Y, X] {
@@ -49,9 +42,6 @@ function main(): i32 {
     print(p.swap().first);
     return 0;
 }`, "u\nu\n"},
-	// A spread update assigned back to the receiver: the receiver's
-	// instantiation reaches the literal through the assignment, the shape
-	// std/pvec's with builds.
 	{"spread-assigned-to-receiver",
 		`struct Box[T] { n: i32, items: T[] }
 function (b: Box[T]) renum(k: i32): Box[T] {
@@ -65,8 +55,6 @@ function main(): i32 {
     if (b.n != 5) { return 1; }
     return 0;
 }`, "x\n"},
-	// Control: a literal of the receiver's own instantiation nested where no
-	// destination reaches it, the shape core/iter's ArrayIter.next builds.
 	{"same-instantiation-in-tuple",
 		`struct Box[T] { v: T, n: i32 }
 function (b: Box[T]) bump(): (Box[T], i32) {
@@ -81,9 +69,6 @@ function main(): i32 {
 }`, "w\n"},
 }
 
-// TestSelfHostStructMethodReorderIRX86_64 cross-checks each case against the
-// interpreter, then compiles it with the self-hosted CLI under strict IR and
-// runs it.
 func TestSelfHostStructMethodReorderIRX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range structMethodReorderCases {

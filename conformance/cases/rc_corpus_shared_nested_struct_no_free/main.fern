@@ -1,11 +1,11 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// Transitive reclamation Stage A — shared nested struct: two
-// Outers share the same Inner (aliased), so when the first
-// Outer drops, Inner is rc>1 and must only dec (not free).
-// The is_unique gate inside __drop_struct_Inner is what makes
-// this safe; a premature free would corrupt the second read.
+
+
+
+
+
+
+
+
 import "core/int";
 struct Inner { vals: i32[] }
 struct Outer { inner: Inner }

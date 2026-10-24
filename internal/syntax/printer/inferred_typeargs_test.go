@@ -8,13 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// The checker stamps its INFERRED instantiation onto the very fields the
-// parser fills for a written one — `StructLit.TypeArgs` and
-// `Call.TypeArgs`. Printing those unconditionally would write an
-// instantiation into source that never named one, which is the same
-// data-loss bug as dropping a written one, pointing the other way. Both
-// printers gate on TypeArgsWritten; this pins that they do, by checking
-// first (so the inferred args are present on the AST) and then printing.
 func TestInferredTypeArgsAreNotPrinted(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -42,8 +35,6 @@ func TestInferredTypeArgsAreNotPrinted(t *testing.T) {
 				t.Fatalf("check: %v", err)
 			}
 			for name, got := range map[string]string{"Print": Print(prog), "Format": Format(prog)} {
-				// The decl's own `[T]` is legitimate; only the
-				// use sites must stay bare.
 				body := got[strings.Index(got, "function main"):]
 				if strings.Contains(body, tc.unwanted) {
 					t.Errorf("%s printed an inferred instantiation (%q) into main:\n%s", name, tc.unwanted, got)

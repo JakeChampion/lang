@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// A builder op on the register path loads its operands straight into the
-// argument registers and calls its helper (ssa_buf_call), rather than pushing
-// them for the stack machine's arm to pop. `swap` receives the handle in %rsi
-// and the string in %rdi, the reverse of what buf_push takes, so the pair is
-// exchanged; `four` passes all four of buf_push_range's operands.
 const bufCallProg = `@noinline function swap(x: i32, h: usize, s: string): i32 { buf_push(h, s); return x; }
 @noinline function four(h: usize, s: string, a: i32, b: i32): void { buf_push_range(h, s, a, b); }
 @noinline function one(h: usize, c: i32): void { buf_push_byte(h, c); }

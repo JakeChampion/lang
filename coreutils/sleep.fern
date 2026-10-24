@@ -1,13 +1,3 @@
-// sleep.fern — GNU-compatible `sleep`.
-//
-//   sleep NUMBER[SUFFIX]...    pause for the SUM of the intervals
-//
-// The NUMBER[SUFFIX] grammar is `lib/duration.fern`, shared with `timeout`.
-//
-// Every operand is checked BEFORE anything is slept: `sleep 1 x` reports
-// x and exits without pausing, and `sleep x y` reports both, then the
-// one `Try …` line. The intervals are SUMMED, so the pause is one call
-// however many operands there were.
 import "std/string";
 import "std/array";
 import "./lib/gnu";
@@ -30,8 +20,6 @@ function help_text(): string {
 
 pub function main(): i32 {
   let argv: string[] = args();
-  // The missing operand is judged on argv, not on what the option scan
-  // left: `sleep --` has nothing to sleep for and still exits 0.
   if (argv.len() <= 1) {
     gnu.die_usage("missing operand", 1);
   }

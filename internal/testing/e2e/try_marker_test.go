@@ -8,16 +8,6 @@ import (
 	"testing"
 )
 
-// `?` on an `@try` enum, both shapes, both paths. Before the marker, `?` was
-// hardwired to Option and Result by name; a user enum of identical shape got
-// `error[E042]: ? operator requires an Option or Result value`. See
-// docs/TRY.md and #9302.
-//
-// The two shapes exercise the two lowerings, which is the whole reason
-// TryKind exists: a payloadless failure variant (MyOpt's Gone) BUILDS a fresh
-// tag-1 value, while one carrying a payload (Outcome's Bad) FORWARDS the
-// source value unchanged. Both the success and failure path of each, because
-// the failure path is the one that early-returns.
 const tryMarkerSrc = `@try
 enum MyOpt[T] { Here(T), Gone }
 
@@ -44,9 +34,6 @@ function main(): i32 {
 }
 `
 
-// errdefer fires on the failure path of `?` for a marked enum exactly as it
-// does for Option and Result — the IR gate now asks Info.TryShapes instead of
-// comparing against the two builtin names.
 const tryMarkerErrdeferSrc = `@try
 enum MyOpt[T] { Here(T), Gone }
 

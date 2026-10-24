@@ -1,16 +1,16 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// MapIter.value() / MapIter.key() returning a string K/V: the
-// returned string must survive the map drop. Each helper builds
-// a fresh map, iterates collecting strings into an outer array,
-// and returns the array — the map dies at scope exit; without
-// per-iter retain the column walk frees the strings the outer
-// array now holds (UAF). The wasm boxed branches str_inc the
-// (data, len); natives single-word rc_inc the returned data
-// pointer at the call dispatch.
-//
-// Per iter: vs[0].len()=28 + ks[0].len()=26 = 54; 300x → 16200.
+
+
+
+
+
+
+
+
+
+
+
+
+
 import "core/int";
 import "core/map";
 import "std/string";

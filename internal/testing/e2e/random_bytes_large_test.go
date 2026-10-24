@@ -2,17 +2,6 @@ package e2e
 
 import "testing"
 
-// randomBytesLargeProbe asks for a MEGABYTE in one call, which is what makes
-// it different from the 16-byte cases beside it: `getrandom(2)` returns how
-// many bytes it wrote, and past one page it may write fewer and return early
-// when a signal arrives — or -EINTR having written none. A helper that calls
-// it once and ignores the result leaves the tail of the buffer as the
-// allocator left it, which is zeros, and nothing reports it (#9221).
-//
-// The assertion is a RUN of zeros rather than "not all zeros": a short fill
-// leaves a zero tail behind good bytes, so the whole buffer is never zero.
-// Sixty-four zeros in a row is 2^-512 as an accident and unmissable as a
-// truncation.
 const randomBytesLargeProbe = `function main(): i32 {
     let bs: u8[] = random_bytes(1048576);
     if (bs.len() != 1048576) { return 1; }
@@ -33,10 +22,6 @@ const randomBytesLargeProbe = `function main(): i32 {
 }
 `
 
-// TestRandomBytesLargeFill runs the probe on every backend that answers
-// random_bytes. The Darwin arm of the arm64 helper has always looped —
-// getentropy caps a call at 256 bytes — so this is the property the two
-// register backends and the interpreter now share with it.
 func TestRandomBytesLargeFill(t *testing.T) {
 	t.Run("interp", func(t *testing.T) {
 		if code := interpExit(t, buildLangBinForInterp(t), randomBytesLargeProbe); code != 0 {

@@ -1,19 +1,5 @@
 package e2e
 
-// `s.split("")` splits into CODEPOINTS on every backend.
-//
-// This was a live native/self-host divergence: std/string's `split` (and hence
-// the interp and the native backends) char-splits an empty separator, while the
-// self-host compiler lowers `s.split(sep)` to its own `__fern_str_split`
-// runtime helper, which returned `[s]` instead. rt_src_str_split's comment
-// recorded the gap as deliberate — it matched the hand-written self-host asm
-// emitter, and no differential test covered empty-sep. The hand-asm emitters
-// have since been deleted, so this is the test, and the helper now char-splits.
-//
-// The unit is a codepoint, not a byte (#8469): every piece is a whole
-// character, so no fragment is ever invalid UTF-8. `to_array()` uses the same
-// scalar units; `bytes()` exposes the byte sequence.
-
 import "testing"
 
 const stringSplitEmptySepProg = `

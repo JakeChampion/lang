@@ -7,26 +7,7 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/modload"
 )
 
-// TestStdArrayIndexOfContainsGeneric pins `.index_of()` / `.contains()` as
-// element-generic Array receiver methods bound `T: cmp.Eq` (#6801). They used
-// to be declared with a concrete `string[]` receiver, and because array method
-// dispatch keys on the NAME only, every element type funnelled into that one
-// signature: `xs.contains(3)` on an `i32[]` reported
-// `E038: expected string[], got i32[]` as soon as anything pulled `std/array`
-// in (e.g. `import "std/i32"`), which named neither the problem nor a fix. The
-// self-host driver dialect lowered the same call fine, so it was a surface
-// divergence too.
-//
-// The bodies compare with the bound's `eq` method rather than `==`: the
-// operator desugars through a `Type.eq` lookup that is not visible from
-// `std/array`, so a caller's `@derive(Eq)` element type would be rejected.
-// The struct case below is what pins that.
-//
-// `.index_of` returns `Option[i32]` since #4387 — "absent" is `None`, not a
-// `-1` sentinel — so each assertion below matches rather than compares.
 func TestStdArrayIndexOfContainsGeneric(t *testing.T) {
-	// The reported repro: `std/i32` transitively imports `std/array`, so the
-	// Array method namespace is populated and the call resolves through it.
 	t.Run("check i32[] receiver with std/i32 imported", func(t *testing.T) {
 		src := `import "std/i32";
 function main(): i32 {
@@ -44,9 +25,6 @@ function main(): i32 {
 		}
 	})
 
-	// The pre-fix error text is the other half of the bug: it talked about
-	// `string[]` when the user wrote `i32[]`. Assert the whole family of
-	// element types is clean, so a regression cannot hide behind one width.
 	t.Run("check every element receiver", func(t *testing.T) {
 		for _, recv := range []struct{ name, ty, lit, target string }{
 			{"i32", "i32[]", "[1, 2, 3]", "2"},
@@ -84,8 +62,6 @@ function main(): i32 {
 		want int
 	}{
 		{
-			// Each `return` is a distinct failure code so a red run names the
-			// assertion; 42 is the all-pass value.
 			name: "i32[] hit / miss / absent",
 			src: `import "std/i32";
 function main(): i32 {
@@ -129,9 +105,6 @@ function main(): i32 {
 			want: 42,
 		},
 		{
-			// The receiver that used to be the only supported one — it must
-			// still compare CONTENTS, not the .rodata slot, so the built
-			// string has to match the literal.
 			name: "string[] receiver keeps content equality",
 			src: `import "std/array";
 function main(): i32 {
@@ -147,8 +120,6 @@ function main(): i32 {
 			want: 42,
 		},
 		{
-			// What a generic `contains` implies: a user type that only
-			// satisfies the bound through `@derive(Eq)`.
 			name: "@derive(Eq) struct element",
 			src: `import "std/array";
 import "core/cmp" as cmp;
@@ -166,8 +137,6 @@ function main(): i32 {
 			want: 42,
 		},
 		{
-			// Two element types in one program: the method monomorphises per
-			// element type rather than collapsing to a single clone.
 			name: "mixed element types in one program",
 			src: `import "std/array";
 function main(): i32 {
@@ -188,9 +157,6 @@ function main(): i32 {
 	for _, c := range cases {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
-			// Each compiled backend gets its own sub-test so a missing
-			// toolchain skips that leg alone: a bare skip here would take
-			// the interp assertion down with it.
 			if got := runInterpByte(t, c.src); got != c.want {
 				t.Errorf("interp: got exit %d, want %d", got, c.want)
 			}

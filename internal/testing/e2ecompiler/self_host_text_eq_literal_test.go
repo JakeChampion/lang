@@ -2,10 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A string compared with a literal checks the other operand's length first and
-// calls the runtime's equality only when the lengths match. Each probe prints
-// a bit per comparison, so a wrong answer on either side of the length test
-// shows as a wrong digit.
 const textEqLiteralProgram = `@noinline function kw(s: string): i32 {
     if (s == "fn") { return 1; }
     if (s == "var") { return 2; }

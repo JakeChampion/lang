@@ -2,13 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A `.bss` data directive with a value list reserves one zero-init slot per
-// value. The emitters write their multi-word globals as one labelled line
-// (`__fern_task_state: .quad 0, 0, 0, 0`), and an assembler reserving one
-// slot for the whole list puts every later .bss symbol on top of the list's
-// tail: the task runtime read the heap allocator's bump pointer as its record
-// table and every self-host-built arm64 server faulted on its first request
-// (#11377).
 const arm64BssValueListProgram = `
 function main(): i32 {
     let p = arm64_gas_program(".bss\nfour: .quad 0, 0, 0, 0\npair: .word 1, 2\nhalf: .4byte 3, 4\nlast: .skip 1\n");

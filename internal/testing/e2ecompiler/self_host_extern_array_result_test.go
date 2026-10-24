@@ -11,15 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternArrayResultCustomProvider is the self-host port of the
-// numeric-array `@import` result (docs/WIT-BRING-YOUR-OWN.md): the self-hosted
-// wasm backend lifts a canonical `list<s32>` into a self-host `i32[]`. It
-// generalises the existing u8[]-result wrapper: for a numeric element the
-// self-host slot size equals the canonical element size, so the wrapper copies
-// each element straight into its slot at +8 (no byte-expansion). Tested via the
-// custom-provider harness: an `iota: func(n: u32) -> list<s32>` provider returns
-// [0,1,2,3]; the self-host side reads xs.len() + xs[3]. Mirror of the Go
-// TestExternListI32ResultCustomProvider.
 func TestSelfHostExternArrayResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -38,7 +29,6 @@ func TestSelfHostExternArrayResultCustomProvider(t *testing.T) {
 		}
 	}
 
-	// --- Provider component exporting local:test/src@0.1.0 iota. ---
 	provWit := filepath.Join(dir, "provwit")
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -48,9 +38,6 @@ func TestSelfHostExternArrayResultCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// iota(n) returns the list indirectly: write 0..n-1 as i32s, then an 8-byte
-	// return area (ptr, len), returning its pointer (the canonical list-result
-	// convention for an export).
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))
@@ -78,7 +65,6 @@ func TestSelfHostExternArrayResultCustomProvider(t *testing.T) {
 	run(wasmtools, "component", "embed", provWit, "-w", "provider", filepath.Join(dir, "prov_core.wasm"), "-o", filepath.Join(dir, "prov_embed.wasm"))
 	run(wasmtools, "component", "new", filepath.Join(dir, "prov_embed.wasm"), "-o", provider)
 
-	// --- User world (custom src iface + wasi stdout). ---
 	userWit := filepath.Join(dir, "userwit")
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps")).CombinedOutput(); err != nil {
 		_ = os.MkdirAll(userWit, 0o755)
@@ -107,7 +93,6 @@ func TestSelfHostExternArrayResultCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	// --- Self-host backend: emit the core from the array-result program. ---
 	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 

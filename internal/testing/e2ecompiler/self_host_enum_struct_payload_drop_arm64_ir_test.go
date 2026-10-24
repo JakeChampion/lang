@@ -4,11 +4,6 @@ import (
 	"testing"
 )
 
-// TestSelfHostEnumStructPayloadDropIRArm64 is the arm64 port of the Perceus
-// enum-payload struct deep-drop (the x86 sibling is
-// TestSelfHostEnumStructPayloadDropIRX86_64). Under qemu the reclaim is proven by
-// the census balancing at live_bytes 0, and a wrong free of the live buffer
-// corrupts the read-back. Variant constructors are UNQUALIFIED.
 func TestSelfHostEnumStructPayloadDropIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -16,9 +11,6 @@ func TestSelfHostEnumStructPayloadDropIRArm64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	// bound-borrow-only payload: the arm reads inner.items before the post-arm reclaim
-	// deep-drops it. items[0]+items[15] = 1 + 16 = 17. A wrong/double free corrupts it.
-	// A runtime element keeps the array and enclosing boxes on the heap.
 	prog := `struct Inner { items: i32[] }
 enum Box { Full(Inner), Empty }
 @noinline function runtime(n: i32): i32 { return n; }

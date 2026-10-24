@@ -8,10 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
-// Inside trait B's default body, `self.scale()` is B's `scale` even when
-// trait A gives the implementing type one too (#12282): the receiver is
-// known there only as B's. A method the program wrote in an impl sees both
-// and stays E074.
 func TestTraitDefaultOwnMethodOutranksAnotherTraits(t *testing.T) {
 	traits := `trait A { function scale(self: Self): i32; }
 trait B { function scale(self: Self): i32; function twice(self: Self): i32 { return self.scale() * 2; } }
@@ -37,8 +33,6 @@ function main(): i32 { let p: P = P { v: 3 }; return p.twice(); }`
 	if !errors.As(errs[0], &ce) || ce.Code() != "E074" {
 		t.Fatalf("want E074, got %v", errs[0])
 	}
-	// An associated default sees the impl type as its trait's too, on a
-	// parameter of that type; on another type the call is a tie.
 	assoc := traits + `impl B for P { function scale(self: Self): i32 { return self.v + 1; } }
 trait C { function scale(self: Self): i32; function half(other: Self): i32 { return other.scale() / 2; } }
 impl C for P { function scale(self: Self): i32 { return self.v; } }
@@ -59,9 +53,6 @@ function main(): i32 { return P.half(Q { v: 3 }); }`
 	}
 }
 
-// `Self.f()` inside an impl method or a trait default is the associated
-// call on the impl type (#12296); `Self` named as a value anywhere else is
-// still E001.
 func TestSelfAssociatedCallInImplAndDefault(t *testing.T) {
 	src := `trait Mk {
     function zero(): Self;

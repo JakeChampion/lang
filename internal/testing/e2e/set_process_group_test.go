@@ -1,23 +1,3 @@
-// `set_process_group` (#8374) end to end on every backend that provides it.
-//
-// Two programs. The first asks only for outcomes the runner gets the same
-// answer to whoever it runs as: a process that is not a session leader may
-// always move into a group of its own, a pid above the kernel's ceiling is
-// always ESRCH, a negative pgid is always EINVAL, and a pgid naming no group
-// in this session is always EPERM.
-//
-// The two argument-order errors differ, which is what catches the operands
-// arriving transposed: setpgid(4194304, 0) is ESRCH where setpgid(0, 4194304)
-// is EPERM, so a lowering that swaps them fails both arms rather than neither.
-//
-// The second forks and moves the child into a group of its own, then signals
-// THE GROUP — a Result that classifies errnos correctly still proves nothing
-// about the group having been made. It has no interpreter leg: the interpreter
-// cannot bare-fork (Go's runtime is threaded).
-//
-// wasm has no leg at all: neither WASI preview has a process table to hold a
-// group, so the `proc` capability withholds the builtin and E066 refuses the
-// program at check time. TestWASMSetProcessGroupRefused is that half.
 package e2e
 
 import (
@@ -28,11 +8,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// Each failing step returns its own code.
-//
-// 4194304 is 2^22, one above the largest pid_max Linux accepts, so no process
-// can ever hold it and no group can ever be named by it — where a number
-// merely unused right now could be reassigned between the compile and the run.
 const setProcessGroupSource = `function main(): i32 {
     // pid 0 is the caller and pgid 0 is the pid's own value, so this is a
     // process moving into a fresh group of its own. The test binary is a
@@ -92,10 +67,6 @@ const setProcessGroupSource = `function main(): i32 {
 }
 `
 
-// The group-creation proof. The child sleeps far longer than the parent needs,
-// so the only way it reaches the parent's waitpid is a signal delivered to the
-// group it joined — and the parent is not in that group, so a kill that landed
-// on the caller's own group instead would take the parent down with it.
 const setProcessGroupDeliverySource = `function main(): i32 {
     let kid: i32 = proc_fork();
     if (kid < 0) { return 1; }
@@ -161,10 +132,6 @@ func TestInterpSetProcessGroup(t *testing.T) {
 	}
 }
 
-// The wasm answer is a refusal, and it has to arrive from the capability scan
-// rather than as an `unknown callee` out of the emitter — the difference
-// between "this target has no process groups" and "the backend forgot one".
-// Both previews, since `proc` is withheld by each.
 func TestWASMSetProcessGroupRefused(t *testing.T) {
 	prog, err := parser.Parse(setProcessGroupSource)
 	if err != nil {

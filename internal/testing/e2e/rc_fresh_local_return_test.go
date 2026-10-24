@@ -4,11 +4,6 @@ import (
 	"testing"
 )
 
-// A function that builds its result in a LOCAL and returns it — `let r =
-// build(n); return r;` — is now proven param-free (returnsNoParamEscape's
-// fresh-local extension), so an owned temp passed to it through a borrowed
-// parameter is reclaimed rather than leaked, exactly like the direct-construction
-// case. Pins value + zero over-release + a flat high-water on all backends.
 const freshLocalSrc = `enum List { Cons(i32, List), Nil }
 function build(n: i32): List { if (n == 0) { return Nil; } return Cons(n, build(n - 1)); }
 function sum(l: List): i32 { match (l) { Cons(h, t) => { return h + sum(t); }, Nil => { return 0; } } }
@@ -37,8 +32,6 @@ func TestWASMFreshLocalReturn(t *testing.T) {
 	if got := runWasm(t, freshLocalSrc); got != 0 {
 		t.Errorf("fresh-local return: got %d, want 0", got)
 	}
-	// Bounded: the inner build(3) temp is reclaimed after relay (a pointer-
-	// returning callee proven to return a fresh local), so the loop is flat.
 	bump := func(n string) string {
 		return `enum List { Cons(i32, List), Nil }
 function build(n: i32): List { if (n == 0) { return Nil; } return Cons(n, build(n - 1)); }

@@ -1,5 +1,3 @@
-// Retained-row/final-text correspondence only. A matching row remains data;
-// neither its final SSA nor these instructions have their effects proved here.
 import "./asmcore";
 import "./ssacreditbound" as bound;
 import "./ssadecrementtext" as text;
@@ -30,9 +28,6 @@ function matches(fragment: string, actual: string[], entry: string): boolean {
   return captured.error == "" && actual.join("\n") == captured.lines.join("\n") && normalized(fragment) == captured.lines.join("\n");
 }
 
-// This scope is ordinary x86 text-mode functions, with a closed complete-unit
-// syntax. Counted release entries retain bound.resolve's refusal. No relowering,
-// name-based old-body fallback, public success flag or linked permission.
 pub function resolve(output: ssaprepare.Output, name: string): Binding {
   let labels: string[] = [];
   for row in output.bodies {
@@ -54,8 +49,6 @@ pub function resolve(output: ssaprepare.Output, name: string): Binding {
   if (actual.error != "") {
     return failure(actual.error);
   }
-  // Independently parse the captured fragment under the same body grammar.
-  // Matching this fragment establishes correspondence, not semantic validity.
   if (!matches(row.assembly, actual.lines, entry)) {
     return failure("retained function text differs from final output");
   }

@@ -18,8 +18,6 @@ import (
 	"time"
 )
 
-// kernelRekeys is whether the kernel takes a second key in a direction,
-// which TLS 1.3's KeyUpdate needs: Linux 6.14 and later.
 func kernelRekeys(t *testing.T) bool {
 	t.Helper()
 	rel, err := os.ReadFile("/proc/sys/kernel/osrelease")
@@ -35,13 +33,6 @@ func kernelRekeys(t *testing.T) bool {
 	return major > 6 || major == 6 && minor >= 14
 }
 
-// TestX86_64KtlsAgainstGo offloads both ends of a connection against Go's
-// crypto/tls. As the server: a line echoed, 200,000 bytes answered, and
-// Go's close_notify read; then a KeyUpdate asking Go to update too, which
-// a kernel from 6.14 takes both ways (the next line echoed under the new
-// keys) and an older one refuses, closing the connection. As the client:
-// a line echoed and 100,000 bytes read through the kernel, and the ticket
-// Go sends after the handshake taken from a record the kernel read.
 func TestX86_64KtlsAgainstGo(t *testing.T) {
 	requireKtls(t)
 	dir := t.TempDir()
@@ -154,9 +145,6 @@ func TestX86_64KtlsAgainstGo(t *testing.T) {
 	})
 }
 
-// ktlsGoClient talks to the Fern server: a line, a large answer, and, with
-// rekey, a KeyUpdate that asks Go to update too, followed by a line under
-// the new keys, or the end of the connection where the kernel refuses them.
 func ktlsGoClient(t *testing.T, addr string, cfg *tls.Config, rekey bool) {
 	t.Helper()
 	c, err := tls.Dial("tcp", addr, cfg)
@@ -557,7 +545,6 @@ function main(): i32 {
 }
 `
 
-// tlsStat is one of the kernel's TLS counters in /proc/net/tls_stat.
 func tlsStat(t *testing.T, name string) int {
 	t.Helper()
 	data, err := os.ReadFile("/proc/net/tls_stat")
@@ -578,12 +565,6 @@ func tlsStat(t *testing.T, name string) int {
 	return 0
 }
 
-// TestX86_64KtlsServe runs std/serve's TLS world (TestServeTLSAgainstGo)
-// with FERN_KTLS=1, so each connection's records go to the kernel once its
-// handshake is done: kept connections, an upload, a response of many
-// records, a file body moved by sendfile, a streamed body behind
-// 100-continue, a plaintext client refused and a resumed session. The
-// kernel's counters show the connections were offloaded both ways.
 func TestX86_64KtlsServe(t *testing.T) {
 	requireKtls(t)
 	bin := buildFernCLI(t)
@@ -603,12 +584,6 @@ func TestX86_64KtlsServe(t *testing.T) {
 	}
 }
 
-// TestX86_64KtlsFetch runs std/fetch's https world (TestTLSClientAgainstGo)
-// with FERN_KTLS=1, so each connection fetch opens is offloaded once its
-// handshake is done: kept and fresh connections, a HelloRetryRequest, RSA
-// and Ed25519 leaves, a CONNECT tunnel, HTTP/2, and handshakes that fail.
-// The output is the world's, and the kernel's counters show the
-// connections the handshakes completed on were offloaded both ways.
 func TestX86_64KtlsFetch(t *testing.T) {
 	requireKtls(t)
 	w := startTLSWorld(t)
@@ -621,19 +596,11 @@ func TestX86_64KtlsFetch(t *testing.T) {
 		t.Fatalf("run: %v\n%s", err, got)
 	}
 	w.check(t, string(got), w.mainConns.Load())
-	// Eight handshakes complete: the kept connection, the address, the
-	// retry, RSA, Ed25519, the tunnel, HTTP/2 and the held transport's.
 	if dtx, drx := tlsStat(t, "TlsTxSw")-tx, tlsStat(t, "TlsRxSw")-rx; dtx < 8 || drx < 8 {
 		t.Fatalf("the kernel took %d transmit and %d receive directions, want both at least 8", dtx, drx)
 	}
 }
 
-// TestX86_64KtlsServeH2 runs two of std/serve's HTTP/2 worlds
-// (TestServeH2X86_64) with FERN_KTLS=1: HTTP/2 chosen by ALPN over the
-// loop's TLS connections, which the loop offloads; and six handlers parked
-// on one shared upstream HTTP/2 connection through a CONNECT tunnel, which
-// fetch offloads for the loop to read as plain bytes. Each world moves the
-// kernel's counters both ways.
 func TestX86_64KtlsServeH2(t *testing.T) {
 	requireKtls(t)
 	w := newServeH2World(t)

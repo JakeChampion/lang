@@ -8,22 +8,6 @@ import (
 	"testing"
 )
 
-// --- A CALL-bound rc-enum earns the consuming-match free too ------------------
-//
-// `let v: E = mkv(i)` followed by a sole top-level consuming match must free
-// the box and its payload every round, exactly as the byte-identical shape with
-// the constructor written INLINE does (it reclaimed nothing: 200 allocs / 0
-// frees over 100 rounds).
-//
-// This is the rc-payload user-enum analogue of #6360, which made the same
-// admission for scalar Option/Result (self_host_call_bound_enum_reclaim_test.go).
-//
-// Exit 99 is reserved for __rc_underflow_count().
-//
-// Counts here are ONE block per heap string: #7351 fused the box into the
-// buffer's reserved header. A pre-fusion number in a row note below is the
-// older one.
-
 type rcenumCallFreeCase struct {
 	name   string
 	src    string
@@ -46,7 +30,6 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 `
 	return []rcenumCallFreeCase{
 		{
-			// THE REPRO. Base: 200 allocs / 0 frees.
 			name: "call_bound_sole_match",
 			src: decls + `function round(i: i32): i32 {
     let v: E = mkv(i);
@@ -58,8 +41,6 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			want: 6, allocs: 200, frees: 200,
 		},
 		{
-			// The INLINE ctor bind, which was already flat. It is the control that
-			// says the difference was the call and not the match.
 			name: "inline_ctor_sole_match_unchanged",
 			src: decls + `function round(i: i32): i32 {
     let v: E = E.A([i, i + 1]);
@@ -71,9 +52,6 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			want: 6, allocs: 200, frees: 200,
 		},
 		{
-			// A REBOUND call-bound name: the rebind's release and the final
-			// value's free must both fire. Base: 400 / 200, when only the rebind
-			// released.
 			name: "call_bound_rebound",
 			src: decls + `function round(i: i32): i32 {
     let v: E = mkv(i);
@@ -86,8 +64,6 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			want: 2, allocs: 400, frees: 400,
 		},
 		{
-			// Call-bound inside a LOOP body, which is the block-level sibling of the
-			// pass (lower_block runs it per block). Base: 400 / 200.
 			name: "call_bound_in_loop_block",
 			src: decls + `function round(i: i32): i32 {
     let a: i32 = 0;
@@ -103,8 +79,6 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			want: 12, allocs: 400, frees: 400,
 		},
 		{
-			// A STRING payload through a producer call: the deep drop must free
-			// the string payload too. Base: 300 / 0.
 			name: "call_bound_string_payload",
 			src: `enum T { W(string), N }
 function mkt(i: i32): T { return T.W("ab" + "cd"); }
@@ -118,8 +92,6 @@ function round(i: i32): i32 {
 			want: 12, allocs: 200, frees: 200,
 		},
 		{
-			// A STRUCT payload through a producer call: the deep drop must free
-			// the payload struct and its array field too.
 			name: "call_bound_struct_payload",
 			src: `struct P { xs: i32[] }
 enum S { V(P), N }
@@ -134,16 +106,6 @@ function round(i: i32): i32 {
 			want: 6, allocs: 300, frees: 300,
 		},
 		{
-			// The payload read back as a VALUE after the match. Counts and the
-			// underflow guard are both blind to a use-after-READ — #7505 was
-			// exactly that, and passed them plus FERN_SANITIZE=1. Native returns
-			// 9. The arrays after the match are constant and not heap-allocated
-			// on the typed lowering. The payload reaches its variant through
-			// `id`, which hides the constant from the static-box plan, so the
-			// variant is still allocated.
-			//
-			// The modulus is 97 because the wasm leg reads the value through the
-			// exit code and WASI rejects a status outside [0, 126).
 			name: "payload_read_back_after_churn",
 			src: `enum E { A(i32[]), B }
 @noinline function id(xs: i32[]): i32[] { return xs; }
@@ -167,12 +129,6 @@ function main(): i32 {
 			want: 9, allocs: 20, frees: 20,
 		},
 		{
-			// A callee returning its PARAM is not an "RCE:" producer, but it is an
-			// "ENUM:" member: the return retains `e`, so `v` carries a count of its
-			// own and `s`, lent at a counted position, keeps its release (#10410).
-			// `s` is dead right after the lend, so its last-use drop runs while `v`
-			// still shares the box. That drop's payload walk is is_unique-gated;
-			// ungated, it freed the array under `v` (99).
 			name: "param_handback_counted",
 			src: `enum E { A(i32[]), B }
 @noinline function passthru(e: E): E { return e; }
@@ -187,8 +143,6 @@ function round(i: i32): i32 {
 			want: 6, allocs: 200, frees: 200,
 		},
 		{
-			// A GUARDED arm whose payload is stored out; a guard could
-			// divert execution to an arm that did not move the payload.
 			name: "guarded_arm_store_reclaimed",
 			src: decls + `function round(i: i32): i32 {
     let v: E = mkv(i);
@@ -202,7 +156,6 @@ function round(i: i32): i32 {
 	}
 }
 
-// TestSelfHostRcEnumCallBoundFreeX86_64 is the leak-accounting leg.
 func TestSelfHostRcEnumCallBoundFreeX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
@@ -237,8 +190,6 @@ func TestSelfHostRcEnumCallBoundFreeX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostRcEnumCallBoundFreeWasmIR — exit codes only, so what this leg
-// catches is a release that frees a LIVE box on wasm, the 99 included.
 func TestSelfHostRcEnumCallBoundFreeWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping rc-enum call-bound free wasm IR e2e")
@@ -277,7 +228,6 @@ func TestSelfHostRcEnumCallBoundFreeWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostRcEnumCallBoundFreeIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostRcEnumCallBoundFreeIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

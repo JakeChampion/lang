@@ -9,9 +9,6 @@ import (
 	"testing"
 )
 
-// useSyntaxCases each hold one malformed `use` line. The self-host used to
-// skip a missing `<-` silently and report the expression that followed as
-// "use source must be a function call" at the end of the block (#12604).
 var useSyntaxCases = []struct{ name, src string }{
 	{"no-name", "function f(x: i32, k: (i32) => i32): i32 { return k(x); }\nfunction main(): i32 {\n  use <- f(1);\n  return 0;\n}\n"},
 	{"two-names", "function f(x: i32, k: (i32) => i32): i32 { return k(x); }\nfunction main(): i32 {\n  use a, b <- f(1);\n  return a;\n}\n"},
@@ -19,12 +16,8 @@ var useSyntaxCases = []struct{ name, src string }{
 	{"not-a-call", "function main(): i32 {\n  let g: i32 = 4;\n  use n <- g;\n  return n;\n}\n"},
 }
 
-// useDiagAt reads the position and text off either compiler's first error
-// line; the self-host's text opens with the enclosing function.
 var useDiagAt = regexp.MustCompile(`:(\d+):(\d+): error(?:\[P001\])?: (?:in fn '[^']*': )?(.*)`)
 
-// TestSelfHostUseSyntaxDiagnosticsX86_64 is the differential for #12604: a
-// malformed `use` is reported where native reports it, with native's text.
 func TestSelfHostUseSyntaxDiagnosticsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

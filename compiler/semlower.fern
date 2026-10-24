@@ -1,19 +1,3 @@
-// The production consumer for the typed semantic pipeline.
-//
-// `semsource` produces an `ssasem.Func` from checked syntax and the checker's
-// types, `ssaunits` plans its counted units, and `ssarc` lowers both to the
-// stack IR the backends already emit (docs/SELFHOST-SEMANTIC-SOURCE.md). Until
-// now the only thing that ran that chain over a whole module was a test driver;
-// this is where a whole-program emit path asks for it.
-//
-// The substitution is whole: every declaration produced, and the emit reads
-// the produced bodies (`ircore.gate`). A refusal fails the compile with exit
-// 3, after a line naming each one.
-//
-// The result is handed to the emit path as a VALUE (`ircore.Sub`) rather than
-// produced inside it, so that only a driver that wants the path links the
-// pipeline behind it. Linking it everywhere cost the eight backend-carrying
-// drivers 6.7-10.2% of their bytes for a flag they never read.
 import "./asmcore";
 import "./caps";
 import "./ircore";
@@ -39,42 +23,23 @@ import "./semarrayreport";
 import "./semndprune";
 import "std/envflag";
 
-// Every body the substitution is considering, declarations first (aligned with
-// mod.funcs) and then the instances the declarations asked for. `n1` is the
-// symbol a body defines and `n2` the receiver-qualified spelling a method's
-// call op names instead; `keep` is whether the body is emitted.
 struct Rows {
   body: irtables.LowerResult[],
   n1: string[],
   n2: string[],
   keep: boolean[],
   grows: ssaunits.GrowTable,
-  // The rows whose result is a sole box (`ssaunits.fresh_rows`).
   fresh: ssaunits.FreshRows,
-  // The rows that reach no observable effect (`pure_rows`).
   pure: util.NameIndex,
   susp: suspend.Set,
-  // Each row's unit plan, kept so the plan under the inferred modes can take
-  // it back for a row the ownership inference did not move (#9969).
   plans: ssaunits.Plan[],
-  // Why each row is not emitted, "" where nothing refused it (`refusal`).
   why: string[],
 }
 
-// sem_report_on reports whether FERN_SEM_IR_REPORT asks for the per-module
-// tally. Nothing about the emitted program changes with it.
 pub function sem_report_on(): boolean {
   return envflag.on("FERN_SEM_IR_REPORT");
 }
 
-// sem_reuse_on reports whether the lowering under the inferred modes keeps the
-// declared plan and body of each row the inference did not move, instead of
-// planning and lowering every row under the inferred modes (#9969).
-//
-// `FERN_SEM_REUSE=` (set but empty) is the off column. It is what
-// TestSelfHostInferredReuseIsIdentical compares the reuse against, and the
-// reason the reuse can be held to byte equality rather than argued for — a
-// fast path with no slow path to check is a fast path nothing checks.
 function sem_reuse_on(): boolean {
   match (env("FERN_SEM_REUSE")) {
     Some(v) => {
@@ -86,14 +51,11 @@ function sem_reuse_on(): boolean {
   }
 }
 
-// report names a refusal on stderr: the detail of the error the refusal
-// fails the compile with.
 function report(what: string, why: string): i32 {
   eprint("FERN_SEM_IR: " + what + ": " + why);
   return 0;
 }
 
-// tally reports what was produced; only FERN_SEM_IR_REPORT prints it.
 function tally(what: string, why: string): i32 {
   if (sem_report_on()) {
     eprint("FERN_SEM_IR: " + what + ": " + why);
@@ -101,9 +63,6 @@ function tally(what: string, why: string): i32 {
   return 0;
 }
 
-// declined is the cache entry for a function this boundary is not emitting.
-// Nothing emits from it, so the partial-op shape ircore.lower_failed_refuse
-// guards against cannot arise.
 function declined(why: string): irtables.LowerResult {
   return irtables.LowerResult {
     source_positions: irtables.no_source(),
@@ -113,11 +72,6 @@ function declined(why: string): irtables.LowerResult {
   };
 }
 
-// The entry for a declaration with no body of its own (an `@import` extern,
-// or a template whose instances stand for it): no ops, and the emit skips it
-// (irtables.LowerResult.superseded). The AST lowering of an erased template
-// body would otherwise decline, on wasm, a module nothing in it calls that
-// body from (#9838).
 function superseded(): irtables.LowerResult {
   return irtables.LowerResult {
     source_positions: irtables.no_source(),
@@ -127,11 +81,7 @@ function superseded(): irtables.LowerResult {
   };
 }
 
-// produced_plan plans one function's units. A refusal at either stage yields a
-// plan that is not ok.
 function produced_plan(p: semsource.Produced, view: ssaunits.SchemaView): ssaunits.Plan {
-  // A template's erased body is not a body this boundary has: its instances
-  // are separate symbols of their own.
   if (p.template) {
     return ssaunits.refused("generic template");
   }
@@ -144,9 +94,6 @@ function produced_plan(p: semsource.Produced, view: ssaunits.SchemaView): ssauni
   return plan_of(p, view);
 }
 
-// refusal is why a row's body is not emitted, or "" where nothing refused it:
-// the body was produced, a template's instances stand for it, or it is an
-// `@import` extern.
 function refusal(p: semsource.Produced, body: irtables.LowerResult): string {
   if (body.ok || p.bodyless || p.dropped) {
     return "";
@@ -160,9 +107,6 @@ function refusal(p: semsource.Produced, body: irtables.LowerResult): string {
   return body.why;
 }
 
-// dump_if_asked prints the semantic graph of the function FERN_SEM_DUMP
-// names, as the planner reads it: after the rewrites, before any count.
-// A trailing `*` names every function with that prefix.
 function dump_if_asked(p: semsource.Produced): void {
   match (env("FERN_SEM_DUMP")) {
     Some(want) => {
@@ -179,9 +123,6 @@ function dump_if_asked(p: semsource.Produced): void {
   }
 }
 
-// A produced function is planned over the analysis it carries when the
-// anchoring verified the graph the planner sees; one whose graph a rewrite
-// moved since carries none and is analysed here.
 function plan_of(p: semsource.Produced, view: ssaunits.SchemaView): ssaunits.Plan {
   dump_if_asked(p);
   match (p.analysis) {
@@ -194,8 +135,6 @@ function plan_of(p: semsource.Produced, view: ssaunits.SchemaView): ssaunits.Pla
   }
 }
 
-// produced_body lowers a planned function. Every plan is made before any body
-// is lowered, because a caller's bracket reads its callees' plans (`grows`).
 function produced_body(p: semsource.Produced, plan: ssaunits.Plan, structs: irtables.StructTab, grows: ssaunits.GrowTable, pure: util.NameIndex, view: ssaunits.SchemaView, susp: suspend.Set): irtables.LowerResult {
   if (!plan.ok) {
     return declined(plan.why);
@@ -207,7 +146,6 @@ function produced_body(p: semsource.Produced, plan: ssaunits.Plan, structs: irta
   return r;
 }
 
-// report_rows names every refused row on stderr (`report`).
 function report_rows(r: Rows, prefix: string): i32 {
   let i: i32 = 0;
   while (i < r.why.len()) {
@@ -219,7 +157,6 @@ function report_rows(r: Rows, prefix: string): i32 {
   return 0;
 }
 
-// The produced body at row `i`: a declaration first, then an instance.
 function produced_at(built: semsource.Built, mod: parser.Module, i: i32): semsource.Produced {
   if (i < mod.funcs.len()) {
     return built.decls[i];
@@ -227,16 +164,11 @@ function produced_at(built: semsource.Built, mod: parser.Module, i: i32): semsou
   return built.instances[i - mod.funcs.len()];
 }
 
-// No rows to take back: what makes `rows_planned` plan every row.
 function no_reuse(): Rows {
   let no_names: string[] = [];
   return Rows { body: [], n1: [], n2: [], keep: [], grows: ssaunits.no_grows(), fresh: ssaunits.no_fresh(), pure: util.name_index(no_names), susp: suspend.none(), plans: [], why: [] };
 }
 
-// Whether row `i`'s plan can be taken from `prev` unchanged. `changed` is
-// `semsource.changed_rows` over the two module productions, in this same
-// order, so a plan is reusable exactly where the inference moved neither the
-// row's own modes nor a contract it calls. An empty `prev` reuses nothing.
 function plan_reusable(prev: Rows, changed: boolean[], i: i32): boolean {
   if (i >= prev.plans.len() || i >= changed.len()) {
     return false;
@@ -244,14 +176,8 @@ function plan_reusable(prev: Rows, changed: boolean[], i: i32): boolean {
   return !changed[i];
 }
 
-// A module's rows planned, with no body lowered yet: every plan, then the
-// callee table the brackets read. `views` is each row's schema view.
 struct Planned { r: Rows, views: ssaunits.SchemaView[] }
 
-// rows_planned plans every row and records the symbols each defines. `prev` /
-// `changed` let the plan under the inferred modes take back the plan of a row
-// the inference did not move: a plan is a function of its row's graph and
-// modes alone.
 function rows_planned(mod: parser.Module, built: semsource.Built, prev: Rows, changed: boolean[]): Planned {
   let r: Rows = no_reuse();
   let keys: string[] = [];
@@ -266,7 +192,6 @@ function rows_planned(mod: parser.Module, built: semsource.Built, prev: Rows, ch
   }
   let at: i32 = mod.funcs.len();
   for p in built.instances {
-    // A refused instance has no graph to name it; its symbol is the one requested.
     let name: string = built.names[at];
     keys = keys.append(name);
     funcs = funcs.append(p.func);
@@ -290,8 +215,6 @@ function rows_planned(mod: parser.Module, built: semsource.Built, prev: Rows, ch
   return Planned { r: r, views: views };
 }
 
-// Row `i`'s plan: `prev`'s where the inference moved neither the row nor a
-// contract it calls, planned afresh otherwise.
 function base_plan(prev: Rows, changed: boolean[], i: i32, p: semsource.Produced, view: ssaunits.SchemaView): ssaunits.Plan {
   if (plan_reusable(prev, changed, i)) {
     return prev.plans[i];
@@ -299,12 +222,6 @@ function base_plan(prev: Rows, changed: boolean[], i: i32, p: semsource.Produced
   return produced_plan(p, view);
 }
 
-// The rows whose body under the inferred plans `inferred` differs from the
-// body under `prev`'s: those the inference moved, and those naming a callee
-// whose grow mask or freshness it moved. A body reads the module's grow table
-// and fresh rows only through the callees it names, a call through a function
-// value naming `ssaunits.indirect_callee` (`ssarc.bracketed`,
-// `ssaunits.with_fresh`), and a moved row can change either for every caller.
 function relowered(built: semsource.Built, mod: parser.Module, inferred: Planned, prev: Rows, changed: boolean[]): boolean[] {
   let out: boolean[] = [];
   let i: i32 = 0;
@@ -317,8 +234,6 @@ function relowered(built: semsource.Built, mod: parser.Module, inferred: Planned
   return out;
 }
 
-// rows_lowered lowers every row's body once: under `b`'s plans, from `b_built`,
-// where `take_b` says so, and under `a`'s from `a_built` everywhere else.
 function rows_lowered(mod: parser.Module, structs: irtables.StructTab, a_built: semsource.Built, a: Planned, b_built: semsource.Built, b: Planned, take_b: boolean[]): Rows {
   let r: Rows = b.r;
   let i: i32 = 0;
@@ -336,12 +251,6 @@ function rows_lowered(mod: parser.Module, structs: irtables.StructTab, a_built: 
   return r;
 }
 
-// The rows that reach no observable effect, by transitive closure over the
-// direct calls — native's effectfulFuncs. An effect is a call to a builtin in
-// either of caps' tables, gated or ungated, a call through a value, or a call
-// to a name that is neither a row nor a compiler helper (`__`). The in-place
-// map is the only reader (ssarc.in_place_maps), so a module with no `map`
-// call to admit is answered with no rows at all.
 function pure_rows(keys: string[], funcs: ssasem.Func[]): util.NameIndex {
   let none: string[] = [];
   if (!any_map_call(funcs)) {
@@ -400,7 +309,6 @@ function effect_builtins(): string[] {
   return out;
 }
 
-// `seed` closed over `callers`: a row calling a marked row is marked.
 function spread_marks(seed: boolean[], callers: i32[][]): boolean[] {
   let marks: boolean[] = seed;
   let work: i32[] = [];
@@ -436,16 +344,8 @@ function unmarked(keys: string[], marks: boolean[]): string[] {
   return out;
 }
 
-// substitution produces every function this boundary admits and hands the
-// result back as a value for the emit path to thread in (ircore.Sub). The
-// caller normalises the module exactly as the emit path does, so the bodies
-// line up with `mod.funcs` position for position.
 struct Inference { built: semsource.Built, rows: Rows, records: parser.StructDecl[] }
 
-// Whether the typed pipeline lowers EVERY body of this module, given whether
-// each row's body (or plan) came through. A template's erased body is not one
-// — its instances stand for it — and neither is a declaration with no body
-// here.
 function lowers_whole_module(built: semsource.Built, keep: boolean[]): boolean {
   let i: i32 = 0;
   while (i < keep.len()) {
@@ -471,18 +371,10 @@ function plans_ok(plans: ssaunits.Plan[]): boolean[] {
   return out;
 }
 
-// The ownership inference, run when the module plans whole under the modes it
-// declared. Each row's body is lowered once: under the inferred modes where
-// the inference moved the row or the grow mask of a callee it names, and under
-// the declared modes elsewhere, where both give the same body. The result is
-// checked whole — a mode can refuse a plan (`ssaunits.mode_error`) — and a
-// module that does not lower whole under the inference is lowered under the
-// modes it declared.
 function inferred_rows(mod: parser.Module, built: semsource.Built, declared: Planned, structs: irtables.StructTab): Inference {
   let widened: semsource.Built = semsource.with_inferred_modes(built);
   let changed: boolean[] = semsource.changed_rows(built, widened);
   if (semsource.any_row_changed(changed)) {
-    // `FERN_SEM_REUSE=` (set but empty) plans and lowers every row afresh.
     let prev: Rows = declared.r;
     if (!sem_reuse_on()) {
       prev = no_reuse();
@@ -496,7 +388,6 @@ function inferred_rows(mod: parser.Module, built: semsource.Built, declared: Pla
   return Inference { built: built, rows: rows_lowered(mod, structs, built, declared, built, declared, []), records: [] };
 }
 
-// The module built and lowered, under the inferred modes when it plans whole.
 function produced_rows(mod: parser.Module, structs: irtables.StructTab, opts: semsource.BuildOpts): Inference {
   let built: semsource.Built = semsource.with_analyses(semsource.build_module_with(mod, opts));
   util.arr_push_cliff_report("sem:built", 0);
@@ -515,12 +406,6 @@ function produced_rows(mod: parser.Module, structs: irtables.StructTab, opts: se
   return inf;
 }
 
-// instance_records declares each record a template's instance builds at its
-// own binding (`Slot__0_T` at i32, from `Slot[T]` in a generic over T). A
-// declaration is what a construction stores its fields through and what names
-// its shape, and the AST tables hold only the one spelled at the variable.
-// Named as ssarc.record_name names the record, appended after the module's
-// own so every declaration index before them is unchanged.
 function instance_records(built: semsource.Built): parser.StructDecl[] {
   let out: parser.StructDecl[] = [];
   let names: string[] = [];
@@ -542,9 +427,6 @@ function instance_records(built: semsource.Built): parser.StructDecl[] {
   return util.append_all(out, instance_variants(built));
 }
 
-// A generic variant is materialized from its typed schema, like a record
-// instance. Impossible variants have no runtime shape; they remain in the
-// semantic table for identity and verification.
 function instance_variants(built: semsource.Built): parser.StructDecl[] {
   let out: parser.StructDecl[] = [];
   let names: string[] = [];
@@ -570,8 +452,6 @@ function instance_variants(built: semsource.Built): parser.StructDecl[] {
   return out;
 }
 
-// A field's spelling as the AST tables read one: a view erased to `string`,
-// a record by the name its declaration carries.
 function field_spelling(t: typeinfo.Type): string {
   if (ssasem.is_view(t)) {
     return "string";
@@ -601,14 +481,9 @@ function declaration_bodies(built: semsource.Built, r: Rows): DeclarationBodies 
       bodies = bodies.append(r.body[i]);
       n = n + 1;
     } else if (built.decls[i].template && (built.decls[i].ok || built.decls[i].bodyless)) {
-      // A template's erased body is no body of this module's: its
-      // produced instances stand for it, and one nothing instantiates
-      // is called by nobody. Neither is a refusal.
       bodies = bodies.append(declined("generic template"));
       n = n + 1;
     } else if (built.decls[i].bodyless) {
-      // An `@import` extern has no body: the bridge emits it from its
-      // declaration. Not a refusal.
       bodies = bodies.append(superseded());
       n = n + 1;
     } else {
@@ -653,7 +528,6 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
   let instance_origins = inst.origins;
   let unspliced = inst.unspliced;
   util.arr_push_cliff_report("sem:substituted", 0);
-  // A refused declaration or instance fails the compile.
   let refused_n: i32 = mod.funcs.len() - n + built.instances.len() - instances.len() - unspliced;
   if (refused_n > 0) {
     eprint("FERN_SEM_IR: the typed lowering refused " + util.i32_to_string(refused_n) + " declarations and instances; the FERN_SEM_IR lines above name each");
@@ -664,8 +538,6 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
     + util.i32_to_string(mod.funcs.len()) + " declarations and "
     + util.i32_to_string(instances.len()) + " of "
     + util.i32_to_string(built.instances.len()) + " instances");
-  // A module produced whole calls no template's erased body: every caller
-  // is produced and calls an instance.
   let i2: i32 = 0;
   while (i2 < mod.funcs.len()) {
     if (!bodies[i2].ok && built.decls[i2].template) {
@@ -674,8 +546,6 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
     i2 = i2 + 1;
   }
   let selected: SelectedHelpers = selected_helpers(built, helpers);
-  // The declaration-less bodies are merged by symbol here, where the rule
-  // lives, so the emit path's tail is a plain append.
   let merged = ssarc.merge_helpers_mapped(instances, selected.rows);
   let extra_origins = util.append_all(instance_origins, physicalbody.select_origins(selected.origins, merged.helper_indices));
   let kept = semndprune.unused_adapter_mapped(mod, bodies, merged.bodies);
@@ -689,11 +559,6 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
   return ircore.Sub { ...ircore.no_sub(), bodies: kept.result.bodies, extra: kept.result.extra, contracts: contract_rows(built.contracts, r), physical_contracts: selected.producers[0].contracts, physical_records: built.records, physical_enums: built.enums, physical_finalizers: built.finalizers, physical_origins: origins, records: inf.records };
 }
 
-// Scalarized record results no longer carry the original box's unit. Select
-// that actual result from the same produced body as the physical lowering;
-// legacy variant/pair contracts retain their per-word reference information.
-// A contract is keyed by the produced function's name, which for a method
-// carries its receiver where the method's graph is named bare.
 function physical_contracts(built: semsource.Built): ssasem.Contract[] {
   let out: ssasem.Contract[] = built.contracts.list;
   let i: i32 = 0;
@@ -749,12 +614,6 @@ function selected_helpers(built: semsource.Built, helpers: ssarc.Helpers): Selec
   return SelectedHelpers { rows: rows, origins: origins, producers: producers };
 }
 
-// contract_rows spells what a caller's lowering reads of the functions it
-// calls — each contract whole (its parameter types and modes and its result
-// type, which inference can move without the declaration changing), the grow
-// rows, the pure rows and the suspension classes — one row per fact, for
-// ircore.unit_keys to fold into a per-module cache key.
-// TestSelfHostContractRowsFoldEveryCalleeFact keeps it complete.
 function contract_rows(cs: ssasem.Contracts, r: Rows): string[] {
   let out: string[] = [];
   for c in cs.list {
@@ -814,8 +673,6 @@ function array_storage_report(mod: parser.Module, built: semsource.Built, r: Row
   return 0;
 }
 
-// The structural key types the maps `f` holds name (#10020), each after the
-// ones nested in it, added to `seen` once.
 function structural_keys(seen: typeinfo.Type[], f: ssasem.Func): typeinfo.Type[] {
   let out: typeinfo.Type[] = seen;
   for t in f.values {
@@ -848,10 +705,6 @@ function with_structural(seen: typeinfo.Type[], k: typeinfo.Type): typeinfo.Type
   return out.append(k);
 }
 
-// The `K__eq` and `K__hash` of each structural key K, as the source a derived
-// `eq` and `hash` would be: elements compared with `==`, or through their own
-// helpers when structural, and hashed into `h * 31 + element` with a string
-// folded byte by byte.
 function key_helper_source(keys: typeinfo.Type[]): string {
   let src: string = "";
   for k in keys {
@@ -901,7 +754,6 @@ function key_hash_body(k: typeinfo.Type): string {
   return out;
 }
 
-// One element folded into `h`; `sfx` keeps a string's loop counter distinct.
 function element_hash(t: typeinfo.Type, x: string, sfx: string): string {
   if (ssasem.structural_map_key(t)) {
     return "h = h * 31 + " + ssasem.keyed_map_key_fn(t, "hash") + "(" + x + ");";
@@ -917,17 +769,10 @@ function element_hash(t: typeinfo.Type, x: string, sfx: string): string {
   return "h = h * 31 + (" + x + " as i32);";
 }
 
-// runtime_bodies is the typed lowering of a Fern-source runtime helper
-// (asmcore.rt_src_*), one body per function the source defines and in its
-// order. A refusal, including a source that does not type-check, exits 3.
 pub function runtime_bodies(src: string): irtables.LowerResult[] {
   return runtime_lowering(src).bodies;
 }
 
-// unpositioned marks the runtime source's own records as the compiler's
-// injection rather than a user's declaration, the way the checker tells them
-// apart, so one may take a reserved name: asmcore.rt_src_pipe's Pipe spells
-// its two ends as the descriptors they are.
 function unpositioned(structs: parser.StructDecl[]): parser.StructDecl[] {
   let out: parser.StructDecl[] = [];
   let i: i32 = 0;
@@ -938,12 +783,8 @@ function unpositioned(structs: parser.StructDecl[]): parser.StructDecl[] {
   return out;
 }
 
-// The runtime callback carries bodies and selected facts from this invocation
-// for a future physical proof. runtime_bodies is the bodies-only projection.
 pub function runtime_lowering(src: string): physicalbody.Lowered {
   let parsed: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
-  // The builtin enums' variants (IoError's NotFound, …), which a program's
-  // module carries from module_with_builtins.
   let mod: parser.Module = parser.Module { ...parsed, structs: parser.inject_builtin_enums(unpositioned(parsed.structs)) };
   let diags: util.Diag[] = checker.build_runtime_gate_diags(mod);
   if (diags.len() > 0) {
@@ -965,7 +806,6 @@ pub function runtime_lowering(src: string): physicalbody.Lowered {
     helpers = ssarc.with_drop_helpers(helpers, inf.built.decls[i].func);
     i = i + 1;
   }
-  // The drop helpers follow the bodies, deduplicated by symbol.
   let merged = ssarc.merge_helpers_mapped(out, helpers.rows);
   let all = merged.bodies;
   let helper_types: Option[physicalbody.Helper][] = [];
@@ -1004,35 +844,20 @@ function first_name(mod: parser.Module): string {
   return mod.funcs[0].name;
 }
 
-// The module an emit path gates and emits, so a caller can produce the
-// substitution against the same normalisation and the same order. The x86-64
-// and arm64 paths spell it this way; wasm lifts inside its own normalisation
-// and takes the unlifted module (target_substitution).
 pub function gated_module(mod: parser.Module): parser.Module {
   return parser.infer_ret_types_module(ircore.script_normalized(mod));
 }
 
-// Checking needs the same typed source anchors as production, before
-// target folding or reachability pruning can discard an invalid body.
-// This performs no RC lowering, register allocation or code generation.
 pub function view_escape_diags(mod: parser.Module): util.Diag[] {
   let typed: parser.Module = parser.module_with_builtins_typed(checker.annotate_module(mod));
   let im: parser.Module = gated_module(ircore.lift_lambdas_typed(typed));
   return semsource.check_views(im);
 }
 
-// build_opts are the build's choices for target_substitution, for a caller
-// that does not import semsource.
 pub function build_opts(debug_lines: boolean, size: boolean, whole: boolean, array_report: i32): semsource.BuildOpts {
   return semsource.BuildOpts { debug_lines: debug_lines, size: size, whole: whole, array_report: array_report };
 }
 
-// target_substitution produces the typed lowering of the checker-typed `typed`
-// for whichever emit path `target` selects, against the normalisation that path
-// gates on. The register backends take the lifted module back (Sub.lifted) so
-// their emit entries read it erased rather than lifting again: lifting an
-// already-lifted body renames its locals, so what was produced would not be the
-// bodies the emit path lowers.
 pub function target_substitution(typed: parser.Module, target: string, opts: semsource.BuildOpts): ircore.Sub {
   if (is_wasm(target)) {
     return substitution_of(wasm_gated(typed), semsource.BuildOpts { ...opts, debug_lines: false });
@@ -1045,8 +870,6 @@ function is_wasm(target: string): boolean {
   return util.str_has_prefix(target, "wasm");
 }
 
-// The module the wasm emit path gates: it lifts inside its own normalisation,
-// after the same map-to-kernel rewrite ircore's lift runs.
 function wasm_gated(typed: parser.Module): parser.Module {
   return lift.lift_lambdas_typed(ircore.script_normalized(ircore.scale_f64_maps_module(typed)));
 }
@@ -1058,23 +881,16 @@ function substitution_of(im: parser.Module, opts: semsource.BuildOpts): ircore.S
   return ircore.Sub { ...sub, rt_lower: runtime_lowering };
 }
 
-// Driven is what a driver hands an emit entry for a module it parsed without
-// the CLI's front end: the module to emit and the typed lowering of it.
 pub struct Driven { full: parser.Module, sub: ircore.Sub }
 
 pub function driven(mod: parser.Module, target: string): Driven {
   return driven_annotated(checker.annotate_module(mod), target);
 }
 
-// driven_annotated is driven for a module the caller has already annotated.
-// `target_os()` / `target_arch()` are folded to the target's names first, as
-// the CLI folds them: no backend emits a body for either.
 pub function driven_annotated(annotated: parser.Module, target: string): Driven {
   return driven_with(annotated, target, build_opts(false, false, false, semarrayreport.from_env()));
 }
 
-// driven_shaken is driven_annotated for a whole program the caller has shaken
-// (treeshake), which the lowering may then narrow further, as the CLI's does.
 pub function driven_shaken(annotated: parser.Module, target: string): Driven {
   return driven_with(annotated, target, build_opts(false, false, true, semarrayreport.from_env()));
 }
@@ -1093,9 +909,6 @@ function checked_typed(annotated: parser.Module, target: string): parser.Module 
   return t.mod;
 }
 
-// Typed is the module the typed lowering reads for a target, and the emit
-// entry's diagnostics on it, which run before the lowering so a module they
-// refuse gets its diagnostic rather than a lowering refusal.
 struct Typed { mod: parser.Module, errs: util.Diag[] }
 
 function typed_for(annotated: parser.Module, target: string): Typed {
@@ -1105,26 +918,14 @@ function typed_for(annotated: parser.Module, target: string): Typed {
   return Typed { mod: typed, errs: asmcore.entry_check_errors(checker.ensure_annotated(parser.erase_view_module(typed))) };
 }
 
-// Verdict is the typed lowering's answer for a program, without emitting it
-// and without exiting: `ok` when the program passes the checks and every
-// declaration and instance is produced. `errors` holds the diagnostics of a
-// program that fails the checks, which then has no rows.
 pub struct Verdict { ok: boolean, errors: util.Diag[], rows: VerdictRow[] }
 
-// One declaration or instance. `state` is "produced", "refused" (with `why`),
-// "template" for a generic whose instances stand for it, "extern" for an
-// `@import` declaration, or "spliced" for one the inliner spliced away.
 pub struct VerdictRow { name: string, state: string, why: string }
 
-// verdict lowers `mod` as a driver that parsed it hands it to the emit
-// (`driven`). A driver that holds a program to the checker's build gate first
-// asks verdict_annotated after it, as its emit does.
 pub function verdict(mod: parser.Module, target: string): Verdict {
   return verdict_annotated(checker.annotate_module(mod), target);
 }
 
-// verdict_ok runs the same checks and lowering as verdict without building
-// declaration names and report rows for a caller that needs only the answer.
 pub function verdict_ok(mod: parser.Module, target: string): boolean {
   let t: Typed = typed_for(checker.annotate_module(mod), target);
   if (t.errs.len() > 0) {
@@ -1149,8 +950,6 @@ function verdict_module(mod: parser.Module, target: string): parser.Module {
   return gated_module(ircore.lift_lambdas_typed(mod));
 }
 
-// verdict_annotated is verdict for a module the caller already checked and
-// annotated (`driven_annotated`).
 pub function verdict_annotated(annotated: parser.Module, target: string): Verdict {
   let t: Typed = typed_for(annotated, target);
   if (t.errs.len() > 0) {
@@ -1193,10 +992,6 @@ function verdict_row(im: parser.Module, inf: Inference, i: i32): VerdictRow {
   return VerdictRow { name: name, state: "template", why: "" };
 }
 
-// verdict_text is a verdict as the drivers' `-ir-probe` prints it: the
-// diagnostics of a program that fails the checks, then `<name>: ir` for each
-// produced row, `<name>: refused: <why>` for each refused one, the state of
-// the rest, and last the module's line, `module: IR` or `module: refused`.
 pub function verdict_text(v: Verdict): string {
   let out: string = "";
   if (v.errors.len() > 0) {
@@ -1220,9 +1015,6 @@ pub function verdict_text(v: Verdict): string {
   return out + "module: refused\n";
 }
 
-// program is the whole program a register backend's emit over `d` gates, which
-// a per-module build cuts into units (ircore.split_units). A module the gate
-// refuses is an error, as it is for the whole-module emit.
 pub function program(d: Driven): ircore.Gated {
   let g: ircore.Gated = ircore.gate_program(ircore.sub_lifted(d.sub, checker.ensure_annotated(d.full)), d.sub);
   if (!g.ok) {

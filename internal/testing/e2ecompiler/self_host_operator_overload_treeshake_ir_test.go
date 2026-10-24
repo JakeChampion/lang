@@ -7,25 +7,6 @@ import (
 	"testing"
 )
 
-// operatorOverloadRootCases are operator overloads whose method RETURNS A
-// TYPE OTHER THAN ITS RECEIVER — the shape #8032 pruned.
-//
-// treeshake resolves the six arithmetic methods by receiver type, so a bare
-// `add` root does not keep `add` for every type in the program. The root an
-// operator node contributes used to be qualified by ExprBinary.ty /
-// ExprUnary.ty, which annotate_module stamps with the type of the WHOLE
-// expression. That is the receiver for the usual `add(self, other): Self`,
-// and nothing else. `-w` on a `W.neg(): string` rooted `string|neg` while
-// the lookup asked for `W|neg`, so W.neg was pruned and lowering emitted a
-// call to a symbol nothing defined:
-//
-//	FERN_STRICT_IR: main (call to unknown symbol W.neg)
-//
-// ts_recv_tag reads the OPERAND's stamped type instead, which is the one
-// ts_recv_kept is asking about.
-//
-// Each case is an exit code, so it fails on a wrong answer as well as on a
-// bail, and it runs on x86-64 where the shape was first found on wasm.
 var operatorOverloadRootCases = []struct {
 	name string
 	src  string
@@ -63,8 +44,6 @@ function main(): i32 {
     let k: N = N { n: 42 };
     return -k;
 }`},
-	// The self-returning shape the receiver lookup already handled. It must
-	// keep working: the return-type lookup is an addition, not a swap.
 	{"binary_add_returns_self", `struct C { n: i32 }
 
 function (a: C) add(b: C): C {
@@ -78,16 +57,6 @@ function main(): i32 {
 }`},
 }
 
-// TestSelfHostOperatorOverloadRootsIRX86_64 compiles each shape with the
-// full driver and oracle-checks the exit against the interpreter.
-//
-// The driver matters: under asm_load_run nothing runs annotate_module, every
-// `ty` is "", treeshake falls back to the BARE method name, and ts_kept_name's
-// exact-name match keeps the method whatever its receiver — so the bug cannot
-// appear there. fern.fern annotates, which is what puts a qualified root in
-// the set.
-//
-// FERN_STRICT_IR makes a prune fail the compile at the bail site, naming it.
 func TestSelfHostOperatorOverloadRootsIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)

@@ -5,7 +5,6 @@ import (
 	"testing"
 )
 
-// Sign masks must preserve lane order, signed zero, and NaN sign bits.
 func TestSelfHostLaneBitmask(t *testing.T) {
 	src := `function main(): i32 {
   let sign_nan: f64 = f64_from_bits(-2251799813685248);
@@ -28,8 +27,6 @@ func TestSelfHostLaneBitmask(t *testing.T) {
 	testAccelerationTargets(t, src)
 }
 
-// The compare feeds the branch directly. Each unordered relation and its
-// negation must retain IEEE semantics after boolean materialization is removed.
 func TestSelfHostFloatBranchFlags(t *testing.T) {
 	src := `@noinline function relations(a: f64, b: f64): i32 {
   let bits: i32 = 0;
@@ -115,8 +112,6 @@ function main(): i32 {
 	testAccelerationTargets(t, src)
 }
 
-// Constant table reads are heap-neutral from their first call. Mutations
-// must copy the static storage and retain all original float bit patterns.
 func TestSelfHostStaticNumericTables(t *testing.T) {
 	src := `const FLOATS: f32[] = [0.1f32, -0.0f32, 16777217.0f32, 1e-40f32, 0.1f32 + 0.0f32];
 const DOUBLES: f64[] = [0.1 + 0.2, -0.0, 1.0 / 10.0, 16777216.0];
@@ -148,8 +143,6 @@ function main(): i32 {
   if (INTEGERS[0] != -9223372036854775807 - 1 || INTEGERS[1] != 9223372036854775807 || UNSIGNED[1] != 18446744073709551615u64) { return 9; }
   return 0;
 }`
-	// Repeated references form a small SSA graph with an exponential tree.
-	// A depth limit alone makes a static-table candidate revisit millions of nodes.
 	src += "\n@noinline function shared_expression(): f64[] {\nlet x0: f64 = 1.25;\n"
 	for i := 1; i <= 27; i++ {
 		src += fmt.Sprintf("let x%d: f64 = x%d + x%d;\n", i, i-1, i-1)

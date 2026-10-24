@@ -1,19 +1,6 @@
 import "std/test";
 
-// tests/stdlib/timing_test.fern — exercises the time
-// builtins (`now_unix_ms`, `monotonic_ns`, `sleep_ms`) and
-// the elapsed-time assertion helpers.
-//
-// The "completes within N ms" pattern is the standard shape
-// of perf-regression tests: stamp `monotonic_ns()` before the
-// operation, pass the stamp + deadline to `assert_elapsed_lt_ms`
-// after. Use `monotonic_ns` (not `now_unix_ms`) for the
-// timestamps so NTP-style clock adjustments don't shift the
-// deadline mid-test.
-
 function test_now_unix_ms_advances(): test.TestOutcome {
-  // Wall-clock reads at least don't go BACKWARDS (modulo NTP
-  // step backwards; we ignore that case for the test).
   let a: i64 = now_unix_ms();
   sleep_ms(2 as i64);
   let b: i64 = now_unix_ms();
@@ -34,10 +21,6 @@ function test_monotonic_ns_advances(): test.TestOutcome {
 }
 
 function test_sleep_actually_sleeps(): test.TestOutcome {
-  // Sleeping for 5ms should elapse at least 4ms of wall time.
-  // We probe both `now_unix_ms` (might step under NTP, but
-  // typical CI is steady) and `monotonic_ns` (guaranteed
-  // forward).
   let start_ns: i64 = monotonic_ns();
   sleep_ms(5 as i64);
   let elapsed_ms: i64 = (monotonic_ns() - start_ns) / (1000000 as i64);
@@ -49,7 +32,6 @@ function test_sleep_actually_sleeps(): test.TestOutcome {
 
 function test_assert_elapsed_lt_ms_pass(): test.TestOutcome {
   let start: i64 = monotonic_ns();
-  // Trivial work — must complete in < 100ms on any sane host.
   let sum: i32 = 0;
   let i: i32 = 0;
   while (i < 1000) {
@@ -62,7 +44,6 @@ function test_assert_elapsed_lt_ms_pass(): test.TestOutcome {
 function test_assert_elapsed_lt_ms_fail_message(): test.TestOutcome {
   let start: i64 = monotonic_ns();
   sleep_ms(10 as i64);
-  // Deadline of 1ms — guaranteed to miss after a 10ms sleep.
   match (test.assert_elapsed_lt_ms(start, 1 as i64)) {
     Fail(msg) => {
       if (!msg.contains("ms elapsed")) {

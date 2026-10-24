@@ -1,30 +1,3 @@
-// A NEGATIVE control for the #3457 load leak (docs/SELFHOST-AST-RETIREMENT.md):
-// a faithful mimic of `lexer.tokenize`'s shape that does NOT leak.
-//
-//   FERN_LEAKCHECK=1 fern -target x86-64-linux -o /tmp/p tests/probes/lexer_shape_control.fern
-//   /tmp/p; # stderr: leakcheck: allocs=1340 frees=1340 live_bytes=0
-//
-// It carries every structural feature the real lexer was assumed to leak on:
-//   - a struct param threaded by self-reassignment (`l = l.adv()`),
-//   - METHOD RECEIVERS on that param (`l.at_end()`, `l.peek()`),
-//   - INDEX reads through one of its fields (`l.src[l.i]`),
-//   - a field-by-field rebuild returning a fresh struct (`Lx { src: l.src, … }`),
-//   - a UNION token type built by per-variant helper functions that retain a
-//     string param (`tok_of(text, line) -> TIdent { text: text, … }`),
-//   - `out = out.append(tok)` in a `while (true)` with the array returned from
-//     INSIDE the loop, and payloads cut from the source by string slice.
-//
-// All of it reclaims: allocs == frees, zero live bytes. Adding a fourth variant
-// with an ARRAY payload (the real `TokFString { parts: … }`) changes nothing.
-//
-// That is the point of the file. `lexer.tokenize` on parser.fern strands 91% of
-// its blocks, and the widening list in the doc named these appearances — method
-// receivers, index targets, self-reassignment — as the reason. They are not:
-// every one of them is exercised here and reclaims. Whatever the lexer's leak
-// is, it is NOT this shape, so localise it inside the real lexer before
-// building an analysis aimed at these constructs.
-//
-// Exit code 5, matching the interpreter.
 import "std/i32";
 
 struct Lx { src: string, i: i32, n: i32, line: i32 }

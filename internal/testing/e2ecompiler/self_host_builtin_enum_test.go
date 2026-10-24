@@ -7,11 +7,6 @@ import (
 	"testing"
 )
 
-// builtinEnumCases construct and match the auto-injected IoError enum
-// WITHOUT a local `enum IoError { … }` declaration — exercising the
-// self-host emitter's builtin-enum injection (parser.inject_builtin_enums),
-// the analogue of the Go checker's builtinEnumDecls. Exit codes
-// cross-checked vs the Go backend.
 var builtinEnumCases = []struct {
 	name string
 	src  string
@@ -19,18 +14,11 @@ var builtinEnumCases = []struct {
 }{
 	{"ioerror-payload", "function classify(e: IoError): i32 { match (e) { NotFound(p) => { return 5; }, Interrupted => { return 1; }, _ => { return 0; } } return 9; } function main(): i32 { let e: IoError = NotFound(\"/x\"); return classify(e); }", 5},
 	{"ioerror-unit", "function classify(e: IoError): i32 { match (e) { NotFound(p) => { return 5; }, Interrupted => { return 1; }, _ => { return 0; } } return 9; } function main(): i32 { let e: IoError = Interrupted; return classify(e); }", 1},
-	// A payload variant reached with NO IoError-typed context to resolve
-	// it against — returned as the function's result, and nested inside
-	// an `Err(...)`. The checker read every IoError variant as a unit
-	// one, so the constructor typed as a VALUE and its own call was
-	// "calling non-function value of type IoError" (#9066). Only
-	// `Interrupted` and `Unsupported` are unit variants.
 	{"ioerror-payload-returned", "function mk(p: string): IoError { return PermissionDenied(p); } function main(): i32 { match (mk(\"/x\")) { PermissionDenied(q) => { return 7; }, _ => { return 0; } } return 9; }", 7},
 	{"ioerror-payload-nested", "function mk(p: string): Result[string, IoError] { return Err(NotFound(p)); } function main(): i32 { match (mk(\"/x\")) { Ok(_) => { return 0; }, Err(e) => { match (e) { NotFound(q) => { return 6; }, _ => { return 1; } } } } return 9; }", 6},
 	{"ioerror-three-payloads", "function mk(a: string, b: string, n: i32): IoError { return Other(a, b, n); } function main(): i32 { match (mk(\"/x\", \"boom\", 21)) { Other(p, m, n) => { if (m == \"boom\" && n == 21) { return 4; } return 3; }, _ => { return 0; } } return 9; }", 4},
 }
 
-// TestSelfHostBuiltinEnumX86_64 — IoError used without a local decl.
 func TestSelfHostBuiltinEnumX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -64,7 +52,6 @@ func TestSelfHostBuiltinEnumX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostBuiltinEnumArm64 — CI-gated arm64 counterpart.
 func TestSelfHostBuiltinEnumArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range builtinEnumCases {

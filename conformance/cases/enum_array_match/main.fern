@@ -1,5 +1,5 @@
-// An array of enum values iterated with for-in and dispatched by
-// match; only Num carries a payload. 40 + 2 = 42.
+
+
 enum Token { Num(i32), Plus, Times }
 
 function main(): i32 {

@@ -1,9 +1,3 @@
-// Command maxrss runs its arguments as a program and prints that program's
-// peak resident set size in KiB on stdout, exiting with the program's exit
-// code, or 255 when a signal killed it. A child's rusage high-water mark
-// starts at the RSS of the process that forked it, so a Go test binary reads
-// its own footprint back for any child smaller than itself; this program is
-// small enough to measure one.
 package main
 
 import (

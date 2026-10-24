@@ -2,13 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/base32.base32_decode_strict across
-// backends: round-trips of base32_encode output, padded and unpadded
-// valid input, the empty string, and the None rejections (bad padding
-// count, non-base32 char, junk, trailing junk after padding, an
-// impossible 1-char final group, and over-long padding). Contrasts the
-// lenient base32_decode, which truncates instead. Returns 42 iff every
-// check holds. Each leg skips itself when its toolchain is absent.
 const base32StrictProg = `
 import "std/base32" as b32;
 import "std/string";

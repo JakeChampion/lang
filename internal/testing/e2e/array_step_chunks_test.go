@@ -1,14 +1,5 @@
 package e2e
 
-// Differential coverage for the std/array adapters `step_by` and
-// `chunks_exact`. `step_by(n)` keeps every n-th element from index 0 (empty
-// for n <= 0). `chunks_exact(size)` is `chunks` restricted to full-length
-// groups — the short trailing remainder is dropped, so every group has
-// exactly `size` elements (what fixed-record / SIMD-style loops want). Each
-// group is a fresh slice, not a reused loop-local buffer, which the self-host
-// RC reuse pass miscompiles (all groups would alias the last). Returns 42 iff
-// every check holds across interp / x86-64 / wasm / arm64.
-
 import "testing"
 
 const arrayStepChunksProg = `

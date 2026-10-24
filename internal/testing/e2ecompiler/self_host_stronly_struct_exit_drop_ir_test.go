@@ -7,38 +7,24 @@ import (
 	"testing"
 )
 
-// strOnlyStructExitDropCases pin the string-ONLY-rc struct exit release
-// (#4355 slice-3 completion, found probing #4354's struct-capture kind): a
-// fresh struct-literal local whose only rc field is a STRING (`P { s: string,
-// n: i32 }`) must release that string at scope exit, not only the box.
-// Detector guards prove no over-release; the param-embed case proves a
-// caller-owned field value survives (retain → release nets zero).
 var strOnlyStructExitDropCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// Fresh string field, read locally, dies at exit — the core leak shape.
 	{"stronly-exit-flat", `struct P { s: string, n: i32 }
 function go(pre: string): i32 { let p: P = P { s: pre + "x", n: 1 }; return p.n + p.s.len(); }
 function churn(m: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
-	// The struct passed to a borrow-only helper first — the borrow gate must
-	// keep it credited and the callee must not double-release.
 	{"stronly-borrow-arg-flat", `struct P { s: string, n: i32 }
 function rd(p: P): i32 { return p.n + p.s.len(); }
 function go(pre: string): i32 { let p: P = P { s: pre + "x", n: 1 }; return rd(p); }
 function churn(m: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
-	// PARAM-EMBED safety: the field aliases the caller's string — the
-	// construction retain (rc 2) balances the field's release (→1), the
-	// caller's string stays readable, detector zero.
 	{"stronly-param-embed-safe", `struct P { s: string, n: i32 }
 function go(pre: string): i32 { let p: P = P { s: pre, n: 1 }; return p.n + p.s.len(); }
 function churn(m: i32): i32 { let pre: string = "ab" + "cd"; let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(pre) != 5) { bad = 1; } i = i + 1; } if (pre.len() != 4) { bad = 2; } return bad; }
 function main(): i32 { let v: i32 = churn(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
-	// Loop-local rebind in one frame: each iteration's box + fresh string field
-	// reclaim at the rebind, flat across the second churn.
 	{"stronly-loop-rebind-flat", `struct P { s: string, n: i32 }
 function main(): i32 {
     let pre: string = "ab";
@@ -54,8 +40,6 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// The #4354 probe that surfaced this: a string-fielded struct captured by a
-	// directly-called closure (param-lifted to a borrowing call) now reclaims.
 	{"stronly-closure-capture-flat", `struct P { s: string, n: i32 }
 function go(pre: string): i32 {
     let p: P = P { s: pre + "x", n: 1 };
@@ -66,8 +50,6 @@ function churn(m: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i
 function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
 }
 
-// TestSelfHostStrOnlyStructExitDropIRX86_64 drives the cases through the
-// self-hosted x86-64 compiler (asm_run), heap-bump + underflow guarded.
 func TestSelfHostStrOnlyStructExitDropIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

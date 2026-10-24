@@ -1,23 +1,6 @@
 import "std/test";
 import "std/http";
 
-// tests/stdlib/http_response_body_shim_test.fern — the
-// RESPONSE side of the body forward-compatibility shim
-// (docs/PLATFORM-RESEARCH.md Rec §4, the issue-#4414 item).
-//
-// `HttpRequest` has carried `body_string()` / `body_bytes()` /
-// `body_len()` since the Tier-A shim landed, so handler code
-// reading a request body already survives the field becoming
-// `Stream[bytes]`. `HttpResponse` had no such accessors, so
-// every response-body read was still spelled `.body` — the one
-// shape the migration has to rewrite. These pin the twin set.
-//
-// What they are really asserting is that the shim and the field
-// AGREE today: each case compares the accessor against the same
-// value reached through a constructor, so when the field type
-// swaps and only the method bodies change, a divergence shows up
-// here rather than in whatever handler notices first.
-
 function test_body_string_round_trips(): test.TestOutcome {
   return test.assert_eq(http.ok("hello").body_string(), "hello");
 }
@@ -36,9 +19,6 @@ function test_empty_body_is_zero_len(): test.TestOutcome {
   return test.assert_eq(http.no_content().body_len(), 0);
 }
 
-// A byte body needs no round-trip through `string` once the
-// field stops being one, which is what this constructor exists
-// for; today it agrees with the string form.
 function test_bytes_constructor_agrees_with_text(): test.TestOutcome {
   let b: HttpResponse = http.bytes(201, "hi".bytes());
   return test.assert_eq(b.body_string(), http.text(201, "hi").body_string());
@@ -48,9 +28,6 @@ function test_bytes_constructor_keeps_status(): test.TestOutcome {
   return test.assert_eq(http.bytes(503, "x".bytes()).status, 503);
 }
 
-// The serializer reads the body through the accessors now, so
-// the wire is the end-to-end check that they carry the same
-// bytes and the same length the auto Content-Length announces.
 function test_serialized_wire_length_matches_body(): test.TestOutcome {
   let wire: string = http.http_serialize_response(http.ok("hello"));
   return test.assert_contains(wire, "Content-Length: 5");

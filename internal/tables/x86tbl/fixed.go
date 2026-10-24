@@ -1,32 +1,11 @@
 package x86tbl
 
-// FixedOp is an instruction reached by mnemonic alone — no operands, a fixed
-// byte sequence — together with every spelling gas accepts for it in AT&T
-// mode.
-//
-// gas resolves a mnemonic against ONE table for both syntax modes, so AT&T
-// mode takes the Intel sign-extend names (cbw, cwde, cdqe, cwd, cdq, cqo)
-// beside the AT&T ones (cbtw, cwtl, cltq, cwtd, cltd, cqto), and movsd and
-// cmpsd beside movsl and cmpsl, because those two are also the SSE
-// scalar-double mnemonics. stosd, lodsd and scasd are the exception: Intel
-// mode only.
-//
-// Every row is pinned from `as --64` read back with objdump, never from a
-// manual, and TestSelfHostX86TableRowsMatchGas assembles every spelling
-// through the self-host and GNU as.
 type FixedOp struct {
-	Spellings []string
-	Bytes     []byte
-	// Repeatable marks what a rep/repne prefix may precede. That is the
-	// string ops plus two idioms gas also takes: `rep ret`, the AMD
-	// branch-prediction workaround, and `rep nop`, which IS pause. Anything
-	// else is refused — gas says "invalid instruction after rep", and the
-	// prefix would otherwise be emitted in front of an instruction that
-	// ignores it.
+	Spellings  []string
+	Bytes      []byte
 	Repeatable bool
 }
 
-// FixedOps is the no-operand vocabulary of the self-host x86-64 assembler.
 var FixedOps = []FixedOp{
 	{Spellings: []string{"ret"}, Bytes: []byte{0xC3}, Repeatable: true},
 	{Spellings: []string{"syscall"}, Bytes: []byte{0x0F, 0x05}},
@@ -45,12 +24,8 @@ var FixedOps = []FixedOp{
 	{Spellings: []string{"cwtd", "cwd"}, Bytes: []byte{0x66, 0x99}},
 	{Spellings: []string{"cltd", "cdq"}, Bytes: []byte{0x99}},
 	{Spellings: []string{"cqto", "cqo"}, Bytes: []byte{0x48, 0x99}},
-	// In 64-bit mode the flags push is already 64 bits wide, so the `q` is
-	// spelling rather than a REX.W and gas disassembles both back to pushf.
 	{Spellings: []string{"pushfq", "pushf"}, Bytes: []byte{0x9C}},
 	{Spellings: []string{"popfq", "popf"}, Bytes: []byte{0x9D}},
-	// The architecturally-guaranteed invalid opcode: what a trap or an
-	// unreachable lowers to.
 	{Spellings: []string{"ud2"}, Bytes: []byte{0x0F, 0x0B}},
 
 	{Spellings: []string{"movsb"}, Bytes: []byte{0xA4}, Repeatable: true},

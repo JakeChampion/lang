@@ -8,16 +8,6 @@ import (
 	"testing"
 )
 
-// paramDestructureCases pin tuple-destructuring parameters
-// `function f((a, b): (T, U))` on the self-host compiler. The parser
-// desugars the pattern into a synthetic `__ptuple_<line>_<col>` param
-// plus a leading `let (a, b) = <synth>;` destructure (mirroring the
-// native parser), so these use the same proven destructure lowering
-// the tupleDestructureIRCases pin — each case carries the same fresh
-// struct temp whose IR-only reclaim free (`call __fn___fern_arr_dec`)
-// proves the module took the IR path, and `t.x - t.y` pads 0 into the
-// exit code. Covers a named function, a second-position param (mixed
-// param list), a verbose lambda, and an arrow lambda.
 var paramDestructureCases = []struct {
 	name string
 	src  string
@@ -29,10 +19,6 @@ var paramDestructureCases = []struct {
 	{"arrow-lambda", "struct Point { x: i32, y: i32 } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; let g = ((lo, hi): (i32, i32)) => hi - lo; return g((5, 47)) + pad; }", 42},
 }
 
-// TestSelfHostParamDestructureX86_64 compiles each case through the
-// self-hosted x86-64 driver (asm_run, IR default-on), asserts the IR
-// path was taken (the reclaimed-temp struct free), and asserts the
-// destructured exit code.
 func TestSelfHostParamDestructureX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)

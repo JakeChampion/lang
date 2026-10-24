@@ -1,13 +1,13 @@
-// rc correctness: the program tears its values down and folds
-// __rc_underflow_count() into its exit code, so 0 means no over-release.
-//
-// The caller-side half of the same admission: the callee's .with is
-// admitted on its own body, and the container it reads through is the
-// CALLER's, still live across the call. The #4873 grow bracket holds
-// the buffer above rc 1 there, so the CoW copies and the field keeps
-// its buffer — the branch that pays the inc the helper's copy path
-// consumes. A missing inc over-releases; a missing bracket rewrites
-// the caller's array.
+
+
+
+
+
+
+
+
+
+
 struct Box { xs: i32[], n: i32 }
 function setter(b: Box, i: i32, v: i32): i32[] {
     return b.xs.with(i, v);

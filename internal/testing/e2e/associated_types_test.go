@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// Associated types: a trait declares `type Item;`, an impl binds it
-// (`type Item = i32;`), and `Self::Item` / `I::Item` projections resolve
-// to the binding — both for a direct method call and through a bounded
-// generic that monomorphises. See docs/ASSOCIATED-TYPES.md.
 const assocTypesSrc = `trait Iterator {
     type Item;
     function next(self: Self): Self::Item;
@@ -28,8 +24,6 @@ function main(): i32 {
 }
 `
 
-// Concrete-only variant (no bounded generic) for the x86-64 helper, which
-// doesn't run the monomorph pass. Exercises `Self::Item` resolution.
 const assocTypesConcreteSrc = `trait Iterator {
     type Item;
     function next(self: Self): Self::Item;
@@ -82,16 +76,6 @@ func TestWASMAssociatedTypes(t *testing.T) {
 	}
 }
 
-// A PARAMETRIC impl binding an associated type to its OWN type parameter
-// (`impl[T] Carrier for Box[T] { type Ok = T; }`). Every case above binds a
-// concrete type on a non-generic impl, which is why this shape shipped broken:
-// the binding stayed a same-named StructType rather than the impl's ParamType,
-// and nothing substituted the base's type arguments into it.
-//
-// Exercises both resolution paths in one program — the direct call (`b.get()`,
-// resolved in the first check pass) and the bounded generic (`unwrap(b)`, whose
-// `C::Ok` only becomes concrete at monomorph, and whose projection base has to
-// be mangled alongside the struct it names).
 const assocTypesGenericImplSrc = `trait Carrier {
     type Ok;
     function get(self: Self): Self::Ok;
@@ -145,21 +129,6 @@ func TestWASMAssociatedTypesGenericImpl(t *testing.T) {
 	}
 }
 
-// A projection in a PARAMETER — `pick[H: Holder](h: H, d: H::Item)` — resolves
-// once an earlier argument pins its base. Projections in the RESULT have always
-// resolved (the generic-call path resolves after substitution); parameters had
-// no equivalent, so every value handed to one was compared against an
-// unresolved `H::Item` and rejected.
-//
-// Covers both bases in one program: a generic STRUCT, which monomorph flattens
-// to `Box__i32` with a synthesised concrete impl, and a generic ENUM, which it
-// deliberately leaves generic — so the enum's projection has to be resolved
-// while monomorph substitutes, there being no instantiation left to look it up
-// against afterwards.
-//
-// The direct `e.get(1)` is required by #9308 (a parametric impl on a generic
-// enum is unreachable through a bound unless the method is also called
-// directly), not by anything this test is about.
 const assocTypesProjInParamSrc = `trait Holder {
     type Item;
     function get(self: Self, d: Self::Item): Self::Item;

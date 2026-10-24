@@ -1,13 +1,5 @@
 package e2eharness
 
-// TaskPortableProgram is the task runtime's gate on every target
-// (docs/NET-P3-SUSPENSION-PLAN.md §3.7): the parks nap through `wait_any`
-// on an empty set under a bound, which no target needs a descriptor for,
-// and the chain holds an i64, an f64 and a string across them, so a save
-// area that narrowed a word would answer wrong. main drives the task by
-// hand, waiting on each park's bound itself and resuming with what its own
-// wait answered (-1, the timeout), then runs the same functions with no
-// task.
 const TaskPortableProgram = `import "std/async";
 import "std/i32";
 
@@ -63,6 +55,4 @@ function main(): i32 {
 }
 `
 
-// TaskPortableWant is the output under the self-host compiler on x86-64,
-// arm64 and wasm: two parks, the same figure as the plain run.
 const TaskPortableWant = "parks 2 out 1410\nplain 1410\n"

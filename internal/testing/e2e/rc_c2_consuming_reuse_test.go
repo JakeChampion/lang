@@ -4,15 +4,6 @@ import (
 	"testing"
 )
 
-// C2 — true zero-alloc FBIP. A consuming match (`match (own xs) { Cons(h,t) =>
-// Cons(g(h), self(t)), Nil => Nil }`) whose arm rebuilds a same-enum variant
-// now hands the consumed scrutinee box STRAIGHT to that construction via the
-// reuse token, instead of shallow-freeing it and allocating a fresh box (C1).
-// Memory is already flat under C1 (the freelist recycles), so C2's win is
-// avoiding the free→alloc round-trip; correctness is the contract these pin:
-// value + no over-release on all backends, and reuse-on == reuse-off (C2 is a
-// pure optimisation over the C1 baseline).
-
 const c2ConsumingSrc = `enum List { Cons(i32, List), Nil }
 function map_inc(own xs: List): List {
     match (xs) {

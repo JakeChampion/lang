@@ -11,14 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternVariantUniformF64ParamCustomProvider exercises a uniform-f64
-// variant `variant ev { a(f64), b(f64) }` @import parameter: every payloaded arm
-// is f64, so the canonical join is an f64 slot (not the i64 bit-container the
-// mixed-width path uses). The self-host wrapper pushes the disc then the box's f64
-// payload directly (f64.load), and the raw import takes (disc:i32, payload:f64).
-//
-// `take: func(e: ev) -> s32`: a(x) -> trunc(x), b(x) -> trunc(x*10). The self-host
-// passes A(2.5) (-> 2) and B(1.5) (-> 15).
 func TestSelfHostExternVariantUniformF64ParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

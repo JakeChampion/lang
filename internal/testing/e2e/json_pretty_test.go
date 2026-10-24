@@ -2,12 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/json's json_encode_pretty across
-// backends. Returns 42 iff: pretty output re-parses to a value whose
-// compact json_encode equals the original's (whitespace-only
-// difference); empty containers and scalars stay compact; and the
-// indentation shape is present. Each leg skips itself when its
-// toolchain is absent.
 const jsonPrettyProg = `
 import "std/json" as json;
 import "std/string";

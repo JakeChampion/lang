@@ -1,19 +1,3 @@
-// examples/fip/httpapp_baseline.fern — the idiomatic variant of the
-// HTTP-like application pipeline (#9586, experiment 4): the same requests,
-// the same routes, the same bounded counter table and the same answers as
-// `httpapp_fip.fern`, through `std/http`'s parse and serialise and a `Map`
-// for the counters.
-//
-// It is the control. The wire bytes become a string, the parse produces an
-// HttpRequest holding owned copies of the method, the path, every header
-// and the body, the handler reads and writes a `Map[string, i64]` keyed by
-// the id's digits, builds an HttpResponse with a string body, and the
-// serialiser concatenates the reply. Nothing is annotated.
-//
-// The state is threaded as two locals rather than one struct: a map
-// mutator on a field of an owned struct copies the whole map (#11119), and
-// each mutator sits in a function of its own because the analysis that lets
-// one write in place reads the receiver's last use over the whole body.
 import "core/cmp";
 import "std/bench";
 import "std/headers";
@@ -22,10 +6,6 @@ import "std/i32";
 import "std/i64";
 import "std/string";
 
-// ===================== THE SERVICE =====================
-
-// The counter table holds at most 256 ids; a request may carry at most 8
-// header fields and 240 body bytes.
 function max_counters(): i32 {
   return 256;
 }
@@ -46,9 +26,6 @@ struct Tallies {
   full: i64,
 }
 
-// A Decision is what the route decided, before the map or the tallies move:
-// the status, the body (one of the kinds below), and whether the counter
-// named by `key` is to be created or bumped.
 function body_literal(): i32 {
   return 0;
 }
@@ -96,7 +73,6 @@ function literal_body(status: i32): string {
   return "bad request";
 }
 
-// counter_id is the id named by a `/counter/<id>` path, or -1.
 function counter_id(path: string): i32 {
   match (slice_unchecked(path, 9, path.len()).to_owned().parse_int()) {
     Some(id) => {
@@ -111,8 +87,6 @@ function counter_id(path: string): i32 {
   }
 }
 
-// counter is `/counter/<id>`: GET reads, POST increments or creates, and a
-// create into a full table is the 503. The map is only read here.
 function counter(counters: Map[string, i64], req: HttpRequest): Decision {
   let id: i32 = counter_id(req.path);
   if (id < 0) {
@@ -138,7 +112,6 @@ function counter(counters: Map[string, i64], req: HttpRequest): Decision {
   return Decision { status: 200, kind: body_text(), text: "1", key: key, create: true, bump: false };
 }
 
-// route is the handler, spelled the same way in the other two variants.
 function route(counters: Map[string, i64], req: HttpRequest): Decision {
   if (req.headers.len() > max_headers()) {
     return decision(431);
@@ -171,7 +144,6 @@ function route(counters: Map[string, i64], req: HttpRequest): Decision {
   return decision(404);
 }
 
-// The map after a decision: one mutator per function.
 function create(own counters: Map[string, i64], d: Decision): Map[string, i64] {
   return counters.insert(d.key, 1 as i64);
 }
@@ -210,7 +182,6 @@ function tally(own t: Tallies, d: Decision): Tallies {
   return Tallies { total: total, seen: t.seen + 1 as i64, served: served, refused: refused, full: full };
 }
 
-// The metrics body, one `name value` line per tally.
 function metrics(t: Tallies, live: i32): string {
   return "requests " + t.seen.to_string() + "\n"
     + "served " + t.served.to_string() + "\n"
@@ -220,8 +191,6 @@ function metrics(t: Tallies, live: i32): string {
     + "counter_total " + t.total.to_string() + "\n";
 }
 
-// render is the HttpResponse for a decision, with the request id carried
-// back the way std/serve's handlers do it.
 function render(d: Decision, req: HttpRequest, t: Tallies, live: i32): HttpResponse {
   let body: string = literal_body(d.status);
   if (d.kind == body_text()) {
@@ -238,8 +207,6 @@ function render(d: Decision, req: HttpRequest, t: Tallies, live: i32): HttpRespo
   }
   return resp;
 }
-
-// ===================== GENERATOR HELPERS (fip) =====================
 
 fip function cr(): u8 {
   return 13 as u8;
@@ -261,7 +228,6 @@ fip function id_space(): i32 {
   return 320;
 }
 
-// put_str writes `lit` at `at`.
 fip function put_str(own out: u8[], at: i32, lit: string): u8[] {
   let i: i32 = 0;
   while (i < lit.len()) {
@@ -271,7 +237,6 @@ fip function put_str(own out: u8[], at: i32, lit: string): u8[] {
   return out;
 }
 
-// digits is how many decimal digits `n` prints as.
 fip function digits(n: i32): i32 {
   let d: i32 = 1;
   let v: i32 = n;
@@ -282,7 +247,6 @@ fip function digits(n: i32): i32 {
   return d;
 }
 
-// put_int writes `n` in decimal at `at`, `digits(n)` bytes.
 fip function put_int(own out: u8[], at: i32, n: i32): u8[] {
   let d: i32 = digits(n);
   let v: i32 = n;
@@ -304,15 +268,6 @@ function zeros_u8(n: i32): u8[] {
   }
   return xs;
 }
-
-// ===================== THE WORKLOAD =====================
-//
-// Identical in the three variants, verbatim, so the runs differ in how the
-// bytes and the state are held and in nothing else. Every 17th request is
-// malformed, cycling through the six refusals; every 23rd carries six extra
-// header fields, for the 431; every 29th that has a body carries 300 bytes,
-// for the 413. The request's length is left in the wire buffer's last four
-// bytes, past anything a request can reach.
 
 fip function wire_len_at(): i32 {
   return max_wire() - 4;
@@ -351,15 +306,10 @@ fip function mix64(n: i64): i64 {
   return x;
 }
 
-// The id a request names: 320 values, drawn by the mixing hash, over a
-// 256-slot table.
 fip function id_of(n: i64): i32 {
   return (mix64(n) % (id_space() as i64)) as i32;
 }
 
-// Methods 0..3: GET, POST, PUT, DELETE. Only POST and PUT carry a body. On
-// `/counter/<id>` 70% of requests are the POST, 20% the GET and 10% a method
-// the route refuses; everywhere else 95% are the GET.
 fip function method_for(n: i64, p: i32): i32 {
   let bucket: i32 = (mix64(n + 1 as i64) % (20 as i64)) as i32;
   if (p == 2) {
@@ -406,8 +356,6 @@ fip function put_method(own w: u8[], at: i32, m: i32): u8[] {
   return put_str(w, at, "DELETE");
 }
 
-// Paths 0..4: `/health`, `/users/<id>`, `/counter/<id>`, `/metrics`,
-// `/missing/<id>`.
 fip function path_of(n: i64): i32 {
   return (n % (5 as i64)) as i32;
 }
@@ -452,7 +400,6 @@ fip function put_crlf(own w: u8[], at: i32): u8[] {
   return w.with(at + 1, lf());
 }
 
-// put_length writes a Content-Length header line for `cl` at `at`.
 fip function length_line_len(cl: i32): i32 {
   return 16 + digits(cl) + 2;
 }
@@ -463,9 +410,6 @@ fip function put_length(own w: u8[], at: i32, cl: i32): u8[] {
   return put_crlf(w, at + 16 + digits(cl));
 }
 
-// build_request writes request `n` into the buffer it is handed and gives
-// it back with the length in its last four bytes. It takes the buffer `own`
-// in every variant: generating the input is the harness, not the service.
 // fern-lint: allow cyclomatic-complexity
 fip function build_request(own w: u8[], n: i64): u8[] {
   let id: i32 = id_of(n);
@@ -562,9 +506,6 @@ fip function out_len_of(o: u8[]): i32 {
   return o[0] as i32 + o[1] as i32 * 256 + o[2] as i32 * 65536;
 }
 
-// A running digest over every response byte. Three implementations of one
-// service agree only if this agrees, which is what makes the comparison a
-// differential test rather than three unrelated benchmarks.
 fip function mix(d: i64, b: i32): i64 {
   let x: i64 = d ^ b as i64;
   x = x * (1099511628211 as i64);
@@ -574,11 +515,6 @@ fip function mix(d: i64, b: i32): i64 {
   }
   return x % (1000000007 as i64);
 }
-
-// ===================== DRIVER =====================
-//
-// The driver owns the state and the buffers, tallies and prints. A request
-// the parser refuses gets the 400 here, as std/serve's loop would give it.
 
 // fern-lint: allow cyclomatic-complexity
 function main(): i32 {
@@ -605,8 +541,6 @@ function main(): i32 {
     p = p + 1;
   }
 
-  // One warm round before the mark. Its requests are the first batch's,
-  // so the state starts the measured run the way the other variants' does.
   let w: i32 = 0;
   while (w < batch) {
     wire = build_request(wire, w as i64);

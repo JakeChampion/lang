@@ -1,10 +1,5 @@
 import "core/cmp";
 
-// sort_inplace — `cmp.sort_in_place`, the `own`-consuming heapsort, over many
-// short arrays. The property being watched is that it stays allocation-free:
-// if `.with` ever stops writing through the unique owner and starts copying,
-// the count jumps by an order of magnitude here while `sort_ints` (which
-// allocates by design) barely moves.
 function main(): i32 {
   let total: i64 = 0i64;
   let r: i32 = 0;

@@ -1,5 +1,3 @@
-// Package sourcelint holds fast, dependency-free repo-hygiene checks that run
-// in the ordinary `go test ./...` lane (no build tools, no fixtures).
 package sourcelint
 
 import (
@@ -9,24 +7,6 @@ import (
 	"testing"
 )
 
-// knownGOOS / knownGOARCH are the tokens the go tool treats as an implicit
-// build constraint when they are the LAST underscore-separated segment of a
-// source file's name (after stripping a trailing `_test`). A test file named
-// `foo_wasm_test.go` or `foo_arm64_test.go` therefore compiles ONLY under that
-// GOOS/GOARCH — and since this project's test binaries always run natively on
-// the host (arm64/wasm targets are exercised by compiling PROGRAMS and running
-// them under qemu/wasmtime, never by cross-building the Go test binary), such a
-// file is silently excluded from every CI lane and every local run: it never
-// compiles in, so it can never fail. #5464 (an arm64 SSA-emit suite that had
-// never run; and two earlier `_wasm_test.go` files) is exactly this trap.
-//
-// The project convention is to place the target token in the MIDDLE of the name
-// (`self_host_ssa_wasm_emit_test.go`, `..._arm64_ir_test.go`) so the last
-// segment is a non-token word. This guard enforces that: a test file whose name
-// ends in a GOOS/GOARCH token before `_test.go` fails the build here rather than
-// disappearing. Restricted to `_test.go` files — a legitimately
-// platform-specific non-test file (`foo_arm64.go`) is a real, intended build
-// constraint and is left alone.
 var knownGOOS = map[string]bool{
 	"aix": true, "android": true, "darwin": true, "dragonfly": true,
 	"freebsd": true, "hurd": true, "illumos": true, "ios": true, "js": true,
@@ -41,9 +21,6 @@ var knownGOARCH = map[string]bool{
 	"sparc64": true, "wasm": true,
 }
 
-// moduleRoot walks up from the test's working directory to the directory
-// holding go.mod (the module root), so the guard scans the whole tree
-// regardless of which package directory `go test` runs it from.
 func moduleRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()
@@ -62,12 +39,6 @@ func moduleRoot(t *testing.T) string {
 	}
 }
 
-// hasPlatformConstraint mirrors go/build's goodOSArchFile filename rule: strip
-// the extension, then IGNORE everything up to and including the first
-// underscore (so a bare `arm64.go` / `arm64_test.go` is NOT auto-tagged — the
-// `arm64` sits before the first `_` and is cut), and check the final one or two
-// segments of the remainder against the known GOOS/GOARCH token sets (a trailing
-// `_test` is dropped first). Returns the constraining token, or "" for none.
 func hasPlatformConstraint(filename string) string {
 	name := filename
 	if i := strings.IndexByte(name, '.'); i >= 0 {
@@ -75,9 +46,9 @@ func hasPlatformConstraint(filename string) string {
 	}
 	i := strings.IndexByte(name, '_')
 	if i < 0 {
-		return "" // no underscore → the leading word is cut, nothing to tag
+		return ""
 	}
-	name = name[i:] // keep from the first '_' (inclusive), e.g. "_ssa_emit_arm64_test"
+	name = name[i:]
 	l := strings.Split(name, "_")
 	if n := len(l); n > 0 && l[n-1] == "test" {
 		l = l[:n-1]

@@ -1,13 +1,7 @@
-// Package e2eharness holds the shared e2e test harness — driver builds,
-// tooling discovery, caches — used by both internal/testing/e2e and
-// internal/testing/e2ecompiler (#4398 part 3). Extracted verbatim from
-// internal/testing/e2e/wit_user_world_test.go.
 package e2eharness
 
 import "testing"
 
-// ExtractComponentType returns the payload of the `component-type` custom
-// section embedded in a core module (the bytes DecodeWorldBytes consumes).
 func ExtractComponentType(t *testing.T, core []byte) []byte {
 	t.Helper()
 	readU := func(b []byte) (uint64, int) {
@@ -22,7 +16,7 @@ func ExtractComponentType(t *testing.T, core []byte) []byte {
 		}
 		return 0, 0
 	}
-	pos := 8 // core module header
+	pos := 8
 	for pos < len(core) {
 		id := core[pos]
 		pos++
@@ -33,7 +27,7 @@ func ExtractComponentType(t *testing.T, core []byte) []byte {
 		pos += n
 		body := core[pos : pos+int(size)]
 		pos += int(size)
-		if id != 0 { // custom section
+		if id != 0 {
 			continue
 		}
 		nameLen, k := readU(body)

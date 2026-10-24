@@ -2,21 +2,6 @@ package e2e
 
 import "testing"
 
-// --- arm64 concat across the old inline cap (#7446) ---------------------
-//
-// The native arm64 backend packed a string of 15 bytes or fewer inline in its
-// two words, and these programs drove every consumer that had to decode that
-// form (len, byte index, equality against a heap literal, slice, as_bytes,
-// print) with the bytes on both sides of the data/len word boundary. A
-// self-host string is never inline, so the lengths are now ordinary heap
-// strings at the same boundaries, and each program is held to its answer and
-// a balanced census.
-
-// strcatBoundarySrc builds results of 8, 14 and 15 bytes from a
-// runtime-selected operand (so nothing folds), then reads them back through
-// every consumer. Those were the native inline form's boundaries: a full data
-// word, bytes in the len word, and the cap. The literals it compares against
-// are read-only, so equality crosses a built string and a literal.
 const strcatBoundarySrc = `function pick(i: i32): string { if (i % 2 == 0) { return "abcde"; } return "vwxyz"; }
 function main(): i32 {
     let t: i32 = 0;
@@ -69,9 +54,6 @@ func TestArm64StrcatBoundariesRoundTrip(t *testing.T) {
 	}
 }
 
-// strcatCapCrossingSrc makes a 16-byte result, one past the old cap, once per
-// round. Each concat heap-allocates, so 100 rounds are 100 allocations, and
-// each round's exit sweep frees its own.
 const strcatCapCrossingSrc = `function pick(i: i32): string { if (i % 2 == 0) { return "abcdefgh"; } return "ABCDEFGH"; }
 function round(i: i32): i32 {
     let s: string = pick(i) + "ijklmnop";
@@ -99,7 +81,6 @@ func TestArm64StrcatAllocatesOncePerRound(t *testing.T) {
 	}
 }
 
-// as_bytes over a built string and over the empty one. 12 + 'a' + 'l' = 217.
 func TestArm64StrcatAsBytes(t *testing.T) {
 	_, _, code := runLeakCheckArm64(t, `function main(): i32 {
     let e: string = "";
@@ -113,7 +94,6 @@ func TestArm64StrcatAsBytes(t *testing.T) {
 	}
 }
 
-// __str_slice reads a built base's length and then materialises its bytes.
 func TestArm64StrcatSlice(t *testing.T) {
 	_, _, code := runLeakCheckArm64(t, `function main(): i32 {
     let s: string = "abcde" + "fghijklmn";
@@ -128,7 +108,6 @@ func TestArm64StrcatSlice(t *testing.T) {
 	}
 }
 
-// __fern_buf_push reads a built argument's bytes. 4 + 'd' = 104.
 func TestArm64StrcatBufPush(t *testing.T) {
 	_, stderr, code := runLeakCheckArm64(t, `function pick(i: i32): string { if (i == 0) { return "ab"; } return "AB"; }
 function main(): i32 {
@@ -148,9 +127,6 @@ function main(): i32 {
 	}
 }
 
-// The path helpers NUL-terminate their argument from its len word; an
-// inline path must be decoded, not sized by the tagged word. Each branch
-// returns a distinct code so a failure names the helper.
 func TestArm64StrcatInlinePathArgs(t *testing.T) {
 	_, code, _ := compileArm64InDir(t, `function pick(i: i32): string { if (i == 0) { return "r"; } return "w"; }
 function main(): i32 {

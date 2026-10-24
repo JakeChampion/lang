@@ -1,6 +1,6 @@
 import "std/io";
 
-// Reads one line from an empty stdin: end of input is Ok(None).
+
 function main(): i32 {
     match (io.read_line(stdin())) {
         Ok(Some(_)) => { return 1; },

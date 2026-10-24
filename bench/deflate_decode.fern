@@ -1,12 +1,5 @@
 import "std/deflate";
 
-// deflate_decode — std/deflate decoding a stream of 32 KiB of generated text.
-//
-// The same kind of text as deflate_encode, compressed once and decoded 32
-// times, so most of the count is the decoder's: Huffman decoding, match
-// copies and the output appends. The one encode is about a fifth of it.
-// scripts/deflate-bench compares the same decoder with libdeflate by wall
-// time; this is its gate.
 function text(n: i32): u8[] {
   let words: string[] = ["the ", "of ", "and ", "a ", "to ", "in ", "is ", "you ", "that ", "it ", "he ", "was ", "for ", "on ", "are ", "as ", "with ", "his ", "they ", "at ", "be ", "this ", "have ", "from ", "or ", "one ", "had ", "by ", "word ", "but ", "not ", "what ", "all ", "were ", "we ", "when ", "your ", "can ", "said ", "there ", "use ", "an ", "each ", "which ", "she ", "do ", "how ", "their ", "if ", "will. "];
   let out: u8[] = [];

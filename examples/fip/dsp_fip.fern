@@ -58,7 +58,6 @@ pub fip function limit(own g: dsp_core.Graph, count: i32): dsp_core.Graph {
   return g;
 }
 
-// Public processing boundary validates before consuming any input or changing state.
 pub fip function process(own g: dsp_core.Graph, input: f64[], count: i32): dsp_core.Graph {
   if (!dsp_core.fits(g, input, count)) {
     return dsp_core.refuse(g);

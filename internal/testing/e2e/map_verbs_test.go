@@ -6,16 +6,6 @@ import (
 	"testing"
 )
 
-// mapVerbsProgram exercises the higher-level Map verbs added to core/map
-// (#2685): entries / merge / extend / from / get_or_insert / update /
-// contains_value, over both i32 and string keys, including the word-count use
-// case (via both get_or_insert and the one-pass update). main returns 0 iff
-// every check holds.
-//
-// These verbs use Option (get) + tuples + generic map ops, which the self-host
-// compiler can't lower yet, so they are covered on the native compiler
-// (interpreter + wasm here; x86-64/arm64 via the interp oracle) rather than the
-// self-host stdtest gate — mirroring the interp-only closure combinators.
 const mapVerbsProgram = `
 import "core/map";
 function main(): i32 {

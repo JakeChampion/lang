@@ -73,8 +73,6 @@ func TestSelfHostWasmBufferRuntimeNeeds(t *testing.T) {
 				t.Fatalf("run: %v\n%s", err, out)
 			}
 			assertBalancedCensus(t, string(out))
-			// Each helper is also guest-local in a Preview 2 component.
-			// Recording its individual need must not require a host import.
 			component := filepath.Join(dir, "main.wasm")
 			compile = exec.Command(cli, "-target", "wasm32-wasi", "-o", component, src, stdlib)
 			compile.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
@@ -85,8 +83,6 @@ func TestSelfHostWasmBufferRuntimeNeeds(t *testing.T) {
 			if err != nil {
 				t.Fatalf("component run: %v\n%s", err, out)
 			}
-			// Component entry points do not print the allocation census;
-			// the core-module run above checks the same helper ownership.
 		})
 	}
 }

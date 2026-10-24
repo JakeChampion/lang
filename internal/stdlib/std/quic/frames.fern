@@ -1,16 +1,4 @@
-// std/quic/frames — QUIC's variable-length integers (RFC 9000 §16) and its
-// frames (§19), read from and written to bytes.
-//
-// A frame has no length of its own and arrives inside a decrypted packet,
-// so `read(payload, at)` either takes the whole frame starting at `at` or
-// answers the FRAME_ENCODING_ERROR the truncated or malformed frame is
-// (§12.4). `read_all(payload)` reads a packet's whole payload, and
-// `encode(frame)` is one frame's bytes. Neither keeps state: what a
-// connection remembers across frames (stream offsets, flow-control limits,
-// which packet numbers it has acknowledged) is std/quic/conn's.
-//
-// Values on the wire are 62-bit, so stream ids, offsets, limits and error
-// codes are i64 here.
+// This module reads and writes QUIC frames and variable-length integers.
 
 import "core/int";
 import "std/i64";
@@ -20,11 +8,8 @@ import "std/utf8";
 import "std/error";
 import "core/cmp";
 
-// The largest value a variable-length integer holds, 2^62-1.
 pub const MAX_VARINT: i64 = 4611686018427387903;
 
-// The frame types (§19, table 3). STREAM is 0x08..0x0f, its low three bits
-// the OFF, LEN and FIN flags.
 pub const PADDING: i64 = 0;
 
 pub const PING: i64 = 1;
@@ -73,7 +58,6 @@ pub const CONNECTION_CLOSE_APP: i64 = 29;
 
 pub const HANDSHAKE_DONE: i64 = 30;
 
-// The transport error codes (§20.1). A TLS alert `a` is CRYPTO_ERROR + a.
 pub const NO_ERROR: i64 = 0;
 
 pub const INTERNAL_ERROR: i64 = 1;
@@ -110,7 +94,6 @@ pub const NO_VIABLE_PATH: i64 = 16;
 
 pub const CRYPTO_ERROR: i64 = 256;
 
-// The packet types a frame may travel in (§12.4, table 3's "Pkts" column).
 pub const IN_INITIAL: i32 = 0;
 
 pub const IN_ZERO_RTT: i32 = 1;
@@ -119,9 +102,6 @@ pub const IN_HANDSHAKE: i32 = 2;
 
 pub const IN_ONE_RTT: i32 = 3;
 
-// === variable-length integers (§16) ========================================
-
-// varint_len is the bytes `v` takes on the wire in its shortest form.
 pub function varint_len(v: i64): i32 {
   if (v < 64) {
     return 1;
@@ -135,7 +115,6 @@ pub function varint_len(v: i64): i32 {
   return 8;
 }
 
-// put_varint appends `v`, which is at most MAX_VARINT, in its shortest form.
 pub function put_varint(own out: u8[], v: i64): u8[] {
   let n: i32 = varint_len(v);
   if (n == 1) {
@@ -156,8 +135,6 @@ pub function put_varint(own out: u8[], v: i64): u8[] {
   return out.append((v & 255) as u8);
 }
 
-// put_varint_n appends `v` in exactly `n` bytes (1, 2, 4 or 8), which must
-// hold it: the form a length written before its value is known takes.
 pub function put_varint_n(own out: u8[], v: i64, n: i32): u8[] {
   let prefix: i64 = 0;
   if (n == 2) {
@@ -179,9 +156,6 @@ pub function put_varint_n(own out: u8[], v: i64, n: i32): u8[] {
   return out;
 }
 
-// varint_at is the integer at `at`, or -1 when `buf` ends inside it;
-// `varint_end` is the offset after it, from its first byte. Neither
-// allocates.
 pub function varint_at(buf: [u8], at: i32): i64 {
   if (at >= buf.len()) {
     return 0 - 1 as i64;
@@ -200,22 +174,14 @@ pub function varint_at(buf: [u8], at: i32): i64 {
   return v;
 }
 
-// varint_end is the offset after the varint at `at`, which `varint_at`
-// has read.
 pub function varint_end(buf: [u8], at: i32): i32 {
   return at + (1 << (buf[at] as i32 >> 6));
 }
 
-// === frames ================================================================
-
-// AckRange — the packet numbers `low` through `high`, both acknowledged.
 pub struct AckRange { low: i64, high: i64 }
 
-// Ecn — the ECN counts an ACK_ECN frame carries (§19.3.2).
 pub struct Ecn { ect0: i64, ect1: i64, ce: i64 }
 
-// Ack — an ACK frame (§19.3), its ranges absolute and largest first.
-// `delay` is as sent, before the ack_delay_exponent scales it.
 pub struct Ack { delay: i64, ranges: AckRange[], ecn: Option[Ecn] }
 
 pub struct ResetStream { stream: i64, code: i64, final_size: i64 }
@@ -226,8 +192,6 @@ pub struct NewConnectionId { sequence: i64, retire_prior_to: i64, id: u8[], rese
 
 pub struct ConnectionClose { code: i64, frame_type: i64, reason: string, app: boolean }
 
-// Frame — one frame as a value. `Padding(n)` is a run of n PADDING bytes,
-// which `read` takes as one frame.
 pub enum Frame {
   Padding(i32),
   Ping,
@@ -251,8 +215,6 @@ pub enum Frame {
   HandshakeDone,
 }
 
-// FrameError — a frame that is not one (§12.4): the transport error to
-// close with, the frame type it was found in, and why.
 pub struct FrameError { code: i64, frame_type: i64, reason: string }
 
 pub function (e: FrameError) to_string(): string {
@@ -271,10 +233,6 @@ function __bad(kind: i64, reason: string): FrameError {
   return FrameError { code: FRAME_ENCODING_ERROR, frame_type: kind, reason: reason };
 }
 
-// Reading — one payload being read: the offset reached, the type of the
-// frame being read (for its error), the last integer and bytes read, the
-// frames so far, and the first error. Each read updates it in place, so a
-// frame costs its own box and nothing per field.
 struct Reading { buf: u8[], at: i32, kind: i64, n: i64, bytes: u8[], frames: Frame[], ok: boolean, failed: Option[FrameError] }
 
 function __reading(payload: u8[], at: i32): Reading {
@@ -285,8 +243,6 @@ function __fail(own r: Reading, reason: string): Reading {
   return Reading { ...r, ok: false, failed: Some(__bad(r.kind, reason)) };
 }
 
-// __int reads the varint at the offset into `n`; after a failure the
-// reading stands, so the first error is the one reported.
 function __int(own r: Reading, what: string): Reading {
   if (!r.ok) {
     return r;
@@ -298,7 +254,6 @@ function __int(own r: Reading, what: string): Reading {
   return Reading { ...r, at: varint_end(r.buf, r.at), n: v };
 }
 
-// __take copies `n` bytes at the offset into `bytes`.
 function __take(own r: Reading, n: i64, what: string): Reading {
   if (!r.ok) {
     return r;
@@ -314,8 +269,6 @@ function __done(own r: Reading, f: Frame): Reading {
   return Reading { ...r, frames: r.frames.append(f) };
 }
 
-// read takes the frame at `at` in a packet's decrypted `payload`, and the
-// offset after it.
 pub function read(payload: u8[], at: i32): Result[(Frame, i32), FrameError] {
   let r: Reading = __frame(__reading(payload, at));
   match (r.failed) {
@@ -327,8 +280,6 @@ pub function read(payload: u8[], at: i32): Result[(Frame, i32), FrameError] {
   return Ok((r.frames[0], r.at));
 }
 
-// read_all reads every frame of a packet's payload. A packet with no
-// frames is a PROTOCOL_VIOLATION (§12.4).
 pub function read_all(payload: u8[]): Result[Frame[], FrameError] {
   if (payload.len() == 0) {
     return Err(FrameError { code: PROTOCOL_VIOLATION, frame_type: 0, reason: "a packet with no frames" });
@@ -346,7 +297,6 @@ pub function read_all(payload: u8[]): Result[Frame[], FrameError] {
   return Ok(r.frames);
 }
 
-// __frame reads one frame at the offset.
 function __frame(own r: Reading): Reading {
   let start: i32 = r.at;
   r = __int(Reading { ...r, kind: 0 }, "frame type");
@@ -369,7 +319,6 @@ function __frame(own r: Reading): Reading {
   return __carrying(r);
 }
 
-// __padding takes a run of PADDING bytes as one frame.
 function __padding(own r: Reading, start: i32): Reading {
   let end: i32 = r.at;
   while (end < r.buf.len() && r.buf[end] == 0) {
@@ -378,7 +327,6 @@ function __padding(own r: Reading, start: i32): Reading {
   return __done(Reading { ...r, at: end }, Padding(end - start));
 }
 
-// __carrying reads the frame types with fields beyond ACK's.
 function __carrying(own r: Reading): Reading {
   if (r.kind >= STREAM && r.kind <= 15) {
     return __stream(r);
@@ -395,8 +343,6 @@ function __carrying(own r: Reading): Reading {
   return __rest(r);
 }
 
-// __ack reads an ACK frame's ranges, each converted from the gap-and-length
-// form of §19.3.1 to absolute packet numbers; a range below zero is an error.
 function __ack(own r: Reading): Reading {
   r = __int(r, "largest acknowledged");
   let largest: i64 = r.n;
@@ -420,7 +366,6 @@ function __ack(own r: Reading): Reading {
   return __done(r2, AckFrame(Ack { delay: delay, ranges: ranges, ecn: ecn }));
 }
 
-// __ecn reads the ECN counts that end an ACK_ECN frame.
 function __ecn(own r: Reading): (Reading, Option[Ecn]) {
   if (!r.ok || r.kind == ACK) {
     return (r, None);
@@ -437,7 +382,6 @@ function __ecn(own r: Reading): (Reading, Option[Ecn]) {
   return (r, Some(Ecn { ect0: e0, ect1: e1, ce: ce }));
 }
 
-// __ack_ranges reads `count` more ranges below those in `ranges`.
 function __ack_ranges(own r: Reading, count: i64, own ranges: AckRange[]): (Reading, AckRange[]) {
   let i: i64 = 0;
   while (i < count) {
@@ -486,7 +430,6 @@ function __stream(own r: Reading): Reading {
   return __done(r, StreamFrame(StreamData { stream: id, offset: offset, data: data, fin: (kind & 1) != 0 }));
 }
 
-// __stream_control reads RESET_STREAM and STOP_SENDING.
 function __stream_control(own r: Reading): Reading {
   r = __int(r, "stream id");
   let id: i64 = r.n;
@@ -506,7 +449,6 @@ function __stream_control(own r: Reading): Reading {
   return __done(r, ResetStreamFrame(ResetStream { stream: id, code: code, final_size: size }));
 }
 
-// __handshake_data reads CRYPTO and NEW_TOKEN.
 function __handshake_data(own r: Reading): Reading {
   if (r.kind == CRYPTO) {
     r = __int(r, "crypto offset");
@@ -542,8 +484,6 @@ function __handshake_data(own r: Reading): Reading {
   return __done(r, NewToken(token));
 }
 
-// __limits reads the flow-control frame types MAX_DATA through
-// STREAMS_BLOCKED.
 function __limits(own r: Reading): Reading {
   r = __int(r, "value");
   if (!r.ok) {
@@ -574,8 +514,6 @@ function __stream_limit(own r: Reading, id: i64): Reading {
   return __done(r, StreamDataBlocked(id, w));
 }
 
-// __stream_count reads MAX_STREAMS and STREAMS_BLOCKED, whose count is at
-// most 2^60 (§19.11, §19.14).
 function __stream_count(own r: Reading, v: i64): Reading {
   if (v > 1152921504606846976) {
     return __fail(r, "a stream count over 2^60");
@@ -587,8 +525,6 @@ function __stream_count(own r: Reading, v: i64): Reading {
   return __done(r, StreamsBlocked(bidi, v));
 }
 
-// __rest reads NEW_CONNECTION_ID through CONNECTION_CLOSE; any other type
-// is unknown, which no frame may be (§12.4).
 function __rest(own r: Reading): Reading {
   if (r.kind == NEW_CONNECTION_ID) {
     return __new_connection_id(r);
@@ -672,15 +608,10 @@ function __new_connection_id(own r: Reading): Reading {
   return __done(r, NewConnectionIdFrame(NewConnectionId { sequence: seq, retire_prior_to: prior, id: id, reset_token: token }));
 }
 
-// === encoding ==============================================================
-
-// encode is one frame's bytes. A STREAM frame is written with its offset
-// when it is not 0 and always with its length, so frames can follow it.
 pub function encode(f: Frame): u8[] {
   return put(__alloc_empty(), f);
 }
 
-// put appends one frame's bytes.
 pub function put(own out: u8[], f: Frame): u8[] {
   match (f) {
     Padding(n) => {
@@ -778,8 +709,6 @@ function __put_ids(own out: u8[], f: Frame): u8[] {
   return out;
 }
 
-// put_stream_head appends a STREAM frame's type, id, offset (when not 0)
-// and length, for a sender to follow with `len` bytes of data.
 pub function put_stream_head(own out: u8[], stream: i64, offset: i64, len: i32, fin: boolean): u8[] {
   let kind: i64 = STREAM | 2;
   if (offset > 0) {
@@ -795,8 +724,6 @@ pub function put_stream_head(own out: u8[], stream: i64, offset: i64, len: i32, 
   return put_varint(out, len as i64);
 }
 
-// stream_overhead is the bytes put_stream_head writes before `len` bytes of
-// data: what a sender subtracts from the room left in a packet.
 pub function stream_overhead(stream: i64, offset: i64, len: i32): i32 {
   let n: i32 = 1 + varint_len(stream) + varint_len(len as i64);
   if (offset > 0) {
@@ -805,8 +732,6 @@ pub function stream_overhead(stream: i64, offset: i64, len: i32): i32 {
   return n;
 }
 
-// __put_ack writes `a`'s ranges, largest first, back into the gap-and-length
-// form (§19.3.1).
 function __put_ack(own out: u8[], a: Ack): u8[] {
   let kind: i64 = ACK;
   if (a.ecn.is_some()) {
@@ -830,11 +755,6 @@ function __put_ack(own out: u8[], a: Ack): u8[] {
   return out;
 }
 
-// === what a frame is to a connection =======================================
-
-// ack_eliciting reports whether receiving `f` obliges the peer to
-// acknowledge its packet (§13.2.1): everything but ACK, PADDING and
-// CONNECTION_CLOSE.
 pub function (f: Frame) ack_eliciting(): boolean {
   match (f) {
     AckFrame(_) => {
@@ -853,9 +773,6 @@ pub function (f: Frame) ack_eliciting(): boolean {
   return true;
 }
 
-// permitted reports whether `f` may travel in a packet of type `space`
-// (IN_INITIAL, IN_ZERO_RTT, IN_HANDSHAKE or IN_ONE_RTT), as table 3 of §12.4
-// says; anything else is a PROTOCOL_VIOLATION.
 pub function (f: Frame) permitted(space: i32): boolean {
   if (space == IN_ONE_RTT) {
     return true;
@@ -883,8 +800,6 @@ pub function (f: Frame) permitted(space: i32): boolean {
   return false;
 }
 
-// __zero_rtt_ok: the frames other than those above that 0-RTT may carry —
-// all but HANDSHAKE_DONE, NEW_TOKEN, PATH_RESPONSE and RETIRE_CONNECTION_ID.
 function __zero_rtt_ok(f: Frame): boolean {
   match (f) {
     HandshakeDone => {
@@ -905,8 +820,6 @@ function __zero_rtt_ok(f: Frame): boolean {
   }
   return true;
 }
-
-// === bytes =================================================================
 
 function __pick(cond: boolean, a: i64, b: i64): i64 {
   if (cond) {

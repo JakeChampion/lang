@@ -7,14 +7,6 @@ import (
 	"testing"
 )
 
-// floatIntrinsicCases exercise the cheap f64 math intrinsics emitted
-// by the self-hosted compiler: __abs_f64 / __sqrt_f64 / __floor_f64 /
-// __ceil_f64 / __trunc_f64 / __round_f64. The -nostdlib x86-64 / arm64
-// backends can't link libm, so these lower to single SSE / FP
-// instructions (sqrtsd, roundsd, andpd-style sign-mask; fsqrt, frintm,
-// frintp, frintz, frinta, fabs). Each program returns an observable
-// i32 (the intrinsic result cast to i32, or a tolerance comparison).
-// Values cross-checked against Go's math package.
 var floatIntrinsicCases = []struct {
 	name string
 	src  string
@@ -31,8 +23,6 @@ var floatIntrinsicCases = []struct {
 	{"round-down", "function main(): i32 { return __round_f64(2.4) as i32; }", 2},
 }
 
-// TestSelfHostFloatIntrinsicsX86_64 — the self-hosted x86-64 emitter's
-// cheap libm intrinsics (plan item 4, cheap subset).
 func TestSelfHostFloatIntrinsicsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -66,7 +56,6 @@ func TestSelfHostFloatIntrinsicsX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFloatIntrinsicsArm64 — CI-gated arm64 counterpart.
 func TestSelfHostFloatIntrinsicsArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

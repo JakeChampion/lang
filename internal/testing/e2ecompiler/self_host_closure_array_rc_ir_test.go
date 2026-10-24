@@ -9,26 +9,11 @@ import (
 	"testing"
 )
 
-// Closure-ARRAY element reclaim on the self-host IR path (#4354). A closure
-// array local (`let fns: (() => i32)[] = [() => n, …]`) holds env boxes, and
-// its release frees the boxes with the buffer at scope exit and at the loop
-// rebind; a shallow buffer dec would leak every box.
-//
-// Three instruments per case, because each is blind to something the others
-// see: FERN_LEAKCHECK's live_bytes (the leak direction), the FERN_SANITIZE
-// quarantine (an over-release that the census reads as a CLEANER run, such as
-// a `for f in fns` loop var double-releasing a box at live_bytes 0), and the
-// exit code (a miscompile). The refusal cases assert only the last two: a
-// shape the credit must decline leaks, and must not free.
-
-// closureArrayRcCases: programs the credit ADMITS. `want` is the program's
-// expected exit code.
 var closureArrayRcCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The literal shape, indexed and called through a loop variable.
 	{"literal-loop-call", `function go(n: i32): i32 {
     let fns: (() => i32)[] = [() => n, () => n + 1, () => n * 2];
     let s: i32 = 0;
@@ -37,10 +22,6 @@ var closureArrayRcCases = []struct {
     return s;
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = (t + go(i)) % 251; i = i + 1; } return t % 7; }`, 1},
-	// A "CAC:" producer: the factory's local moves out, the caller's binding
-	// is the sole owner and takes the walk; the array is also borrowed by a
-	// callee that binds an element (`let d = fns[0]` — the retained element
-	// bind, which before the fix freed the caller's box from under it).
 	{"factory-and-param-bind", `function mkfns(n: i32): (() => i32)[] { let a: (() => i32)[] = [() => n, () => n + 1]; return a; }
 function consume(fns: (() => i32)[]): i32 { let d = fns[0]; return d(); }
 function go(n: i32): i32 {
@@ -51,8 +32,6 @@ function go(n: i32): i32 {
     return s;
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = (t + go(i)) % 251; i = i + 1; } return t % 7; }`, 1},
-	// Loop-local and block-local arrays: the rebind release frees the
-	// previous iteration's boxes, the exit sweep the last.
 	{"loop-local-and-block-local", `function main(): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
@@ -64,8 +43,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = (t 
     }
     return t % 7;
 }`, 0},
-	// Element binds in a loop: each `let d = fns[i]` retains its box and the
-	// rebind releases the previous one, so the walk sees every count paid.
 	{"element-bind-loop", `function go(n: i32): i32 {
     let fns: (() => i32)[] = [() => n, () => n + 1];
     let s: i32 = 0;
@@ -75,10 +52,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = (t 
     return s + e() + fns[1]();
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = (t + go(i)) % 251; i = i + 1; } return t % 7; }`, 5},
-	// Closure LOCALS as elements — at the literal, at a self-append, in a
-	// producer — are retained by the container, so the local's own release
-	// and the walk's dec meet at one free. `for f in fns` with f only called
-	// is a borrow the credit admits.
 	{"closure-local-elements", `function build(n: i32): (() => i32)[] {
     let c = () => n * 3;
     let out: (() => i32)[] = [c];
@@ -96,10 +69,6 @@ function go(n: i32): i32 {
     return s + d() + c() + hs[0]() + hs[1]();
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = (t + go(i)) % 251; i = i + 1; } return t % 7; }`, 2},
-	// The `[c, …]` literal read as an array-of-arrays before the fix, which
-	// made the foreach var an OWNED array: its exit dec plus `let e = fns[1]`'s
-	// released one box twice — invisible to the census (live_bytes 0), fatal
-	// under the quarantine.
 	{"closure-local-first-element-foreach", `function go(n: i32): i32 {
     let c = () => n;
     let fns: (() => i32)[] = [c, () => n + 1];
@@ -110,8 +79,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = (t 
     return s + d() + e() + c() + fns.len();
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = (t + go(i)) % 251; i = i + 1; } return t % 7; }`, 1},
-	// An annotated literal grown by `.append` with a closure local that is
-	// still called afterwards.
 	{"annotated-empty-append", `function go(n: i32): i32 {
     let fns: (() => i32)[] = [() => n];
     let c = () => n + 1;
@@ -119,9 +86,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = (t 
     return fns[0]() + fns[1]() + c();
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = (t + go(i)) % 251; i = i + 1; } return t % 7; }`, 3},
-	// An EMPTY `fn[]` literal whose element READ is lowered BEFORE the first
-	// append and reached at runtime from iteration 2. The read must bind a
-	// closure, not a plain scalar — calling the box pointer as code SIGSEGVs.
 	{"empty-append-read-before-append", `function go(n: i32): i32 {
     let fns: (() => i32)[] = [];
     let s: i32 = 0;
@@ -136,11 +100,6 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = (t 
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = (t + go(i)) % 251; i = i + 1; } return t % 7; }`, 6},
 }
 
-// closureArrayRcRefusals: an element escaping through a return, a whole-array
-// alias, a loop var stored into another container, an element handed to a
-// struct literal. Each is exercised after the array is dead, so a release under
-// a live reference is a use-after-free the sanitizer leg traps. The census
-// balances on the typed lowering. Exit 0 is native's.
 const closureArrayRcRefusalsSrc = `struct H { f: () => i32 }
 function pick(n: i32): () => i32 { let fns: (() => i32)[] = [() => n, () => n + 1]; return fns[1]; }
 function alias(n: i32): i32 { let fns: (() => i32)[] = [() => n]; let g = fns; return g[0]() + fns[0](); }
@@ -161,11 +120,6 @@ function main(): i32 {
     return t % 7;
 }`
 
-// closureArrayRcFixpointSrc is the bump-allocator fixpoint form the wasm and
-// arm64 legs run (neither has the leak census): every admitted shape at once,
-// a warm-up churn, then a second churn that must not move the high-water mark.
-// 99 = the underflow detector ticked (an over-release), 98 = growth, 97 = the
-// two churns disagree (a value corrupted).
 const closureArrayRcFixpointSrc = `function mkfns(n: i32): (() => i32)[] { let a: (() => i32)[] = [() => n, () => n + 1]; return a; }
 function early(n: i32): i32 {
     let fns: (() => i32)[] = [];
@@ -208,9 +162,6 @@ func TestSelfHostClosureArrayRcIRX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	// census compiles under FERN_LEAKCHECK and returns the run's exit code and
-	// live bytes; sanitize compiles under FERN_SANITIZE and returns the exit
-	// code and whether the sanitizer reported anything.
 	census := func(t *testing.T, name, src string) (int, int64) {
 		t.Helper()
 		asm := hevCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1"})
@@ -273,7 +224,6 @@ func TestSelfHostClosureArrayRcIRX86_64(t *testing.T) {
 	})
 }
 
-// TestSelfHostClosureArrayRcWasmIR: the wasm sibling through the wasm_ir_run driver.
 func TestSelfHostClosureArrayRcWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping closure-array RC wasm IR e2e")
@@ -308,7 +258,6 @@ func TestSelfHostClosureArrayRcWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostClosureArrayRcIRArm64: the arm64 sibling under qemu.
 func TestSelfHostClosureArrayRcIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

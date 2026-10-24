@@ -9,26 +9,11 @@ import (
 	"testing"
 )
 
-// numericEdgeIRCases pin the integer/float codegen edge cases on the self-host
-// IR path that used to miscompile or trap:
-//
-//   - #4329 div/rem by zero must NOT raise #DE (SIGFPE): x/0 = 0, x%0 = x, and
-//     INT_MIN/-1 = INT_MIN, INT_MIN%-1 = 0 (the x86 idivq faults on both).
-//   - #4330 i32 shift counts mask mod 32, not mod 64 (the 64-bit shlq/sarq/shrq
-//     masked %cl to 6 bits, so a count >= 32 wrapped wrongly).
-//   - #4333 unary f64 `-x` flips the sign bit (op_funary "fneg"), preserving
-//     -0.0; the old `0.0 - x` lowering flushed -0.0 to +0.0.
-//   - #4332 f64 -> int is saturating: NaN -> 0, overflow clamps to INT_MIN/MAX
-//     (x86 cvttsd2si wraps to a sentinel, wasm i32.trunc_f64_s TRAPS on NaN).
-//
-// Each case returns a small deterministic int, is pinned to the "ir" path on
-// x86, and its expectation is the native-interpreter result.
 var numericEdgeIRCases = []struct {
 	name string
 	main string
 	want int
 }{
-	// #4329 — non-trapping division.
 	{"div-zero", `let a=100; let b=0; if (a/b == 0) { return 7; } return 1;`, 7},
 	{"mod-zero", `let a=100; let b=0; if (a%b == 100) { return 7; } return 1;`, 7},
 	{"i64-div-zero", `let a: i64 = 9000000000; let b: i64 = 0; if (a / b == 0) { return 7; } return 1;`, 7},
@@ -36,23 +21,17 @@ var numericEdgeIRCases = []struct {
 	{"intmin-div", `let lo: i32 = -2147483647 - 1; if (lo / -1 < 0) { return 7; } return 1;`, 7},
 	{"intmin-mod", `let lo: i32 = -2147483647 - 1; if (lo % -1 == 0) { return 7; } return 1;`, 7},
 	{"div-normal", `let a=17; let b=5; if (a/b == 3 && a%b == 2) { return 7; } return 1;`, 7},
-	// #4330 — i32 shift-count masking (mod 32).
 	{"shl-hi", `let one=1; if ((one << 40) == 256) { return 7; } return 1;`, 7},
 	{"shr-hi", `let x=256; if ((x >> 34) == 64) { return 7; } return 1;`, 7},
 	{"shl-normal", `let x=255; if ((x << 3) == 2040 && (x >> 1) == 127) { return 7; } return 1;`, 7},
-	// #4333 — signed-zero preserving negation (unary `-z`, not `0.0 - z`).
 	{"neg-zero", `let z: f64 = 0.0; let nz = -z; if (1.0 / nz < 0.0) { return 7; } return 1;`, 7},
 	{"neg-normal", `let x: f64 = 3.5; let y = -x; if (y < 0.0 && (0.0 - y) > 3.0) { return 7; } return 1;`, 7},
-	// #4332 — saturating f64 -> int.
 	{"sat-pos", `let big = 1000000000000.0; if ((big as i32) == 2147483647) { return 7; } return 1;`, 7},
 	{"sat-neg", `let big = 1000000000000.0; let imin: i32 = -2147483647 - 1; if (((0.0 - big) as i32) == imin) { return 7; } return 1;`, 7},
 	{"sat-nan", `let nan = 0.0 / 0.0; if ((nan as i32) == 0) { return 7; } return 1;`, 7},
 	{"sat-inrange", `if ((42.7 as i32) == 42) { return 7; } return 1;`, 7},
 	{"sat64-huge", `let h = 1000000000000000000000.0; let r: i64 = h as i64; if (r == 9223372036854775807) { return 7; } return 1;`, 7},
 	{"sat64-nan", `let nan = 0.0 / 0.0; let r: i64 = nan as i64; if (r == 0) { return 7; } return 1;`, 7},
-	// #4332 (unsigned remainder) — f64 -> u32/u64 saturates over the UNSIGNED
-	// range: the signed lowering clamped `3e9 as u32` at INT32_MAX and
-	// `1e19 as u64` at INT64_MAX, and NaN/negative must still go to 0.
 	{"sat-u32-inrange", `let f = 3000000000.5; let u: u32 = f as u32; if (u == 3000000000u32) { return 7; } return 1;`, 7},
 	{"sat-u32-neg", `let f = 0.0 - 5.5; let u: u32 = f as u32; if (u == 0u32) { return 7; } return 1;`, 7},
 	{"sat-u32-big", `let f = 1000000000000.0; let u: u32 = f as u32; if (u == 4294967295u32) { return 7; } return 1;`, 7},
@@ -66,8 +45,6 @@ func numericEdgeIRSrc(mainBody string) string {
 	return "function main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostNumericEdgesIRX86_64 routes each case through the self-hosted
-// x86-64 IR driver, pinned to the "ir" path, and runs the emitted binary.
 func TestSelfHostNumericEdgesIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -101,16 +78,6 @@ func TestSelfHostNumericEdgesIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostNumericEdgesIRArm64 runs the same cases through the arm64 IR
-// backend (asm_ir_run -target arm64-linux → asm_arm64_ir.emit_module_or_error_sub →
-// asm_arm64_ir.emit_body). The arm64-specific regression here is #4330: the
-// i32 shifts emitted the bare x-form (`lsl/asr/lsr x0, x0, x1`), whose count
-// masks mod 64 — a count >= 32 wrapped wrongly instead of masking mod 32 like
-// native (`lsl w0`), wasm (`i32.shl`), and the fixed x86 IR path. The div and
-// f64 cases are included too: arm64's sdiv/fcvtzs are non-trapping/saturating in
-// hardware, so they pin that the shared lowering's op stream stays arm64-clean.
-// Routing is pinned by the arm64 IR emitter's `.Lssa_` label marker. CI-gated
-// arm64 (qemu).
 func TestSelfHostNumericEdgesIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -132,9 +99,6 @@ func TestSelfHostNumericEdgesIRArm64(t *testing.T) {
 			if err != nil || len(asm) == 0 {
 				t.Fatalf("%s: driver failed (%d bytes, err %v)", tc.name, len(asm), err)
 			}
-			// `.Lssa_` is the arm64 IR emitter's per-function label prefix
-			// (asm_arm64_ir); its presence proves the module routed through the
-			// IR path.
 			if !strings.Contains(string(asm), ".Lssa_") {
 				t.Fatalf("%s: arm64 asm has no .Lssa_ marker — module did not lower through the IR", tc.name)
 			}
@@ -151,10 +115,6 @@ func TestSelfHostNumericEdgesIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostNumericEdgesIRWasm runs the same cases through the wasm IR
-// backend (which additionally exercises the i32.trunc_sat_f64_s + f64.neg
-// lowerings). The x86 idivq/shift/cvttsd2si faults don't exist on wasm, but
-// the saturating-cast and signed-zero cases are the shared regressions.
 func TestSelfHostNumericEdgesIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host numeric-edge wasm IR e2e")

@@ -5,14 +5,6 @@ import (
 	"testing"
 )
 
-// httpHandlerBodyProg is a bring-your-own wasi:http handler that obtains the
-// response body + its output-stream handles — `outgoing-response.body()` and
-// `outgoing-body.write()` both return `result<own<R>>` (a resource handle
-// wrapped in a result, returned indirectly), the new capability this slice adds
-// (a handle is a valid single-scalar result payload). It then serves an empty
-// 200. (Writing bytes via output-stream.blocking-write-and-flush needs the
-// variant-err `result<_, stream-error>` return — a distinct follow-on, see
-// docs/WIT-BRING-YOUR-OWN.md.)
 const httpHandlerBodyProg = `@import("wasi:http/types@0.2.0", "incoming-request")
 resource IncomingRequest;
 @import("wasi:http/types@0.2.0", "response-outparam")
@@ -57,9 +49,6 @@ function on_request(request: own IncomingRequest, response_out: own ResponseOutp
 	return;
 }`
 
-// TestExportWasiHttpHandlerBodyServes proves a bring-your-own handler can obtain
-// the response body + output-stream handles via result<own<R>>-returning
-// @import externs and serve (200) under `wasmtime serve`.
 func TestExportWasiHttpHandlerBodyServes(t *testing.T) {
 	if got := serveHttpHandlerStatus(t, httpHandlerBodyProg); got != http.StatusOK {
 		t.Fatalf("status = %d; want 200", got)

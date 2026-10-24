@@ -7,7 +7,6 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
-// diagCount returns how many separate diagnostics err carries.
 func diagCount(err error) int {
 	if err == nil {
 		return 0
@@ -18,15 +17,6 @@ func diagCount(err error) int {
 	return 1
 }
 
-// A `let` whose initialiser fails to check keeps its name in scope with
-// an erroneous type, so the one real error is the only one reported
-// (#5317). Dropping the binding — what the recovery path used to do —
-// turned a single typo into an E001 per later use, which is how a
-// three-line function reported four errors.
-//
-// The self-hosted checker already binds on this path (`check_stmt`'s
-// StmtVar arm binds `t` whatever it is, unknown included); this is the
-// native side catching up.
 func TestFailedVarInitPoisonsTheBinding(t *testing.T) {
 	cases := []struct {
 		name string
@@ -68,10 +58,6 @@ function main(): i32 {
 			want: `cannot find "nosuch" in this scope`,
 		},
 		{
-			// A capture records the name's type in the enclosing
-			// function's capture sink, so the poisoned type travels the
-			// captureChain — the one path where a nil type reaches code
-			// that never sees a checkExpr result.
 			name: "captured by a local function and a lambda",
 			src: `function main(): i32 {
     let b = nosuch();
@@ -97,8 +83,6 @@ function main(): i32 {
 }`,
 			want: `cannot find "nosuch" in this scope`,
 		},
-		// The type-mismatch half: an arithmetic operator over a non-integer
-		// has no result type, so its binding carries none to mismatch later.
 		{
 			name: "failed arithmetic, then assigned and passed",
 			src: `function f(s: string): i32 { return s.len(); }
@@ -137,10 +121,6 @@ function main(): i32 {
 	}
 }
 
-// A destructure binds several names at once, so dropping the group on a
-// failed pattern multiplies the follow-on noise by the pattern's width.
-// Every path that gives up on `let (a, b) = …` / `let S { f } = …`
-// poisons the names it would have bound.
 func TestFailedDestructurePoisonsEveryName(t *testing.T) {
 	cases := []struct {
 		name string
@@ -220,9 +200,6 @@ function main(): i32 {
 	}
 }
 
-// Poisoning silences the *follow-on* reports, not independent ones: two
-// bad initialisers are still two errors, and a later mistake with no
-// connection to either is still reported.
 func TestPoisonDoesNotSwallowIndependentErrors(t *testing.T) {
 	err := checkSource(t, `function main(): i32 {
     let b = nosuch();
@@ -243,8 +220,6 @@ func TestPoisonDoesNotSwallowIndependentErrors(t *testing.T) {
 	}
 }
 
-// A poisoned name is a declared name: redeclaring it in the same scope
-// is still E013.
 func TestPoisonedBindingStillCollidesOnRedeclaration(t *testing.T) {
 	err := checkSource(t, `function main(): i32 {
     let b = nosuch();

@@ -10,13 +10,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/component"
 )
 
-// p3StreamProducerCore is the PRODUCER half of the two-component stream export:
-// `prod` ()->() creates a stream (stream.new — readable=low32 / writable=high32),
-// stores [10,20,12] in its own memory, task.returns the readable end, then
-// stream.writes the 3 bytes through the writable end. Imports ("","tr")
-// task.return(stream) (i32)->(), ("","snew") stream.new ()->i64, ("","sw")
-// stream.write (writable,ptr,count)->status [gMem-trampolined]; exports "mem" +
-// "prod". Generated from WAT via wasm-tools 1.240.
 var p3StreamProducerCore = []byte{
 	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x13, 0x04, 0x60,
 	0x01, 0x7f, 0x00, 0x60, 0x00, 0x01, 0x7e, 0x60, 0x03, 0x7f, 0x7f, 0x7f,
@@ -35,13 +28,6 @@ var p3StreamProducerCore = []byte{
 	0x01, 0x68, 0x01, 0x02, 0x72, 0x64, 0x02, 0x02, 0x77, 0x72,
 }
 
-// p3StreamConsumerCore is the CONSUMER half: `run` ()->() async-lowers the
-// imported `prod` (("","prodl") (retptr)->status) into mem[0], reads the stream
-// readable handle from mem[0], stream.reads 3 bytes (("","sread") (readable,ptr,
-// count)->status) into mem[4..6], and task.returns their sum. The producer's
-// write buffers across the task boundary, so the read drains it synchronously and
-// the statuses are dropped — no await loop. Imports ("","tr"/"prodl"/"sread") and
-// ("mem","m"); exports "run". Generated from WAT via wasm-tools 1.240.
 var p3StreamConsumerCore = []byte{
 	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x14, 0x04, 0x60,
 	0x01, 0x7f, 0x00, 0x60, 0x01, 0x7f, 0x01, 0x7f, 0x60, 0x03, 0x7f, 0x7f,
@@ -59,18 +45,8 @@ var p3StreamConsumerCore = []byte{
 	0x07, 0x01, 0x03, 0x01, 0x00, 0x02, 0x72, 0x64,
 }
 
-// TestWasmP3StreamExportImport is the WASI Preview-3 `stream<T>` ACROSS-A-BOUNDARY
-// case, assembled through the Go composer (component.BuildStreamExportImportComponent):
-// a nested producer exports `prod: async func() -> stream<u8>` (stream.new →
-// task.return the readable end → stream.write [10,20,12]), and a consumer
-// `canon lower async`-es that import, reads the returned stream handle,
-// `stream.read`s the 3 bytes, sums them, and re-returns the total from its async
-// export `run`. Runs under wasmtime's async features → 42 (10+20+12). The stream
-// counterpart of TestWasmP3FutureExportImport — a stream flowing OUT of one
-// component and INTO another, completing the cross-boundary future/stream pair.
-// See docs/WASI-PREVIEW3-ASYNC-PLAN.md.
 func TestWasmP3StreamExportImport(t *testing.T) {
-	skipIfPreview2Missing(t) // ensures wasmtime on PATH
+	skipIfPreview2Missing(t)
 
 	comp := component.BuildStreamExportImportComponent(p3StreamProducerCore, p3StreamConsumerCore, p3PendMemCore, component.CValtypeU8, component.CValtypeU32)
 	dir := t.TempDir()

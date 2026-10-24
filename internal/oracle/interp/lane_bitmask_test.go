@@ -13,7 +13,6 @@ func TestLaneBitmaskPreservesRawSigns(t *testing.T) {
 		for mask := 0; mask < 1<<(128/width); mask++ {
 			lanes := Lanes{Width: width, Bits: make([]uint64, 128/width)}
 			for lane := range lanes.Bits {
-				// Include zero, NaNs, and arbitrary payloads without float conversion.
 				lanes.Bits[lane] = []uint64{0, signBit(width) - 1, 1, signBit(width) >> 1}[lane]
 				if mask&(1<<lane) != 0 {
 					lanes.Bits[lane] |= signBit(width)

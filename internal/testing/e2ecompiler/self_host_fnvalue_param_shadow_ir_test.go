@@ -6,22 +6,10 @@ import (
 	"testing"
 )
 
-// fnValueParamShadowCases pin a local binding whose initialiser is an ident that
-// SHADOWS a same-named module function (#6854). The lift pass env-boxed
-// `let g = <module fn name>` into a `__mkclo$` trampoline without checking
-// whether the name was bound locally first, so `let cur = p` inside a function
-// taking `p: SomeStruct` bound a closure slot: the struct type was lost and
-// every later `cur.field` bailed the whole module.
-//
-// It was found on std/json's whitespace skip, which then took `p: __JsonParser`:
-// a user program declaring any function named `p` and importing std/test (which
-// pulls std/json in) could not be compiled at all, on a function it never
-// reaches. The same guard already exists for fn-typed struct FIELDS (#6191).
 var fnValueParamShadowCases = []struct {
 	name string
 	src  string
 }{
-	// A struct PARAM shadowed by a module function of the same name.
 	{"struct_param_shadows_fn", `struct Q { s: string, pos: i32 }
 
 function q_skip(p: Q): i32 {
@@ -34,7 +22,6 @@ function p(x: i32): i32 { return x; }
 function main(): i32 {
     return q_skip(Q { s: "abc", pos: 1 }) * 10 + p(2);
 }`},
-	// A local `let` shadowing a module function, rebound to another local.
 	{"local_var_shadows_fn", `struct Q { s: string, pos: i32 }
 
 function run(): i32 {
@@ -48,8 +35,6 @@ function p(x: i32): i32 { return x + 1; }
 function main(): i32 {
     return run() * 10 + p(3);
 }`},
-	// The control: with no shadowing, `let g = <module fn>` still binds a
-	// callable function value.
 	{"unshadowed_fn_value_still_boxed", `function dbl(x: i32): i32 { return x * 2; }
 
 function main(): i32 {
@@ -58,8 +43,6 @@ function main(): i32 {
 }`},
 }
 
-// TestSelfHostFnValueParamShadowIR_X86_64 drives fnValueParamShadowCases through
-// the self-host x86-64 IR path under FERN_STRICT_IR.
 func TestSelfHostFnValueParamShadowIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 

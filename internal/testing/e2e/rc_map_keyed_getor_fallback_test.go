@@ -4,21 +4,6 @@ import (
 	"testing"
 )
 
-// The struct/enum-key (keyKind-3) `get_or` path emitted both non-receiver
-// arguments inline, with no stashOwnedArgTemp / emitArgTempDrops — so neither
-// temp was ever ended. `get_or` only READS the key, and the counted-read value
-// column retains the fallback on a miss, so both are dead at the call.
-//
-// The key half leaked a struct a round on its own. The fallback half arrived
-// with the miss-retain (#7910 (a)), whose !keyKind3 arm ends the fallback temp
-// and whose keyed sibling did not: 48 B a round on top, on a column the
-// composite-key leak matrix never covered (its rows all use i32 / string value
-// columns, where neither temp is counted).
-//
-// Reported by a review bot on #8215, measured at 64 B a round on x86-64, and
-// bounded here rather than pinned to a number: the residue is the map and its
-// one entry, which this shape does not reclaim either way.
-
 func keyedGetOrFallbackSrc(n string) string {
 	return `import "core/map";
 import "core/cmp" as cmp;
@@ -43,9 +28,6 @@ function main(): i32 {
 }`
 }
 
-// The hit path must still hand back the map's own value, and a string[] column
-// must reclaim the fallback's strings rather than the map's. 0 iff every read
-// saw the right thing AND nothing dec'd past zero.
 const keyedGetOrFallbackUnderflowSrc = `import "core/map";
 import "core/cmp" as cmp;
 

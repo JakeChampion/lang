@@ -1,7 +1,7 @@
-// A mutually-recursive type: a binary tree where interior nodes hold
-// further Trees. The Leaf literals widen to the Tree union directly
-// in Node's field initializers (no intermediate typed locals needed).
-// 40 + 2 = 42.
+
+
+
+
 struct Leaf { v: i32 }
 struct Node { left: Tree, right: Tree }
 type Tree = Leaf | Node;

@@ -7,13 +7,6 @@ import (
 	"testing"
 )
 
-// genericEnumIRCase is a self-host generic-enum (`enum E[T]`) program whose
-// exit code is pinned against the interpreter's oracle value. Each case
-// exercises the parser's monomorphize_enums pass (parser.fern): a generic enum
-// is cloned per concrete instantiation (`Opt[i32]` → `Opt__i32` with
-// `Sm__i32(i32)`), the variant constructions + match arm patterns + annotations
-// are mangled to the clone, so the variant payload types are concrete (#3572).
-// Exit codes are kept <= 120 (native) / <= 125 (WASI).
 type genericEnumIRCase struct {
 	name     string
 	src      string
@@ -21,37 +14,24 @@ type genericEnumIRCase struct {
 }
 
 var genericEnumIRCases = []genericEnumIRCase{
-	// i32 payload: construction + match + payload binding through a cloned
-	// `Sm__i32(i32)` variant.
 	{"i32_payload", `enum Opt[T] { Sm(T), Nn }
 function main(): i32 {
     let o: Opt[i32] = Sm(5);
     match (o) { Sm(n) => { return n; }, Nn => { return 0; } }
 }`, 5},
-	// string payload: the case the erased shape miscompiled — a method on the
-	// bound payload (`s.len()`) needs the concrete `string` type to dispatch.
 	{"string_payload_method", `enum Box[T] { V(T) }
 function main(): i32 {
     let b: Box[string] = V("hi");
     match (b) { V(s) => { return s.len(); } }
 }`, 2},
-	// unit variant: `Nn` has no payload, so its instantiation is pinned by the
-	// `let o: Opt[i32]` annotation rather than an argument.
 	{"unit_variant", `enum Opt[T] { Sm(T), Nn }
 function main(): i32 {
     let o: Opt[i32] = Nn;
     match (o) { Sm(n) => { return n; }, Nn => { return 9; } }
 }`, 9},
-	// unit variant passed BARE as a call argument (#5247): the callee's declared
-	// parameter type `Opt[i32]` — not a var annotation at the use site — must pin
-	// the bare `Nn`'s instantiation; an un-mangled argument would name the
-	// generic `Nn` struct monomorphize_enums drops.
 	{"unit_variant_call_arg", `enum Opt[T] { Sm(T), Nn }
 function get(o: Opt[i32]): i32 { match (o) { Sm(v) => { return v; }, Nn => { return 42; } } }
 function main(): i32 { return get(Nn); }`, 42},
-	// mixed call arguments pin per-index off the callee's parameter list: arg 0
-	// is a bare unit variant (needs the param type), arg 1 a payload variant
-	// (infers from `40`). 1 + 40 == 41.
 	{"unit_variant_call_arg_mixed", `enum Opt[T] { Sm(T), Nn }
 function combine(a: Opt[i32], b: Opt[i32]): i32 {
     let x: i32 = 0;
@@ -60,14 +40,11 @@ function combine(a: Opt[i32], b: Opt[i32]): i32 {
     return x;
 }
 function main(): i32 { return combine(Nn, Sm(40)); }`, 41},
-	// construction-only (no match): the construction alone must lower.
 	{"construction_only", `enum Opt[T] { Sm(T), Nn }
 function main(): i32 {
     let o: Opt[i32] = Sm(5);
     return 1;
 }`, 1},
-	// two distinct instantiations of the same enum coexisting (`Opt[i32]` +
-	// `Opt[string]`): each clones to its own concrete enum + variant structs.
 	{"two_instantiations", `enum Opt[T] { Sm(T), Nn }
 function main(): i32 {
     let a: Opt[i32] = Sm(7);
@@ -78,16 +55,11 @@ function main(): i32 {
     match (b) { Sm(s) => { y = s.len(); }, Nn => { } }
     return x + y;
 }`, 10},
-	// match on a CALL result (`match (wrap(4))`): the scrutinee's instantiation
-	// comes from the callee's declared return type, not an annotation.
 	{"call_scrutinee", `enum Opt[T] { Sm(T), Nn }
 function wrap(v: i32): Opt[i32] { return Sm(v); }
 function main(): i32 {
     match (wrap(4)) { Sm(x) => { return x + 1; }, Nn => { return 0; } }
 }`, 5},
-	// array of a generic enum, iterated + matched per element. The unit-variant
-	// element (`Nn`) gets its instantiation from the array's element type, and
-	// the `for` loop variable carries the element type into the match.
 	{"array_iter", `enum Opt[T] { Sm(T), Nn }
 function main(): i32 {
     let xs: Opt[i32][] = [Sm(1), Sm(2), Nn];
@@ -95,13 +67,11 @@ function main(): i32 {
     for o in xs { match (o) { Sm(x) => { s = s + x; }, Nn => { } } }
     return s;
 }`, 3},
-	// match on an index into a generic-enum array (`match (xs[0])`).
 	{"index_scrutinee", `enum Opt[T] { Sm(T), Nn }
 function main(): i32 {
     let xs: Opt[i32][] = [Sm(9), Nn];
     match (xs[0]) { Sm(x) => { return x; }, Nn => { return 0; } }
 }`, 9},
-	// string-payload array, method dispatch on the bound element through a `for`.
 	{"string_array_method", `enum Box[T] { V(T) }
 function main(): i32 {
     let xs: Box[string][] = [V("ab"), V("cde")];
@@ -109,25 +79,16 @@ function main(): i32 {
     for b in xs { match (b) { V(s) => { n = n + s.len(); } } }
     return n;
 }`, 5},
-	// TWO type params: `Pair[i32, i32]` keys off the annotation, joining both
-	// args into `i32__i32`; me_infer_variant_key unifies each payload field, so
-	// the clone has concrete fields for both. 3 + 4 == 7.
 	{"multiparam_i32", `enum Pair[K, V] { P(K, V) }
 function main(): i32 {
     let p: Pair[i32, i32] = P(3, 4);
     match (p) { P(a, b) => { return a + b; } }
 }`, 7},
-	// two type params with MIXED payload types (i32 + string) + a unit variant —
-	// the key `i32__string` drives concrete field types so `b.len()` dispatches.
-	// 5 + "hi".len() == 7.
 	{"multiparam_mixed", `enum Pair[K, V] { P(K, V), Z }
 function main(): i32 {
     let p: Pair[i32, string] = P(5, "hi");
     match (p) { P(a, b) => { return a + b.len(); }, Z => { return 0; } }
 }`, 7},
-	// A method declared on the generic enum is cloned per instantiation with
-	// its receiver re-pointed at the clone, so `or_else` dispatches on
-	// `Opt__i32` and `Opt__string` alike. 5 + 7 + "abc".len() == 15.
 	{"method_per_instantiation", `enum Opt[T] { Sm(T), Nn }
 function (o: Opt[T]) or_else(d: T): T { match (o) { Sm(x) => { return x; }, Nn => { return d; } } }
 function main(): i32 {
@@ -136,9 +97,6 @@ function main(): i32 {
     let c: Opt[string] = Sm("abc");
     return a.or_else(0) + b.or_else(7) + c.or_else("").len();
 }`, 15},
-	// A method with a type parameter of its own folds into a free generic
-	// before the pass, keyed by the receiver's arguments and its own; the
-	// payload of the variant argument (`Full(9)`) is what settles U.
 	{"method_own_type_param", `enum Box[T, E] { Full(T), Blank(E) }
 function (b: Box[T, E]) pair[U](other: Box[U, E]): Box[U, E] { return other; }
 function take(b: Box[i32, string]): i32 { match (b) { Full(n) => { return n; }, Blank(s) => { return s.len(); } } }
@@ -146,9 +104,6 @@ function main(): i32 {
     let b: Box[i32, string] = Full(5);
     return take(b.pair(Full(9))) + take(b.pair(Full(2)));
 }`, 11},
-	// A method that builds a variant, read back by another method (#12904): the
-	// template's `Bin(t, k, …)` is typed by the type variable K, which names no
-	// instantiation, so no clone at K is made. 1 + 2 == 3.
 	{"method_builds_variant", `enum Tree[K] { Tip, Bin(Tree[K], K, i32) }
 function (t: Tree[K]) size(): i32 { match (t) { Tip => { return 0; }, Bin(_, _, n) => { return n; } } }
 function (t: Tree[K]) put(k: K): Tree[K] { return Bin(t, k, t.size() + 1); }
@@ -157,8 +112,6 @@ function main(): i32 {
     let b: Tree[string] = Tip;
     return a.put(1).size() + b.put("x").put("y").size();
 }`, 3},
-	// A method's clone hands a bare unit variant to a generic function, whose
-	// parameter takes the instantiation the call's other argument binds (#12904).
 	{"method_bare_variant_to_generic", `enum Tree[K] { Tip, Bin(Tree[K], K, i32) }
 function (t: Tree[K]) size(): i32 { match (t) { Tip => { return 0; }, Bin(_, _, n) => { return n; } } }
 function leaf[K](l: Tree[K], k: K): Tree[K] { return Bin(l, k, l.size() + 1); }
@@ -167,9 +120,6 @@ function main(): i32 {
     let a: Tree[i32] = Tip;
     return a.grow(7).size();
 }`, 1},
-	// A method's clone matches on a generic function's result: the call is
-	// keyed (`find__i32`) before its clone exists, and its return type is read
-	// off the template the instance names (#12904).
 	{"method_matches_generic_call", `enum Tree[K] { Tip, Bin(Tree[K], K, i32) }
 function find[K](t: Tree[K], k: K): Tree[K] { return t; }
 function (t: Tree[K]) has(k: K): i32 { match (find(t, k)) { Tip => { return 0; }, Bin(_, _, n) => { return n; } } }
@@ -179,9 +129,6 @@ function main(): i32 {
 }`, 4},
 }
 
-// TestSelfHostGenericEnumIRX86_64 builds the self-host asm_run driver and runs
-// each generic-enum program through it (Fern source → x86-64 asm → native
-// binary → exit code), asserting the oracle value.
 func TestSelfHostGenericEnumIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -215,10 +162,6 @@ func TestSelfHostGenericEnumIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostGenericEnumWasmIR is the wasm sibling: monomorphize_enums is a
-// target-independent parser pass, so the wasm IR backend gets generic enums for
-// free. Each case asserts the same oracle exit code through the self-host CLI
-// on wasm32-wasi.
 func TestSelfHostGenericEnumWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range genericEnumIRCases {

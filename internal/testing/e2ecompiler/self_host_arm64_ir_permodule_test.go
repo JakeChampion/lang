@@ -9,35 +9,13 @@ import (
 	"testing"
 )
 
-// TestSelfHostIRPerModuleLinkArm64 is the arm64 counterpart of the x86
-// per-module link/driver tests (#3451 / #3457 step 0a): the arm64
-// asm_modload_run -target arm64-linux driver compiling a multi-module program by emitting
-// each module as its OWN arm64 translation unit and linking them.
-//
-// The program is the cross-module ENUM case (mirroring
-// TestSelfHostIRPerModuleCrossEnum): module `col` constructs `Blue(7)`; the
-// entry `match`es it. That match lowers to a shape-pointer compare (variant_is),
-// so it is the essential test for the arm64 shape-symbol SHARING this slice
-// adds — each unit emits the enum variant's shape name as a `.weak` global
-// (__fern_shp_col__Blue), so the SAME variant constructed in `col` and compared
-// in the entry resolves to ONE linker-merged address and the match finds its
-// arm across the module boundary. Without it the match silently fails (the
-// per-module bootstrap miscompile this slice prevents). The linked binary,
-// run natively or under qemu-aarch64, returns 7.
-//
-// The driver itself is built as an x86 host binary (only its OUTPUT is arm64
-// asm); the emitted units are assembled+linked with the aarch64 cross gcc.
 func TestSelfHostIRPerModuleLinkArm64(t *testing.T) {
 	armgcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
-	// The arm64 backend + its per-module driver, alongside the shared modload
-	// project (which already holds util/lexer/parser/flatten/asm_ir/builtins/…).
 
-	// Build the arm64 driver as an x86 host binary (mirrors the fixpoint harness).
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_modload_run.fern", "arm64driver")
 
-	// Two-module program: col constructs Blue(7); the entry matches it.
 	colSrc := "pub enum Color { Red(i32), Green, Blue(i32) }\n" +
 		"pub function mk(): Color { return Blue(7); }\n"
 	mainSrc := "import \"./col\";\n" +

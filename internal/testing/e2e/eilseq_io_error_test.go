@@ -12,7 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The path is relative because wasm resolves every path against its preopen.
 const eilseqProg = `function main(): i32 {
     match (remove_file("victim.txt")) {
         Ok(_) => { print("removed"); return 1; },
@@ -27,9 +26,6 @@ const eilseqProg = `function main(): i32 {
 }
 `
 
-// EILSEQ is IoError.InvalidUtf8 on every target (#11707). No unprivileged
-// syscall reliably answers EILSEQ, so unlinkat is made to, under the seccomp
-// launcher.
 func TestEilseqIsInvalidUtf8EveryTarget(t *testing.T) {
 	dir := t.TempDir()
 	victim := filepath.Join(dir, "victim.txt")

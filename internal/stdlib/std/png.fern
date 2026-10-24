@@ -1,4 +1,4 @@
-// RGB PNG encoding with eight bits per channel and no interlace.
+// This module encodes RGB PNG images with eight bits per channel and no interlace.
 
 import "std/binary";
 import "std/deflate";
@@ -26,17 +26,14 @@ pub enum Compression { Balanced, Fast }
 
 pub struct Options { filter: Filter, compression: Compression }
 
-// The default preserves the original filter-zero output and compression ratio.
 pub function options(): Options {
   return Options { filter: Filter.Unfiltered, compression: Compression.Balanced };
 }
 
-// Pixels are consecutive RGB triples, from left to right and top to bottom.
 pub function encode_rgb8(width: i32, height: i32, pixels: [u8]): Result[u8[], EncodeError] {
   return encode_rgb8_with_options(width, height, pixels, options());
 }
 
-// Filters are lossless. Adaptive selects a filter separately for each row.
 pub function encode_rgb8_with_options(width: i32, height: i32, pixels: [u8], opts: Options): Result[u8[], EncodeError] {
   if (width <= 0 || height <= 0 || width as i64 * 3 + 1 > 2147483647) {
     return Err(InvalidDimensions);

@@ -5,22 +5,10 @@ import (
 	"testing"
 )
 
-// A `T[][]` local that shares its buffer with another — an alias, a struct
-// field bind, or a local reassigned from it — takes the rows-walking release,
-// so the last owner frees the rows (#10416). Before, only
-// a fresh unaliased local did, and an alias left every slot on the shallow
-// buffer dec, which freed the outer buffer and stranded the rows. Reads that
-// follow the first release run after fresh allocations, so a row freed early
-// shows as a wrong answer as well as under the sanitizer. A box whose release a
-// row tests goes through id or ids, so it is built on the heap rather than
-// placed as a constant; a rebind target the test only reads past can stay a
-// constant.
 var arrArrAliasCases = []struct {
-	name string
-	src  string
-	want int
-	// refused: the group escapes, so only the absence of an over-release is
-	// checked, not the census.
+	name    string
+	src     string
+	want    int
 	refused bool
 }{
 	{"alias", `@noinline function id(xs: i32[]): i32[] { return xs; }
@@ -64,7 +52,6 @@ function main(): i32 {
     return acc;
 }
 `, 46, false},
-	// A string[][] field bind whose holder is rebound first (#10548).
 	{"field_bind_strings", `@noinline function ids(s: string): string { return s; }
 struct Names { n: i32, names: string[][] }
 function main(): i32 {
@@ -81,7 +68,6 @@ function main(): i32 {
     return n;
 }
 `, 24, false},
-	// A literal rebound inside an `if` (#10497).
 	{"literal_rebound_in_if", `@noinline function ids(s: string): string { return s; }
 function main(): i32 {
     let q: string[][] = [[ids("a") + "b", "c"]];
@@ -102,7 +88,6 @@ function main(): i32 {
     return q[0][0] + q.len() + junk.len();
 }
 `, 10, false},
-	// A field bind whose holder is typed from a call result (#10548's remainder).
 	{"field_bind_call_holder", `@noinline function ids(s: string): string { return s; }
 struct Names { n: i32, names: string[][] }
 function mk(i: i32): Names {
@@ -136,7 +121,6 @@ function main(): i32 {
     return total;
 }
 `, 18, false},
-	// A break out of a for over a row of an aliased array of arrays (#10219).
 	{"break_out_of_row_for", `@noinline
 function through(deps: i32[][], takes: i32[]): i32[][] {
     let out: i32[][] = deps;

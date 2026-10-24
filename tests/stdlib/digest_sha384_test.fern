@@ -2,15 +2,6 @@ import "std/test";
 import "std/crypto" as crypto;
 import "std/string";
 
-// tests/stdlib/digest_sha384_test.fern — std/crypto's streaming SHA-384 (FIPS 180-4)
-// against the standard known-answer vectors (empty, "abc", the 112-byte
-// multi-block message, one million 'a'), fed through the pending-block logic in
-// every way that matters: whole strings, 1000 updates of 1000 bytes, and 7-byte
-// updates that straddle each block boundary, cross-checked against the one-shot form.
-
-// __pseudo builds the 10,003-byte fixed pattern byte i = (i * 7 + 3) & 255:
-// long enough that 7-byte updates straddle every block boundary offset, and
-// not valid UTF-8, so the hasher is fed raw bytes.
 function __pseudo(): u8[] {
   let b: u8[] = __alloc_u8(10003);
   let i: i32 = 0;
@@ -21,7 +12,6 @@ function __pseudo(): u8[] {
   return b;
 }
 
-// __thousand_a is 1000 'a's, the unit of the million-'a' vector.
 function __thousand_a(): string {
   let b: u8[] = __alloc_u8(1000);
   let i: i32 = 0;
@@ -51,8 +41,6 @@ function test_bytes_len(): test.TestOutcome {
   return test.assert_eq(crypto.sha384_new().update("abc").final_bytes().len(), 48);
 }
 
-// One million 'a' as 1000 updates of 1000 bytes: 1000 is not a multiple of the
-// block size, so every update leaves a partial block pending.
 function test_million_a_chunked(): test.TestOutcome {
   let h: crypto.Sha512 = crypto.sha384_new();
   let chunk: string = __thousand_a();
@@ -64,8 +52,6 @@ function test_million_a_chunked(): test.TestOutcome {
   return test.assert_eq(h.final_hex(), "9d0e1809716474cb086e834e310a4a1ced149e9c00f248527972cec5704c2a5b07b8b3dc38ecc4ebae97ddd87f3d8985");
 }
 
-// 7-byte view slices over the fixed pattern, against the whole message fed as a
-// string and the reference value.
 function test_seven_byte_updates(): test.TestOutcome {
   let msg: u8[] = __pseudo();
   let h: crypto.Sha512 = crypto.sha384_new();
@@ -83,7 +69,6 @@ function test_seven_byte_updates(): test.TestOutcome {
   return test.assert_eq(chunked, whole);
 }
 
-// update_bytes takes the same bytes as u8[]; the one-shot helpers agree.
 function test_update_bytes_and_oneshot(): test.TestOutcome {
   let via_bytes: string = crypto.sha384_new().update_bytes("abc".bytes()).final_hex();
   if (via_bytes != crypto.sha384_hex("abc")) {

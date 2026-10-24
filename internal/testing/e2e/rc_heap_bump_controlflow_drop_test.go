@@ -4,35 +4,6 @@ import (
 	"testing"
 )
 
-// Perceus precise drops — slice 5: control-flow-aware placement. The last use
-// of an owned local may now sit INSIDE a nested if / while / for / match. The
-// drop is emitted right after the whole top-level statement that contains the
-// last use — by then the local is dead on EVERY path through that statement,
-// so a single top-level drop + zero-slot is sound, and any early `return` on a
-// path keeps the value live to its own exit sweep (the zeroed slot makes the
-// post-statement drop a no-op on paths that already returned). This reclaims
-// before the (often long) tail after an `if`, which is where the win is.
-//
-// Earlier slices conservatively bailed on ANY nested-block use; this removes
-// that bail (keeping freeEligible + the alias gates + a now-any-depth
-// reassignment exclusion).
-//
-// Element scope: the nested-use extension is gated to PRIMITIVE-element arrays
-// (i32[] / f64[] / …), whose drop is a pure buffer free with no per-element rc
-// to balance across the drop point. A POINTER-element array (string[] /
-// struct[] / T[][] / tuple[]) with a nested last use falls back to the exit
-// sweep: its deep drop dec's each element, and an element aliased OUT across an
-// early drop takes the arm64 two-word heap-string reclamation path the plan
-// still defers (slice 5g) — an early drop there corrupts under allocation-reuse
-// pressure (the self-host driver's `let av: string[] = args()` with
-// `entry = av[1]` / `root = av[2]` last-used at `av[2]` inside an `if`). The
-// cfArgsAliasSrc case below pins that this self-host shape is reclaimed
-// correctly (no over-release) with the pointer-element gate in place.
-
-// cfEarlyReturnSrc: `big` is used inside an if that can early-return on one
-// path (big still live there -> its own exit sweep) and is dead after the if
-// on the other (precise drop + zero). Must be value-correct + 0 over-release
-// across many iterations, with a forced interleaved alloc.
 const cfEarlyReturnSrc = `function helper(seed: i32): i32 {
     let big: i32[] = [seed, seed + 1, seed + 2];
     let r: i32 = 0;
@@ -55,9 +26,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// cfLoopThenDeadSrc: `data` is read in a loop body (read-only, no reassign),
-// dead after the loop -> dropped after the while. Value-correct + 0
-// over-release.
 const cfLoopThenDeadSrc = `function sumloop(seed: i32): i32 {
     let data: i32[] = [seed, seed + 1, seed + 2, seed + 3];
     let s: i32 = 0;
@@ -78,8 +46,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// cfAliasedSrc: `big` is used in an if AND aliased into a struct that outlives
-// the if; the post-if precise drop must only DEC (the struct keeps it).
 const cfAliasedSrc = `struct Holder { items: i32[], n: i32 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -97,13 +63,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// cfArgsAliasSrc mirrors the self-host driver's main(): a pointer-element
-// (string[]) local whose elements are aliased OUT (entry / root) with the
-// array's last use nested in an `if`, then allocation pressure, then the
-// aliases are read. The pointer-element gate keeps this on the exit-sweep path
-// (no early deep drop), so the aliased element strings survive — no over-
-// release, no corruption (the bug a blanket nested-drop hit on arm64). The
-// 17-char literals escape SSO so the elements are real heap strings.
 const cfArgsAliasSrc = `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;

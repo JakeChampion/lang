@@ -12,8 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// buildBoolArrayUserWorld writes the shared user world (custom src iface + wasi
-// stdout), embeds it into an empty module, and decodes the resulting world.
 func buildBoolArrayUserWorld(t *testing.T, wasmtools, dir, iface string) *componenttype.World {
 	t.Helper()
 	run := func(name string, args ...string) {
@@ -51,8 +49,6 @@ func buildBoolArrayUserWorld(t *testing.T, wasmtools, dir, iface string) *compon
 	return w
 }
 
-// buildComposeRunBoolArray builds the core from src, composes it against the
-// world + provider, and runs it under wasmtime, asserting `want` in stdout.
 func buildComposeRunBoolArray(t *testing.T, wasmtime, wasmtools, dir, src, want, provider string, w *componenttype.World) {
 	t.Helper()
 	run := func(name string, args ...string) {
@@ -88,14 +84,6 @@ func buildComposeRunBoolArray(t *testing.T, wasmtime, wasmtools, dir, src, want,
 	}
 }
 
-// TestExternBoolArrayParamCustomProvider is the P4c bool[]-*param* gate
-// (docs/WIT-BRING-YOUR-OWN.md): a Fern bool[] passed to an `@import` extern
-// whose WIT takes `list<bool>`. A Fern bool is a 4-byte i32 (0/1) but the
-// canonical list<bool> element is a single byte, so the wrapper byte-repacks the
-// array (contracting each 4-byte slot to one byte) into a fresh buffer and
-// passes (buf, count) — it can't pass the array zero-copy like the numeric
-// arrays. The provider exports `count-true: func(b: list<bool>) -> s32` summing
-// the true bytes; the Fern side passes [true, false, true] and expects 2.
 func TestExternBoolArrayParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -121,8 +109,6 @@ func TestExternBoolArrayParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// list<bool> is lowered into the provider's memory (1 byte/elem) via
-	// cabi_realloc; count-true sums the bytes.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))

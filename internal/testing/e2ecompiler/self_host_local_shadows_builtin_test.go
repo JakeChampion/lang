@@ -2,10 +2,6 @@ package e2ecompiler
 
 import "testing"
 
-// A call through a local function value named like a builtin types as the
-// local's result. The pre-codegen gate (asmcore) read the builtin table first,
-// typed `rename(x)` as the fs builtin's Option, and refused the program with an
-// E003 the checker never raised (#10923).
 func TestSelfHostLocalShadowsBuiltin(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -23,8 +19,6 @@ function main(): i32 { return apply(3, (v: i32): string => "abc").len(); }`, 3},
     let n: string = rename(1);
     return n.len();
 }`, 2},
-		// A local or parameter named `None` is the binding, not the builtin
-		// Option (#10957).
 		{"local_none", `function main(): i32 {
     let None: i32 = 5;
     let v: i32 = None;

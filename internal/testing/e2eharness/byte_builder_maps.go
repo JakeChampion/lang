@@ -2,9 +2,6 @@ package e2eharness
 
 import "strings"
 
-// ByteBuilderMapsSource compares the three raw builders with element-wise
-// oracles. Native census runs also verify pushes into reserved space allocate
-// neither temporary arrays nor copies of borrowed inputs.
 func ByteBuilderMapsSource(allocations bool) string {
 	probe := ""
 	if allocations {

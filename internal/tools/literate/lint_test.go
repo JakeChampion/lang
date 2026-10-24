@@ -9,7 +9,7 @@ func TestUnusedChunksReachability(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
-		want string // comma-joined sorted unused chunk names
+		want string
 	}{
 		{
 			"all used",

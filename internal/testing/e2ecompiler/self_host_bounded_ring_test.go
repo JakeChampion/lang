@@ -60,7 +60,6 @@ func TestSelfHostBoundedRingModel(t *testing.T) {
 				}
 				fmt.Fprintf(&states, "fixture%d()", step)
 				fmt.Fprintf(&ops, "[%t,%d]", push, status)
-				// Each fixture remains small on ARM, outside allocation marks.
 				fmt.Fprintf(&fixtures, "@noinline function fixture%d():i32[] {return [", step)
 				for i, v := range queue {
 					if i > 0 {
@@ -70,7 +69,6 @@ func TestSelfHostBoundedRingModel(t *testing.T) {
 				}
 				fixtures.WriteString("]; }\n")
 			}
-			// Encode action and status separately to keep homogeneous Fern arrays.
 			actions := strings.ReplaceAll(strings.ReplaceAll(ops.String(), "true", "1"), "false", "0")
 			source := fixtures.String() + fmt.Sprintf(`
 function main():i32 {

@@ -71,17 +71,12 @@ func TestPositions(t *testing.T) {
 }
 
 func TestUnknownChar(t *testing.T) {
-	// `~` is not a recognised punctuator (`@` now lexes — it leads the
-	// `@derive(...)` attribute).
 	_, _, err := Tokenize("~")
 	if err == nil {
 		t.Fatal("expected error on '~'")
 	}
 }
 
-// TestLexErrorCodes pins the code each lex error carries, which the self-host
-// lexer's TokError matches: P002 for a malformed numeric literal, P001 for
-// everything else.
 func TestLexErrorCodes(t *testing.T) {
 	for _, c := range []struct{ src, msg, code string }{
 		{"#", "unexpected character '#'", "P001"},
@@ -145,16 +140,6 @@ func TestStringLiteralEscapes(t *testing.T) {
 	}
 }
 
-// A string literal containing multi-byte UTF-8 characters must be
-// preserved byte-for-byte. `b.WriteRune(c)` on a single source byte
-// (`rune(l.src[l.i])`) re-encodes each byte of a multi-byte character
-// as its own code point
-// — turning `∃` (0xE2 0x88 0x83) into three mojibake runes. Strings
-// are UTF-8 byte arrays here, so the token text must equal the
-// original source bytes. Surfaced as a format → parse → format
-// non-idempotency on a real example file.
-// \xNN hex byte escapes (string + f-string literal portions), and the
-// two-hex-digit requirement.
 func TestStringLiteralHexEscape(t *testing.T) {
 	toks, _, err := Tokenize(`"\x48\x69\x21"`)
 	if err != nil {
@@ -163,7 +148,6 @@ func TestStringLiteralHexEscape(t *testing.T) {
 	if toks[0].Text != "Hi!" {
 		t.Errorf("string \\x: got %q, want %q", toks[0].Text, "Hi!")
 	}
-	// f-string literal portion.
 	fts, _, err := Tokenize(`f"\x41={x}"`)
 	if err != nil {
 		t.Fatal(err)
@@ -171,7 +155,6 @@ func TestStringLiteralHexEscape(t *testing.T) {
 	if fts[0].Kind != FString || len(fts[0].FParts) == 0 || fts[0].FParts[0].Lit != "A=" {
 		t.Errorf("f-string \\x: got %v, want first FPart Lit %q", fts[0].FParts, "A=")
 	}
-	// Needs two hex digits.
 	if _, _, err := Tokenize(`"\xZ1"`); err == nil {
 		t.Error("expected error on \\x with non-hex digit")
 	}
@@ -192,18 +175,11 @@ func TestStringLiteralUTF8(t *testing.T) {
 	}
 }
 
-// The f-string literal scanner had the same byte-vs-rune bug as the
-// plain-string scanner (a second `lit.WriteRune(c)` on a single
-// source byte), so multi-byte UTF-8 in a literal *segment* of an
-// f-string — e.g. the `café ` before `{x}` — was corrupted too.
-// The literal pieces must be preserved byte-for-byte.
 func TestFStringLiteralUTF8(t *testing.T) {
 	cases := []struct {
 		src  string
 		want []FStringPart
 	}{
-		// Columns advance per byte, so a multi-byte literal segment
-		// shifts the interpolant's column by its encoded length.
 		{src: `f"café {x}"`, want: []FStringPart{{Lit: "café "}, {Expr: "x", Pos: ast.Position{Line: 1, Col: 10}}}},
 		{src: `f"{x} 日本語"`, want: []FStringPart{{Expr: "x", Pos: ast.Position{Line: 1, Col: 4}}, {Lit: " 日本語"}}},
 		{src: `f"∃ {n} items"`, want: []FStringPart{{Lit: "∃ "}, {Expr: "n", Pos: ast.Position{Line: 1, Col: 8}}, {Lit: " items"}}},
@@ -234,9 +210,6 @@ func TestStringLiteralUnterminated(t *testing.T) {
 	}
 }
 
-// TestStringEscapes pins the escapes a string and an f-string decode: the set
-// a character literal takes, encoded as UTF-8, so the value is always valid
-// UTF-8. \xNN stops at 0x7F; \u{...} reaches every Unicode scalar value.
 func TestStringEscapes(t *testing.T) {
 	for _, c := range []struct{ src, want string }{
 		{`"a\x41\x7f"`, "aA\x7f"},
@@ -269,18 +242,6 @@ func TestStringLiteralUnknownEscape(t *testing.T) {
 	}
 }
 
-// f-strings produce a single FString token whose FParts hold
-// alternating literal / interpolant pieces. The parser sub-parses
-// each interpolant Expr text into an ast.Expr; the IR (via the
-// checker's desugar) lowers the AST node to a `+`-chain. Cases
-// covered: empty, literal-only, single / multi / leading /
-// trailing interpolation, `{{` and `}}` brace escapes, escape
-// sequences in literal segments, an interpolant containing a
-// string literal (so the boundary scanner has to skip past the
-// inner quotes). Each interpolant also carries the source position
-// of its first byte — the parser rebases the sub-parse onto it, so a
-// wrong position here lands every diagnostic inside the f-string at
-// the wrong place.
 func TestFStringParts(t *testing.T) {
 	cases := []struct {
 		src  string
@@ -324,8 +285,6 @@ func TestFStringParts(t *testing.T) {
 	}
 }
 
-// f-string error cases: unterminated, newline inside, bare `}`,
-// empty `{}` interpolant.
 func TestFStringErrors(t *testing.T) {
 	for _, src := range []string{
 		`f"unterminated`,
@@ -363,10 +322,6 @@ func TestFloatLiteral(t *testing.T) {
 	}
 }
 
-// Scientific-notation float literals: `[eE][+-]?[0-9]+` on either an
-// integer base (`1e3`) or a fractional one (`1.5e-2`). The whole
-// thing must come back as a single Float token whose text is
-// ParseFloat-ready.
 func TestFloatScientificNotation(t *testing.T) {
 	toks, _, err := Tokenize("1e3 1.5e10 1.5E3 2.0e-2 6.022e+23")
 	if err != nil {
@@ -393,9 +348,6 @@ func TestFloatScientificNotation(t *testing.T) {
 	}
 }
 
-// Hex integer literals: `0x` / `0X` followed by hex digits come back
-// as a single Number token whose text includes the prefix. Mixed
-// case digits and an optional integer suffix are accepted.
 func TestHexLiteral(t *testing.T) {
 	toks, _, err := Tokenize("0x2A 0xff 0X0 0xDEADBEEF 0x10u8")
 	if err != nil {
@@ -424,16 +376,12 @@ func TestHexLiteral(t *testing.T) {
 	}
 }
 
-// A bare `0x` with no hex digits is an error, not a silent `0`
-// followed by an `x` identifier.
 func TestHexLiteralNeedsDigits(t *testing.T) {
 	if _, _, err := Tokenize("0x"); err == nil {
 		t.Fatal("expected error for bare 0x literal, got nil")
 	}
 }
 
-// `0o` octal and `0b` binary literals come back as one Number token, prefix
-// and suffix split as a hex literal's are (#9091).
 func TestRadixLiteral(t *testing.T) {
 	toks, _, err := Tokenize("0o755 0O17 0b1010 0B1 0o170000u32 0b11111111u8")
 	if err != nil {
@@ -452,8 +400,6 @@ func TestRadixLiteral(t *testing.T) {
 	}
 }
 
-// A radix literal with no digits, or with a digit its base does not have, is
-// an error rather than `0` followed by an identifier.
 func TestRadixLiteralRejectsBadDigits(t *testing.T) {
 	for _, src := range []string{"0o", "0b", "0o78", "0b102", "0o9"} {
 		if _, _, err := Tokenize(src); err == nil {
@@ -462,15 +408,11 @@ func TestRadixLiteralRejectsBadDigits(t *testing.T) {
 	}
 }
 
-// A dangling `e` with no exponent digits is NOT an exponent — the
-// number stops before it and the `e...` lexes as a separate
-// identifier. Guards against eating the `e` of `1einvalid`.
 func TestFloatBareEIsNotExponent(t *testing.T) {
 	toks, _, err := Tokenize("1e foo")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// `1` (Number) `e` (Ident) `foo` (Ident) EOF
 	want := []struct {
 		k Kind
 		s string
@@ -490,10 +432,6 @@ func TestFloatBareEIsNotExponent(t *testing.T) {
 	}
 }
 
-// Chained numeric field access (`t.1.0`) must lex as three numbers
-// joined by two dots — not as `t . 1.0` with `1.0` eaten as a float
-// literal. The lexer tracks the previous token kind and suppresses
-// the `.<digit>` → float upgrade when the prior token was `.`.
 func TestChainedTupleNumericAccess(t *testing.T) {
 	toks, _, err := Tokenize("t.1.0")
 	if err != nil {
@@ -520,10 +458,6 @@ func TestChainedTupleNumericAccess(t *testing.T) {
 	}
 }
 
-// Regression-pin that a `.<digit>` AFTER a non-dot context still
-// upgrades to a float literal. Covers `let f = 1.5;` and the
-// post-paren `(1.5)` case so the afterDot suppression doesn't
-// over-fire.
 func TestFloatLiteralStillWorksAfterNonDot(t *testing.T) {
 	toks, _, err := Tokenize("let f = 1.5;")
 	if err != nil {
@@ -540,9 +474,6 @@ func TestFloatLiteralStillWorksAfterNonDot(t *testing.T) {
 	}
 }
 
-// `float` is not a type; the parser refuses it in type position in
-// favour of `f64`. It stays an Ident at the lexer level, so a `float`
-// local or field keeps working.
 func TestFloatIsNoLongerAKeyword(t *testing.T) {
 	toks, _, err := Tokenize("float")
 	if err != nil {
@@ -597,7 +528,6 @@ func TestNumericLiteralSuffixes(t *testing.T) {
 			t.Errorf("%s: tokenize error: %v", c.src, err)
 			continue
 		}
-		// First token is the literal; second should be EOF.
 		if toks[0].Kind != c.kind || toks[0].Text != c.text || toks[0].Suffix != c.suffix {
 			t.Errorf("%s: got %v Text=%q Suffix=%q, want %v Text=%q Suffix=%q",
 				c.src, toks[0].Kind, toks[0].Text, toks[0].Suffix, c.kind, c.text, c.suffix)
@@ -608,7 +538,7 @@ func TestNumericLiteralSuffixes(t *testing.T) {
 func TestNumericLiteralRejectsBadSuffix(t *testing.T) {
 	for _, src := range []string{
 		"42i33",
-		"42i", // truncated suffix
+		"42i",
 		"1.5i32",
 	} {
 		if _, _, err := Tokenize(src); err == nil {

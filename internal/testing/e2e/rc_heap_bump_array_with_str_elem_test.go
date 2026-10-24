@@ -4,29 +4,6 @@ import (
 	"testing"
 )
 
-// The string-element sibling of TestX86_64ArrayWithPtrElemRecycles (#6407).
-//
-// `arr.with(i, v)` on a `string[]` did no element bookkeeping at all: strings
-// were absent from the counted-element set, so the CoW copy shared the
-// receiver's element buffers at unchanged rc, the overwritten element was
-// never released, and — because the escape analysis keys the receiver's
-// reclaimability on that store being counted — the whole receiver was tainted
-// out of freeEligible. One `.with` therefore stranded N+1 blocks per round,
-// which is what made every `sort` of a `string[]` grow without bound.
-//
-// The probe is the shape from the issue: build an 8-element `string[]` of
-// heap strings, do one `.with` whose value is read out of the same array
-// (the projection the escape walk follows to the receiver), discard, repeat.
-// Nothing survives a round, so the bump cursor must stay flat: at 100k rounds
-// the leak was ~350 B/round, tens of MiB. The 1 MiB bound is the same one the
-// pointer-element probe uses.
-//
-// Run on all three compiled backends, because the retain the copy branch owes
-// is spelled differently on each: native single-word x86-64 walks the buffer
-// with __fern_rc_inc (__fern_arr_cow_inplace_ptr), while arm64 and wasm carry
-// two-word (data, len) elements whose inline tag lives in `len` — they need
-// __fern_arr_cow_inplace_str's __fern_str_inc walk, and the single-word helper
-// would dereference an inline string's characters as a pointer.
 const arrWithStrElemChurnSrc = `import "std/i32";
 import "std/string";
 function mks(): string[] {

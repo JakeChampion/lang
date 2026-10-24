@@ -1,10 +1,10 @@
-// std/array's none: true iff the predicate holds for no element; vacuously
-// true for an empty array.
-// A minimal inline body, so this pins the lowering of its shape rather than
-// the shipped module.
-//
-// no negatives -> none(is_neg) true (tag 1); has evens -> none(is_even) false;
-// 1*10 + 0 = 10.
+
+
+
+
+
+
+
 function none[T](xs: T[], pred: (T) => boolean): boolean { for x in xs { if (pred(x)) { return false; } } return true; }
 function is_neg(x: i32): boolean { return x < 0; }
 function is_even(x: i32): boolean { return x % 2 == 0; }

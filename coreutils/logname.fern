@@ -1,34 +1,3 @@
-// logname.fern — GNU-compatible `logname`.
-//
-//   logname    the name the session was logged in under
-//
-// This is getlogin(3), not the effective user, which is the whole point
-// of the utility: after `su` it still says who logged in. There is no
-// option and no operand, and an operand is `extra operand`.
-//
-// getlogin has no answer on a system that keeps no record of logins,
-// and then GNU prints nothing at all and exits 1 with `no login name` —
-// not the euid's name, which would be the wrong answer rather than none.
-//
-// glibc answers it in two steps and this follows both, because they
-// disagree on real machines:
-//
-//   1. /proc/self/loginuid — the uid the kernel's audit subsystem
-//      recorded for the session's ancestor. `(uid_t)-1` means nothing
-//      was recorded; anything else is looked up in the passwd database.
-//      This is why logname works inside a login session that keeps no
-//      utmp.
-//   2. Failing that, the CONTROLLING TERMINAL: the name of the terminal
-//      on file descriptor 0, matched against the utmp database's
-//      user-process entry for that terminal. A descriptor that is not a
-//      terminal ends it here — there is no session to name.
-//
-// Darwin keeps the session's login name in the kernel, and getlogin(2)
-// answers alone there.
-//
-// Naming the terminal is ttyname(0), which is `lib/tty.fern`; matching it
-// against ut_line wants it without the `/dev/` prefix, which `who -m`
-// needs too and which lives in lib/utmp.fern beside that field.
 import "std/string";
 import "std/array";
 import "./lib/gnu";
@@ -45,8 +14,6 @@ function help_text(): string {
   return out;
 }
 
-// The audit login uid, or None when the kernel recorded none. The file
-// holds a decimal number and nothing else; `(uid_t)-1` is the sentinel.
 function login_uid(): Option[i64] {
   match (read_file("/proc/self/loginuid")) {
     Ok(text) => {

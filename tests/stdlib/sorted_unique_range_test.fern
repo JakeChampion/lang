@@ -1,16 +1,5 @@
 import "std/test";
 
-// tests/stdlib/sorted_unique_range_test.fern — exercises
-// the batch-19 additions to std/test:
-//   * `test.assert_in_range_f64(v, lo, hi)` — inclusive float
-//     range. NaN always fails.
-//   * `test.assert_sorted_asc(arr)` /
-//     `test.assert_sorted_asc(arr)` — monotonically
-//     non-decreasing order. Empty / single-element arrays
-//     are vacuously sorted.
-//   * `test.assert_unique(arr)` / `test.assert_unique(arr)`
-//     — every element appears at most once.
-
 function test_in_range_f64_pass(): test.TestOutcome {
   return test.assert_in_range_f64(2.5, 1.0, 3.0);
 }
@@ -29,7 +18,6 @@ function test_in_range_f64_below(): test.TestOutcome {
       return test.fail("expected below-range fail");
     },
     Fail(msg) => {
-      // Verify the diagnostic names the offending side.
       if (!msg.contains("lower bound")) {
         return test.fail("expected 'lower bound' in failure: " + msg);
       }
@@ -79,7 +67,6 @@ function test_sorted_i32_single(): test.TestOutcome {
 }
 
 function test_sorted_i32_equal_runs(): test.TestOutcome {
-  // Non-decreasing — equal adjacent pairs are OK.
   return test.assert_sorted_asc([1, 1, 2, 2, 3]);
 }
 
@@ -89,8 +76,6 @@ function test_sorted_i32_inversion(): test.TestOutcome {
       return test.fail("inversion missed");
     },
     Fail(msg) => {
-      // The diagnostic should embed the index so the
-      // first violation is locatable.
       if (!msg.contains("index 2")) {
         return test.fail("expected 'index 2': " + msg);
       }
@@ -119,8 +104,6 @@ function test_unique_i32_pass(): test.TestOutcome {
 }
 
 function test_unique_i32_unsorted_input(): test.TestOutcome {
-  // Uniqueness is order-independent — the helper sorts
-  // internally, so a scrambled input still works.
   return test.assert_unique([7, 2, 9, 4]);
 }
 

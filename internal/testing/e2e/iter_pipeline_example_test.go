@@ -6,13 +6,6 @@ import (
 	"testing"
 )
 
-// TestExampleIterPipeline runs the committed examples/iter_pipeline.fern — a
-// tour of the core/iter + core/cmp stdlib (iter.of / filter / map / fold +
-// cmp.sort) — on the native interp / x86-64 / wasm backends and oracle-
-// checks the exit code. End-to-end integration coverage that the shipped
-// iterator/sort surface composes (each piece is unit-tested elsewhere; this
-// pins them working together through a realistic pipeline). The example is also
-// compiled for arm64 by the `examples-*` CI jobs.
 func TestExampleIterPipeline(t *testing.T) {
 	p, err := filepath.Abs("../../../examples/iter_pipeline.fern")
 	if err != nil {
@@ -33,7 +26,6 @@ func TestExampleIterPipeline(t *testing.T) {
 	}
 }
 
-// TestExampleIterPipelineArm64 is the arm64 leg (CI-gated; qemu).
 func TestExampleIterPipelineArm64(t *testing.T) {
 	p, err := filepath.Abs("../../../examples/iter_pipeline.fern")
 	if err != nil {

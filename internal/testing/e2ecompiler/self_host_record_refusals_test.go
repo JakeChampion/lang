@@ -9,17 +9,6 @@ import (
 	"testing"
 )
 
-// recordRefusalsDriver hands each assembler a record stream by hand. A
-// branch record to a label id nothing defines, and a marker byte the arm64
-// assembler has no record for, must be refused rather than assembled; the
-// well-formed twin of each must assemble clean. A named record carrying an
-// adrp or its :lo12: add must queue the page fixup the text arm queues. Each
-// x86 record encoder of the frame, the stack and the memory forms must
-// assemble to the bytes its text assembles to, a named record must be the
-// call or rip-relative address its text assembles to, and a frame's .cfi_*
-// records must render the unwind image their directives render, on both
-// targets; the arm64 sxtw record must be its text's word and refuse the
-// operands sxtw does not take.
 const recordRefusalsDriver = `import "./x86_native"; import "./arm64_native"; import "./util";
 function first_diff(a: i32[], b: i32[]): i32 {
     let n: i32 = a.len();
@@ -254,14 +243,12 @@ func TestSelfHostRecordRefusals(t *testing.T) {
 		if m == nil {
 			t.Fatalf("no %q line in driver output:\n%s", name, out)
 		}
-		// A CIE and one FDE with its rules: an empty image would compare
-		// equal and prove nothing.
 		if n, _ := strconv.Atoi(string(m[1])); n < 40 {
 			t.Errorf("%s renders only %d bytes of .eh_frame:\n%s", name, n, out)
 		}
 	}
 	for _, want := range []string{
-		"\nx86_named -1 0 22\n", // e8 rel32, 48 8d 3d rel32, 48 63 c0, c3, e8 rel32, c3
+		"\nx86_named -1 0 22\n",
 		"\nx86_named_missing 1\n",
 		"\nx86_named_undefined 0 1\n",
 		"\nx86_cfi -1 -1 0\n",
@@ -288,15 +275,15 @@ func TestSelfHostRecordRefusals(t *testing.T) {
 		"\nx86_mov_rsp_base -1 0\n",
 		"\nx86_mov_r13_base -1 0\n",
 		"\nx86_alu_rsp -1 0\n",
-		"\nx86_run -1 0 7\n",   // 41 54, 48 89 e5, 41 5c
-		"\nx86_run_tail 0 5\n", // 41 54, 48 89 e5: the run closed by the end of the source
+		"\nx86_run -1 0 7\n",
+		"\nx86_run_tail 0 5\n",
 		"\nx86_undefined_unknown 1\n",
 		"\n  branch to a label id nothing defines\n",
 		"\nx86_defined_unknown 0\n",
-		"\nx86_defined_code 2\n", // jmp to the next byte is EB 00
+		"\nx86_defined_code 2\n",
 		"\narm64_sxtw -1 0 4\n",
 		"\narm64_sxtw_bad -1 -1 -1\n",
-		"\narm64_mark3_unknown 2\n", // the text line, and the word it left unread
+		"\narm64_mark3_unknown 2\n",
 		"\narm64_mark3_code 0\n",
 		"\narm64_mark1_unknown 0\n",
 		"\narm64_mark1_code 4\n",
@@ -305,7 +292,7 @@ func TestSelfHostRecordRefusals(t *testing.T) {
 		"\narm64_named_fixups 2\n",
 		"\narm64_named_fixups_text 2\n",
 		"\narm64_pair_mode2 -1\n",
-		"\narm64_pair_mode3 2847888371\n", // stp x19, x20, [sp, #-16]! is 0xa9bf53f3
+		"\narm64_pair_mode3 2847888371\n",
 		"\narm64_mov_w_sp -1\n",
 		"\narm64_mov_sp_w -1\n",
 	} {

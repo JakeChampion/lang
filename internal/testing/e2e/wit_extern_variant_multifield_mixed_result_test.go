@@ -12,22 +12,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternVariantMultiFieldMixedResultCustomProvider is the *general* multi-field
-// `variant` *result* gate (docs/WIT-BRING-YOUR-OWN.md): a WIT variant whose cases
-// carry more than one mixed-width / float payload — `variant ev { move(tuple<s32,
-// s64>), spin(tuple<f32, f64>), stop }` — lifted into a Fern enum `Ev { Move(i32,
-// i64), Spin(f32, f64), Stop }`.
-//
-// The canonical join is returned indirectly in the variant *memory* layout: a
-// 1-byte discriminant, then the payload 8-aligned (a 64-bit field is present), so
-// field0 @ offset 8 and field1 @ offset 16. The result wrapper copies each matched
-// arm's fields from those canonical offsets into the Fern box by field width (i32
-// for the 4-byte fields, i64 for the 8-byte ones), the float bits surviving the
-// integer move (appendVariantResultStoreMultiField + ir's per-arm FieldAreaOffsets).
-//
-// `classify: func(n: s32) -> ev`: n<10 → stop, n<100 → move(5, 10), else →
-// spin(2.0, 4.0). The Fern `match` recovers each arm's fields and checks them, so a
-// wrong width / offset / coercion fails.
 func TestExternVariantMultiFieldMixedResultCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -54,9 +38,6 @@ func TestExternVariantMultiFieldMixedResultCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// classify returns the variant indirectly in the canonical memory layout: a
-	// 24-byte area (disc:u8 @0, field0 @8, field1 @16) via cabi_realloc, 8-aligned
-	// because a 64-bit field is present. move=0/spin=1/stop=2.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (global $h (mut i32) (i32.const 1024))

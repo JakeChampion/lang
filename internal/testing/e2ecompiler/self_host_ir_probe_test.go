@@ -12,8 +12,8 @@ import (
 type irProbeCase struct {
 	name        string
 	src         string
-	wantVerdict string   // a line the report must contain
-	wantLines   []string // per-function lines the report must contain
+	wantVerdict string
+	wantLines   []string
 }
 
 func irProbeCases() []irProbeCase {
@@ -25,40 +25,30 @@ func irProbeCases() []irProbeCase {
 			wantLines:   []string{"add: ir", "main: ir"},
 		},
 		{
-			// The checks refuse a call to nothing before anything lowers, so
-			// the report carries the diagnostic and no rows.
 			name:        "unknown-call-fails-the-checks",
 			src:         "function main(): i32 { return mystery(3); }",
 			wantVerdict: "module: refused",
 			wantLines:   []string{"mystery"},
 		},
 		{
-			// An instance bound to a view would retain a view it was lent
-			// (TestSelfHostStrictIRNamesBailReason's template-bound-to-a-view,
-			// which the CLI fails with exit 3); the probe names the instance and
-			// the reason and still answers.
 			name:        "typed-refusal-names-its-reason",
 			src:         viewTemplateSrc,
 			wantVerdict: "module: refused",
 			wantLines:   []string{"main: ir", "first$str: refused: a view is lent, never retained"},
 		},
 		{
-			// A MAIN-LESS module is produced: the entry's `_start` exits 0 when
-			// there is no main (TestSelfHostNoMainModuleIRX86_64).
 			name:        "no-main-is-ir",
 			src:         "function helper(): i32 { return 1; }",
 			wantVerdict: "module: IR",
 			wantLines:   []string{"helper: ir"},
 		},
 		{
-			// Regression guard: break/continue in a for-x-in-array body lowers.
 			name:        "break-continue-array-for-lowers",
 			src:         "function main(): i32 {\n let acc: i32 = 0;\n let xs: i32[] = [1, 2, 3, 4, 5];\n for x in xs { if (x == 2) { continue; } if (x == 4) { break; } acc = acc + x; }\n return acc;\n}",
 			wantVerdict: "module: IR",
 			wantLines:   []string{"main: ir"},
 		},
 		{
-			// Method receivers lower; the report keys them by the dispatch label.
 			name:        "method-receiver-lowers",
 			src:         "struct P { x: i32 }\nfunction (p: P) get(): i32 { return p.x; }\nfunction main(): i32 { let p = P { x: 7 }; return p.get(); }",
 			wantVerdict: "module: IR",
@@ -79,18 +69,9 @@ func irProbeCases() []irProbeCase {
 	}
 }
 
-// TestSelfHostIREligibilityProbe exercises the asm_ir_run driver's `-ir-probe`
-// flag, which prints the typed lowering's verdict (semlower.verdict_text)
-// instead of emitting asm: `<name>: ir` for each declaration it produces,
-// `<name>: refused: <why>` for each it refuses, and last the module's line.
-// The cases pin a module produced whole, a refusal with its reason, a program
-// the checks refuse (its diagnostic in place of the rows), a main-less module,
-// and a receiver method keyed by its dispatch label.
 func TestSelfHostIREligibilityProbe(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	// The probe driver = asm_ir_run.fern (writeSelfHostAsmProject copies its
-	// ./-imports; std/io resolves from the real stdlib root).
 	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "airun")
 
@@ -127,19 +108,9 @@ func TestSelfHostIREligibilityProbe(t *testing.T) {
 	}
 }
 
-// TestSelfHostIRPipelineProbe exercises the asm_load_run driver's `-ir-probe`
-// flag — the pipeline-level companion to TestSelfHostIREligibilityProbe. Where
-// the asm_ir_run probe sees a single parsed module, this loader-driven probe
-// gives the verdict for the WHOLE program after its `import "std/…"` modules
-// are resolved from disk and flattened in. The cases pin: a self-contained
-// module reports per declaration and a verdict, `-decide` agrees with it both
-// ways, and a stdlib-importing program's report includes the mangled stdlib
-// functions (proving the whole loaded program is probed, not just the entry
-// module).
 func TestSelfHostIRPipelineProbe(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	// asm_load_run pulls in flatten + checker on top of the core emitter set.
 	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "alr")
 	stdlibRoot, err := filepath.Abs("../../stdlib")
@@ -147,8 +118,6 @@ func TestSelfHostIRPipelineProbe(t *testing.T) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	// probe writes prog to a temp entry file and runs `<driver> <entry> [root]
-	// -ir-probe`, returning the report. root="" omits the stdlib root.
 	probe := func(t *testing.T, prog, root string) string {
 		t.Helper()
 		entry := filepath.Join(dir, "probe_entry.fern")
@@ -158,10 +127,6 @@ func TestSelfHostIRPipelineProbe(t *testing.T) {
 		args := []string{entry}
 		if root != "" {
 			args = append(args, root)
-			// With a stdlib root the loader treeshakes by default (added later),
-			// which would prune the imported module's functions this probe asserts
-			// on (it verifies the loader pulls the whole flattened program into the
-			// report, not just the entry module). Opt out so they remain visible.
 			args = append(args, "-no-treeshake")
 		}
 		args = append(args, "-ir-probe")
@@ -187,7 +152,6 @@ func TestSelfHostIRPipelineProbe(t *testing.T) {
 		}
 	})
 
-	// decide runs `-decide` on prog, which prints only the module verdict.
 	decide := func(t *testing.T, prog string) string {
 		t.Helper()
 		entry := filepath.Join(dir, "decide_entry.fern")
@@ -216,9 +180,6 @@ func TestSelfHostIRPipelineProbe(t *testing.T) {
 	})
 
 	t.Run("stdlib-loaded-whole-program", func(t *testing.T) {
-		// Importing a stdlib module pulls its (mangled) functions into the
-		// loaded program; the report must list them, proving the probe sees the
-		// whole flattened program, not just the entry module.
 		rep := probe(t, "import \"std/array\";\nfunction main(): i32 { let xs: i32[] = [1, 2, 3]; return xs.len(); }", stdlibRoot)
 		if !strings.Contains(rep, "module:") {
 			t.Errorf("report missing verdict line\n--- report ---\n%s", rep)
@@ -229,9 +190,6 @@ func TestSelfHostIRPipelineProbe(t *testing.T) {
 	})
 }
 
-// TestSelfHostPathProbePrintsRefused is the path probe's own refusal: most
-// probe assertions want "ir", so this is the one that reads the other verdict,
-// for a module the typed lowering refuses, beside one it produces.
 func TestSelfHostPathProbePrintsRefused(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -250,8 +208,6 @@ func TestSelfHostPathProbePrintsRefused(t *testing.T) {
 	}
 }
 
-// The boolean query must agree with the detailed report after each target's
-// normalisation, including refusals, generic instances and bodyless imports.
 func TestSelfHostVerdictBoolean(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -289,13 +245,9 @@ function main(): i32 {
 	}
 }
 
-// viewTemplateSrc is a module the typed lowering refuses: first's instance at
-// `str` would keep, in an array, a view it was only lent.
 const viewTemplateSrc = "pub function first[T](f: () => T): T {\n let xs: T[] = [f()];\n return xs[0];\n}\n" +
 	"function main(): i32 {\n let b: string = \"abcdefgh\";\n print(first((): str => slice_unchecked(b, 2, 5)));\n return 0;\n}\n"
 
-// firstNLines returns the first n newline-delimited lines of s (for compact
-// failure output on a large report).
 func firstNLines(s string, n int) string {
 	lines := strings.SplitN(s, "\n", n+1)
 	if len(lines) > n {

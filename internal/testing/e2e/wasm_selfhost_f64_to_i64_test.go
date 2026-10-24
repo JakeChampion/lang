@@ -7,16 +7,6 @@ import (
 	"testing"
 )
 
-// TestWasmSelfHostF64ToI64 guards the f64→i64 cast (`x as i64` where x is f64)
-// on the self-host wasm IR path. TestWasm*-named so test-e2e-wasm runs it under
-// wasmtime in CI (TestSelfHostWasmRun is skipped there for lack of wasmtime).
-//
-// The bug it guards: `as_i64` always emitted op_int_extend (i32→i64), so an
-// f64 operand had its bit pattern mis-extended as if it were an i32 — and on
-// wasm the i32→i64 path fed an f64 to i64.extend_i32_s, an invalid module
-// (wasmtime exits 1). Fixed by a new op_f64_to_i64 (i64.trunc_f64_s on wasm;
-// the same 64-bit-dest cvttsd2si / fcvtzs the register backends already use
-// for f64_to_i32), selected when the cast operand is f64.
 func TestWasmSelfHostF64ToI64(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wasm f64-to-i64 e2e")
@@ -32,14 +22,10 @@ func TestWasmSelfHostF64ToI64(t *testing.T) {
 		source string
 		stdout string
 	}{
-		// Via a typed local, and directly on a literal — both > 2^32 so an i32
-		// truncation would print the wrong value.
 		{"via-local", "function main(): i32 { let x: f64 = 5000000000.0; let r: i64 = x as i64; print_i64(r); return 0; }", "5000000000"},
 		{"direct-print", "function main(): i32 { print_i64(9000000000.0 as i64); return 0; }", "9000000000"},
-		// Truncation toward zero (3.9 → 3) and a negative value.
 		{"truncates", "function main(): i32 { let x: f64 = 3.9; print_i64(x as i64); return 0; }", "3"},
 		{"negative", "function main(): i32 { let x: f64 = -4000000000.0; print_i64(x as i64); return 0; }", "-4000000000"},
-		// Result of an f64 expression cast to i64.
 		{"expr", "function main(): i32 { let a: f64 = 2500000000.0; print_i64((a * 2.0) as i64); return 0; }", "5000000000"},
 	}
 

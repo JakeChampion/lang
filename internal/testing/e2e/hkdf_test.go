@@ -2,11 +2,6 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/crypto's HKDF-SHA256 (RFC 5869) across
-// backends. Checks Test Case 1 (13-byte salt, 10-byte info, L=42), the
-// extract PRK, and Test Case 3 (zero-length salt/info). Returns 42 iff
-// every vector matches. Each leg skips itself when its toolchain is
-// absent.
 const hkdfProg = `
 import "std/crypto" as crypto;
 import "std/hex" as hex;

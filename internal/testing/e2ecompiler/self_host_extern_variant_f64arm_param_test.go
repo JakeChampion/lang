@@ -11,17 +11,6 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestSelfHostExternVariantF64ArmParamCustomProvider extends the self-host
-// mixed-width variant port to a float arm: `variant ev { i(s32), d(f64) }`. The
-// canonical join of a 32-bit and a 64-bit arm is i64, and an f64 arm coerces to it
-// by reinterpret (its bits) — so the self-host wrapper reads the box's f64 payload
-// with i64.load (the value-preserving bit-load), the same disc-branching i64-join
-// path the i64 arm uses. (The self-host has no distinct f32, so f32 arms — which
-// have a 4-vs-8-byte impedance against the canonical 32-bit join — stay deferred,
-// as does a uniform-f64 variant whose join is f64 rather than the i64 container.)
-//
-// `take: func(e: ev) -> s32`: i(x) -> x, d(y) -> round(y). The self-host passes
-// I(7) (-> 7) and D(2.5) (-> 2, only if the f64 bits survive the i64 join).
 func TestSelfHostExternVariantF64ArmParamCustomProvider(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -49,8 +38,6 @@ func TestSelfHostExternVariantF64ArmParamCustomProvider(t *testing.T) {
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export sink; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
 	}
-	// take receives the variant flattened to (disc:i32, payload:i64). The d arm's
-	// f64 occupies the i64 join as its raw bits, recovered via f64.reinterpret_i64.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (func (export "local:test/sink@0.1.0#take") (param $disc i32) (param $p i64) (result i32)

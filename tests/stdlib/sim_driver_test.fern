@@ -3,18 +3,6 @@ import "std/async";
 import "std/sim";
 import "std/time";
 
-// tests/stdlib/sim_driver_test.fern — deterministic simulation testing
-// (docs/DST-PLATFORM-BRIEF.md slice 1): the std/sim virtual-clock Driver
-// driving the std/async combinators through gather_on / race_on /
-// with_deadline_on. Every assertion here is EXACT — deadlines are virtual
-// time, not sleeps, and tie order is a pure function of the seed — and the
-// suite runs identically on every backend, including the interpreter
-// (where fd-backed futures never resolve on the real driver).
-//
-// Run:  fern -interp tests/stdlib/sim_driver_test.fern
-
-// with_deadline: a winner under the virtual deadline is Some, a straggler
-// past it is None, and the clock lands exactly on the deadline.
 function test_deadline_some_and_none(): test.TestOutcome {
   let d: sim.Sim = sim.new(7);
   let fs: async.Future[string][] = [
@@ -41,8 +29,6 @@ function test_deadline_some_and_none(): test.TestOutcome {
   return test.assert_eq(d.now_ns(), 25000000 as i64);
 }
 
-// with_deadline with every future in time: all Some, and the clock stops
-// at the LAST resolution, not the deadline.
 function test_deadline_all_in_time(): test.TestOutcome {
   let d: sim.Sim = sim.new(7);
   let fs: async.Future[i32][] = [
@@ -73,8 +59,6 @@ function test_deadline_all_in_time(): test.TestOutcome {
   return test.assert_eq(d.now_ns(), 20000000 as i64);
 }
 
-// __tie_winner runs a race between two futures ready at the SAME virtual
-// instant; the winner is the seeded PRNG's pick.
 function __tie_winner(seed: i64): i32 {
   let d: sim.Sim = sim.new(seed);
   let fs: async.Future[i32][] = [
@@ -91,13 +75,6 @@ function __tie_winner(seed: i64): i32 {
   return w;
 }
 
-// A race tie is broken deterministically: same seed, same winner, every
-// run — and different seeds do exercise both orders (pinned picks).
-//
-// The pinned picks were re-recorded when sim's generator moved from
-// Park-Miller + a biased modulo to std/rand's PCG32 + Lemire rejection
-// (#6193): the two seeds swapped sides. Same-seed reproducibility — the
-// first check, and the contract sim exists to provide — is unchanged.
 function test_race_tie_seeded(): test.TestOutcome {
   if (__tie_winner(1) != __tie_winner(1)) {
     return test.fail("same seed raced to different winners");
@@ -111,8 +88,6 @@ function test_race_tie_seeded(): test.TestOutcome {
   return test.pass();
 }
 
-// Seed sweep — the property-test seed: every seed yields a valid,
-// self-consistent tie race (winner in range, value matching the winner).
 function test_race_tie_seed_sweep(): test.TestOutcome {
   let s: i64 = 1;
   while (s <= 20) {
@@ -125,8 +100,6 @@ function test_race_tie_seed_sweep(): test.TestOutcome {
   return test.pass();
 }
 
-// gather over out-of-order readiness returns input-order results, and the
-// clock lands on the LAST future's ready time.
 function test_gather_out_of_order(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let fs: async.Future[i32][] = [
@@ -141,8 +114,6 @@ function test_gather_out_of_order(): test.TestOutcome {
   return test.assert_eq(d.now_ns(), 30000000 as i64);
 }
 
-// A chained future re-suspends N times (the __fetch_drain shape) and
-// resolves at at_ns + N * step_ns of virtual time.
 function test_chain_resolves_after_resuspensions(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let fs: async.Future[i32][] = [sim.future_chain(d, 10000000, 5000000, 3, 9)];
@@ -153,8 +124,6 @@ function test_chain_resolves_after_resuspensions(): test.TestOutcome {
   return test.assert_eq(d.now_ns(), 25000000 as i64);
 }
 
-// The chain's suspension structure, drained by hand: N+1 Pendings whose
-// tokens (ready-at ms) step by step_ns, then Ready.
 function test_chain_suspension_count(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let f: async.Future[i32] = sim.future_chain(d, 10000000, 5000000, 3, 9);
@@ -186,8 +155,6 @@ function test_chain_suspension_count(): test.TestOutcome {
   return test.fail("chain never resolved");
 }
 
-// Virtual time never moves outside poll_ready: constructing futures and
-// timers leaves the clock at 0.
 function test_time_only_advances_in_poll(): test.TestOutcome {
   let d: sim.Sim = sim.new(3);
   let f: async.Future[i32] = sim.future_at(d, 90000000, 1);

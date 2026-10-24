@@ -1,12 +1,12 @@
-// A loop keeps more values live than there are callee-saved registers,
-// across array appends that grow the array and across a call that only some
-// iterations make. On arm64 such values can sit in caller registers that the
-// emitter saves around those calls (docs/SELFHOST-SSA-BACKEND.md, "Cold
-// calls"). Every value must come through both unchanged.
+
+
+
+
+
 import "std/i32";
 
-// scramble uses enough temporaries to write the caller registers. It
-// recurses so that it stays a call.
+
+
 function scramble(x: i32, depth: i32): i32 {
   if (depth > 0) {
     return scramble(x + depth, depth - 1) ^ x;

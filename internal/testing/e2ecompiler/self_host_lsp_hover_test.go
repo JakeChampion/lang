@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// `fern -lsp`'s hover and go-to-definition (compiler/lspquery.fern), with the
-// answers written out as data: a definition lands on the declared name, a
-// definition in the stdlib names the stdlib file, and a constant, a lambda's
-// parameter and an enum-qualified variant have a hover.
-
 type lspHover struct {
 	Contents struct {
 		Kind  string `json:"kind"`
@@ -26,12 +21,6 @@ type lspLocation struct {
 	Range lspRange `json:"range"`
 }
 
-// lspAsk is one hover or definition request and its expected answer. For a
-// hover, `want` is the code shown, `prose` the doc comment shown under it, and
-// `at` the range of the name hovered; for
-// a definition, `file` is the file the location names — relative to the
-// tree, or absolute — and `at` its range. An empty `want` (hover) or `file`
-// (definition) expects null.
 type lspAsk struct {
 	name   string
 	doc    string
@@ -60,8 +49,6 @@ func lspPosition(id int, method, uri string, line, char int) lspMsg {
 	return lspMsg{"id": id, "method": method, "params": lspMsg{"textDocument": lspMsg{"uri": uri}, "position": lspMsg{"line": line, "character": char}}}
 }
 
-// askLSP opens `open` (names in dir, read from disk) in one server, sends
-// every request, and holds each answer to its expectation.
 func askLSP(t *testing.T, s lspServers, dir string, open []string, asks []lspAsk) {
 	t.Helper()
 	var msgs []lspMsg
@@ -155,10 +142,6 @@ func checkDefinition(t *testing.T, dir string, a lspAsk, result json.RawMessage)
 	}
 }
 
-// TestSelfHostLSPHoverX86_64 holds hover and definition on one document:
-// locals, functions, structs, fields, methods and variants, non-ASCII before
-// the name, the built-in Option, a generic function, a constant, scoped
-// bindings and a document position no name covers.
 func TestSelfHostLSPHoverX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	dir := t.TempDir()
@@ -210,8 +193,6 @@ func TestSelfHostLSPHoverX86_64(t *testing.T) {
 			"  return f(1);\n" +
 			"}\n",
 	})
-	// The x read at the end of nonascii.fern's line 1, after one 2-byte, two
-	// 3-byte and one 4-byte character: 1 + 1 + 1 + 2 UTF-16 units.
 	naLines := strings.Split(nonASCII, "\n")
 	naUse := utf16Column(naLines, 2, strings.LastIndex(naLines[1], "x")+1)
 	naDecl := utf16Column(naLines, 2, strings.Index(naLines[1], "x:")+1)
@@ -246,26 +227,20 @@ func TestSelfHostLSPHoverX86_64(t *testing.T) {
 		hoverAsk("match-arm-binding", "scoped.fern", 3, 26, "(var) r: f64", rng(3, 26, 27)),
 		hoverAsk("match-arm-other-binding", "scoped.fern", 4, 27, "(var) w: i32", rng(4, 27, 28)),
 		hoverAsk("for-binding", "scoped.fern", 11, 21, "(var) word: string", rng(11, 20, 24)),
-		// Nor for a lambda's parameter, or a variant qualified by its enum.
 		hoverAsk("lambda-parameter", "scoped.fern", 13, 27, "(parameter) k: i32", rng(13, 27, 28)),
 		hoverAsk("captured-local", "scoped.fern", 13, 32, "(var) total: i32", rng(13, 31, 36)),
 		hoverAsk("enum-qualified-variant", "scoped.fern", 14, 24, "(variant of Shape) Circle(f64)", rng(14, 23, 29)),
 		hoverAsk("closure-local", "scoped.fern", 15, 9, "(var) f: (i32) => i32", rng(15, 9, 10)),
-		// A declaration's doc comment shows under its signature.
 		{name: "documented-function", doc: "doc.fern", line: 9, char: 16, want: "function add(i32, i32): i32", prose: "add sums two numbers.\nIt never overflows silently.", at: rng(9, 15, 18)},
 		{name: "documented-struct", doc: "doc.fern", line: 10, char: 10, want: "struct Point { x: i32, y: i32 }", prose: "Point is a spot on the plane.", at: rng(10, 9, 14)},
 		hoverAsk("undocumented-function", "doc.fern", 11, 17, "function main2(): i32", rng(11, 15, 20)),
-		// A parameter is declared on its function's line; the comment above it
-		// documents the function, not the parameter.
 		hoverAsk("parameter-of-documented-function", "doc.fern", 5, 43, "(parameter) a: i32", rng(5, 43, 44)),
 
-		// A definition lands on the declared name, not on `let`.
 		defAsk("local", "local.fern", 2, 9, "local.fern", rng(1, 6, 7)),
 		defAsk("parameter", "param.fern", 1, 9, "param.fern", rng(0, 13, 14)),
 		defAsk("function-call", "call.fern", 1, 31, "call.fern", rng(0, 9, 12)),
 		defAsk("struct-literal", "literal.fern", 1, 34, "literal.fern", rng(0, 7, 12)),
 		defAsk("annotation", "point.fern", 2, 9, "point.fern", rng(0, 7, 12)),
-		// On the field, not its struct.
 		defAsk("field", "point.fern", 3, 11, "point.fern", rng(0, 15, 16)),
 		defAsk("method", "method.fern", 4, 13, "method.fern", rng(1, 20, 23)),
 		defAsk("receiver", "method.fern", 1, 40, "method.fern", rng(1, 10, 11)),
@@ -275,7 +250,6 @@ func TestSelfHostLSPHoverX86_64(t *testing.T) {
 		defAsk("unknown-name", "unknown.fern", 0, 32, "", lspRange{}),
 		defAsk("local-shadows-parameter", "shadow.fern", 2, 9, "shadow.fern", rng(1, 6, 7)),
 		defAsk("non-ascii-before", "nonascii.fern", 1, naUse, "nonascii.fern", rng(1, naDecl, naDecl+1)),
-		// Some has no declaration to land on.
 		defAsk("option-variant", "builtin.fern", 3, 24, "", lspRange{}),
 		defAsk("generic-function", "builtin.fern", 4, 10, "builtin.fern", rng(1, 9, 11)),
 		defAsk("constant", "builtin.fern", 4, 17, "builtin.fern", rng(0, 6, 11)),
@@ -288,8 +262,6 @@ func TestSelfHostLSPHoverX86_64(t *testing.T) {
 		"variant.fern", "number.fern", "blank.fern", "shadow.fern", "unknown.fern", "nonascii.fern", "builtin.fern", "scoped.fern", "doc.fern"}
 	askLSP(t, s, dir, open, asks)
 
-	// A document the server does not have open, and a request without a
-	// position, are answered null rather than with an error.
 	t.Run("not-open", func(t *testing.T) {
 		frames, _ := runLSP(t, s.selfHost(), session(
 			lspPosition(2, "textDocument/hover", fileURI(filepath.Join(dir, "local.fern")), 2, 9),
@@ -305,15 +277,10 @@ func TestSelfHostLSPHoverX86_64(t *testing.T) {
 	})
 }
 
-// TestSelfHostLSPHoverWorkspaceX86_64 is hover and definition across
-// modules: a name declared in another module is described as its
-// module declares it and located in that module's file, and a position is
-// only ever searched for in the document the request names.
 func TestSelfHostLSPHoverWorkspaceX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 
 	t.Run("cross-module", func(t *testing.T) {
-		// A space in the directory is a %20 in the location's URI.
 		dir := filepath.Join(t.TempDir(), "a project")
 		writeTree(t, dir, map[string]string{
 			"util.fern": "pub struct Point { x: i32, y: i32 }\npub function foo(): i32 { return 42; }\n",
@@ -322,15 +289,12 @@ func TestSelfHostLSPHoverWorkspaceX86_64(t *testing.T) {
 				"function main(): i32 { let p: util.Point = origin(); return p.x + util.foo(); }\n",
 		})
 		askLSP(t, s, dir, []string{"main.fern"}, []lspAsk{
-			// CrossModuleStructDefinition: the annotation `util.Point`, the
-			// cursor on `Point`, and on its qualifier.
 			defAsk("annotation-definition", "main.fern", 2, 35, "util.fern", rng(0, 11, 16)),
 			defAsk("qualifier-definition", "main.fern", 2, 31, "util.fern", rng(0, 11, 16)),
 			hoverAsk("annotation-hover", "main.fern", 2, 35, "struct util__Point { x: i32, y: i32 }", rng(2, 30, 40)),
 			hoverAsk("return-annotation", "main.fern", 1, 24, "struct util__Point { x: i32, y: i32 }", rng(1, 19, 29)),
 			hoverAsk("qualified-literal", "main.fern", 1, 47, "struct util__Point { x: i32, y: i32 }", rng(1, 39, 49)),
 			defAsk("qualified-literal", "main.fern", 1, 47, "util.fern", rng(0, 11, 16)),
-			// CrossModuleCallJump.
 			hoverAsk("qualified-call", "main.fern", 2, 72, "(from util) function foo(): i32", rng(2, 66, 74)),
 			defAsk("qualified-call", "main.fern", 2, 72, "util.fern", rng(1, 13, 16)),
 			hoverAsk("field-of-imported-struct", "main.fern", 2, 62, "(field) x: i32", rng(2, 62, 63)),
@@ -346,8 +310,6 @@ func TestSelfHostLSPHoverWorkspaceX86_64(t *testing.T) {
 		}
 	})
 
-	// collidingVariantWorkspace's modules: a and b each declare `Kind { Text }`
-	// and use `Text` at the same line and column, and main imports both.
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{
 		"a.fern": "pub enum Kind { Text }\npub function ka(): Kind { return Text; }\n",
@@ -355,16 +317,12 @@ func TestSelfHostLSPHoverWorkspaceX86_64(t *testing.T) {
 		"main.fern": "import \"./a\";\n" +
 			"import \"./b\";\n" +
 			"function main(): i32 { let x: a.Kind = a.ka(); let y: b.Kind = b.kb(); return 0; }\n",
-		// own.fern declares a Kind of its own beside a's, so a bare `Text` is
-		// its own variant and `a.Text` is a's.
 		"own.fern": "import \"./a\";\n" +
 			"enum Kind { Text, Other }\n" +
 			"function main(): i32 {\n  let k: Kind = Text;\n  let x: a.Kind = a.Text;\n  return 0;\n}\n",
 	})
 	t.Run("colliding-variants", func(t *testing.T) {
 		askLSP(t, s, dir, []string{"main.fern", "a.fern", "b.fern", "own.fern"}, []lspAsk{
-			// VariantHoverNamesTheStampedEnum / VariantDefinitionPicksTheStampedEnum:
-			// each file's `Text` is its own module's variant.
 			hoverAsk("a-variant", "a.fern", 1, 33, "(variant of Kind) Text", rng(1, 33, 37)),
 			defAsk("a-variant", "a.fern", 1, 33, "a.fern", rng(0, 16, 20)),
 			hoverAsk("b-variant", "b.fern", 1, 33, "(variant of Kind) Text", rng(1, 33, 37)),
@@ -375,9 +333,6 @@ func TestSelfHostLSPHoverWorkspaceX86_64(t *testing.T) {
 			defAsk("imported-variant", "own.fern", 4, 21, "a.fern", rng(0, 16, 20)),
 			hoverAsk("imported-call", "main.fern", 2, 41, "(from a) function ka(): a__Kind", rng(2, 39, 43)),
 			defAsk("imported-call", "main.fern", 2, 41, "a.fern", rng(1, 13, 15)),
-			// PositionSearchDoesNotCrossFiles: main.fern's import line is
-			// shorter than a's `return Text;` line, and its `Kind` annotation
-			// position is a's and b's, not its own.
 			hoverAsk("no-search-in-siblings", "main.fern", 1, 33, "", lspRange{}),
 			defAsk("no-search-in-siblings", "main.fern", 1, 33, "", lspRange{}),
 			hoverAsk("no-type-in-siblings", "main.fern", 1, 19, "", lspRange{}),
@@ -386,16 +341,11 @@ func TestSelfHostLSPHoverWorkspaceX86_64(t *testing.T) {
 	})
 }
 
-// TestSelfHostLSPHoverLiterateAndStdlibX86_64 places answers in a literate
-// document, whose positions are its tangled module's moved back onto it, and
-// in the stdlib, whose definitions name the stdlib file.
 func TestSelfHostLSPHoverLiterateAndStdlibX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{
-		// litFeatureDoc: lines 3 and 4 tangle to lines 1 and 2.
-		"t.fern.md": "```fern\n<<*>>=\nfunction greeting(): i32 { return 7; }\nfunction main(): i32 { return greeting(); }\n```\n",
-		// A chunk referenced two columns in, so its columns move.
+		"t.fern.md":      "```fern\n<<*>>=\nfunction greeting(): i32 { return 7; }\nfunction main(): i32 { return greeting(); }\n```\n",
 		"chunks.fern.md": "# Doc\n\n```fern\n<<*>>=\nfunction helper(n: i32): i32 { return n + 1; }\nfunction main(): i32 {\n  <<body>>\n}\n```\n\nThe body.\n\n```fern\n<<body>>=\nlet v: i32 = helper(41);\nreturn v;\n```\n",
 		"array.fern":     "import \"std/array\";\nfunction main(): i32 {\n  let xs: i32[] = [1, 2];\n  let m: Option[i32] = xs.avg();\n  return xs.len();\n}\n",
 		"std.fern":       "import \"std/string\";\nfunction main(): i32 {\n  let s: string = \"abc\";\n  let r: string = string.repeat_char(1 as char, 2);\n  if (s.starts_with(\"a\")) {\n    return r.len();\n  }\n  return 0;\n}\n",
@@ -412,8 +362,6 @@ func TestSelfHostLSPHoverLiterateAndStdlibX86_64(t *testing.T) {
 		t.Fatalf("%s no longer declares %q", file, decl)
 		return lspRange{}
 	}
-	// docAbove is the comment run ending on the line above a declaration,
-	// each line's `//` and surrounding space trimmed: what a hover shows.
 	docAbove := func(file, decl string) string {
 		lines := strings.Split(string(mustRead(t, file)), "\n")
 		for i, l := range lines {
@@ -448,8 +396,6 @@ func TestSelfHostLSPHoverLiterateAndStdlibX86_64(t *testing.T) {
 		defAsk("stdlib-method", "std.fern", 4, 10, stringFern, declAt(stringFern, "pub function (s: string) starts_with(", "starts_with")),
 		documented(hoverAsk("stdlib-function", "std.fern", 3, 28, "(from string) function repeat_char(char, i32): string", rng(3, 18, 36)), stringFern, "pub function repeat_char("),
 		defAsk("stdlib-function", "std.fern", 3, 28, stringFern, declAt(stringFern, "pub function repeat_char(", "repeat_char")),
-		// std/array's pinned receiver `avg`, and the built-in `len`, which has
-		// no declaration.
 		documented(hoverAsk("array-method", "array.fern", 3, 27, "(method on Array) function avg(): Option[i32]", rng(3, 26, 29)), arrayFern, "pub function (arr: i32[]) avg("),
 		defAsk("array-method", "array.fern", 3, 27, arrayFern, declAt(arrayFern, "pub function (arr: i32[]) avg(", "avg")),
 		hoverAsk("array-len", "array.fern", 4, 13, "(method on Array) function len(): i32", rng(4, 12, 15)),

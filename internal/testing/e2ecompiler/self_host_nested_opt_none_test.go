@@ -2,23 +2,11 @@ package e2ecompiler
 
 import "testing"
 
-// --- A `Some(None)` payload keeps the binding's declared type (#7217) -------
-//
-//	let o: Option[Option[i32]] = Some(None);
-//
-// The `Some(inner)` arm binds the inner Option, so a nested `match (inner)`
-// must see an Option scrutinee, not the `Option[i32]` a bare `None` argument
-// would suggest. The neighbours pin the other payload shapes (nested Some,
-// nested Result, a `None` routed through a local, an unannotated binding, an
-// array payload that escapes, a string payload, a reassigned local).
-//
-// Every want was confirmed against BOTH oracles — bin/fern -interp and the
-// native x86-64 backend — and every row balances at live_bytes 0.
 type nestedOptNoneCase struct {
 	name      string
 	src       string
 	want      int
-	wantFrees int // when non-zero, assert an exact free count
+	wantFrees int
 }
 
 const nestedOptNoneMain = "\nfunction main(): i32 { let t: i32 = 0; let i: i32 = 0; " +
@@ -28,7 +16,6 @@ const nestedOptNoneMain = "\nfunction main(): i32 { let t: i32 = 0; let i: i32 =
 func nestedOptNoneCases() []nestedOptNoneCase {
 	return []nestedOptNoneCase{
 		{
-			// THE REPRO: a nested match on the `Some(None)` payload.
 			name: "nested_none",
 			src: `function round(i: i32): i32 {
     let o: Option[Option[i32]] = Some(None);
@@ -41,7 +28,6 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 			want: 19,
 		},
 		{
-			// The nested-Some neighbour.
 			name: "nested_some",
 			src: `function round(i: i32): i32 {
     let o: Option[Option[i32]] = Some(Some(i));
@@ -54,7 +40,6 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 			want: 63,
 		},
 		{
-			// A nested RESULT payload.
 			name: "nested_result",
 			src: `function round(i: i32): i32 {
     let o: Option[Result[i32, i32]] = Some(Ok(i));
@@ -67,7 +52,6 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 			want: 63,
 		},
 		{
-			// The same `None` routed through an annotated local.
 			name: "via_local",
 			src: `function round(i: i32): i32 {
     let inner0: Option[i32] = None;
@@ -81,9 +65,6 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 			want: 19,
 		},
 		{
-			// No annotation: the payload's type comes from the construction
-			// alone, which the checker accepts only while the payload goes
-			// unread.
 			name: "unannotated_none",
 			src: `function round(i: i32): i32 {
     let o = Some(None);
@@ -93,7 +74,6 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 			want: 72,
 		},
 		{
-			// The annotated single-level match.
 			name: "single_level",
 			src: `function round(i: i32): i32 {
     let o: Option[Option[i32]] = Some(None);
@@ -103,9 +83,6 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 			want: 72,
 		},
 		{
-			// A scalar-array payload that escapes the match into an outer
-			// local. Two boxes a round (the array and the Some), both freed:
-			// pinned exactly, so a dropped reclaim or an over-release shows.
 			name: "array_payload_escapes",
 			src: `function round(i: i32): i32 {
     let held: i32[] = [];
@@ -119,7 +96,6 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 			want: 77, wantFrees: 400,
 		},
 		{
-			// A STRING payload.
 			name: "nested_string",
 			src: `function round(i: i32): i32 {
     let o: Option[Option[string]] = Some(None);
@@ -132,7 +108,6 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 			want: 19,
 		},
 		{
-			// A REASSIGNED Option local.
 			name: "reassigned",
 			src: `function round(i: i32): i32 {
     let o: Option[Option[i32]] = Some(None);
@@ -148,8 +123,6 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 	}
 }
 
-// TestSelfHostNestedOptNoneX86_64 — a `Some(None)` payload keeps the binding's
-// declared Option type, so the nested `match` lowers, and every row balances.
 func TestSelfHostNestedOptNoneX86_64(t *testing.T) {
 	boxedProbes(t)
 	cli := newStrictCLI(t)
@@ -181,8 +154,6 @@ func TestSelfHostNestedOptNoneX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostNestedOptNoneWasmIR — the wasm sibling. Exit codes only: an
-// over-release moves no byte count on any backend.
 func TestSelfHostNestedOptNoneWasmIR(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range nestedOptNoneCases() {
@@ -194,7 +165,6 @@ func TestSelfHostNestedOptNoneWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostNestedOptNoneIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostNestedOptNoneIRArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)

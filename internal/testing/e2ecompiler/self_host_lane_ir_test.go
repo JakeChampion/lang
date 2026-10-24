@@ -9,17 +9,6 @@ import (
 	"testing"
 )
 
-// The lane ops (ir.lane_kind_names, docs/SIMD-GENERIC-KERNELS.md §6 slice
-// 4b) have no source construct yet, so the program is built from the IR
-// constructors and substituted into the lowered cache, as
-// self_host_byte_view_rc_test.go does. `main` computes with every op on
-// f64x2 and f32x4 values held in locals, reads lanes back with vextract and
-// exits with the number of the first check that is not the spec's answer, 0
-// when all hold. Check 33 spills lane values across a call, check 34
-// calls a lane function with no f64 value in it, and check 35 reads and
-// writes groups of array elements. Each target's emitter, allocator and encoder are what the
-// exit code proves: a wrong register class, slot size or instruction gives a
-// wrong lane, not a diagnostic.
 const laneIRDriver = `import "./ir";
 import "./irtables";
 import "./ircore";
@@ -265,16 +254,12 @@ func TestSelfHostLaneIR(t *testing.T) {
 	}
 }
 
-// laneMainText is the emitted text of main, from its label to the next
-// function's, for a failure report.
 func laneMainText(asm string) string {
 	i := strings.Index(asm, "\n__fn_main")
 	if i < 0 {
 		return asm
 	}
 	rest := asm[i+1:]
-	// main's own entries (__fn_main.r, __fn_main.k) stay; the next other
-	// function's label ends the text.
 	at := 8
 	for {
 		j := strings.Index(rest[at:], "\n__fn_")

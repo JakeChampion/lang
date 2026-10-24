@@ -1,9 +1,5 @@
 package e2e
 
-// cryptoVectorsProgram exercises std/crypto against standard SHA-256 and
-// HMAC-SHA256 known-answer vectors (NIST / RFC 2104). It returns 0 on success
-// or a small non-zero code identifying the failed vector. Used by the
-// interp / x86-64 / arm64 / wasm crypto e2e tests (issue #2681).
 const cryptoVectorsProgram = `
 import "std/crypto";
 import "std/string";

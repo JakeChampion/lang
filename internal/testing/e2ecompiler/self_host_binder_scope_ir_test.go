@@ -7,29 +7,10 @@ import (
 	"testing"
 )
 
-// binderScopeCases pin what a name is BOUND by, which is the question
-// astwalk.collect_bound_stmt answers for every capture analysis in the
-// compiler. Both cases were rejected outright before #6993 slice three, and
-// both are shapes the self-host's own sources do not contain — so the
-// fixpoint, which only proves the compiler reproduces itself, could not see
-// either.
-//
-// The oracle is the native interp rather than a hand-computed constant: these
-// are programs whose right answer is "whatever the reference implementation
-// says", and a differential states that directly.
 var binderScopeCases = []struct {
 	name string
 	src  string
 }{
-	// A lambda inside an `n @ Tag(x)` arm reading the @-binding. The whole-value
-	// binder is carried on the PATTERN, so collect_bound_stmt must report `n` as
-	// bound; otherwise the free-variable filter declines to treat it as an
-	// enclosing local and the lambda takes the no-capture lift with a bare `n` in
-	// its body —
-	//
-	//	FERN_STRICT_IR: __lam_0 (function value n not defined)
-	//
-	// The capture's TYPE must also resolve, from the scrutinee's enum.
 	{"at-binding-captured-by-a-lambda", `enum Box { Full(i32), Empty }
 
 function total(b: Box): i32 { match (b) { Full(v) => { return v; }, Empty => { return 0; } } return 0; }
@@ -46,14 +27,6 @@ function f(b: Box): i32 {
 }
 
 function main(): i32 { return f(Full(5)); }`},
-	// A tuple destructure binds its names comma-joined (`let (g, h)` arrives as
-	// the single name "g,h"), so a walk that does not split it reports neither
-	// `g` nor `h` as bound. asmcore's call gate carried its own binder walk that
-	// did not split, and rejected a valid program:
-	//
-	//	error[E001]: in fn 'main' at 6:10: call to undefined function 'g'
-	//
-	// It now shares astwalk's walk, which has split since #5173.
 	{"tuple-destructured-fn-values-are-bound", `function inc(n: i32): i32 { return n + 1; }
 function dbl(n: i32): i32 { return n * 2; }
 function pair(): ((i32) => i32, (i32) => i32) { return (inc, dbl); }
@@ -63,9 +36,6 @@ function main(): i32 {
 }`},
 }
 
-// TestSelfHostBinderScopeIRX86_64 runs them through the production x86-64 IR
-// path under strict IR, so a per-function bail fails rather than reaching the
-// right answer by another route.
 func TestSelfHostBinderScopeIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -95,9 +65,6 @@ func TestSelfHostBinderScopeIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostBinderScopeWasmIR is the wasm leg. The capture lift picks a
-// different trampoline shape there, and a funcref type is structural, so a
-// mis-typed capture traps instead of quietly reading the wrong slot.
 func TestSelfHostBinderScopeWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host binder-scope wasm IR e2e")
