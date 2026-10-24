@@ -227,7 +227,7 @@ var strBindStdlibCases = []struct {
 	want int
 }{
 	{"stdlib-drop-view", `base.drop(2)`, 0},
-	{"stdlib-pad-start-owned", `base.pad_start(200, " ")`, 0},
+	{"stdlib-pad-start-owned", `base.pad_start(200, ' ')`, 0},
 	{"stdlib-remove-prefix-view", `base.remove_prefix("abcd")`, 0},
 	// The identity path of the same helper, guarded: `drop(0)` returns base's own
 	// box, and base is read after. 99/97 without the pointer compare.
