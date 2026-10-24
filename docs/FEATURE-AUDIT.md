@@ -215,7 +215,7 @@ records their bugs in the audit log.
 | `std/array` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | reductions sum/max/min/product — `audit_std_numeric` + `self_host_audit_stdarray_test`; generic verbs `reverse`/`take`/`drop`/`concat`/`zip`/`flat_map`/`reduce` + Eq-bound `contains`/`index_of`/`distinct`/`count`; sorting lives in `core/cmp` |
 | `std/math` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | range/i32_max/i32_min — `audit_std_numeric` + `self_host_math_test` |
 | `std/format` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | self-host via the IR path (x86-64 + wasm): `format_bytes` (`TestSelfHostFormatBytesIR`), `format(fmt, args)` `{}`-substitution (`TestSelfHostFormatStringIR`), `format_duration_ms` (`TestSelfHostFormatDurationIR`), and the `{:fill|align|width.precision}` specs (`TestSelfHostFormatSpecIR`) — all oracle-checked against the interpreter; native via `audit_std_textfmt` + the `format_specs` fixture (with std/f64 `to_string_prec`) |
-| `std/csv` | ✅ | ✅ | ✅ | ✅ | | ✅ | parse_line/join/escape — `audit_std_textfmt`; self-host via the IR path (x86-64 + wasm): `csv_parse_line` (`TestSelfHostCsvParseLineIR`); `csv_escape`/`csv_join` reach `std/string`'s `index_of`, which the single-program IR drivers cannot load, so they are covered by the CLI-driven suites |
+| `std/csv` | ✅ | ✅ | ✅ | ✅ | | ✅ | parse_line/join/escape — `audit_std_textfmt`; self-host via the IR path (x86-64 + wasm): `csv.parse_line` (`TestSelfHostCsvParseLineIR`); `csv.escape`/`csv.join` reach `std/string`'s `index_of`, which the single-program IR drivers cannot load, so they are covered by the CLI-driven suites |
 | `std/log` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | leveled `Logger`/`LogEntry` (#2683) plain-text + JSON-lines `render` — native via `log_leveled` fixture (all four backends); self-host via the IR path (x86-64 + wasm): `TestSelfHostLogLeveledIR` — structs with i32/boolean/string fields, chained struct-returning receiver methods, the threshold-filter branch, byte-indexed JSON escaping (hardcoded expectations: `.to_string()` is a self-host builtin the importless interp can't resolve, cf. format_bytes) |
 | `std/io` | | | | | | ⬜ | |
 | `std/io_buffered` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | In-memory BytesWriter: byte writes, extraction and reset. into_string returns Option[string] after UTF-8 validation. Actual module coverage on bootstrap interp/x86/ARM/wasm/Darwin and primary compiler x86/ARM/wasm: TestSelfHostBytesWriterIR and the shared BytesWriterUTF8Program corpus. The prior copied BW fixture has been removed. |
@@ -1619,7 +1619,7 @@ remaining frontier.)
 
 A stdlib frontier re-sweep (after the core/iter combinator landings) found
 `string.repeat_char(…)` — a module-qualified free-FUNCTION call into `std/string`
-— routing the AST emitter, while `format.format` / `csv.csv_parse_line` (other
+— routing the AST emitter, while `format.format` / `csv.parse_line` (other
 cross-module free-function calls) lowered. Root cause: `std/string`'s basename
 import alias is `string`, which **collides with the `string` primitive type
 keyword**. The self-host lexer emits a KEYWORD token for `string`, so
@@ -2591,15 +2591,15 @@ exercises the `__alloc_u8` / `__memcpy` / `usize` scratch-buffer-written-
 backwards path (the high-mmap-address-safe pointer capture) end-to-end through
 the self-host IR — no AST fallback.
 
-### 2026-06-21 — std/csv: pure-Fern std/test migration coverage (`csv_escape` / `csv_join` / `csv_parse_line`)
+### 2026-06-21 — std/csv: pure-Fern std/test migration coverage (`csv.escape` / `csv.join` / `csv.parse_line`)
 
 `std/csv`'s RFC 4180 single-line surface had Go-side coverage but no
 migration-shaped (pure-Fern, `std/test`-driven) companion. Added
-`tests/stdlib/csv_test.fern` — 12 assertions: `csv_escape` plain pass-through
-and quote-wrapping on comma / interior-quote (doubled) / newline; `csv_join`
-plain, field-escaping, and empty; `csv_parse_line` plain split, quoted field
+`tests/stdlib/csv_test.fern` — 12 assertions: `csv.escape` plain pass-through
+and quote-wrapping on comma / interior-quote (doubled) / newline; `csv.join`
+plain, field-escaping, and empty; `csv.parse_line` plain split, quoted field
 with embedded comma, `""` → `"` decode, the empty-input single-empty-field
-case; and a `csv_join` → `csv_parse_line` round-trip through a field that holds
+case; and a `csv.join` → `csv.parse_line` round-trip through a field that holds
 both a comma and a quote. Gated natively (`TestRunnerCsvExamplePasses`) and
 through the self-host differential gate (`TestSelfHostStdTestE2E/csv`), which
 oracle-checks TAP-13 stdout + exit code against the interpreter **byte-for-byte**.
@@ -4207,9 +4207,9 @@ reserved, E010) and `int.int_to_string` is written `.to_string()`;
 driver treats it as a builtin and keeps the IR path. Instant/Zoned RFC-3339
 `Option`-returning methods remain pending.
 
-### 2026-06-13 — std/csv `csv_escape` / `csv_join` via the self-host IR path (x86-64 + wasm)
+### 2026-06-13 — std/csv `csv.escape` / `csv.join` via the self-host IR path (x86-64 + wasm)
 
-Closed the last `std/csv` "self-host pending" piece (after `csv_parse_line`).
+Closed the last `std/csv` "self-host pending" piece (after `csv.parse_line`).
 `TestSelfHostCsvEscapeIR` runs the inlined RFC-4180 field escaper + joiner
 (`s.index_of(",")`/`"\""`/`"\n"`/`"\r"` guards, `s.replace("\"", "\"\"")`, and a
 `string[]` join loop with concat) through the x86-64 and wasm IR drivers,
@@ -4343,14 +4343,14 @@ wasm owned-vs-borrow differential gate:
   covered by the existing `self_host_json_test.go`.
 - `audit_std_time` — `is_leap_year` / `days_in_month` / `date_make` /
   `format_iso`.
-- `audit_std_textfmt` — `csv_parse_line` / `csv_join` / `csv_escape` +
+- `audit_std_textfmt` — `csv.parse_line` / `csv.join` / `csv.escape` +
   `format.format_bytes`.
 
 No new bugs. `std/time` / `std/format` / `std/csv` self-host coverage is pending
 (their bundles pull `std/string`/`std/array`); marked ⚠️ until added.
 
 Author note: module-level free functions are called qualified
-(`json.json_parse`, `csv.csv_parse_line`); `json_parse` returns `Option`
+(`json.json_parse`, `csv.parse_line`); `json_parse` returns `Option`
 (not `Result`); the integer getter is `json_get_i32`.
 
 ### 2026-06-12 — std/string core methods audited (native 4-backend differential)

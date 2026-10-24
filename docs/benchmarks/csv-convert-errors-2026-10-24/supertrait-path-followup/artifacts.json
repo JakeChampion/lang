@@ -1,0 +1,66 @@
+{
+  "source_commit": "4c88132ee99634eb836ae68dac1ad8cbce1bcc1f",
+  "public_source_commit": "c6cce632632bd1bd8bb724c9ee119f36e8f87aad",
+  "files": {
+    "bootstrap-bootstrap.json.gz": {
+      "bytes": 392,
+      "sha256": "2e4b33c3e56b20eb51c396ffffdcb24e88472bdfb62649e294a0f3d7e9b8ed45"
+    },
+    "change.patch.gz": {
+      "bytes": 1172,
+      "sha256": "ea4192f0782bb5c4b93c9d7532612181c9b9e2a3270bd5929124926962bb401a"
+    },
+    "check-sizes.py.gz": {
+      "bytes": 897,
+      "sha256": "6b6194d78cc143b51ce528e5f797fab2c537df044c3d64a714d0497555a85327"
+    },
+    "driver-builds.json.gz": {
+      "bytes": 1043,
+      "sha256": "8f7c1ad88668f571b9bd15e6c79a7745d465c5351644832218219b81aacac572"
+    },
+    "driver-gate.log.gz": {
+      "bytes": 340,
+      "sha256": "bc465df7c8a2040589320faadd72bcf1ac0fc60209b4703b9708f7ab6be02ca3"
+    },
+    "driver-sizes.txt.gz": {
+      "bytes": 163,
+      "sha256": "a1c1f55b434c7cfae297660a0eb8035c4fff22b0ccc3f370022ee8a3211fb19f"
+    },
+    "format.log.gz": {
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    "go-malformed.stderr.gz": {
+      "bytes": 255,
+      "sha256": "36e1425cf269bfdd30f26722f0b7fb517717818bb03277615a7da17cfcfeee9a"
+    },
+    "go-malformed.stdout.gz": {
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    "malformed.fern.gz": {
+      "bytes": 96,
+      "sha256": "eaeb692e87b1b1f43a6cc82bf49879b2029c0dae2037fc2e890479b31152d5c6"
+    },
+    "self-malformed.stderr.gz": {
+      "bytes": 167,
+      "sha256": "dfc94dfd0ffd3340aa93ec28b18e6f61a18e2d4902fdc4dee42f358141db3ced"
+    },
+    "self-malformed.stdout.gz": {
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    "sizes.log.gz": {
+      "bytes": 180,
+      "sha256": "3f99ec6f5a237a958d4c990d9b0c3c76a072a454e1bb6ada1f548a74f7a167c0"
+    },
+    "source-files.json": {
+      "bytes": 51873,
+      "sha256": "3191b0debaaf9d4c76efb00ac2e315365055f065739d9e0beedec94ea583811d"
+    },
+    "targeted-tests-fixed.jsonl.gz": {
+      "bytes": 14746,
+      "sha256": "918d7d4682fd7bfa78de93ccd28f7221bc01eb8dd5536ed916d5399138906d63"
+    }
+  }
+}

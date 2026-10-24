@@ -1,75 +1,101 @@
 import "std/test";
 import "std/csv" as csv;
 
+function __csv_fields(s: string): string[] {
+  match (csv.parse_line(s)) {
+    Ok(fields) => {
+      return fields;
+    },
+    Err(e) => {
+      eprint(e.message());
+      exit(98);
+    }
+  }
+  return [];
+}
+
+function __csv_rows(s: string): string[][] {
+  match (csv.parse(s)) {
+    Ok(rows) => {
+      return rows;
+    },
+    Err(e) => {
+      eprint(e.message());
+      exit(98);
+    }
+  }
+  return [];
+}
+
 // tests/stdlib/csv_test.fern — pure-Fern coverage of std/csv's
-// RFC 4180 single-line surface: csv_escape (quote-wrap fields with
-// comma / quote / newline, interior quotes doubled), csv_join (escape
-// then comma-join) and csv_parse_line (split, with quoted fields that
+// RFC 4180 single-line surface: csv.escape (quote-wrap fields with
+// comma / quote / newline, interior quotes doubled), csv.join (escape
+// then comma-join) and csv.parse_line (split, with quoted fields that
 // may contain commas and "" → " decoding). The Go-side suite unit-tests
 // the prelude origin; this is the migration-shaped (pure-Fern) companion.
 
 function test_escape_plain(): test.TestOutcome {
-  return test.assert_eq(csv.csv_escape("hello"), "hello");
+  return test.assert_eq(csv.escape("hello"), "hello");
 }
 
 function test_escape_comma(): test.TestOutcome {
-  return test.assert_eq(csv.csv_escape("a,b"), "\"a,b\"");
+  return test.assert_eq(csv.escape("a,b"), "\"a,b\"");
 }
 
 function test_escape_quote(): test.TestOutcome {
   // Interior quotes are doubled and the field is wrapped.
-  return test.assert_eq(csv.csv_escape("say \"hi\""), "\"say \"\"hi\"\"\"");
+  return test.assert_eq(csv.escape("say \"hi\""), "\"say \"\"hi\"\"\"");
 }
 
 function test_escape_newline(): test.TestOutcome {
-  return test.assert_eq(csv.csv_escape("l1\nl2"), "\"l1\nl2\"");
+  return test.assert_eq(csv.escape("l1\nl2"), "\"l1\nl2\"");
 }
 
 function test_join(): test.TestOutcome {
-  return test.assert_eq(csv.csv_join(["a", "b", "c"]), "a,b,c");
+  return test.assert_eq(csv.join(["a", "b", "c"]), "a,b,c");
 }
 
 function test_join_escapes(): test.TestOutcome {
-  return test.assert_eq(csv.csv_join(["a,b", "c"]), "\"a,b\",c");
+  return test.assert_eq(csv.join(["a,b", "c"]), "\"a,b\",c");
 }
 
 function test_join_empty(): test.TestOutcome {
-  return test.assert_eq(csv.csv_join([]), "");
+  return test.assert_eq(csv.join([]), "");
 }
 
 // Many fields mixing pass-through, comma-quoted, quote-doubled, empty,
 // and newline-quoted content — exercises the two-pass exact-size buffer
-// (#4379) growing path where csv_join used to recopy the whole record
+// (#4379) growing path where csv.join used to recopy the whole record
 // per field.
 function test_join_many(): test.TestOutcome {
   let row: string[] = ["plain", "has,comma", "has\"quote", "", "line\nbreak"];
   return test.assert_eq(
-    csv.csv_join(row),
+    csv.join(row),
     "plain,\"has,comma\",\"has\"\"quote\",,\"line\nbreak\"",
   );
 }
 
 function test_parse_plain(): test.TestOutcome {
-  return test.assert_eq_array(csv.csv_parse_line("a,b,c"), ["a", "b", "c"]);
+  return test.assert_eq_array(__csv_fields("a,b,c"), ["a", "b", "c"]);
 }
 
 function test_parse_quoted_comma(): test.TestOutcome {
   // A quoted field may contain commas.
-  return test.assert_eq_array(csv.csv_parse_line("\"a,b\",c"), ["a,b", "c"]);
+  return test.assert_eq_array(__csv_fields("\"a,b\",c"), ["a,b", "c"]);
 }
 
 function test_parse_doubled_quote(): test.TestOutcome {
   // "" inside a quoted field decodes to a single ".
-  return test.assert_eq_array(csv.csv_parse_line("\"say \"\"hi\"\"\""), ["say \"hi\""]);
+  return test.assert_eq_array(__csv_fields("\"say \"\"hi\"\"\""), ["say \"hi\""]);
 }
 
 function test_parse_empty(): test.TestOutcome {
   // The empty input is a single empty field.
-  return test.assert_eq_array(csv.csv_parse_line(""), [""]);
+  return test.assert_eq_array(__csv_fields(""), [""]);
 }
 
 function test_roundtrip(): test.TestOutcome {
-  return test.assert_eq_array(csv.csv_parse_line(csv.csv_join(["a,b", "c\"d"])), ["a,b", "c\"d"]);
+  return test.assert_eq_array(__csv_fields(csv.join(["a,b", "c\"d"])), ["a,b", "c\"d"]);
 }
 
 // Exercises the field builder rewritten to a growable u8[] (#4379): a
@@ -78,14 +104,14 @@ function test_roundtrip(): test.TestOutcome {
 // reallocations. Byte-identical to the old char-concat behaviour.
 function test_parse_multibyte_and_growth(): test.TestOutcome {
   return test.assert_eq_array(
-    csv.csv_parse_line(",Glóin,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,Þórin"),
+    __csv_fields(",Glóin,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,Þórin"),
     ["", "Glóin", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "Þórin"],
   );
 }
 
-// csv_parse — the full multi-record document parser.
+// csv.parse — the full multi-record document parser.
 function test_doc_multi_record(): test.TestOutcome {
-  let rows: string[][] = csv.csv_parse("a,b,c\n1,2,3");
+  let rows: string[][] = __csv_rows("a,b,c\n1,2,3");
   if (rows.len() != 2) {
     return test.fail("row count " + rows.len().to_string());
   }
@@ -97,7 +123,7 @@ function test_doc_multi_record(): test.TestOutcome {
 
 function test_doc_embedded_newline(): test.TestOutcome {
   // A newline inside a quoted field does NOT end the record.
-  let rows: string[][] = csv.csv_parse("\"a,b\",\"line1\nline2\",z");
+  let rows: string[][] = __csv_rows("\"a,b\",\"line1\nline2\",z");
   if (rows.len() != 1) {
     return test.fail("row count " + rows.len().to_string());
   }
@@ -106,7 +132,7 @@ function test_doc_embedded_newline(): test.TestOutcome {
 
 function test_doc_crlf_and_trailing(): test.TestOutcome {
   // CRLF separators + a trailing terminator → no spurious empty record.
-  let rows: string[][] = csv.csv_parse("a,b\r\nc,d\r\n");
+  let rows: string[][] = __csv_rows("a,b\r\nc,d\r\n");
   if (rows.len() != 2) {
     return test.fail("row count " + rows.len().to_string());
   }
@@ -114,16 +140,16 @@ function test_doc_crlf_and_trailing(): test.TestOutcome {
 }
 
 function test_doc_empty_and_trailing_field(): test.TestOutcome {
-  if (csv.csv_parse("").len() != 0) {
+  if (__csv_rows("").len() != 0) {
     return test.fail("empty input");
   }
   // Trailing comma → a present empty final field.
-  return test.assert_eq_array(csv.csv_parse("a,")[0], ["a", ""]);
+  return test.assert_eq_array(__csv_rows("a,")[0], ["a", ""]);
 }
 
 function test_doc_serialize_roundtrip(): test.TestOutcome {
   let rows: string[][] = [["x", "y,z"], ["1", "two\nlines"]];
-  let back: string[][] = csv.csv_parse(csv.csv_serialize(rows));
+  let back: string[][] = __csv_rows(csv.serialize(rows));
   if (back.len() != 2) {
     return test.fail("row count");
   }
@@ -131,6 +157,87 @@ function test_doc_serialize_roundtrip(): test.TestOutcome {
     return test.fail("row 0");
   }
   return test.assert_eq_array(back[1], ["1", "two\nlines"]);
+}
+
+function expect_error(input: string, offset: i32, kind: csv.ParseErrorKind): test.TestOutcome {
+  match (csv.parse(input)) {
+    Ok(_) => {
+      return test.fail("malformed CSV succeeded");
+    },
+    Err(e) => {
+      if (e.offset != offset || e.kind != kind) {
+        return test.fail(e.message());
+      }
+      return test.assert_eq(e.message(), e.to_string());
+    }
+  }
+  return test.fail("missing result");
+}
+
+function test_malformed_fields(): test.TestOutcome {
+  let inputs: string[] = ["a\"b", "\"a\"x", "\"a", "\"\"\"", "\"\"\"\"\""];
+  let offsets: i32[] = [1, 3, 2, 3, 5];
+  let kinds: csv.ParseErrorKind[] = [
+    csv.ParseErrorKind.UnexpectedQuote,
+    csv.ParseErrorKind.UnexpectedByteAfterQuote(120 as u8),
+    csv.ParseErrorKind.UnclosedQuote,
+    csv.ParseErrorKind.UnclosedQuote,
+    csv.ParseErrorKind.UnclosedQuote,
+  ];
+  for i in 0..inputs.len() {
+    let outcome: test.TestOutcome = expect_error(inputs[i], offsets[i], kinds[i]);
+    match (outcome) {
+      test.TestOutcome.Fail(_) => {
+        return outcome;
+      },
+      _ => {}
+    }
+  }
+  return test.pass();
+}
+
+function test_single_record_boundary(): test.TestOutcome {
+  for input in ["a\nb", "a\rb", "a\r\nb"] {
+    match (csv.parse_line(input)) {
+      Err(e) => {
+        if (e.offset != 1 || e.kind != csv.ParseErrorKind.UnexpectedRecordTerminator) {
+          return test.fail(e.message());
+        }
+      },
+      Ok(_) => {
+        return test.fail("multiple records succeeded");
+      }
+    }
+  }
+  return test.assert_eq_array(__csv_fields("\"a\r\nb\",c"), ["a\r\nb", "c"]);
+}
+
+function test_document_error_offset(): test.TestOutcome {
+  let outcome: test.TestOutcome = expect_error("a,b\r\n\"c\"z", 8, csv.ParseErrorKind.UnexpectedByteAfterQuote(122 as u8));
+  match (outcome) {
+    test.TestOutcome.Fail(_) => {
+      return outcome;
+    },
+    _ => {}
+  }
+  return expect_error("é,\"x", 5, csv.ParseErrorKind.UnclosedQuote);
+}
+
+function test_record_roundtrip_corpus(): test.TestOutcome {
+  let cells: string[] = ["", "plain", "a,b", "a\"b", "a\nb", "a\rb", "a\r\nb", "é"];
+  for a in cells {
+    for b in cells {
+      let row: string[] = [a, b];
+      let outcome: test.TestOutcome = test.assert_eq_array(__csv_fields(csv.join(row)), row);
+      match (outcome) {
+        test.TestOutcome.Fail(_) => {
+          return outcome;
+        },
+        _ => {}
+      }
+    }
+  }
+  return test.pass();
 }
 
 function main(): i32 {
@@ -154,5 +261,9 @@ function main(): i32 {
   r = r.it("doc CRLF + trailing", test_doc_crlf_and_trailing);
   r = r.it("doc empty + trailing fld", test_doc_empty_and_trailing_field);
   r = r.it("doc serialize roundtrip", test_doc_serialize_roundtrip);
+  r = r.it("malformed fields", test_malformed_fields);
+  r = r.it("single record boundary", test_single_record_boundary);
+  r = r.it("document error offset", test_document_error_offset);
+  r = r.it("record roundtrip corpus", test_record_roundtrip_corpus);
   return r.finish();
 }

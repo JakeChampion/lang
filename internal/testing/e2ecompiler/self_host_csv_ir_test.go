@@ -1,115 +1,29 @@
 package e2ecompiler
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
-// TestSelfHostCsvParseLineIR covers std/csv's RFC-4180 single-line parser
-// through the self-hosted x86-64 IR path (a "self-host pending" audit gap).
-// csv_parse_line is self-contained — it uses only builtins (string byte index
-// `s[i]`, `slice_unchecked`, concat, and a `string[]` builder), no std/string
-// methods — so it lowers through the IR path directly. (csv_escape / csv_join
-// pull in `index_of` / `replace`, deferred.) The program self-checks the parse
-// of a quoted-field-with-comma line and returns 42 on success.
+// TestSelfHostCsvParseLineIR tests the public parser and its errors on both targets.
 func TestSelfHostCsvParseLineIR(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
-
-	emitAndRunIR := func(t *testing.T, src string) int {
-		t.Helper()
-		var cmd *exec.Cmd
-		if len(runner) == 0 {
-			cmd = exec.Command(driverBin)
-		} else {
-			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
-		}
-		cmd.Stdin = bytes.NewReader([]byte(src))
-		emitted, err := cmd.Output()
-		if err != nil || len(emitted) == 0 {
-			t.Fatalf("driver failed for %q: %v", src, err)
-		}
-		innerAsm := filepath.Join(dir, "ir_inner.s")
-		innerBin := filepath.Join(dir, "ir_inner")
-		if err := os.WriteFile(innerAsm, emitted, 0o644); err != nil {
-			t.Fatalf("write inner asm: %v", err)
-		}
-		if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", innerAsm, "-o", innerBin).CombinedOutput(); err != nil {
-			t.Fatalf("inner gcc: %v\n%s", err, out)
-		}
-		var inner *exec.Cmd
-		if len(runner) == 0 {
-			inner = exec.Command(innerBin)
-		} else {
-			inner = exec.Command(runner[0], append(append([]string{}, runner[1:]...), innerBin)...)
-		}
-		_ = inner.Run()
-		if inner.ProcessState == nil || !inner.ProcessState.Exited() {
-			t.Fatalf("inner did not exit normally for %q", src)
-		}
-		return inner.ProcessState.ExitCode()
-	}
-
-	// std/csv's csv_parse_line, verbatim.
-	const parser = `
-function csv_parse_line(s: string): string[] {
-    let out: string[] = [];
-    let n: i32 = s.len();
-    let i: i32 = 0;
-    let field: string = "";
-    let in_quotes: boolean = false;
-    while (i < n) {
-        let c: i32 = s[i] as i32;
-        if (in_quotes) {
-            if (c == 34) {
-                if (i + 1 < n && s[i + 1] == 34) { field = field + "\""; i = i + 2; }
-                else { in_quotes = false; i = i + 1; }
-            } else { field = field + slice_unchecked(s, i, i + 1); i = i + 1; }
-        } else {
-            if (c == 44) { out = out.append(field); field = ""; i = i + 1; }
-            else if (c == 34 && field.len() == 0) { in_quotes = true; i = i + 1; }
-            else { field = field + slice_unchecked(s, i, i + 1); i = i + 1; }
-        }
-    }
-    return out.append(field);
-}
-`
-	cases := []struct {
-		name string
-		src  string
-	}{
-		// 4 fields, a quoted field with an embedded comma ("c,d"), and tail field.
-		{"quoted-comma", parser + `function main(): i32 {
-    let f: string[] = csv_parse_line("a,bb,\"c,d\",e");
-    if (f.len() != 4) { return 100; }
-    if (f[0].len() != 1 || f[1].len() != 2 || f[2].len() != 3 || f[3].len() != 1) { return 101; }
-    if (f[2][0] != 99 || f[2][1] != 44 || f[2][2] != 100) { return 102; }
-    return 42;
-}`},
-		// Doubled quote inside a quoted field decodes to one quote: "a""b" -> a"b.
-		{"doubled-quote", parser + `function main(): i32 {
-    let f: string[] = csv_parse_line("\"a\"\"b\",x");
-    if (f.len() != 2) { return 100; }
-    if (f[0].len() != 3) { return 101; }
-    if (f[0][0] != 97 || f[0][1] != 34 || f[0][2] != 98) { return 102; }
-    return 42;
-}`},
-		// Plain unquoted line.
-		{"plain", parser + `function main(): i32 {
-    let f: string[] = csv_parse_line("x,y,z");
-    if (f.len() != 3) { return 100; }
-    return 42;
-}`},
+	cli := buildSelfHostCLI(t)
+	interpBin := buildLangBinForInterp(t)
+	cases := []struct{ name, body string }{
+		{"quoted-comma", `let Ok(f) = csv.parse_line("a,bb,\"c,d\",e") else { return 100; }; if (f.len() != 4 || f[2] != "c,d") { return 101; } return 42;`},
+		{"doubled-quote", `let Ok(f) = csv.parse_line("\"a\"\"b\",x") else { return 100; }; if (f.len() != 2 || f[0] != "a\"b") { return 101; } return 42;`},
+		{"plain", `let Ok(f) = csv.parse_line("x,y,z") else { return 100; }; if (f.len() != 3) { return 101; } return 42;`},
+		{"unclosed", `match (csv.parse_line("\"x")) { Err(e) => { if (e.offset == 2 && e.kind == csv.ParseErrorKind.UnclosedQuote) { return 42; } }, Ok(_) => {} } return 100;`},
+		{"quote-in-field", `match (csv.parse("a\"b")) { Err(e) => { if (e.offset == 1 && e.kind == csv.ParseErrorKind.UnexpectedQuote) { return 42; } }, Ok(_) => {} } return 100;`},
+		{"byte-after-quote", `match (csv.parse("\"a\"x")) { Err(e) => { if (e.offset == 3 && e.kind == csv.ParseErrorKind.UnexpectedByteAfterQuote(120 as u8)) { return 42; } }, Ok(_) => {} } return 100;`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := emitAndRunIR(t, tc.src); got != 42 {
-				t.Errorf("self-host IR csv_parse_line %q: check = %d, want 42", tc.name, got)
+			src := `import "std/csv"; function main(): i32 { ` + tc.body + ` }`
+			if got := interpExit(t, interpBin, src); got != 42 {
+				t.Fatalf("interpreter exit %d, want 42", got)
+			}
+			for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+				if stderr, code := cli.exitOf(t, src, target); code != 42 {
+					t.Errorf("%s exit %d, want 42\n%s", target, code, stderr)
+				}
 			}
 		})
 	}

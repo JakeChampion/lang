@@ -2,13 +2,7 @@ package e2ecompiler
 
 import "testing"
 
-// supertraitIRCases exercise supertraits (`trait Ord: Eq`) through the
-// self-hosted compiler. The self-host dispatches by receiver type and
-// doesn't validate conformance, so it carries no supertrait semantics —
-// but it must PARSE the `: Eq` clause (parse_trait_decl skips it) and a
-// bounded generic over `Ord` whose body calls the supertrait's `eq`
-// method still runs: monomorphisation clones `rank` per concrete type and
-// dispatches `a.eq(b)` / `a.lt(b)` to the type's methods. See docs/TRAITS.md.
+// supertraitIRCases exercise direct and bounded calls to inherited methods.
 var supertraitIRCases = []struct {
 	name     string
 	src      string

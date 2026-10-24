@@ -27691,11 +27691,17 @@ function trait_closure(reqs: TraitReq[], tn: string, module: string): i32[] {
 // trait_req_index finds trait `tn`'s record, preferring the one `module`
 // declares when two modules declare a trait of that simple name.
 function trait_req_index(reqs: TraitReq[], tn: string, module: string): i32 {
+  let base: string = util.base_type_name(tn);
+  let name: string = derive_simple_name(base);
+  let owner: string = module;
+  if (base.len() > name.len()) {
+    owner = slice_unchecked(base, 0, base.len() - name.len() - 1) + "";
+  }
   let any: i32 = 0 - 1;
   let i: i32 = 0;
   while (i < reqs.len()) {
-    if (reqs[i].trait_name == tn) {
-      if (reqs[i].module == module) {
+    if (reqs[i].trait_name == name) {
+      if (reqs[i].module == owner) {
         return i;
       }
       if (any < 0) {
@@ -30083,46 +30089,38 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
     p = p.advance();
   }
   let simple: string = derive_simple_name(tname);
-  // Optional generic type parameters: `trait Greet[T] { … }`. Native
-  // parses these via parseTypeParamList; the self-host erases traits
-  // (dispatch is by receiver type) and monomorphises a default method
-  // through the IMPL's type params in finalize_impl_method, so the
-  // trait's declared params carry no weight — but they MUST be consumed
-  // here or `[T]` and the trait body spill back into parse_module as a
-  // stray array literal + orphan block, losing default methods (#4340).
-  // Consumed through the shared list parser, which also keeps the names for
-  // the formatter — printing the block without them leaves every `T` in the
-  // method signatures unbound.
+  // Trait parameters bind arguments in requirements and inherited methods.
   let (trait_tps, trait_tp_p) = parse_type_param_list(p);
   p = refuse_const_tparams(trait_tp_p, p, trait_tps);
-  // Optional supertrait clause `: Trait (+ Trait)*` (each possibly
-  // `mod.Trait`). Dispatch is still by receiver type, but the supertrait
-  // NAMES are retained for the E021 conformance check (#4347): an
-  // `impl B for T` where `trait B: A` also requires an `impl A for T`.
-  // See docs/TRAITS.md.
+  // Parent spellings retain qualifiers and type arguments.
   if (p.peek_punct() == ":") {
     p = p.advance();
     let go_sup: boolean = true;
     while (go_sup && !p.at_end()) {
-      let sup_name: string = "";
-      let sup_written: string = "";
-      if (p.peek_ident().len() > 0) {
-        sup_name = p.peek_ident();
-        sup_written = sup_name;
-        p = p.advance();
+      let parent_at: Par = p;
+      let parent_ident: boolean = p.peek_ident().len() > 0;
+      let parent_path: Par = p.advance();
+      while (parent_path.peek_punct() == "." && parent_path.peek_ident_at(1).len() > 0) {
+        parent_path = parent_path.advance().advance();
       }
-      if (p.peek_punct() == ".") {
-        p = p.advance();
-        if (p.peek_ident().len() > 0) {
-          sup_name = p.peek_ident();
-          sup_written = sup_written + "." + sup_name;
-          p = p.advance();
-        }
+      if (parent_path.peek_punct() == "::") {
+        p = parent_path;
+        break;
       }
-      if (sup_name.len() > 0) {
-        supertraits = supertraits.append(derive_simple_name(sup_name));
-        decl_supers = decl_supers.append(sup_written);
+      let (sup_name, sup_ret, sup_end) = parse_type_name(p);
+      let parent_ref: TypeRef = parse_type_ref(sup_name);
+      if (!parent_ident || parent_ref.array_depth > 0 || parent_ref.is_tuple || parent_ref.is_fn || parent_ref.is_view) {
+        trait_bad = trait_bad.append(decl_sentinel(parent_at, "expected a trait name with optional type arguments"));
+        p = sup_end;
+        break;
       }
+      if (sup_end.pos == p.pos) {
+        p = p.expected_type();
+        break;
+      }
+      p = sup_end;
+      supertraits = supertraits.append(sup_name);
+      decl_supers = decl_supers.append(sup_name);
       if (p.peek_punct() == "+") {
         p = p.advance();
       } else {

@@ -268,7 +268,7 @@ not `impl From[f64] for T` (`Info.ImplTraitArgs` records each impl's args;
 
 ### Supertraits
 
-A trait may require other traits with a `: Trait + Trait` clause after its
+A trait can require other traits with a `: Trait + Trait` clause after its
 name. `trait Ord: Eq` means **Eq is a supertrait of Ord**:
 
 ```fern
@@ -286,21 +286,29 @@ Two consequences (Rust's semantics):
 
   ```fern
   function rank[T: Ord](a: T, b: T): i32 {
-      if a.eq(b) { return 0; }       // Eq method, reached via Ord's supertrait
-      if a.lt(b) { return -1; }
+      if (a.eq(b)) { return 0; }       // Eq method, reached via Ord's supertrait
+      if (a.lt(b)) { return -1; }
       return 1;
   }
   ```
 
-Supertrait names may be qualified (`mod.Trait`) and are mangled like any
-other trait reference. The supertrait graph must be acyclic and each
-supertrait must name a real trait (both are checked: `cyclic supertrait`
-/ `unknown supertrait`). Implemented in the checker
-(`expandTraits` / `collectTraitSupers` drive bound expansion;
-`traitInItsOwnSupers` the cycle check) — `core/cmp`'s traits stay flat for
-now, so no existing impl is forced to gain a supertrait. The self-host
-parser skips the supertrait clause (it dispatches by receiver type and
-carries no conformance), so supertrait programs still compile there.
+Use a qualified parent name (`mod.Trait`) to refer to another module.
+The supertrait graph must be acyclic, and every parent must name a declared trait.
+The Go checker reports `cyclic supertrait` and `unknown supertrait` for these errors.
+
+A generic parent retains its type arguments:
+
+```fern
+trait Parent[A] { function value(self: Self): A; }
+trait Child[U]: Parent[Option[U]] {}
+```
+
+An `impl Child[i32] for Box` requires `impl Parent[Option[i32]] for Box`.
+A parent implementation with different arguments does not satisfy that requirement.
+A `T: Child[i32]` bound exposes `value` with the result type `Option[i32]`.
+The same substitution applies to associated functions, receiver methods, and transitive parents.
+Both compilers preserve the parent arguments and check their number.
+Both formatters preserve the full parent clause.
 
 ## 3a. Display spine: `print` / `write` / `eprint` (#2696)
 

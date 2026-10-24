@@ -150,7 +150,7 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 		}
 	}
 	sub := substituter{values: values, assets: in.Assets, targetOS: in.TargetOS, targetArch: in.TargetArch}
-	for _, fn := range prog.Funcs {
+	foldFunc := func(fn *ast.FuncDecl) {
 		sub.values = values
 		sub.module = fn.BodyModule()
 		if body := fn.BodyModule(); body != "" && body != prog.EntryModule {
@@ -162,6 +162,17 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 		// was refused by E076 as reading one.
 		w := ast.ScopeWalker{Visit: sub.visit, AfterStmt: foldIfCond}
 		w.WalkFunc(fn)
+	}
+	for _, fn := range prog.Funcs {
+		foldFunc(fn)
+	}
+	for _, td := range prog.Traits {
+		for i := range td.Methods {
+			method := &td.Methods[i]
+			if method.Body != nil {
+				foldFunc(&ast.FuncDecl{P: method.P, Params: method.Params, Body: method.Body, SourceModule: td.SourceModule})
+			}
+		}
 	}
 	prog.Consts = nil
 	if len(sub.errs) > 0 {

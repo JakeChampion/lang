@@ -4375,3 +4375,22 @@ func TestLaneTypeKeywords(t *testing.T) {
 		t.Error("a lane type keyword should not parse as a binding name")
 	}
 }
+
+func TestGenericSupertraitArguments(t *testing.T) {
+	prog, err := Parse(`trait Child[U]: api.Parent[Option[U], (string, u8)] + Marker {}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	td := prog.Traits[0]
+	if len(td.Supertraits) != 2 || td.Supertraits[0] != "api.Parent" || td.Supertraits[1] != "Marker" {
+		t.Fatalf("parents: %v", td.Supertraits)
+	}
+	if len(td.SupertraitArgs) != 2 || len(td.SupertraitArgs[0]) != 2 || len(td.SupertraitArgs[1]) != 0 {
+		t.Fatalf("arguments: %v", td.SupertraitArgs)
+	}
+	for i, want := range []string{"Option[U]", "(string, u8)"} {
+		if got := td.SupertraitArgs[0][i].String(); got != want {
+			t.Errorf("argument %d: %s, want %s", i, got, want)
+		}
+	}
+}

@@ -1,0 +1,3 @@
+/workspace/scratch/lang-generic-supertraits/inherited.fern:2:23: error[P001]: at top level: expected "{", got "["
+    trait Child[U]: Parent[U] {}
+                          ^

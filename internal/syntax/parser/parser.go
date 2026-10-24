@@ -1040,14 +1040,14 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 	}
 	// Optional supertraits: `trait Ord: Eq + Hash { … }`. Same `: Trait
 	// (+ Trait)*` grammar as a type-parameter bound (qualifiers allowed).
-	supertraits, err := p.parseOptBounds()
+	supertraits, supertraitArgs, err := p.parseOptBoundsWithArgs()
 	if err != nil {
 		return nil, err
 	}
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, err
 	}
-	td := &ast.TraitDecl{P: kw.Pos, Name: name.Text, NamePos: name.Pos, Supertraits: supertraits, TypeParams: typeParams}
+	td := &ast.TraitDecl{P: kw.Pos, Name: name.Text, NamePos: name.Pos, Supertraits: supertraits, SupertraitArgs: supertraitArgs, TypeParams: typeParams}
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
 		// Associated type declaration: `type Item;`. Referenced in method
 		// signatures as `Self::Item`; each impl binds it with
@@ -1736,14 +1736,6 @@ func (p *parser) refuseConstParams(pos ast.Position) error {
 	name := p.constParams[0]
 	p.constParams = nil
 	return p.errorfCode(pos, "P001", "const parameter %s: only a function takes a const parameter", name)
-}
-
-// parseOptBounds parses an optional trait-bound list on a type
-// parameter: `: Display + Eq` (bounds may be qualified, `mod.Trait`).
-// Returns nil when no `:` follows. See docs/TRAITS.md.
-func (p *parser) parseOptBounds() ([]string, error) {
-	bs, _, err := p.parseOptBoundsWithArgs()
-	return bs, err
 }
 
 // parseOptBoundsWithArgs parses a `: Trait (+ Trait)*` bound clause, where

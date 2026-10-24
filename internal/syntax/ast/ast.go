@@ -3727,6 +3727,8 @@ type TraitDecl struct {
 	// with no supertraits. modload mangles these names like any other
 	// trait reference. See docs/TRAITS.md.
 	Supertraits []string
+	// SupertraitArgs parallels Supertraits and preserves each parent's type arguments.
+	SupertraitArgs [][]Type
 	// AssocTypes names the trait's associated types (`type Item;`), in
 	// declaration order. A method signature refers to one as
 	// `Self::Item` (a ProjType); each impl must bind it via

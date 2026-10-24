@@ -14661,7 +14661,7 @@ function bounds_in_module(b: string, module: string): string {
 // followed, so `T: Num` reaches `Zero.zero` when `trait Num: Zero`. Track
 // the current path to terminate cycles without rejecting deep valid chains.
 function trait_assoc_req(reqs: parser.TraitReq[], tr: string, field: string, seen: string[]): AssocHit {
-  let idx: i32 = trait_req_idx(tr, reqs);
+  let idx: i32 = trait_req_idx(util.base_type_name(tr), reqs);
   if (idx < 0) {
     return assoc_miss();
   }
@@ -14670,18 +14670,22 @@ function trait_assoc_req(reqs: parser.TraitReq[], tr: string, field: string, see
     return assoc_miss();
   }
   let path: string[] = seen.append(req.trait_name);
+  let args: string[] = [];
+  for arg in parser.parse_type_ref(tr).args {
+    args = args.append(parser.render_type_ref(arg));
+  }
   for rs in req.assoc_sigs {
     if (rs.name == field) {
       // The parser already limits assoc_sigs to receiverless functions.
       let params: string[] = [];
       for p in rs.params {
-        params = params.append(parser.fn_tag_spelling(p.type_name, p.fn_ret, p.fn_param_types));
+        params = params.append(parser.subst_ty(parser.fn_tag_spelling(p.type_name, p.fn_ret, p.fn_param_types), req.type_params, args));
       }
-      return AssocHit { found: true, ret: rs.ret_type, owner: req.trait_name, params: params, is_const: rs.is_const };
+      return AssocHit { found: true, ret: parser.subst_ty(rs.ret_type, req.type_params, args), owner: req.trait_name, params: params, is_const: rs.is_const };
     }
   }
   for supertrait in req.supertraits {
-    let sh: AssocHit = trait_assoc_req(reqs, supertrait, field, path);
+    let sh: AssocHit = trait_assoc_req(reqs, parser.subst_ty(supertrait, req.type_params, args), field, path);
     if (sh.found) {
       return sh;
     }
@@ -14870,7 +14874,11 @@ function dyn_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, traits: strin
 // associated-dispatch arm (resolveTraitMethodForParam + `tm.Assoc`), so
 // `T.nope()` — no bound providing it — stays the E001 native reports.
 function tp_assoc_req(s: Scope, tname: string, field: string): AssocHit {
-  for tr in tp_bound_traits(s, tname) {
+  let k: i32 = util.index_of_str(s.tparams, tname);
+  if (k < 0 || k >= s.tbounds.len()) {
+    return assoc_miss();
+  }
+  for tr in parser.split_plus_bounds(s.tbounds[k]) {
     let h: AssocHit = trait_assoc_req(s.trait_reqs, tr, field, []);
     if (h.found) {
       return h;
@@ -15019,7 +15027,11 @@ function type_assoc_req(s: Scope, tyname: string, field: string): AssocHit {
   for imp in s.impls {
     if (imp.impl_type == base && util.has_str(imp.method_names, field)) {
       if (s.lookup_method(field, base).name.len() == 0) {
-        let h: AssocHit = trait_assoc_req(s.trait_reqs, imp.trait_name, field, []);
+        let spelling: string = imp.trait_ref;
+        if (spelling.len() == 0) {
+          spelling = imp.trait_name;
+        }
+        let h: AssocHit = trait_assoc_req(s.trait_reqs, spelling, field, []);
         if (h.found) {
           return h;
         }
@@ -25374,8 +25386,50 @@ function e021_has_impl(mod: parser.Module, trait_name: string, impl_type: string
   return false;
 }
 
+function e021_supertrait_impl(mod: parser.Module, spelling: string, self: string): boolean {
+  let idx: i32 = trait_req_idx(util.base_type_name(spelling), mod.trait_reqs);
+  if (idx < 0) {
+    return false;
+  }
+  let req: parser.TraitReq = mod.trait_reqs[idx];
+  let want: parser.TypeRef = parser.parse_type_ref(spelling);
+  for imp in mod.impls {
+    if (imp.trait_name != req.trait_name || imp.trait_module != req.module || imp.impl_type != self) {
+      continue;
+    }
+    let got: parser.TypeRef = parser.parse_type_ref(imp.trait_ref);
+    if (got.args.len() != want.args.len()) {
+      continue;
+    }
+    let same: boolean = true;
+    let i: i32 = 0;
+    while (i < want.args.len()) {
+      if (parser.render_type_ref(got.args[i]) != parser.render_type_ref(want.args[i])) {
+        same = false;
+      }
+      i = i + 1;
+    }
+    if (same) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function e021_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
+  for req in mod.trait_reqs {
+    for parent in req.supertraits {
+      let idx: i32 = trait_req_idx(util.base_type_name(parent), mod.trait_reqs);
+      if (idx >= 0) {
+        let want: i32 = mod.trait_reqs[idx].type_params.len();
+        let got: i32 = parser.parse_type_ref(parent).args.len();
+        if (want != got) {
+          out = out.append(dg("E021", "supertrait " + util.base_type_name(parent) + " expects " + util.i32_to_string(want) + " type arguments, got " + util.i32_to_string(got)));
+        }
+      }
+    }
+  }
   for im in mod.impls {
     // An array, owned or a view, has no receiver name a trait's methods could
     // hang on, as native's methodTypeName has none.
@@ -25389,8 +25443,9 @@ function e021_diags(mod: parser.Module): util.Diag[] {
         // Supertrait conformance: `impl B for T` where `trait B: A`
         // requires a separate `impl A for T` (#4347 slice 3).
         let sup: string[] = trait_req.supertraits;
-        for elem in sup {
-          if (!e021_has_impl(mod, elem, im.impl_type)) {
+        for parent in sup {
+          let elem: string = e021_req_spelling(parent, im, trait_req.type_params, mod.impls);
+          if (!e021_supertrait_impl(mod, elem, im.impl_type)) {
             out = out.append(dg_at("E021", "impl " + im.trait_name + " for " + im.impl_type + " also requires `impl " + elem + " for " + im.impl_type + "` (supertrait of " + im.trait_name + ")", im.line, im.col));
           }
         }
