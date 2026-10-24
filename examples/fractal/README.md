@@ -79,6 +79,72 @@ The iteration counter measures executed orbit work, including the shared referen
 It does not count each skipped update as executed work.
 See the [measurements, numerical checks, and CPU reference](../../docs/benchmarks/fractal-acceleration-2026-10-23/README.md).
 
+## Tile delivery
+
+`/api/config` supplies the renderer version and binary size.
+Tile URLs use `/tile/{version}/{z}/{x}/{y}`.
+The version contains 24 hexadecimal digits from the executable SHA-256 digest.
+
+A renderer change creates different URLs and prevents stale CDN tiles.
+A version mismatch returns 404 without a cache policy.
+The old tile route redirects to the versioned route.
+If the executable is unavailable, the server and browser disable tile caches.
+
+The browser caches at most 256 tiles and 16 MiB of PNG data.
+HTTP and WebSocket delivery share this cache and one request scheduler.
+The scheduler selects tiles nearest the viewport center first.
+It permits two HTTP requests or one WebSocket request at a time.
+Duplicate requests share one response, with separate cancellation for each consumer.
+
+An unloaded tile cancels its queued request or signals an active request through `/cancel/{session}/{id}`.
+The renderer checks cancellation between rows and before PNG compression.
+It yields to the event loop about every four milliseconds.
+A one-millisecond poll lets HTTP cancellation reach an active render.
+PNG compression completes before another cancellation check can run.
+Canceled tiles do not increase the completed tile count.
+
+Explicit cancellation tokens apply to the container that receives them.
+Deployments with multiple containers need request affinity for this control route.
+
+The WebSocket route uses `/ws/{version}/{session}`.
+Each binary response starts with 32 bytes in network byte order:
+
+| Offset | Field | Type |
+| --- | --- | --- |
+| 0 | Request ID | u32 |
+| 4 | Total render microseconds | u32 |
+| 8 | Executed work units | u64 |
+| 16 | Completed container tiles | u32 |
+| 20 | Compute microseconds | u32 |
+| 24 | Color microseconds | u32 |
+| 28 | PNG microseconds | u32 |
+| 32 | PNG data | bytes |
+
+A canceled request receives a JSON response with its `cancelled` request ID.
+HTTP responses expose the same stages through `Server-Timing`.
+The client falls back to HTTP after socket failures.
+A stale client refreshes its configuration and reloads when the renderer version changes.
+The URL hash preserves its view.
+
+## Measurements
+
+The UI shows recent median and p95 latency at the current zoom.
+The window contains at most 60 tiles from the last 120 completed tiles.
+Latency starts at the tile request and ends after image decode.
+Details show median render, compute, color, PNG, queue, and transfer times.
+Transfer time estimates the response time after subtraction of server render time.
+
+It includes network and response work, so it is not a direct network measurement.
+Cached tiles do not contribute old server times to compute, color, PNG, or render medians.
+Local cache hits and CDN cache hits have separate counters.
+
+The palette uses readable numeric tables without heap allocation on reads.
+PNG row copies use the shared byte-copy kernel.
+At zoom 20 and above, the default renderer selects the fast lossless compressor.
+Shallow tiles retain balanced compression to avoid large transfer costs.
+`render_exact` and `render_reference` retain the original PNG output.
+See the [delivery, PNG, SIMD, and numerical report](../../docs/benchmarks/fractal-delivery-2026-10-24/README.md).
+
 ## Errors
 
 Rendering, request parsing, PNG encoding, and binary decoding return `Result` with typed errors.
@@ -93,7 +159,8 @@ bin/fern -fmt -d examples/fractal
 bin/fern -target x86-64-linux -run examples/fractal/fractal_test.fern
 bin/fern -target x86-64-linux -run examples/fractal/source_test.fern
 bin/fern -target x86-64-linux -run examples/fractal/acceleration_test.fern
-go test ./internal/testing/e2ecompiler -run 'TestSelfHostFractal' -count=1 -v
+node --test examples/fractal/tests/delivery.test.mjs
+go test ./internal/testing/e2ecompiler -run 'TestSelfHostFractal|TestSelfHostStaticNumericTables|TestSelfHostPNGFilters' -count=1 -v
 ```
 
 The Fern suite checks coordinate bounds, binary fields, PNG bytes, and iteration totals.
@@ -101,3 +168,10 @@ Its fixtures cover the whole set, interior points, boundary detail, and maximum 
 The Go tests run all suites and the private FIP kernels on x86-64, ARM64, and WASI.
 The kernel tests check allocation counts from the first call and preserve shared snapshots.
 The acceleration tests compare lane refills, partial groups, and deadlines with a scalar oracle.
+
+The browser tests cover priorities, cache limits, cancellation, transport changes, and obsolete renderer versions.
+The live HTTP test confirms that cancellation reaches an active render.
+The numerical check compares 12,015 points with a 113-bit oracle.
+Its points include random samples, analytic boundaries, tile edges, and alternate reference centers.
+PNG tests decode all filter and compression pairs with an independent decoder on all three targets.
+They also check raw fast DEFLATE streams through empty, short, and 32 KiB window cases.

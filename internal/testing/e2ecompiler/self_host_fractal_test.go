@@ -1,10 +1,49 @@
 package e2ecompiler
 
 import (
+	"bytes"
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
+
+func TestSelfHostFractalBrowser(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is required for browser transport tests")
+	}
+	cmd := exec.Command(node, "--test", "../../../examples/fractal/tests/delivery.test.mjs")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("browser transport: %v\n%s", err, out)
+	}
+}
+
+func TestSelfHostFractalNumerics(t *testing.T) {
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("113-bit GCC oracle runs on x86-64 Linux")
+	}
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is required for the numerical oracle")
+	}
+	if _, err := exec.LookPath("g++"); err != nil {
+		t.Skip("GCC is required for __float128")
+	}
+	cli := buildSelfHostCLI(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	result := filepath.Join(t.TempDir(), "numerics.json")
+	cmd := exec.CommandContext(ctx, python, "../../../docs/benchmarks/fractal-delivery-2026-10-24/check_numerics.py", "--fern", cli.bin, "--output", result, "--check")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("numerical regression: %v\n%s", err, out)
+	}
+}
 
 func TestSelfHostFractalTiles(t *testing.T) {
 	path, err := filepath.Abs("../../../examples/fractal/fractal_test.fern")
@@ -19,7 +58,7 @@ func TestSelfHostFractalSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	testFractalTargets(t, path)
+	testFractalTargets(t, path, true)
 }
 
 func TestSelfHostFractalAcceleration(t *testing.T) {
@@ -48,12 +87,27 @@ func TestSelfHostFractalFipKernels(t *testing.T) {
 	testFractalTargets(t, filepath.Join(dir, "fractal.fern"))
 }
 
-func testFractalTargets(t *testing.T, path string) {
+func testFractalTargets(t *testing.T, path string, network ...bool) {
 	t.Helper()
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
-			stderr, code := cli.exitOfFile(t, path, target, nil, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			var stderr string
+			var code int
+			if target == "wasm32-wasi" && len(network) > 0 && network[0] {
+				// The yielding HTTP handler imports WASI socket polling even when
+				// this route test runs without a listening socket.
+				cmd := exec.Command(e2eharness.Wasmtime(t), "run", "-S", "inherit-network", cli.wasmComponent(t, path, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1"))
+				var errors bytes.Buffer
+				cmd.Stderr = &errors
+				_ = cmd.Run()
+				if cmd.ProcessState == nil {
+					t.Fatalf("wasmtime did not start: %s", errors.String())
+				}
+				stderr, code = errors.String(), cmd.ProcessState.ExitCode()
+			} else {
+				stderr, code = cli.exitOfFile(t, path, target, nil, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			}
 			if code != 0 {
 				t.Fatalf("exit %d: %s", code, stderr)
 			}

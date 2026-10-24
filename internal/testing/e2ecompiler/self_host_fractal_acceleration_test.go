@@ -1,6 +1,9 @@
 package e2ecompiler
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 // Sign masks must preserve lane order, signed zero, and NaN sign bits.
 func TestSelfHostLaneBitmask(t *testing.T) {
@@ -109,6 +112,49 @@ function main(): i32 {
   }
   return 0;
 }`
+	testAccelerationTargets(t, src)
+}
+
+// Constant table reads are heap-neutral from their first call. Mutations
+// must copy the static storage and retain all original float bit patterns.
+func TestSelfHostStaticNumericTables(t *testing.T) {
+	src := `const FLOATS: f32[] = [0.1f32, -0.0f32, 16777217.0f32, 1e-40f32, 0.1f32 + 0.0f32];
+const DOUBLES: f64[] = [0.1 + 0.2, -0.0, 1.0 / 10.0, 16777216.0];
+const INTEGERS: i64[] = [-9223372036854775807 - 1, 9223372036854775807];
+const UNSIGNED: u64[] = [0u64, 18446744073709551615u64];
+@noinline function local_casts(): f32[] { return [(1.0 / 10.0) as f32, (16777217.0f32 as f64) as f32]; }
+@noinline fip function narrow(i: i32): f32 { return FLOATS[i]; }
+@noinline fip function wide(i: i32): f64 { return DOUBLES[i]; }
+function main(): i32 {
+  if (shared_expression()[0] != 167772160.0) { return 11; }
+  let before: i64 = __heap_alloc_count();
+  let casts: f32[] = local_casts();
+  if (casts[0] != 0.1f32 || casts[1] != 16777216.0f32) { return 10; }
+  let i: i32 = 0;
+  while (i < 128) {
+    if (f32_bits(narrow(i % 5)) != f32_bits(FLOATS[i % 5])) { return 1; }
+    if (f64_bits(wide(i % 4)) != f64_bits(DOUBLES[i % 4])) { return 2; }
+    i = i + 1;
+  }
+  if (__heap_alloc_count() != before) { return 3; }
+  if (f32_bits(narrow(0)) != f32_bits(0.1f32) || f32_bits(narrow(1)) != -2147483647 - 1) { return 4; }
+  if (narrow(2) != 16777216.0f32 || f32_bits(narrow(3)) != f32_bits(1e-40f32) || narrow(4) != 0.1f32) { return 5; }
+  if (f64_bits(wide(0)) != f64_bits(0.1 + 0.2) || f64_bits(wide(1)) != -9223372036854775807 - 1 || wide(3) != 16777216.0) { return 6; }
+  let alias: f32[] = FLOATS;
+  let changed: f32[] = alias.with(0, 12.0f32).append(13.0f32);
+  if (changed[0] != 12.0f32 || changed[5] != 13.0f32 || alias[0] != 0.1f32 || FLOATS[0] != 0.1f32) { return 7; }
+  let doubles: f64[] = DOUBLES.with(0, 12.0);
+  if (doubles[0] != 12.0 || DOUBLES[0] != 0.1 + 0.2) { return 8; }
+  if (INTEGERS[0] != -9223372036854775807 - 1 || INTEGERS[1] != 9223372036854775807 || UNSIGNED[1] != 18446744073709551615u64) { return 9; }
+  return 0;
+}`
+	// Repeated references form a small SSA graph with an exponential tree.
+	// A depth limit alone makes a static-table candidate revisit millions of nodes.
+	src += "\n@noinline function shared_expression(): f64[] {\nlet x0: f64 = 1.25;\n"
+	for i := 1; i <= 27; i++ {
+		src += fmt.Sprintf("let x%d: f64 = x%d + x%d;\n", i, i-1, i-1)
+	}
+	src += "return [x27];\n}\n"
 	testAccelerationTargets(t, src)
 }
 
