@@ -85,7 +85,7 @@ function main(): i32 {
 
     // TOTP: a base32-decoded secret is exactly what the key parameter
     // wants now, with no conversion in between (RFC 6238 App. B).
-    let secret: u8[] = b32.decode(b32.encode("12345678901234567890123456789012".bytes()));
+    let Ok(secret) = b32.decode(b32.encode("12345678901234567890123456789012".bytes())) else { return 24; };
     if (crypto.totp_sha256(secret, 59, 30, 8) != 46119246) { return 22; }
     if (crypto.hotp_sha256(secret, 1, 8) != 46119246) { return 23; }
 

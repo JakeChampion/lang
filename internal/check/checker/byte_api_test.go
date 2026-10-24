@@ -24,6 +24,9 @@ import "std/crypto" as crypto;
 		{"update-array-removed", `hash.cksum_new().update_array([97 as u8]);`, `no field or method "update_array"`},
 		{"hmac-duplicate-removed", `crypto.hmac_sha256_bytes([97 as u8], "abc");`, "hmac_sha256_bytes"},
 		{"fill-is-character", `"a".pad_start(4, "é");`, "expected char, got string"},
+		{"replace-byte-input", `let wide: i32 = 255; "a".replace_byte(97, wide);`, "expected u8, got i32"},
+		{"replace-byte-overflow", `"a".replace_byte(999, 0);`, "does not fit in u8"},
+		{"without-byte-overflow", `"a".without_byte(999);`, "does not fit in u8"},
 		{"single-byte-input", `let wide: i32 = 255; "a".count_byte(wide);`, "expected u8, got i32"},
 	}
 	for _, tc := range cases {

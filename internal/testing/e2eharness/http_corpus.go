@@ -145,8 +145,8 @@ function answer(wire: u8[]): string {
 
 function main(): i32 {
 `)
-	for _, c := range cases {
-		fmt.Fprintf(&b, "    print(%q + \"\\t\" + verdict(hex.decode(\"%s\")));\n", c.Name, hex.EncodeToString(c.Wire))
+	for i, c := range cases {
+		fmt.Fprintf(&b, "    let Ok(wire%d) = hex.decode(%q) else { return 98; };\n    print(%q + \"\\t\" + verdict(wire%d));\n", i, hex.EncodeToString(c.Wire), c.Name, i)
 	}
 	b.WriteString("    return 0;\n}\n")
 	return b.String()
