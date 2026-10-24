@@ -4393,7 +4393,7 @@ pub function reuse_layer_disabled(name: string): boolean {
 // lowering's entry, rather than for every plan ownership inference tries and
 // discards; a plan that has them keeps them, so a table a test plants is the
 // one the replay reads.
-pub function with_reuse(f: ssasem.Func, p: Plan): Plan {
+pub function with_reuse(f: ssasem.Func, p: Plan, idx: i32[][], dom: ssadeps.Dom): Plan {
   if (p.reuse.pairs.len() == f.graph.blocks.len()) {
     return p;
   }
@@ -4401,9 +4401,8 @@ pub function with_reuse(f: ssasem.Func, p: Plan): Plan {
   if (!p.ok) {
     return Plan { ...p, reuse: Reuse { ...p.reuse, disabled: off } };
   }
-  let idx: i32[][] = step_index(p);
   let links: i32[] = links_of(f, p, idx);
-  let vr: VariantReads = variant_reads(f, p);
+  let vr: VariantReads = variant_reads(f, p, dom);
   let carry: Carry = carried_pairs(f, p, idx, links, off, vr);
   let uses: ssasem.Uses = p.analysis.uses;
   let pairs: ReusePairs[] = [];
@@ -4679,7 +4678,7 @@ pub function known_variant(vr: VariantReads, b: ssa.SBlock, d: i32): string {
 // not reported, so nothing speculates on its box.
 pub struct VariantReads { at: i32[], dom: ssadeps.Dom, sites: i32[][], names: string[][], shared: boolean[] }
 
-function variant_reads(f: ssasem.Func, p: Plan): VariantReads {
+function variant_reads(f: ssasem.Func, p: Plan, dom: ssadeps.Dom): VariantReads {
   let sites: i32[][] = [];
   let names: string[][] = [];
   let shared: boolean[] = __alloc_bool(f.values.len());
@@ -4701,7 +4700,7 @@ function variant_reads(f: ssasem.Func, p: Plan): VariantReads {
     }
     bi = bi + 1;
   }
-  return VariantReads { at: ssa.block_positions(f.graph), dom: ssadeps.dominates(f.graph), sites: sites, names: names, shared: shared };
+  return VariantReads { at: ssa.block_positions(f.graph), dom: dom, sites: sites, names: names, shared: shared };
 }
 
 // The slots a construction claims, or -1 where it is not one a token can be

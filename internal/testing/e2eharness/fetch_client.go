@@ -762,7 +762,7 @@ noencoding: 201 [NOENC] headers: content-length=NOENCLEN trailers:
 refused: error connect: Connection refused
 badurl: error invalid URL: no scheme in not a url
 noscheme: error invalid URL: scheme ftp is not http
-tls: error TLS: a protocol error
+tls: error host: TLS-protocol-error
 crlfurl: error invalid URL: a path or query that cannot be written on a request line
 crlfvalue: error invalid request: a header value has a byte that cannot be written
 badname: error invalid request: a header name is not a token

@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -1197,6 +1198,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	c := &checker{
 		funcSources: map[string]string{},
+		entryModule: prog.EntryModule,
 		info: &Info{
 			VarTypes:            map[*ast.Var]ast.Type{},
 			Locals:              map[*ast.FuncDecl][]*ast.Var{},
@@ -3014,7 +3016,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	// read_dir(path): Result[string[], IoError] — list the
 	// non-recursive children of `path`. Entries are base names
-	// (no leading directory), unsorted. Use `std/sort` on the
+	// (no leading directory), unsorted. Use `cmp.sort` on the
 	// result if a deterministic order matters.
 	//
 	// Entries come back as `string`, so this inherits the
@@ -8849,6 +8851,9 @@ func isScalarBuiltinMethod(mangled string) bool {
 }
 
 type checker struct {
+	// entryModule is the entry module's path; its declarations keep their
+	// names unmangled.
+	entryModule string
 	// callee is the callee expression the call arm is checking, so a function
 	// named there is told from one named as a value.
 	callee ast.Expr
@@ -10007,7 +10012,7 @@ func (c *checker) monomorphCloneEnumName(dest ast.Type) string {
 // monomorphized clone's `E__i32` is not a module mangle, so it stands.
 func (c *checker) enumHintName(name string) string {
 	ed, ok := c.info.Enums[name]
-	if !ok || ed.Monomorphized || ed.SourceModule == "" {
+	if !ok || ed.Monomorphized || ed.SourceModule == "" || ed.SourceModule == c.entryModule {
 		return name
 	}
 	if ed.SourceModule == c.currentModule() {
@@ -10017,6 +10022,19 @@ func (c *checker) enumHintName(name string) string {
 		return name
 	}
 	return demangle(name)
+}
+
+// variantHintName is how a diagnostic names variant `name` of `ed`: bare. A
+// union's variants are its member structs, whose names modload mangles in a
+// module's declarations, so the declaring module's prefix comes off.
+func (c *checker) variantHintName(ed *ast.EnumDecl, name string) string {
+	if ed == nil || ed.SourceModule == "" || ed.SourceModule == c.entryModule {
+		return name
+	}
+	if i := strings.Index(ed.Name, "__"); i > 0 && strings.HasPrefix(name, ed.Name[:i+2]) {
+		return name[i+2:]
+	}
+	return name
 }
 
 // variantEnumList returns a human-readable list of the enum names that
@@ -12487,12 +12505,24 @@ func (c *checker) boundsAdmitReceiver(mangled string, param, recv ast.Type) bool
 	return true
 }
 
+// stdlibReceiverMatches binds the declaration's receiver parameters.
+// The substituted type must match the actual receiver exactly.
+func (c *checker) stdlibReceiverMatches(typeName, method string, recv ast.Type) bool {
+	pattern := stdlibMethodReceiverPatterns[typeName+"."+method]
+	if pattern == nil {
+		return true
+	}
+	sub := map[string]ast.Type{}
+	return c.unifyType(pattern, recv, sub) && ast.Equal(substituteType(pattern, sub), recv)
+}
+
 // unknownMethodMessage builds the E043 text for a method call whose
 // receiver is a non-struct with a method namespace of its own — an
 // array, a map, a slice. The bare "field access on non-struct value of
 // type i32[]" it replaces names neither the method nor the receiver's
 // actual API, which is the worst case for exactly the two situations
 // that produce it: a typo, and a spelling that was deliberately retired.
+
 func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) string {
 	msg := fmt.Sprintf("no method %q on %s", method, recv)
 	if repl, ok := retiredCollectionSpellings[typeName+"."+method]; ok {
@@ -12502,17 +12532,30 @@ func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) s
 		return fmt.Sprintf("%s — the in-place spelling was removed; use %q, which returns the updated %s (assign the result back)",
 			msg, repl, typeName)
 	}
-	if s := diag.Suggest(method, c.methodsFor(typeName, recv)); s != "" {
+	declared := stdlibMethodIndex[typeName]
+	if receiver := stdlibMethodReceivers[typeName][method]; receiver != "" && !c.stdlibReceiverMatches(typeName, method, recv) {
+		return fmt.Sprintf("%s — %q is declared for %s in %q", msg, method, receiver, declared[method])
+	}
+	if mod := declared[method]; mod != "" && !c.moduleAlreadyImports(mod) {
+		// The f-string desugar is the one way to reach this without writing
+		// a method call.
+		note := ""
+		if method == "to_string" {
+			note = " (an f-string like `f\"{x}\"` desugars to `x.to_string()`)"
+		}
+		return fmt.Sprintf("%s — add `import %q`%s", msg, mod, note)
+	}
+	names := c.methodsFor(typeName, recv)
+	if s := diag.Suggest(method, names); s != "" {
 		return fmt.Sprintf("%s — did you mean %q?", msg, s)
 	}
-	// A scalar or string receiver keeps most of its methods in a stdlib
-	// module, so the likeliest cause of an unrecognised name is a missing
-	// import rather than a wrong name. Listing the two builtins the type
-	// has without it would point the reader away from the fix.
-	if mod := scalarModuleFor(recv); mod != "" && !c.moduleAlreadyImports(mod) {
-		return fmt.Sprintf("%s — if it comes from %s, add `import %q`", msg, mod, mod)
+	if s := diag.Suggest(method, slices.Sorted(maps.Keys(declared))); s != "" && c.stdlibReceiverMatches(typeName, s, recv) && !c.moduleAlreadyImports(declared[s]) {
+		return fmt.Sprintf("%s — did you mean %q, which needs `import %q`?", msg, s, declared[s])
 	}
-	if names := c.methodsFor(typeName, recv); len(names) > 0 {
+	if len(declared) > 0 {
+		msg += ", and no stdlib module declares one"
+	}
+	if len(names) > 0 {
 		return fmt.Sprintf("%s (it has: %s)", msg, strings.Join(names, ", "))
 	}
 	return msg
@@ -12680,6 +12723,7 @@ var fipNonAllocBuiltins = map[string]bool{
 	"__ptr_width": true, "__heap_bump_bytes": true, "__heap_alloc_count": true,
 	"monotonic_ns": true,
 	"__f64x2_of":   true, "__f64x2_splat": true, "__f64x2_lane": true,
+	"__f64x2_lt": true, "__f64x2_ne": true, "__f64x2_bitmask": true, "__f32x4_bitmask": true,
 }
 
 // checkFipFunctions verifies every `fip function` performs no heap allocation —
@@ -12971,94 +13015,6 @@ func (c *checker) errTypeParamAssoc(tid *ast.Ident, field string) {
 // (replacing one identifier with another always re-parses). namePos is
 // the field NAME token's own position (FieldInit.NamePos /
 // FieldAccess.FieldPos); a zero position (synthetic node) skips the fix.
-// builtinUnionModule is the stdlib module that declares the methods of the
-// built-in union t, or "".
-func builtinUnionModule(t ast.Type) string {
-	if e, ok := t.(ast.EnumType); ok {
-		switch e.Name {
-		case "Option":
-			return "std/option"
-		case "Result":
-			return "std/result"
-		}
-	}
-	return ""
-}
-
-// scalarMethodModule returns the stdlib module that defines `method` on the
-// scalar type `t`, or "" when there is no such pairing. It exists so a method
-// call on a scalar whose module was not imported gets a diagnostic naming the
-// import, rather than the raw "field access on non-struct value" E043 — which
-// describes the desugared shape rather than the user's code, and is especially
-// confusing for f-strings (`f"{n}"` becomes `n.to_string()`).
-//
-// Deliberately narrow: only method names these modules actually define on the
-// scalar receivers, so a typo'd method still gets the generic error rather than
-// a confidently wrong import suggestion. Since the auto-prelude was removed
-// (Phase 5) a program sees only what it imports, which is what makes this class
-// of confusion reachable at all. #5494.
-func scalarMethodModule(t ast.Type, method string) string {
-	mod := scalarModuleFor(t)
-	if mod == "" {
-		return ""
-	}
-	// to_string is the one every scalar module defines, and the f-string
-	// desugar target — the case that motivates this. Keep the set tight.
-	switch method {
-	case "to_string", "to_string_radix", "to_string_padded", "to_string_with_sep", "to_string_prec":
-		return mod
-	}
-	return ""
-}
-
-// scalarModuleFor names the stdlib module that carries a scalar type's
-// method surface, or "" for a type whose methods aren't in one. Unlike
-// scalarMethodModule it does not check that the module actually defines
-// the method — callers that only want to say "if this method exists, it
-// comes from here" use this one.
-func scalarModuleFor(t ast.Type) string {
-	var mod string
-	switch x := t.(type) {
-	case ast.NumberType:
-		if !x.IsSigned() {
-			if x.NormalWidth() == 64 || x.IsPointerWidth() {
-				mod = "std/u64"
-			} else if x.NormalWidth() == 8 {
-				// u8's method surface lives in std/i32, not std/u32:
-				// every `pub function (b: u8) …` in the stdlib is
-				// declared there. Pointing at std/u32 made the hint
-				// unfollowable — importing it changed nothing and the
-				// identical error repeated, with no reason to try
-				// elsewhere. Bytes reach users constantly (indexing a
-				// string yields u8), so this is a common first error.
-				mod = "std/i32"
-			} else {
-				mod = "std/u32"
-			}
-		} else if x.NormalWidth() == 64 {
-			mod = "std/i64"
-		} else {
-			mod = "std/i32"
-		}
-	case ast.FloatType:
-		mod = "std/f64"
-	case ast.StringType:
-		mod = "std/string"
-	case ast.StrType:
-		// A `str` view shares the `string` method surface (methodTypeName maps
-		// it to "string"), so its methods come from the same module. Without
-		// this case the message fell through to the builtin list — "it has:
-		// as_bytes, len" — which is the outcome the comment above forbids, and
-		// it is reached by FOLLOWING another diagnostic: E043/E002/E003 on a
-		// `str` in an owned position all say "add `.to_owned()`", and
-		// `.to_owned()` is one of the methods that needs the import.
-		mod = "std/string"
-	default:
-		return ""
-	}
-	return mod
-}
-
 // unknownVariantHint explains an arm name that is not a variant. Two
 // distinct mistakes reach here and the bare message serves neither:
 //
@@ -13073,8 +13029,8 @@ func scalarModuleFor(t ast.Type) string {
 // The catch-all reading is only offered when the name resembles no
 // variant: a near-miss is far more likely to be a typo than an attempt
 // at a wildcard.
-func unknownVariantHint(name string, ed *ast.EnumDecl) string {
-	if s := variantSpellingHint(name, ed); s != "" {
+func (c *checker) unknownVariantHint(name string, ed *ast.EnumDecl) string {
+	if s := c.variantSpellingHint(name, ed); s != "" {
 		return s
 	}
 	return " — a bare name in arm position is a VARIANT, not a binding;" +
@@ -13085,13 +13041,15 @@ func unknownVariantHint(name string, ed *ast.EnumDecl) string {
 // close enough. It is the whole hint where the spelling already says the
 // pattern is a variant — a tuple element's `A(x)`, which cannot be read as a
 // binder, so unknownVariantHint's arm-position advice would misdirect.
-func variantSpellingHint(name string, ed *ast.EnumDecl) string {
+func (c *checker) variantSpellingHint(name string, ed *ast.EnumDecl) string {
+	name = c.variantHintName(ed, name)
 	best, bestD := "", 0
 	max := len(name)/3 + 1
 	for i := range ed.Variants {
-		d := editDistanceStr(name, ed.Variants[i].Name)
+		v := c.variantHintName(ed, ed.Variants[i].Name)
+		d := editDistanceStr(name, v)
 		if d <= max && (best == "" || d < bestD) {
-			best, bestD = ed.Variants[i].Name, d
+			best, bestD = v, d
 		}
 	}
 	if best != "" {
@@ -13222,6 +13180,19 @@ type scope struct {
 	// match on the spelling. Nil for a scope that binds only parameters
 	// and pattern bindings.
 	vars map[string]*ast.Var
+	// consts names the const parameters a generic function's root scope
+	// binds.
+	consts map[string]bool
+}
+
+// binder is the innermost scope from s outward that binds name, or nil.
+func (s *scope) binder(name string) *scope {
+	for cur := s; cur != nil; cur = cur.parent {
+		if _, ok := cur.names[name]; ok {
+			return cur
+		}
+	}
+	return nil
 }
 
 func newScope(parent *scope) *scope {
@@ -13406,6 +13377,17 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 			c.errfCode(fn.P, "E018", "duplicate parameter %q", p.Name)
 		}
 		root.set(p.Name, p.Type)
+	}
+	for _, cp := range fn.ConstParams {
+		if _, dup := root.names[cp]; dup {
+			c.errfCode(fn.P, "E018", "duplicate parameter %q", cp)
+			continue
+		}
+		root.set(cp, ast.NumberType{Width: 32, Signed: true})
+		if root.consts == nil {
+			root.consts = map[string]bool{}
+		}
+		root.consts[cp] = true
 	}
 	c.checkBlock(fn.Body, root)
 	c.settleLitLocals(fn.Body)
@@ -16363,9 +16345,9 @@ func scrutineeSub(ed *ast.EnumDecl, et ast.EnumType) map[string]ast.Type {
 // to declare in a per-arm scope and to drive the position-based IR lowering.
 // A named-field pattern reaches it already rewritten into this form by
 // settleNamedVariantPattern. Errors report at pos.
-func (c *checker) resolveVariantBindings(pos ast.Position, variant *ast.EnumVariant, bindings []string, sub map[string]ast.Type) ([]string, []ast.Type) {
+func (c *checker) resolveVariantBindings(pos ast.Position, ed *ast.EnumDecl, variant *ast.EnumVariant, bindings []string, sub map[string]ast.Type) ([]string, []ast.Type) {
 	if len(bindings) != len(variant.Payloads) {
-		c.errfCode(pos, "E015", "%s", payloadCountMsg(variant.Name, len(variant.Payloads), len(bindings)))
+		c.errfCode(pos, "E015", "%s", payloadCountMsg(c.variantHintName(ed, variant.Name), len(variant.Payloads), len(bindings)))
 	}
 	outTypes := make([]ast.Type, len(bindings))
 	for k := range bindings {
@@ -16388,7 +16370,7 @@ func (c *checker) resolveVariantBindings(pos ast.Position, variant *ast.EnumVari
 // field may be named once, and all of them must be unless the pattern ends in
 // `..`. A settled pattern settles to itself, so a re-check after
 // monomorphisation is a no-op. See docs/NAMED-FIELD-VARIANTS.md.
-func (c *checker) settleNamedVariantPattern(pos ast.Position, variant *ast.EnumVariant, fields, bindings []string, payloads []*ast.TuplePatElem, rest bool) ([]string, []*ast.TuplePatElem) {
+func (c *checker) settleNamedVariantPattern(pos ast.Position, ed *ast.EnumDecl, variant *ast.EnumVariant, fields, bindings []string, payloads []*ast.TuplePatElem, rest bool) ([]string, []*ast.TuplePatElem) {
 	if len(variant.FieldNames) == 0 {
 		c.errfCode(pos, "E015", "variant %s has positional payloads; match it as %s(...), not %s { ... }",
 			variant.Name, variant.Name, variant.Name)
@@ -16400,11 +16382,11 @@ func (c *checker) settleNamedVariantPattern(pos ast.Position, variant *ast.EnumV
 	for k, f := range fields {
 		idx := slices.Index(variant.FieldNames, f)
 		if idx < 0 {
-			c.errfCode(pos, "E015", "variant %s has no field %q", variant.Name, f)
+			c.errfCode(pos, "E015", "variant %s has no field %q", c.variantHintName(ed, variant.Name), f)
 			continue
 		}
 		if bound[idx] {
-			c.errfCode(pos, "E015", "field %q bound more than once in pattern for %s", f, variant.Name)
+			c.errfCode(pos, "E015", "field %q bound more than once in pattern for %s", f, c.variantHintName(ed, variant.Name))
 			continue
 		}
 		bound[idx] = true
@@ -16661,7 +16643,7 @@ func (c *checker) checkTuplePatVariantElem(pos ast.Position, el *ast.TuplePatEle
 		c.errfCode(pos, "E043", "unknown enum type %q", et.Name)
 		return
 	}
-	c.checkVariantQualifier(pos, el.VariantModule, ed)
+	badQualifier := c.checkVariantQualifier(pos, el.VariantModule, ed)
 	var variant *ast.EnumVariant
 	for j := range ed.Variants {
 		if ed.Variants[j].Name == el.VariantName {
@@ -16670,15 +16652,17 @@ func (c *checker) checkTuplePatVariantElem(pos ast.Position, el *ast.TuplePatEle
 		}
 	}
 	if variant == nil {
-		c.errfCode(pos, "E014", "variant %q is not part of enum %s%s",
-			el.VariantName, ed.Name, variantSpellingHint(el.VariantName, ed))
+		if !badQualifier {
+			c.errfCode(pos, "E014", "variant %q is not part of enum %s%s",
+				c.variantHintName(ed, el.VariantName), c.enumHintName(ed.Name), c.variantSpellingHint(el.VariantName, ed))
+		}
 		return
 	}
 	if el.VariantFieldNames != nil {
-		el.VariantBindings, el.VariantPayloads = c.settleNamedVariantPattern(pos, variant, el.VariantFieldNames, el.VariantBindings, el.VariantPayloads, el.RestWritten)
+		el.VariantBindings, el.VariantPayloads = c.settleNamedVariantPattern(pos, ed, variant, el.VariantFieldNames, el.VariantBindings, el.VariantPayloads, el.RestWritten)
 		el.VariantFieldNames = slices.Clone(variant.FieldNames)
 	}
-	el.VariantBindings, el.VariantBindingTypes = c.resolveVariantBindings(pos, variant, el.VariantBindings, scrutineeSub(ed, et))
+	el.VariantBindings, el.VariantBindingTypes = c.resolveVariantBindings(pos, ed, variant, el.VariantBindings, scrutineeSub(ed, et))
 	for i, name := range el.VariantBindings {
 		// A slot carrying a sub-pattern binds nothing itself — its pattern
 		// does, under the same element rules, so it routes back through
@@ -16984,7 +16968,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			c.checkBlock(arm.Body, s)
 			continue
 		}
-		c.checkVariantQualifier(arm.P, arm.VariantModule, ed)
+		badQualifier := c.checkVariantQualifier(arm.P, arm.VariantModule, ed)
 		// Find the variant on this enum.
 		varIdx := -1
 		var variant *ast.EnumVariant
@@ -16996,8 +16980,10 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			}
 		}
 		if varIdx < 0 {
-			c.errfCode(arm.P, "E014", "variant %q is not part of enum %s%s",
-				arm.VariantName, ed.Name, unknownVariantHint(arm.VariantName, ed))
+			if !badQualifier {
+				c.errfCode(arm.P, "E014", "variant %q is not part of enum %s%s",
+					c.variantHintName(ed, arm.VariantName), c.enumHintName(ed.Name), c.unknownVariantHint(arm.VariantName, ed))
+			}
 			c.checkBlock(arm.Body, s)
 			continue
 		}
@@ -17007,7 +16993,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		arm.EnumName = ed.Name
 		arm.VariantIndex = varIdx
 		if covered[arm.VariantName] {
-			c.errfCode(arm.P, "E028", "variant %q already covered earlier in this match", arm.VariantName)
+			c.errfCode(arm.P, "E028", "variant %q already covered earlier in this match", c.variantHintName(ed, arm.VariantName))
 		}
 		// Bind names in a fresh scope so they don't leak into
 		// sibling arms. Payload types get the type-parameter
@@ -17016,10 +17002,10 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		// pattern (`Rect { w, h }`) is validated + reordered into
 		// declaration order here.
 		if arm.NamedFields {
-			arm.Bindings, arm.Payloads = c.settleNamedVariantPattern(arm.P, variant, arm.FieldNames, arm.Bindings, arm.Payloads, arm.RestWritten)
+			arm.Bindings, arm.Payloads = c.settleNamedVariantPattern(arm.P, ed, variant, arm.FieldNames, arm.Bindings, arm.Payloads, arm.RestWritten)
 			arm.FieldNames = slices.Clone(variant.FieldNames)
 		}
-		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, sub)
+		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, ed, variant, arm.Bindings, sub)
 		// A refutable arm may still complete its variant's coverage together
 		// with its siblings — see payloadsExhaustive, applied per variant once
 		// every arm is in. Snapshotted AFTER resolveVariantBindings, which is
@@ -17061,7 +17047,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		for _, v := range ed.Variants {
 			if !covered[v.Name] {
 				c.errfCode(n.P, "E030", "match does not cover variant %s of enum %s — add an arm for it, or a `_` arm",
-					v.Name, ed.Name)
+					c.variantHintName(ed, v.Name), c.enumHintName(ed.Name))
 			}
 		}
 	}
@@ -17880,7 +17866,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			c.errfCode(arm.P, "E035", "tuple pattern requires a tuple scrutinee, got enum %s", ed.Name)
 			continue
 		}
-		c.checkVariantQualifier(arm.P, arm.VariantModule, ed)
+		badQualifier := c.checkVariantQualifier(arm.P, arm.VariantModule, ed)
 		varIdx := -1
 		var variant *ast.EnumVariant
 		for j := range ed.Variants {
@@ -17891,8 +17877,10 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			}
 		}
 		if varIdx < 0 {
-			c.errfCode(arm.P, "E014", "variant %q is not part of enum %s%s",
-				arm.VariantName, ed.Name, unknownVariantHint(arm.VariantName, ed))
+			if !badQualifier {
+				c.errfCode(arm.P, "E014", "variant %q is not part of enum %s%s",
+					c.variantHintName(ed, arm.VariantName), c.enumHintName(ed.Name), c.unknownVariantHint(arm.VariantName, ed))
+			}
 			unify(c.checkExpr(arm.Body, s), arm.Body.Pos())
 			continue
 		}
@@ -17902,13 +17890,13 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 		arm.EnumName = ed.Name
 		arm.VariantIndex = varIdx
 		if covered[arm.VariantName] {
-			c.errfCode(arm.P, "E028", "variant %q already covered earlier in this match", arm.VariantName)
+			c.errfCode(arm.P, "E028", "variant %q already covered earlier in this match", c.variantHintName(ed, arm.VariantName))
 		}
 		if arm.NamedFields {
-			arm.Bindings, arm.Payloads = c.settleNamedVariantPattern(arm.P, variant, arm.FieldNames, arm.Bindings, arm.Payloads, arm.RestWritten)
+			arm.Bindings, arm.Payloads = c.settleNamedVariantPattern(arm.P, ed, variant, arm.FieldNames, arm.Bindings, arm.Payloads, arm.RestWritten)
 			arm.FieldNames = slices.Clone(variant.FieldNames)
 		}
-		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, sub)
+		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, ed, variant, arm.Bindings, sub)
 		// A refutable arm may still complete its variant's coverage together
 		// with its siblings — see payloadsExhaustive, applied per variant once
 		// every arm is in. Snapshotted AFTER resolveVariantBindings, which is
@@ -17947,7 +17935,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 		for _, v := range ed.Variants {
 			if !covered[v.Name] {
 				c.errfCode(n.P, "E030", "match does not cover variant %s of enum %s — add an arm for it, or a `_` arm",
-					v.Name, ed.Name)
+					c.variantHintName(ed, v.Name), c.enumHintName(ed.Name))
 			}
 		}
 	}
@@ -18097,6 +18085,12 @@ func (c *checker) retagIndexAsTypeArgs(n *ast.Call, s *scope) {
 	if !ok || !c.calleeIsGenericFunc(fn, s) {
 		return
 	}
+	if gen := c.info.GenericFuncs[fn.Name]; len(gen.TypeParams) > 0 && slices.Contains(gen.ConstParams, gen.TypeParams[0]) {
+		n.Callee = fn
+		n.TypeArgs = []ast.Type{c.indexAsConstArg(ix.Idx, s)}
+		n.TypeArgsWritten = true
+		return
+	}
 	params := c.typeParamsInScope()
 	t, ok := c.indexAsType(ix.Idx, params, s)
 	if !ok {
@@ -18106,6 +18100,96 @@ func (c *checker) retagIndexAsTypeArgs(n *ast.Call, s *scope) {
 	n.Callee = fn
 	n.TypeArgs = []ast.Type{t}
 	n.TypeArgsWritten = true
+}
+
+// indexAsConstArg reads the index operand of `f[e](…)`, where f takes a const
+// parameter first, as that parameter's argument: an integer literal, or a
+// const parameter in scope. Any other operand is a value or a type, which
+// constArgDiags refuses, so it comes back as a name or an empty one.
+func (c *checker) indexAsConstArg(e ast.Expr, s *scope) ast.Type {
+	switch x := e.(type) {
+	case *ast.NumberLit:
+		if isConstArgLit(x) {
+			return constArgOf(x)
+		}
+	case *ast.Ident:
+		if c.isConstParam(x.Name, s) {
+			return ast.ParamType{Name: x.Name}
+		}
+		if _, bound := c.identValueBinding(x.Name, s); !bound {
+			t := ast.Type(ast.StructType{Name: x.Name})
+			c.resolveType(&t, c.typeParamsInScope(), x.P)
+			return t
+		}
+	}
+	return ast.StructType{}
+}
+
+// isConstArgLit reports whether n is an unsuffixed integer literal, in any
+// base, which is the spelling of a const argument.
+func isConstArgLit(n *ast.NumberLit) bool {
+	return n.Width == 0 && !n.IsUnsigned && !n.IsFloat
+}
+
+// constArgOf is the const argument an integer literal spells. A value past
+// i64 keeps a value past i32, so constArgDiags refuses it.
+func constArgOf(n *ast.NumberLit) ast.ConstArg {
+	if n.ExceedsI64 || n.ExceedsU64 {
+		return ast.ConstArg{Value: math.MaxInt64}
+	}
+	return ast.ConstArg{Value: n.Value}
+}
+
+// isConstParam reports whether name, read in scope s, is a const parameter of
+// an enclosing generic function rather than a binder that shadows one.
+func (c *checker) isConstParam(name string, s *scope) bool {
+	if b := s.binder(name); b != nil {
+		return b.consts[name]
+	}
+	for i := len(c.captureChain) - 1; i >= 0; i-- {
+		if ent := c.captureChain[i]; ent.scope != nil {
+			if b := ent.scope.binder(name); b != nil {
+				return b.consts[name]
+			}
+		}
+	}
+	return false
+}
+
+// constArgDiags checks each written argument of a call to generic fn against
+// the kind of its parameter: a const parameter takes an integer literal or a
+// const parameter in scope (E089 for a value, E090 for a type), and a type
+// parameter takes a type (E090 for an integer).
+func (c *checker) constArgDiags(fn *ast.FuncDecl, written []ast.Type, pos ast.Position, s *scope) {
+	for i, ta := range written {
+		if i >= len(fn.TypeParams) {
+			return
+		}
+		tp := fn.TypeParams[i]
+		_, isInt := ta.(ast.ConstArg)
+		if !slices.Contains(fn.ConstParams, tp) {
+			if isInt {
+				c.errfCode(pos, "E090", "type parameter %s takes a type, not the integer %s", tp, ta)
+			}
+			continue
+		}
+		if ca, ok := ta.(ast.ConstArg); ok {
+			if ca.Value > math.MaxInt32 {
+				c.errfCode(pos, "E089", "the const argument for %s must fit in i32", tp)
+			}
+			continue
+		}
+		if pt, ok := ta.(ast.ParamType); ok && c.isConstParam(pt.Name, s) {
+			continue
+		}
+		if st, ok := ta.(ast.StructType); ok && len(st.Args) == 0 {
+			if _, bound := c.identValueBinding(st.Name, s); st.Name == "" || bound {
+				c.errfCode(pos, "E089", "the const argument for %s must be an integer literal or a const parameter", tp)
+				continue
+			}
+		}
+		c.errfCode(pos, "E090", "const parameter %s takes an integer, not the type %s", tp, ta)
+	}
 }
 
 // indexAsType reads an index operand as the type it spells: a type name, or a
@@ -18799,6 +18883,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	case *ast.Ident:
 		if t, ok := s.lookup(n.Name); ok {
 			n.Local = true
+			n.ConstParam = s.binder(n.Name).consts[n.Name]
 			c.noteLitIdent(n, t, s.lookupVarDecl(n.Name))
 			return t
 		}
@@ -18827,6 +18912,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 				if t, ok := ent.scope.lookup(n.Name); ok {
 					n.Local = true
+					n.ConstParam = ent.scope.binder(n.Name).consts[n.Name]
 					// Record the capture in this entry's sink AND
 					// in every deeper sink (so each intermediate
 					// closure forwards the slot through).
@@ -19925,6 +20011,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					if tooMany || (tooFew && n.Method == nil) {
 						display, _ := callSiteName(fn)
 						c.errfCode(n.P, "E040", "%s", arityMsg(display, len(fn.TypeParams), count, "type argument"))
+					} else if n.Method == nil {
+						c.constArgDiags(fn, written, n.P, s)
 					}
 					// The receiver's arguments are the LEADING parameters.
 					for i, ta := range recvArgs {
@@ -19944,9 +20032,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						offset = len(fn.TypeParams) - len(written)
 					}
 					for i, ta := range written {
-						if offset+i < len(fn.TypeParams) {
-							sub[fn.TypeParams[offset+i]] = ta
+						if offset+i >= len(fn.TypeParams) {
+							continue
 						}
+						// An integer for a type parameter is E090, and the
+						// arguments still infer that parameter.
+						if _, isInt := ta.(ast.ConstArg); isInt && !slices.Contains(fn.ConstParams, fn.TypeParams[offset+i]) {
+							continue
+						}
+						sub[fn.TypeParams[offset+i]] = ta
 					}
 				}
 			}
@@ -20844,6 +20938,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// shaped captures (string / array / struct / enum / slice /
 		// tuple / closure, per ast.IsPointerType) are rejected;
 		// thread the new value out of the closure (return it).
+		if id, ok := n.Target.(*ast.Ident); ok && c.isConstParam(id.Name, s) {
+			c.errfCode(id.Pos(), "E091", "cannot assign to const parameter %s: it is the constant its instance is made for", id.Name)
+		}
 		if id, ok := n.Target.(*ast.Ident); ok {
 			if ct, isCap := c.capturedType(id.Name, s); isCap && ast.IsPointerType(ct) {
 				c.errfCode(id.Pos(), "E049",
@@ -21486,36 +21583,14 @@ func (c *checker) fieldAccessType(n *ast.FieldAccess, s *scope, tt ast.Type) ast
 	st, ok := tt.(ast.StructType)
 	if !ok {
 		if tt != nil {
-			// A method call on a SCALAR whose defining stdlib module was not
-			// imported lands here, and the bare E043 actively misleads: it
-			// talks about struct field access on code the user may not have
-			// written at all. An f-string desugars `f"{n}"` to
-			// `n.to_string()`, so `write(f"x{n}y")` without `import "std/i32"`
-			// reports "field access on non-struct value of type i32" pointing
-			// at the f-string. Name the import instead (#5494).
-			if mod := scalarMethodModule(tt, n.Field); mod != "" {
-				// The f-string note only makes sense for to_string — it is the
-				// only method the desugar produces, and the only way a user can
-				// reach this without writing a method call themselves.
-				hint := ""
-				if n.Field == "to_string" {
-					hint = " (an f-string like `f\"{x}\"` desugars to `x.to_string()`)"
-				}
-				c.errfCode(n.P, "E043",
-					"no method %q on %s — add `import %q`%s", n.Field, tt, mod, hint)
-				return nil
-			}
-			// A receiver with a method namespace of its own — an
-			// array, a map, a slice — reaching here means the
-			// method does not exist. Say so, and say what does.
-			if tn, ok := collectionNamespace(tt); ok && len(c.methodsOn(tn)) > 0 {
+			// A receiver with a method namespace of its own, or whose methods
+			// live in stdlib modules, gets the method advice: the import that
+			// declares the method, a near miss, or what the receiver has. The
+			// bare "field access on non-struct" would describe the desugared
+			// shape, not the reader's code: `f"{n}"` becomes `n.to_string()`
+			// (#5494).
+			if tn, ok := collectionNamespace(tt); ok && (len(c.methodsOn(tn)) > 0 || len(stdlibMethodIndex[tn]) > 0) {
 				c.errUnknownMethod(n, tn, tt)
-				return nil
-			}
-			// Option's and Result's methods live in std/option and
-			// std/result, which a program sees only when it imports them.
-			if mod := builtinUnionModule(tt); mod != "" && !c.moduleAlreadyImports(mod) {
-				c.errfCode(n.P, "E043", "no method %q on %s — if it comes from %s, add `import %q`", n.Field, tt, mod, mod)
 				return nil
 			}
 			c.errfCode(n.P, "E043", "field access on non-struct value of type %s", tt)
@@ -23506,7 +23581,7 @@ func isFloat(t ast.Type) bool {
 
 // laneBuiltinVerbs are the lane builtins after their `__f64x2_` / `__f32x4_`
 // prefix (docs/SIMD-GENERIC-KERNELS.md §6).
-var laneBuiltinVerbs = []string{"splat", "of", "lane", "mul_add", "sqrt", "abs", "floor", "round", "min", "max", "lt", "ne", "select", "load", "with"}
+var laneBuiltinVerbs = []string{"splat", "of", "lane", "bitmask", "mul_add", "sqrt", "abs", "floor", "round", "min", "max", "lt", "ne", "select", "load", "with"}
 
 // registerLaneBuiltins declares the lane builtins of f64x2 and f32x4. `lane`
 // reads one element, `lt` and `ne` give a mask, `select(a, b, m)` takes a
@@ -23525,6 +23600,7 @@ func (c *checker) registerLaneBuiltins() {
 			"splat":   {Params: []ast.Type{e}, Result: lt},
 			"of":      {Params: of, Result: lt},
 			"lane":    {Params: []ast.Type{lt, i32}, Result: e},
+			"bitmask": {Params: []ast.Type{lt}, Result: i32},
 			"mul_add": {Params: []ast.Type{lt, lt, lt}, Result: lt},
 			"select":  {Params: []ast.Type{lt, lt, lt}, Result: lt},
 			"load":    {Params: []ast.Type{arr, i32}, Result: lt},
@@ -24198,19 +24274,25 @@ func isBareNumericLiteral(e ast.Expr) bool {
 // `Color.Red` type-checked as a statement and was rejected as an expression —
 // one construct with two answers depending only on its position (#6576). One
 // function now, so they cannot drift again.
-func (c *checker) checkVariantQualifier(p ast.Position, qualifier string, ed *ast.EnumDecl) {
+//
+// It reports whether the qualifier is wrong; a variant missing from the
+// scrutinee enum is then not reported again as E014.
+func (c *checker) checkVariantQualifier(p ast.Position, qualifier string, ed *ast.EnumDecl) bool {
 	if qualifier == "" {
-		return
+		return false
 	}
 	if _, qualIsEnum := c.info.Enums[qualifier]; qualIsEnum {
 		if qualifier != ed.Name {
 			c.errfCode(p, "E029", "variant pattern qualifier %q does not match scrutinee enum %s",
 				c.enumHintName(qualifier), c.enumHintName(ed.Name))
+			return true
 		}
-		return
+		return false
 	}
 	if ed.SourceModule != "" && qualifier != ed.SourceModule {
 		c.errfCode(p, "E029", "variant pattern qualifier names module %q, but enum %s lives in module %q",
 			qualifier, c.enumHintName(ed.Name), ed.SourceModule)
+		return true
 	}
+	return false
 }

@@ -1,0 +1,23 @@
+// E089: a const argument is an integer literal or a const parameter in
+// scope. A local value or an expression is refused, because the argument
+// names the instance the call runs. A literal past i32 is refused too.
+// `ok` shows what is accepted.
+function filled[const N: i32](x: f64): f64[] {
+  let out: f64[] = [];
+  while (out.len() < N) {
+    out = out.append(x);
+  }
+  return out;
+}
+
+function ok[const M: i32](): i32 {
+  return filled[M](1.0).len() + filled[2](1.0).len();
+}
+
+function main(): i32 {
+  let k: i32 = 2;
+  let a: i32 = filled[k](1.0).len();
+  let b: i32 = filled[k + 1](1.0).len();
+  let c: i32 = filled[2147483648](1.0).len();
+  return a + b + c + ok[1]();
+}

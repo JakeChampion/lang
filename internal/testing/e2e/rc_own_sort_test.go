@@ -4,25 +4,25 @@ import (
 	"testing"
 )
 
-// Dogfood: std/sort's `own`-taking in-place sorts. `sort_i32_inplace_asc/_desc`
-// consume their array argument and return the SAME buffer, sorted — no copy,
-// zero allocation. These exercise the `own` feature (affine + ownership-guard +
-// transfer-by-return) through real stdlib code: a fresh literal is an owned
-// value (passes the E051 guard), the function permutes it in place, and the
-// returned array IS the input box (the own param escapes via `return`, so the
-// exit sweep must not free it).
+// Dogfood: core/cmp's `own`-taking in-place sorts. `sort_in_place` and
+// `sort_desc_in_place` consume their array argument and return the SAME
+// buffer, sorted — no copy, zero allocation. These exercise the `own` feature
+// (affine + ownership-guard + transfer-by-return) through real stdlib code: a
+// fresh literal is an owned value (passes the E051 guard), the function
+// permutes it in place, and the returned array IS the input box (the own param
+// escapes via `return`, so the exit sweep must not free it).
 
 const ownInplaceSortSrc = `
-import "std/sort";
+import "core/cmp";
 function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
     while (i < 100) {
-        let a: i32[] = sort.sort_i32_inplace_asc([5, 3, 8, 1, 9, 2, 7, 4, 6]);
+        let a: i32[] = cmp.sort_in_place([5, 3, 8, 1, 9, 2, 7, 4, 6]);
         if (a[0] != 1) { return 10; }
         if (a[8] != 9) { return 11; }
         if (a[4] != 5) { return 12; }   // median
-        let b: i32[] = sort.sort_i32_inplace_desc([5, 3, 8, 1, 9, 2, 7, 4, 6]);
+        let b: i32[] = cmp.sort_desc_in_place([5, 3, 8, 1, 9, 2, 7, 4, 6]);
         if (b[0] != 9) { return 20; }
         if (b[8] != 1) { return 21; }
         acc = acc + a[0] + b[0];        // 1 + 9 = 10 per iter
@@ -53,12 +53,12 @@ func TestWASMOwnInplaceSort(t *testing.T) {
 	// a fresh sorted array per iteration.
 	bump := func(n string) string {
 		return `
-import "std/sort";
+import "core/cmp";
 function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
     let i: i32 = 0;
     while (i < ` + n + `) {
-        let a: i32[] = sort.sort_i32_inplace_asc([5, 3, 8, 1, 9, 2, 7, 4, 6]);
+        let a: i32[] = cmp.sort_in_place([5, 3, 8, 1, 9, 2, 7, 4, 6]);
         let u: i32 = a[0];
         i = i + 1;
     }

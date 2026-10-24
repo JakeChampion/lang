@@ -1,0 +1,12 @@
+// E090: an argument has the kind of its parameter. A const parameter takes
+// an integer and a type parameter takes a type, so a type in the place of N
+// and an integer in the place of T are refused.
+function count[const N: i32, T](x: T): i32 {
+  return N;
+}
+
+function main(): i32 {
+  let a: i32 = count[string, string]("a");
+  let b: i32 = count[3, 4]("a");
+  return a + b + count[3, string]("a");
+}

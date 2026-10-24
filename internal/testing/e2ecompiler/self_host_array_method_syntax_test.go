@@ -18,8 +18,6 @@ var arrayMethodSyntaxCases = []struct {
 	{"sum_abs", "import \"std/array\";\nfunction main(): i32 { let a: i32[] = [5, 3, 8, 1]; return a.sum_abs(); }\n", 17},
 	// reversed returns a fresh i32[]; index it back to a scalar exit code.
 	{"reversed", "import \"std/array\";\nfunction main(): i32 { let a: i32[] = [5, 3, 8, 1]; let b: i32[] = a.reverse(); return b[0]; }\n", 1},
-	// sorted_asc likewise returns i32[].
-	{"sorted_asc", "import \"std/array\";\nfunction main(): i32 { let a: i32[] = [3, 1, 2]; let s: i32[] = a.sorted_asc(); return s[0] * 100 + s[1] * 10 + s[2]; }\n", 123},
 }
 
 func TestSelfHostArrayMethodSyntaxX86_64(t *testing.T) {

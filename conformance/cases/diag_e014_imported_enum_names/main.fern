@@ -1,0 +1,19 @@
+// Diagnostics on an imported enum's patterns name the enum and its variants
+// as the source spells them (`shapes.Shape`, `Circle`), never by the
+// module-mangled names the loader gives them.
+import "./shapes";
+
+function area(s: shapes.Shape): i32 {
+    match (s) {
+        shapes.Shape.Circel(r) => { return 1; },
+        shapes.Shape.Circle { r } => { return 2; },
+        shapes.Shape.Rect(w, h) => { return 3; },
+        shapes.Shape.Rect { w, .. } => { return 4; },
+        shapes.Mark.Tick => { return 5; },
+    }
+    return 0;
+}
+
+function main(): i32 {
+    return area(shapes.Shape.Dot);
+}

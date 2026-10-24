@@ -22,9 +22,17 @@ func TestSelfHostFractalSource(t *testing.T) {
 	testFractalTargets(t, path)
 }
 
+func TestSelfHostFractalAcceleration(t *testing.T) {
+	path, err := filepath.Abs("../../../examples/fractal/acceleration_test.fern")
+	if err != nil {
+		t.Fatal(err)
+	}
+	testFractalTargets(t, path)
+}
+
 func TestSelfHostFractalFipKernels(t *testing.T) {
 	dir := t.TempDir()
-	for _, name := range []string{"fractal.fern", "binary.fern"} {
+	for _, name := range []string{"fractal.fern", "linear.fern", "kernel.fern", "series.fern"} {
 		source, err := os.ReadFile(filepath.Join("../../../examples/fractal", name))
 		if err != nil {
 			t.Fatal(err)

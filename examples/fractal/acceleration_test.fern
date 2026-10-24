@@ -1,0 +1,159 @@
+import "std/test";
+import "std/f64";
+import "std/hash";
+import "./fractal";
+import "./kernel";
+import "./linear";
+import "./series";
+
+struct Escape { steps: i32, magnitude: f64 }
+
+// This oracle has no SIMD, batching, interior tests, or cycle detection.
+function scalar(real: f64, imaginary: f64, limit: i32): Escape {
+  let zr: f64 = 0.0;
+  let zi: f64 = 0.0;
+  let steps: i32 = 0;
+  while (steps < limit) {
+    let rr: f64 = zr * zr;
+    let ii: f64 = zi * zi;
+    if (rr + ii > 65536.0) {
+      return Escape { steps: steps, magnitude: rr + ii };
+    }
+    zi = 2.0 * zr * zi + imaginary;
+    zr = rr - ii + real;
+    steps = steps + 1;
+  }
+  return Escape { steps: limit, magnitude: -1.0 };
+}
+
+function test_refill(): test.TestOutcome {
+  for size in [1, 2, 3, 7, 8, 9, 17] {
+    for limit in [0, 1, 4, 5, 15, 16, 17, 63, 64, 65, 257] {
+      let view: kernel.View = kernel.View { size: size, x: 0, y: 0, step: 4.0 / (size as f64), limit: limit };
+      let pixels: kernel.Pixels = kernel.render(view, None);
+      let row: i32 = 0;
+      while (row < size) {
+        let column: i32 = 0;
+        while (column < size) {
+          let real: f64 = -2.5 + (column as f64 + 0.5) * view.step;
+          let imaginary: f64 = 2.0 - (row as f64 + 0.5) * view.step;
+          let want: Escape = scalar(real, imaginary, limit);
+          let at: i32 = row * size + column;
+          if (want.magnitude >= 0.0) {
+            if (pixels.counts[at] != want.steps || pixels.magnitudes[at] != f64_bits(want.magnitude)) {
+              return test.fail("refilled lane differs from scalar escape");
+            }
+          } else if (pixels.counts[at] < 0 || pixels.counts[at] > limit || f64_from_bits(pixels.magnitudes[at]) > 0.0) {
+            return test.fail("bounded lane has an escape result");
+          }
+          column = column + 1;
+        }
+        row = row + 1;
+      }
+    }
+  }
+  return test.pass();
+}
+
+function test_prefix(): test.TestOutcome {
+  // Check both a bounded orbit through zero and an escaping orbit.
+  for real in [0.0, -0.75] {
+    let imaginary: f64 = 0.0;
+    if (real < 0.0) {
+      imaginary = 0.1;
+    }
+    let ref: linear.Reference = linear.reference(real, imaginary, 1e-8, 256, 1e-8);
+    if (ref.series.steps < 2 || ref.series.error < 0.0) {
+      return test.fail("shared series was not constructed");
+    }
+    for delta in [-5e-9, 0.0, 5e-9] {
+      let start: linear.Start = linear.prefix(ref, real + delta, imaginary + delta, 256);
+      if (start.steps < 2) {
+        return test.fail("prefix did not skip updates");
+      }
+      let zr: f64 = 0.0;
+      let zi: f64 = 0.0;
+      let at: i32 = 0;
+      while (at < start.steps) {
+        let rr: f64 = zr * zr;
+        let ii: f64 = zi * zi;
+        if (rr + ii > 65536.0) {
+          return test.fail("prefix skipped an escape");
+        }
+        zi = 2.0 * zr * zi + imaginary + delta;
+        zr = rr - ii + real + delta;
+        at = at + 1;
+      }
+      if ((zr - start.real).abs() + (zi - start.imaginary).abs() > 1e-6) {
+        return test.fail("prefix state exceeds the comparison tolerance");
+      }
+    }
+  }
+  // Disable the polynomial to exercise composed linear blocks separately.
+  let ref: linear.Reference = linear.reference(-0.75, 0.1, 1e-15, 256, 1e-8);
+  let linear_only: linear.Reference = linear.Reference { ...ref, series: series.Model { ...ref.series, steps: 0 } };
+  let start: linear.Start = linear.prefix(linear_only, -0.75, 0.1, 256);
+  if (start.steps < 9 || start.work >= start.steps) {
+    return test.fail("linear blocks did not skip updates");
+  }
+  return test.pass();
+}
+
+function test_invalid_tiles(): test.TestOutcome {
+  match (fractal.render(-1, 0, 0)) {
+    Err(InvalidTile) => {},
+    _ => {
+      return test.fail("invalid zoom was accepted");
+    }
+  }
+  match (fractal.render_exact(42, 4398046511104, 0)) {
+    Err(InvalidTile) => {},
+    _ => {
+      return test.fail("invalid coordinate was accepted");
+    }
+  }
+  return test.pass();
+}
+
+function test_output_paths(): test.TestOutcome {
+  match (fractal.render(42, 0, 0)) {
+    Ok(tile) => {
+      if (hash.crc32_new().update_array(tile.png).finish() != 757427088 as u32) {
+        return test.fail("short-orbit tile PNG differs");
+      }
+    },
+    Err(_) => {
+      return test.fail("short-orbit renderer failed");
+    }
+  }
+  match (fractal.render(20, 195329, 524288)) {
+    Ok(tile) => {
+      if (hash.crc32_new().update_array(tile.png).finish() != 4160868373 as u32) {
+        return test.fail("shared bounded tile PNG differs");
+      }
+    },
+    Err(_) => {
+      return test.fail("shared bounded renderer failed");
+    }
+  }
+  match (fractal.render_exact(14, 7193, 7652)) {
+    Ok(tile) => {
+      if (hash.crc32_new().update_array(tile.png).finish() != 581054115 as u32) {
+        return test.fail("direct lane-refill tile PNG differs");
+      }
+    },
+    Err(_) => {
+      return test.fail("direct lane-refill renderer failed");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner: test.TestRunner = test.test_new("fractal acceleration");
+  runner = runner.it("lane refill, tails, and iteration deadlines", test_refill);
+  runner = runner.it("shared orbit prefix", test_prefix);
+  runner = runner.it("typed coordinate errors", test_invalid_tiles);
+  runner = runner.it("default and direct output paths", test_output_paths);
+  return runner.finish();
+}

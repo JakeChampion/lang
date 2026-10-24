@@ -4,7 +4,6 @@
 // Generic methods operate on T[] values. Other methods select a specific
 // element type, such as string[] for join.
 
-import "std/sort";
 // core/cmp supplies the `Eq` trait that bounds the equality-driven verbs
 // (`contains` / `index_of` / `distinct`) below, plus the primitive `impl Eq`
 // instances (i32 / string / …) that satisfy it.
@@ -26,7 +25,7 @@ import "std/num";
 //
 // What is left here is genuinely i32-shaped — `gcd_all` / `median` /
 // `avg` and friends, whose bodies need integer division. The element-polymorphic reductions (`sum` / `max` /
-// `min` / `product` / `count` / `sorted_asc` / …) live at the bottom of
+// `min` / `product` / `count` / …) live at the bottom of
 // the file as bounded generic methods.
 
 // `(arr: i32[]) avg()` — integer mean (truncated toward zero).
@@ -893,7 +892,7 @@ pub function find_map[T, U](xs: T[], f: (T) => Option[U]): Option[U] {
 // `max_by_i32_key(xs, key)` / `min_by_i32_key(xs, key)` — the ELEMENT of `xs`
 // whose i32 `key(x)` projection is largest / smallest, as `Option[T]` (`None`
 // for an empty array). The "which record has the max timestamp" case, the
-// projection sibling of `sort_by_i32_key` and of `core/cmp`'s value-returning
+// projection sibling of `cmp.sort_by_key` and of `core/cmp`'s value-returning
 // `max_of` / `min_of` (which need the elements themselves to be `Ord`; these
 // only need an i32 key, so they work for any element type via the closure).
 // Each element's `key` is evaluated once. Ties keep the FIRST extremal element
@@ -1524,11 +1523,6 @@ pub function reduce[T](xs: T[], f: (T, T) => T): Option[T] {
   return Some(acc);
 }
 
-// (Generic `sort_by(xs, cmp)` lives in std/sort; generic `sort(xs)` for a
-// `T: cmp.Ord` element type lives in core/cmp. The method forms
-// `xs.sort_by(cmp)` below delegate to std/sort — #5348 removed the duplicate
-// free-function copies that used to live here.)
-
 // `binary_search(xs, target)` — `Some(i)` for an index where `xs[i] == target`,
 // or `None` if absent, assuming `xs` is sorted ASCENDING by the element type's
 // `Ord` ordering (the order `sort` produces). O(log n) — halve the search range
@@ -1865,12 +1859,6 @@ pub function (xs: T[]) reduce(f: (T, T) => T): Option[T] {
   return reduce(xs, f);
 }
 
-// `xs.sort_by(cmp)` — comparator-driven stable sort (fresh array); delegates
-// to std/sort's generic `sort_by`.
-pub function (xs: T[]) sort_by(cmp: (T, T) => i32): T[] {
-  return sort.sort_by(xs, cmp);
-}
-
 // `xs.max_by(cmp)` / `xs.min_by(cmp)` — extremal element under the comparator
 // (first on a tie); `None` when empty.
 pub function (xs: T[]) max_by(cmp: (T, T) => i32): Option[T] {
@@ -2000,12 +1988,11 @@ pub function (xs: T[]) windows[T](size: i32): T[][] {
 // ---- Element-polymorphic method forms of the reductions ------------
 //
 // `sum` / `product` / `max` / `min` / `count` / `index_of` /
-// `sorted_asc` / `sorted_desc` / `reverse` / `take` / `drop` / `distinct`
+// `reverse` / `take` / `drop` / `distinct`
 // used to exist twice, once for an `i32[]` receiver and once for a
 // `string[]` one, under names invented to dodge a namespace that keyed on
-// the method name alone (`count` vs `count_str`, `reversed` vs `reverse`,
-// `sorted_asc` vs `sorted_str_asc`). They are one bounded generic each now,
-// so the same call works for every element type that satisfies the bound —
+// the method name alone (`count` vs `count_str`, `reversed` vs `reverse`).
+// They are one bounded generic each now, so the same call works for every element type that satisfies the bound —
 // i32 / i64 / u32 / u64 / f32 / f64 / string and `@derive(Ord)` /
 // `@derive(Eq)` types alike (#2663).
 
@@ -2066,16 +2053,6 @@ pub function (xs: T[]) range[T: cmp.Ord + num.Sub](): Option[T] {
 // `xs.count(target)` — how many elements equal `target`.
 pub function (xs: T[]) count[T: cmp.Eq](target: T): i32 {
   return count(xs, target);
-}
-
-// `xs.sorted_asc()` / `xs.sorted_desc()` — a fresh array in `Ord` order;
-// the input is untouched.
-pub function (xs: T[]) sorted_asc[T: cmp.Ord](): T[] {
-  return cmp.sort(xs);
-}
-
-pub function (xs: T[]) sorted_desc[T: cmp.Ord](): T[] {
-  return cmp.sort_desc(xs);
 }
 
 // `xs.reverse()` — fresh array, elements in reverse order.

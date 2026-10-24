@@ -100,14 +100,16 @@ func TestFipAdmitsNonAllocatingBuiltins(t *testing.T) {
 		`__clz32(x)`, `__ctz32(x)`, `__popcount32(x)`, `__clz64(y)`, `__ctz64(y)`, `__popcount64(y)`, `(__mulhi_u64(y, y) as i32)`,
 		`__ptr_width()`, `(__heap_bump_bytes() as i32)`, `(__heap_alloc_count() as i32)`, `(monotonic_ns() as i32)`,
 		`(__f64x2_lane(__f64x2_of(1.0, 2.0), 1) as i32)`, `(__f64x2_lane(__f64x2_splat(3.0), 0) as i32)`,
+		`__f64x2_bitmask(__f64x2_lt(__f64x2_of(1.0, 2.0), __f64x2_splat(2.0)))`,
+		`__f64x2_bitmask(__f64x2_ne(__f64x2_of(1.0, 2.0), __f64x2_splat(2.0)))`, `__f32x4_bitmask(v)`,
 	} {
 		for _, kw := range []string{"fip", "fbip"} {
-			wantNoErr(t, kw+" "+call, kw+` function probe(s: string, set: u8[], x: u32, y: u64): i32 { return `+call+`; }
+			wantNoErr(t, kw+" "+call, kw+` function probe(s: string, set: u8[], x: u32, y: u64, v: f32x4): i32 { return `+call+`; }
 function main(): i32 { return 0; }`)
 		}
 	}
-	if len(fipNonAllocBuiltins) != 34 {
-		t.Errorf("fipNonAllocBuiltins has %d entries and this test covers 34: add a row for the new one", len(fipNonAllocBuiltins))
+	if len(fipNonAllocBuiltins) != 38 {
+		t.Errorf("fipNonAllocBuiltins has %d entries and this test covers 38: add a row for the new one", len(fipNonAllocBuiltins))
 	}
 }
 

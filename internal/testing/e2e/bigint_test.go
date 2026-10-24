@@ -245,7 +245,7 @@ function main(): i32 {
 // silently records that a type satisfies a trait, so a signature that drifted
 // out of line with the trait would fail here and nowhere else. `cmp.sort` over
 // a BigInt[] is the essential case; it only works if `cmp` really returns
-// the -1/0/1 that std/sort expects.
+// the -1/0/1 that `cmp.sort` expects.
 func TestX86_64BigIntTraits(t *testing.T) {
 	src := `import "core/bigint";
 import "core/cmp";
@@ -260,7 +260,7 @@ function big(s: string): bigint.BigInt {
 }
 
 function main(): i32 {
-    // Ord, through std/sort's adaptive sort — negatives, zero, and values
+    // Ord, through core/cmp's adaptive sort — negatives, zero, and values
     // wider than i64 all in one array.
     let xs: bigint.BigInt[] = [];
     xs = xs.append(big("340282366920938463463374607431768211456"));

@@ -1388,6 +1388,12 @@ function simd_opcode(op: string): i32 {
   if (op == "f64x2.splat") {
     return 20;
   }
+  if (op == "i32x4.bitmask") {
+    return 164;
+  }
+  if (op == "i64x2.bitmask") {
+    return 196;
+  }
   if (op == "f64x2.extract_lane") {
     return 33;
   }

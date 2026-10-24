@@ -6,8 +6,8 @@ import "testing"
 // x86-64 + wasm. The per-width monomorphic sort family (`sort_i32_asc` etc.)
 // retired to core/cmp's generic `sort` / `sort_desc` (#5397), but the relevant
 // sort surface is inlined verbatim as monomorphic i32 / string merge sorts
-// matching the fresh-copy shape `cmp.sort` / `cmp.sort_desc` and std/sort's
-// `sort_by`-based string sorts now ship: the i32 ascending / descending stable
+// matching the fresh-copy shape `cmp.sort` / `cmp.sort_desc` and
+// `cmp.sort_by`'s string sorts ship: the i32 ascending / descending stable
 // bottom-up merge sorts (direct scalar compares), the byte-lexicographic
 // `string_cmp` three-way comparator, and the string ascending / descending
 // merge sorts built on it. This verifies the constructs those sorts lower to
@@ -20,7 +20,7 @@ import "testing"
 // return-borrowed-param early-out (executed by the i32-empty / string-singleton
 // cases). Each program returns a small deterministic int (kept <= 126);
 // expectations are oracle-checked against the native interpreter. FEATURE-AUDIT
-// std/sort + core/cmp sort row.
+// core/cmp sort row.
 const sortIRPrelude = `pub function sort_i32_asc(arr: i32[]): i32[] {
     let n: i32 = arr.len();
     if (n < 2) { return arr; }

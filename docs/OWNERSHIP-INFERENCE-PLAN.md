@@ -473,9 +473,10 @@ analysis, which is independent, pure, and de-risks the design.
   whitelisted non-allocating builtins (the `len` method and the builtin
   functions in `fipNonAllocBuiltins`). Rejected: array/tuple/struct
   /payload-enum literals, string concat/interpolation, writes through a
-  non-`own` heap value, and any call not proven allocation-free. Dogfooded:
-  `std/sort`'s `sort_i32_inplace_asc/_desc` are now `fip` (they sort the
-  owned buffer in place, allocating nothing). Parser + checker tests both
+  non-`own` heap value, and any call not proven allocation-free. Dogfooded by
+  std/sort's `sort_i32_inplace_asc/_desc` until #12722 replaced them with
+  core/cmp's generic `sort_in_place` family, which calls a comparator and so
+  is `own` but not `fip`. Parser + checker tests both
   directions; `internal/syntax/diag/explanations/E053.md`.
 
   **Future relaxation:** Koka's `fip` also permits allocation fully matched

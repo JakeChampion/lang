@@ -2,6 +2,7 @@ import "std/test";
 import "std/http";
 import "std/platform";
 import "std/option";
+import "std/result";
 import "./source";
 import "./server";
 
@@ -19,13 +20,13 @@ function test_imports(): test.TestOutcome {
     html.starts_with("  ") && html.contains("href=\"/_src/fractal.fern\"")
       && html.contains("<span class=\"s\">&quot;./fractal&quot;</span></a>")
       && html.contains("<span class=\"k\">as</span> tiles;") && html.contains("<span class=\"c\">// use the renderer</span>")
-      && source.highlight("import\t\"./binary\";").contains("href=\"/_src/binary.fern\""),
+      && source.highlight("import\t\"std/binary\";").contains("/internal/stdlib/std/binary.fern\""),
   );
 }
 
 function test_import_targets(): test.TestOutcome {
   return test.assert_true(
-    source.import_href("././binary.fern").unwrap_or("") == "/_src/binary.fern"
+    source.import_href("././source.fern").unwrap_or("") == "/_src/source.fern"
       && source.import_href("std/http").unwrap_or("") == "https://github.com/JakeChampion/lang/blob/main/internal/stdlib/std/http.fern"
       && source.import_href("../../compiler/weave").unwrap_or("") == "https://github.com/JakeChampion/lang/blob/main/compiler/weave.fern"
       && source.import_href("./missing").is_none() && source.import_href("../../../etc/passwd").is_none(),
@@ -83,6 +84,31 @@ function test_unknown_paths(): test.TestOutcome {
   );
 }
 
+function test_request_errors(): test.TestOutcome {
+  match (server.parse_request("4294967295 42 4398046511103 4398046511103")) {
+    Ok(tile) => {
+      if (tile.id != 4294967295 as u32 || tile.z != 42 || tile.x != 4398046511103) {
+        return test.fail("valid request changed during parsing");
+      }
+    },
+    Err(_) => {
+      return test.fail("valid request was rejected");
+    }
+  }
+  for request in ["", "1 2 3", "1 2 3 4 5", "-1 0 0 0", "4294967296 0 0 0", "1 4294967296 0 0", "1 42 9223372036854775808 0", "1 42 -1 0", "1 0 0 x", "1 42 4398046511104 0"] {
+    if (server.parse_request(request).is_ok()) {
+      return test.fail("malformed request was accepted");
+    }
+  }
+  let routes = server.routes[platform.Host](server.stats("test", 0, 0), "web", []);
+  for path in ["/tile/0/9223372036854775808/0", "/tile/42/-1/0", "/tile/43/0/0", "/tile/0/x/0"] {
+    if (routes.handle(http.request("GET", path), platform.host()).status != 400) {
+      return test.fail("malformed tile route did not return 400");
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let runner: test.TestRunner = test.test_new("fractal source browser");
   runner = runner.it("Fern tokens", test_highlight);
@@ -93,5 +119,6 @@ function main(): i32 {
   runner = runner.it("line anchors and active file", test_line_links);
   runner = runner.it("source routes before static files", test_routes);
   runner = runner.it("unknown and traversal paths", test_unknown_paths);
+  runner = runner.it("typed request errors and HTTP 400", test_request_errors);
   return runner.finish();
 }

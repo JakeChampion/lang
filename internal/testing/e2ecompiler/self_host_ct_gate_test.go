@@ -475,6 +475,7 @@ function main(): i32 {
 	// every table entry, and only the range verdicts and the signature are
 	// declassified. Verification runs on public values.
 	{"ecdsa", `import "std/crypto/ecdsa";
+import "std/crypto/sha2";
 
 function filled(n: i32, seed: i32): u8[] {
   let b: u8[] = __alloc_u8(n);
@@ -486,7 +487,7 @@ function filled(n: i32, seed: i32): u8[] {
   return b;
 }
 
-function signs(curve: ecdsa.Curve, h: ecdsa.Hash, size: i32): i32 {
+function signs(curve: ecdsa.Curve, h: sha2.Hash, size: i32): i32 {
   let d: u8[] = filled(size, 5);
   let msg: u8[] = filled(50, 9);
   __ct_secret(d);
@@ -521,7 +522,7 @@ function signs(curve: ecdsa.Curve, h: ecdsa.Hash, size: i32): i32 {
 }
 
 function main(): i32 {
-  return signs(ecdsa.P256, ecdsa.Sha256, 32) + 10 * signs(ecdsa.P384, ecdsa.Sha384, 48);
+  return signs(ecdsa.P256, sha2.Sha256, 32) + 10 * signs(ecdsa.P384, sha2.Sha384, 48);
 }
 `, false},
 	// ECDH over P-256 with both scalars secret: the peer's point is public,

@@ -131,8 +131,8 @@ func TestSelfHostModuleNameMangle(t *testing.T) {
 // beside the entry and `sub/sort.fern` beside its importer were one module
 // with one prefix. Whichever lost emitted nothing under the prefix its own
 // importer referenced, and every call into it was an undefined symbol. That
-// is not a contrived shape: the coreutils multicall imports `coreutils/sort`
-// while `users.fern` imports `std/sort`, and the same for `base64` and `tty`.
+// is not a contrived shape: the coreutils multicall imports `coreutils/base64`
+// while other utilities import `std/base64`.
 //
 // The two answers differ so a collapse is caught even if it links: taking
 // either module for both gives 2 or 80, never 41.

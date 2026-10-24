@@ -10,6 +10,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/envflag"
@@ -171,6 +172,15 @@ type LanesType struct {
 func (l LanesType) Lanes() int { return 128 / l.Width }
 
 type ArrayType struct{ Elem Type }
+
+// ConstArg is an integer written as a generic argument: the `4` of
+// `filled[4](x)`, bound to a const parameter (`const N: i32`). Raw is the
+// spelling as written when it is not the decimal of Value, for the
+// formatter, as on NumberLit.
+type ConstArg struct {
+	Value int64
+	Raw   string
+}
 
 // StreamType is the WASI Preview-3 async data channel `Stream[T]` — a sequence
 // of `T` delivered incrementally over the wire. It appears in Fern source only
@@ -516,6 +526,7 @@ func (CharType) isType()     {}
 func (FloatType) isType()    {}
 func (LanesType) isType()    {}
 func (ArrayType) isType()    {}
+func (ConstArg) isType()     {}
 func (StreamType) isType()   {}
 func (SliceType) isType()    {}
 func (TupleType) isType()    {}
@@ -548,6 +559,7 @@ func (f FloatType) String() string {
 func (l LanesType) String() string {
 	return fmt.Sprintf("f%dx%d", l.Width, l.Lanes())
 }
+func (c ConstArg) String() string { return strconv.FormatInt(c.Value, 10) }
 
 // typeString renders t as a postfix `[]` element. Only a FuncType needs
 // grouping: without the parens, `(i32) => i32` swallows the `[]` as its own
@@ -1344,6 +1356,9 @@ func Equal(a, b Type) bool {
 	case LanesType:
 		y, ok := b.(LanesType)
 		return ok && x.Width == y.Width
+	case ConstArg:
+		y, ok := b.(ConstArg)
+		return ok && x.Value == y.Value
 	case ArrayType:
 		y, ok := b.(ArrayType)
 		return ok && Equal(x.Elem, y.Elem)
@@ -1683,6 +1698,9 @@ type Ident struct {
 	// local or captured binding, so a pass that reads function references
 	// by name knows this one shadows any top-level function it spells.
 	Local bool
+	// ConstParam is set by the checker when the name reads a const
+	// parameter, and monomorph replaces it with the instance's integer.
+	ConstParam bool
 }
 type ArrayLit struct {
 	P     Position
@@ -3228,6 +3246,10 @@ type FuncDecl struct {
 	// before IR lowering. After monomorphisation runs, every
 	// FuncDecl that survives has TypeParams empty.
 	TypeParams []string
+	// ConstParams names the const parameters among TypeParams
+	// (`function filled[const N: i32](…)`). Each is an i32 value in the
+	// body, and its argument is a ConstArg.
+	ConstParams []string
 	// Bounds maps a type-parameter name to the traits it is
 	// constrained by — `function f[T: Display + Eq](…)` records
 	// Bounds["T"] = ["Display", "Eq"]. The checker uses bounds to

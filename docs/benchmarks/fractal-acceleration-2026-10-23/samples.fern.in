@@ -1,0 +1,46 @@
+import "./kernel";
+import "./linear";
+import "std/binary";
+
+function sample(z: i32, x: i64, y: i64): void {
+  let step: f64 = 4.0 / ((1 as i64 << (z + 8) as i64) as f64);
+  let view: kernel.View = kernel.View { size: 256, x: x * 256, y: y * 256, step: step, limit: 256 + 64 * z };
+  let ref: Option[linear.Reference] = None;
+  if (z >= 20) {
+    let real: f64 = -2.5 + ((view.x + 128) as f64 + 0.5) * step;
+    let imaginary: f64 = 2.0 - ((view.y + 128) as f64 + 0.5) * step;
+    let candidate: linear.Reference = linear.reference(real, imaginary, 182.0 * step, view.limit, 1e-8);
+    let corner: linear.Start = linear.prefix(candidate, -2.5 + (view.x as f64 + 0.5) * step, 2.0 - (view.y as f64 + 0.5) * step, view.limit);
+    if (corner.steps >= 64) { ref = Some(candidate); }
+  }
+  let direct: kernel.Pixels = kernel.render(view, None);
+  let accelerated: kernel.Pixels = kernel.render(view, ref);
+  // A stratified grid includes all four corners and the tile center.
+  let row: i32 = 0;
+  while (row <= 16) {
+    let py: i32 = row * 255 / 16;
+    let column: i32 = 0;
+    while (column <= 16) {
+      let px: i32 = column * 255 / 16;
+      let at: i32 = py * 256 + px;
+      let a: i32 = accelerated.counts[at];
+      let b: i32 = direct.counts[at];
+      if (f64_from_bits(accelerated.magnitudes[at]) <= 0.0) { a = -1; }
+      if (f64_from_bits(direct.magnitudes[at]) <= 0.0) { b = -1; }
+      let real: f64 = -2.5 + ((view.x + px as i64) as f64 + 0.5) * step;
+      let imaginary: f64 = 2.0 - ((view.y + py as i64) as f64 + 0.5) * step;
+      let bytes: u8[] = binary.append_u64_be([], f64_bits(real) as u64);
+      bytes = binary.append_u64_be(bytes, f64_bits(imaginary) as u64);
+      bytes = binary.append_u32_be(bytes, view.limit as u32);
+      bytes = binary.append_u32_be(bytes, a as u32);
+      bytes = binary.append_u32_be(bytes, b as u32);
+      match (stdout().write_bytes(bytes)) { Ok(_) => {}, Err(_) => { exit(1); }, }
+      column = column + 1;
+    }
+    row = row + 1;
+  }
+}
+function main(): i32 {
+CALLS
+  return 0;
+}

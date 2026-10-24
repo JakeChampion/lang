@@ -17,7 +17,7 @@ import (
 // NUMERIC-scalar field/payload (`vn = -1 / 1 / 0` via `<` / `>`), keeping
 // `.cmp()` delegation for nominal fields. The inline form matches core/cmp's
 // numeric `cmp` exactly, so the native/self-host differential oracle still
-// agrees. (A string field's Ord routes through sort.string_cmp, not a primitive
+// agrees. (A string field's Ord routes through `impl Ord for string`, not a primitive
 // `<`, so a string-keyed derive(Ord) is the one shape that still falls back —
 // it stays correct on the native backends, just not on the self-host IR path.)
 var deriveOrdCases = []struct {

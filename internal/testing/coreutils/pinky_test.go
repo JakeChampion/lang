@@ -1,6 +1,9 @@
 package coreutils
 
-import "testing"
+import (
+	"regexp"
+	"testing"
+)
 
 func init() {
 	registerCorpus("pinky", pinkyCases)
@@ -17,8 +20,9 @@ func init() {
 //   - The SHORT format's ROWS are whatever the build machine has. On a
 //     container there is no /var/run/utmp at all and every case below
 //     prints its heading and stops; on a machine with logins both sides
-//     read the same file at the same moment and still agree, which is
-//     what the corpus asserts either way. What is NOT asserted there is
+//     read the same file and agree on every column but Idle, which is
+//     the time since the terminal was last read and so moves between the
+//     two runs. pinkyIdle masks it before the comparison. What is NOT asserted there is
 //     that a row is ever produced, so the row layout — the real-name
 //     column, the message-status prefix, the four idle spellings — is
 //     covered by the implementation and by nothing here. It was checked
@@ -39,6 +43,15 @@ func init() {
 // looks the name up, matches an operand and prints the column under the
 // field as it stands. That is invisible here for the same reason the
 // rows are, and it is why the implementation keeps the raw field.
+// pinkyIdleField is the six-column Idle field of a session row: what comes
+// right before the When column. Under -q, which drops Idle, it is the tail
+// of the TTY column instead, and masking that on both sides changes nothing.
+var pinkyIdleField = regexp.MustCompile(`(?m)^(.*) .{6} ([A-Z][a-z]{2} [ 0-9][0-9] [0-9]{2}:[0-9]{2})`)
+
+func pinkyIdle(out string) string {
+	return pinkyIdleField.ReplaceAllString(out, "$1 ~idle~ $2")
+}
+
 func pinkyCases(t *testing.T) []invocation {
 	cases := []invocation{
 		{name: "no arguments"},
@@ -146,6 +159,9 @@ func pinkyCases(t *testing.T) []invocation {
 		invocation{name: "stdout closed with no heading", args: []string{"-f", "fernnosuchuser"}, stdout: stdoutClosed},
 		invocation{name: "stdout closed on a fault", args: []string{"-l"}, stdout: stdoutClosed},
 	)
+	for i := range cases {
+		cases[i].mask = pinkyIdle
+	}
 	return cases
 }
 
@@ -161,4 +177,20 @@ func TestPinkyHelpVersion(t *testing.T) {
 	requireVersion(t, "pinky", []string{"--version"}, 0)
 	requireVersion(t, "pinky", []string{"--vers"}, 0)
 	requireVersion(t, "pinky", []string{"--version", "x"}, 0)
+}
+
+// TestPinkyIdleMask pins what the mask touches: the Idle field of a row in
+// each of its spellings, and nothing in the heading or the long format.
+func TestPinkyIdleMask(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"runner   Anka                *console  00:09  Oct 23 14:33\n", "runner   Anka                *console  ~idle~ Oct 23 14:33\n"},
+		{"runner   Anka                *console         Oct 23 14:33\n", "runner   Anka                *console  ~idle~ Oct 23 14:33\n"},
+		{"root     root                 pts/0    3d     Oct  2 09:01 host\n", "root     root                 pts/0    ~idle~ Oct  2 09:01 host\n"},
+		{"Login    Name                 TTY      Idle   When         Where\n", "Login    Name                 TTY      Idle   When         Where\n"},
+		{"Login name: root                        In real life:  root\n", "Login name: root                        In real life:  root\n"},
+	} {
+		if got := pinkyIdle(tc.in); got != tc.want {
+			t.Errorf("pinkyIdle(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
 }

@@ -1,0 +1,643 @@
+// Refill completed SIMD lanes while the other pixels continue.
+import "./linear";
+
+pub struct View { size: i32, x: i64, y: i64, step: f64, limit: i32 }
+
+pub struct Pixels { counts: i32[], magnitudes: i64[], iterations: i64 }
+
+struct Lane {
+  active: boolean,
+  column: i32,
+  parameter: f64,
+  real: f64,
+  imaginary: f64,
+  start: i32,
+  work: i32,
+  born: i32,
+  stop: i32,
+  saved_real: f64,
+  saved_imaginary: f64,
+  checkpoint: i32,
+}
+
+pub fip function known_interior(real: f64, imaginary: f64): boolean {
+  let y2: f64 = imaginary * imaginary;
+  let x: f64 = real - 0.25;
+  let bulb: f64 = real + 1.0;
+  let q: f64 = x * x + y2;
+  return q * (q + real - 0.25) <= 0.25 * y2 || bulb * bulb + y2 <= 0.0625;
+}
+
+function empty_lane(): Lane {
+  return Lane { active: false, column: 0, parameter: 0.0, real: 0.0, imaginary: 0.0, start: 0, work: 0, born: 0, stop: 2000000000, saved_real: 0.0, saved_imaginary: 0.0, checkpoint: 16 };
+}
+
+// Analytic interior pixels retain the zero-filled output and consume no lane.
+function seed(own lane: Lane, view: View, imaginary: f64, column: i32, round: i32, ref: Option[linear.Reference]): Lane {
+  let at: i32 = column;
+  while (at < view.size) {
+    let parameter: f64 = -2.5 + ((view.x + at as i64) as f64 + 0.5) * view.step;
+    if (!known_interior(parameter, imaginary)) {
+      let real: f64 = 0.0;
+      let zi: f64 = 0.0;
+      let start: i32 = 0;
+      let work: i32 = 0;
+      match (ref) {
+        Some(reference) => {
+          let initial: linear.Start = linear.prefix(reference, parameter, imaginary, view.limit);
+          real = initial.real;
+          zi = initial.imaginary;
+          start = initial.steps;
+          work = initial.work;
+        },
+        None => {}
+      }
+      return Lane {
+        ...lane, active: true, column: at, parameter: parameter, real: real, imaginary: zi,
+        start: start, work: work, born: round, stop: round + (view.limit - start + 3) / 4, saved_real: real, saved_imaginary: zi, checkpoint: 16,
+      };
+    }
+    at = at + 1;
+  }
+  return Lane { ...lane, active: false, column: view.size, parameter: 0.0, real: 0.0, imaginary: 0.0, start: view.limit, stop: 2000000000 };
+}
+
+// Each stream keeps its orbit in vector registers. Completed lanes receive
+// another pixel immediately; the other lanes continue from their current orbit.
+// fern-lint: allow cyclomatic-complexity
+pub function render(view: View, ref: Option[linear.Reference]): Pixels {
+  let counts: i32[] = __alloc_i32(view.size * view.size);
+  let magnitudes: i64[] = __alloc_i64(view.size * view.size);
+  let iterations: i64 = 0;
+  let row: i32 = 0;
+  while (row < view.size) {
+    let imaginary: f64 = 2.0 - ((view.y + row as i64) as f64 + 0.5) * view.step;
+    let round: i32 = 0;
+    let lane0: Lane = seed(empty_lane(), view, imaginary, 0, 0, ref);
+    let lane1: Lane = seed(empty_lane(), view, imaginary, lane0.column + 1, 0, ref);
+    let lane2: Lane = seed(empty_lane(), view, imaginary, lane1.column + 1, 0, ref);
+    let lane3: Lane = seed(empty_lane(), view, imaginary, lane2.column + 1, 0, ref);
+    let lane4: Lane = seed(empty_lane(), view, imaginary, lane3.column + 1, 0, ref);
+    let lane5: Lane = seed(empty_lane(), view, imaginary, lane4.column + 1, 0, ref);
+    let lane6: Lane = seed(empty_lane(), view, imaginary, lane5.column + 1, 0, ref);
+    let lane7: Lane = seed(empty_lane(), view, imaginary, lane6.column + 1, 0, ref);
+    let next: i32 = lane7.column + 1;
+    let active: i32 = 0;
+    let next_stop: i32 = 2000000000;
+    if (lane0.active) {
+      active = active | 1;
+    }
+    if (lane0.stop < next_stop) {
+      next_stop = lane0.stop;
+    }
+    if (lane1.active) {
+      active = active | 2;
+    }
+    if (lane1.stop < next_stop) {
+      next_stop = lane1.stop;
+    }
+    if (lane2.active) {
+      active = active | 4;
+    }
+    if (lane2.stop < next_stop) {
+      next_stop = lane2.stop;
+    }
+    if (lane3.active) {
+      active = active | 8;
+    }
+    if (lane3.stop < next_stop) {
+      next_stop = lane3.stop;
+    }
+    if (lane4.active) {
+      active = active | 16;
+    }
+    if (lane4.stop < next_stop) {
+      next_stop = lane4.stop;
+    }
+    if (lane5.active) {
+      active = active | 32;
+    }
+    if (lane5.stop < next_stop) {
+      next_stop = lane5.stop;
+    }
+    if (lane6.active) {
+      active = active | 64;
+    }
+    if (lane6.stop < next_stop) {
+      next_stop = lane6.stop;
+    }
+    if (lane7.active) {
+      active = active | 128;
+    }
+    if (lane7.stop < next_stop) {
+      next_stop = lane7.stop;
+    }
+    let parameter01: f64x2 = __f64x2_of(lane0.parameter, lane1.parameter);
+    let real01: f64x2 = __f64x2_of(lane0.real, lane1.real);
+    let imaginary01: f64x2 = __f64x2_of(lane0.imaginary, lane1.imaginary);
+    let parameter23: f64x2 = __f64x2_of(lane2.parameter, lane3.parameter);
+    let real23: f64x2 = __f64x2_of(lane2.real, lane3.real);
+    let imaginary23: f64x2 = __f64x2_of(lane2.imaginary, lane3.imaginary);
+    let parameter45: f64x2 = __f64x2_of(lane4.parameter, lane5.parameter);
+    let real45: f64x2 = __f64x2_of(lane4.real, lane5.real);
+    let imaginary45: f64x2 = __f64x2_of(lane4.imaginary, lane5.imaginary);
+    let parameter67: f64x2 = __f64x2_of(lane6.parameter, lane7.parameter);
+    let real67: f64x2 = __f64x2_of(lane6.real, lane7.real);
+    let imaginary67: f64x2 = __f64x2_of(lane6.imaginary, lane7.imaginary);
+    let cy: f64x2 = __f64x2_splat(imaginary);
+    let two: f64x2 = __f64x2_splat(2.0);
+    let radius: f64x2 = __f64x2_splat(65536.0);
+    while (active != 0) {
+      let first_real01: f64x2 = real01;
+      let first_imaginary01: f64x2 = imaginary01;
+      let first_real23: f64x2 = real23;
+      let first_imaginary23: f64x2 = imaginary23;
+      let first_real45: f64x2 = real45;
+      let first_imaginary45: f64x2 = imaginary45;
+      let first_real67: f64x2 = real67;
+      let first_imaginary67: f64x2 = imaginary67;
+      {
+        let rr01: f64x2 = real01 * real01;
+        let ii01: f64x2 = imaginary01 * imaginary01;
+        imaginary01 = two * real01 * imaginary01 + cy;
+        real01 = rr01 - ii01 + parameter01;
+        let rr23: f64x2 = real23 * real23;
+        let ii23: f64x2 = imaginary23 * imaginary23;
+        imaginary23 = two * real23 * imaginary23 + cy;
+        real23 = rr23 - ii23 + parameter23;
+        let rr45: f64x2 = real45 * real45;
+        let ii45: f64x2 = imaginary45 * imaginary45;
+        imaginary45 = two * real45 * imaginary45 + cy;
+        real45 = rr45 - ii45 + parameter45;
+        let rr67: f64x2 = real67 * real67;
+        let ii67: f64x2 = imaginary67 * imaginary67;
+        imaginary67 = two * real67 * imaginary67 + cy;
+        real67 = rr67 - ii67 + parameter67;
+      }
+      {
+        let rr01: f64x2 = real01 * real01;
+        let ii01: f64x2 = imaginary01 * imaginary01;
+        imaginary01 = two * real01 * imaginary01 + cy;
+        real01 = rr01 - ii01 + parameter01;
+        let rr23: f64x2 = real23 * real23;
+        let ii23: f64x2 = imaginary23 * imaginary23;
+        imaginary23 = two * real23 * imaginary23 + cy;
+        real23 = rr23 - ii23 + parameter23;
+        let rr45: f64x2 = real45 * real45;
+        let ii45: f64x2 = imaginary45 * imaginary45;
+        imaginary45 = two * real45 * imaginary45 + cy;
+        real45 = rr45 - ii45 + parameter45;
+        let rr67: f64x2 = real67 * real67;
+        let ii67: f64x2 = imaginary67 * imaginary67;
+        imaginary67 = two * real67 * imaginary67 + cy;
+        real67 = rr67 - ii67 + parameter67;
+      }
+      {
+        let rr01: f64x2 = real01 * real01;
+        let ii01: f64x2 = imaginary01 * imaginary01;
+        imaginary01 = two * real01 * imaginary01 + cy;
+        real01 = rr01 - ii01 + parameter01;
+        let rr23: f64x2 = real23 * real23;
+        let ii23: f64x2 = imaginary23 * imaginary23;
+        imaginary23 = two * real23 * imaginary23 + cy;
+        real23 = rr23 - ii23 + parameter23;
+        let rr45: f64x2 = real45 * real45;
+        let ii45: f64x2 = imaginary45 * imaginary45;
+        imaginary45 = two * real45 * imaginary45 + cy;
+        real45 = rr45 - ii45 + parameter45;
+        let rr67: f64x2 = real67 * real67;
+        let ii67: f64x2 = imaginary67 * imaginary67;
+        imaginary67 = two * real67 * imaginary67 + cy;
+        real67 = rr67 - ii67 + parameter67;
+      }
+      {
+        let rr01: f64x2 = real01 * real01;
+        let ii01: f64x2 = imaginary01 * imaginary01;
+        imaginary01 = two * real01 * imaginary01 + cy;
+        real01 = rr01 - ii01 + parameter01;
+        let rr23: f64x2 = real23 * real23;
+        let ii23: f64x2 = imaginary23 * imaginary23;
+        imaginary23 = two * real23 * imaginary23 + cy;
+        real23 = rr23 - ii23 + parameter23;
+        let rr45: f64x2 = real45 * real45;
+        let ii45: f64x2 = imaginary45 * imaginary45;
+        imaginary45 = two * real45 * imaginary45 + cy;
+        real45 = rr45 - ii45 + parameter45;
+        let rr67: f64x2 = real67 * real67;
+        let ii67: f64x2 = imaginary67 * imaginary67;
+        imaginary67 = two * real67 * imaginary67 + cy;
+        real67 = rr67 - ii67 + parameter67;
+      }
+      round = round + 1;
+      let mag01: f64x2 = real01 * real01 + imaginary01 * imaginary01;
+      let mag23: f64x2 = real23 * real23 + imaginary23 * imaginary23;
+      let mag45: f64x2 = real45 * real45 + imaginary45 * imaginary45;
+      let mag67: f64x2 = real67 * real67 + imaginary67 * imaginary67;
+      let finished: i32 = (__f64x2_bitmask(__f64x2_lt(radius, mag01)) << 0 | __f64x2_bitmask(__f64x2_lt(radius, mag23)) << 2 | __f64x2_bitmask(__f64x2_lt(radius, mag45)) << 4 | __f64x2_bitmask(__f64x2_lt(radius, mag67)) << 6) & active;
+      // Deadlines are scalar metadata. Test them only at the first due group.
+      if (round >= next_stop) {
+        if (lane0.active && round >= lane0.stop) {
+          finished = finished | 1;
+        }
+        if (lane1.active && round >= lane1.stop) {
+          finished = finished | 2;
+        }
+        if (lane2.active && round >= lane2.stop) {
+          finished = finished | 4;
+        }
+        if (lane3.active && round >= lane3.stop) {
+          finished = finished | 8;
+        }
+        if (lane4.active && round >= lane4.stop) {
+          finished = finished | 16;
+        }
+        if (lane5.active && round >= lane5.stop) {
+          finished = finished | 32;
+        }
+        if (lane6.active && round >= lane6.stop) {
+          finished = finished | 64;
+        }
+        if (lane7.active && round >= lane7.stop) {
+          finished = finished | 128;
+        }
+      }
+      let periodic: i32 = 0;
+      if ((round & 3) == 0) {
+        if ((active & 1) != 0 && (finished & 1) == 0) {
+          let zr: f64 = __f64x2_lane(real01, 0);
+          let zi: f64 = __f64x2_lane(imaginary01, 0);
+          if (zr == lane0.saved_real && zi == lane0.saved_imaginary) {
+            periodic = periodic | 1;
+          }
+          if ((round - lane0.born) * 4 >= lane0.checkpoint) {
+            lane0 = Lane { ...lane0, saved_real: zr, saved_imaginary: zi, checkpoint: lane0.checkpoint * 2 };
+          }
+        }
+        if ((active & 2) != 0 && (finished & 2) == 0) {
+          let zr: f64 = __f64x2_lane(real01, 1);
+          let zi: f64 = __f64x2_lane(imaginary01, 1);
+          if (zr == lane1.saved_real && zi == lane1.saved_imaginary) {
+            periodic = periodic | 2;
+          }
+          if ((round - lane1.born) * 4 >= lane1.checkpoint) {
+            lane1 = Lane { ...lane1, saved_real: zr, saved_imaginary: zi, checkpoint: lane1.checkpoint * 2 };
+          }
+        }
+        if ((active & 4) != 0 && (finished & 4) == 0) {
+          let zr: f64 = __f64x2_lane(real23, 0);
+          let zi: f64 = __f64x2_lane(imaginary23, 0);
+          if (zr == lane2.saved_real && zi == lane2.saved_imaginary) {
+            periodic = periodic | 4;
+          }
+          if ((round - lane2.born) * 4 >= lane2.checkpoint) {
+            lane2 = Lane { ...lane2, saved_real: zr, saved_imaginary: zi, checkpoint: lane2.checkpoint * 2 };
+          }
+        }
+        if ((active & 8) != 0 && (finished & 8) == 0) {
+          let zr: f64 = __f64x2_lane(real23, 1);
+          let zi: f64 = __f64x2_lane(imaginary23, 1);
+          if (zr == lane3.saved_real && zi == lane3.saved_imaginary) {
+            periodic = periodic | 8;
+          }
+          if ((round - lane3.born) * 4 >= lane3.checkpoint) {
+            lane3 = Lane { ...lane3, saved_real: zr, saved_imaginary: zi, checkpoint: lane3.checkpoint * 2 };
+          }
+        }
+        if ((active & 16) != 0 && (finished & 16) == 0) {
+          let zr: f64 = __f64x2_lane(real45, 0);
+          let zi: f64 = __f64x2_lane(imaginary45, 0);
+          if (zr == lane4.saved_real && zi == lane4.saved_imaginary) {
+            periodic = periodic | 16;
+          }
+          if ((round - lane4.born) * 4 >= lane4.checkpoint) {
+            lane4 = Lane { ...lane4, saved_real: zr, saved_imaginary: zi, checkpoint: lane4.checkpoint * 2 };
+          }
+        }
+        if ((active & 32) != 0 && (finished & 32) == 0) {
+          let zr: f64 = __f64x2_lane(real45, 1);
+          let zi: f64 = __f64x2_lane(imaginary45, 1);
+          if (zr == lane5.saved_real && zi == lane5.saved_imaginary) {
+            periodic = periodic | 32;
+          }
+          if ((round - lane5.born) * 4 >= lane5.checkpoint) {
+            lane5 = Lane { ...lane5, saved_real: zr, saved_imaginary: zi, checkpoint: lane5.checkpoint * 2 };
+          }
+        }
+        if ((active & 64) != 0 && (finished & 64) == 0) {
+          let zr: f64 = __f64x2_lane(real67, 0);
+          let zi: f64 = __f64x2_lane(imaginary67, 0);
+          if (zr == lane6.saved_real && zi == lane6.saved_imaginary) {
+            periodic = periodic | 64;
+          }
+          if ((round - lane6.born) * 4 >= lane6.checkpoint) {
+            lane6 = Lane { ...lane6, saved_real: zr, saved_imaginary: zi, checkpoint: lane6.checkpoint * 2 };
+          }
+        }
+        if ((active & 128) != 0 && (finished & 128) == 0) {
+          let zr: f64 = __f64x2_lane(real67, 1);
+          let zi: f64 = __f64x2_lane(imaginary67, 1);
+          if (zr == lane7.saved_real && zi == lane7.saved_imaginary) {
+            periodic = periodic | 128;
+          }
+          if ((round - lane7.born) * 4 >= lane7.checkpoint) {
+            lane7 = Lane { ...lane7, saved_real: zr, saved_imaginary: zi, checkpoint: lane7.checkpoint * 2 };
+          }
+        }
+      }
+      finished = finished | periodic;
+      if ((finished & 1) != 0) {
+        let stop: i32 = lane0.start + (round - lane0.born) * 4;
+        let count: i32 = stop;
+        let magnitude: f64 = -1.0;
+        if ((periodic & 1) == 0) {
+          count = stop - 4;
+          let zr: f64 = __f64x2_lane(first_real01, 0);
+          let zi: f64 = __f64x2_lane(first_imaginary01, 0);
+          while (count <= stop && count < view.limit) {
+            let rr: f64 = zr * zr;
+            let ii: f64 = zi * zi;
+            if (rr + ii > 65536.0) {
+              magnitude = rr + ii;
+              break;
+            }
+            zi = 2.0 * zr * zi + imaginary;
+            zr = rr - ii + lane0.parameter;
+            count = count + 1;
+          }
+        }
+        let at: i32 = row * view.size + lane0.column;
+        counts = counts.with(at, count);
+        magnitudes = magnitudes.with(at, f64_bits(magnitude));
+        iterations = iterations + (count - lane0.start + lane0.work) as i64;
+        lane0 = seed(lane0, view, imaginary, next, round, ref);
+        next = lane0.column + 1;
+        if (!lane0.active) {
+          active = active & (255 ^ 1);
+        }
+        parameter01 = __f64x2_of(lane0.parameter, __f64x2_lane(parameter01, 1));
+        real01 = __f64x2_of(lane0.real, __f64x2_lane(real01, 1));
+        imaginary01 = __f64x2_of(lane0.imaginary, __f64x2_lane(imaginary01, 1));
+      }
+      if ((finished & 2) != 0) {
+        let stop: i32 = lane1.start + (round - lane1.born) * 4;
+        let count: i32 = stop;
+        let magnitude: f64 = -1.0;
+        if ((periodic & 2) == 0) {
+          count = stop - 4;
+          let zr: f64 = __f64x2_lane(first_real01, 1);
+          let zi: f64 = __f64x2_lane(first_imaginary01, 1);
+          while (count <= stop && count < view.limit) {
+            let rr: f64 = zr * zr;
+            let ii: f64 = zi * zi;
+            if (rr + ii > 65536.0) {
+              magnitude = rr + ii;
+              break;
+            }
+            zi = 2.0 * zr * zi + imaginary;
+            zr = rr - ii + lane1.parameter;
+            count = count + 1;
+          }
+        }
+        let at: i32 = row * view.size + lane1.column;
+        counts = counts.with(at, count);
+        magnitudes = magnitudes.with(at, f64_bits(magnitude));
+        iterations = iterations + (count - lane1.start + lane1.work) as i64;
+        lane1 = seed(lane1, view, imaginary, next, round, ref);
+        next = lane1.column + 1;
+        if (!lane1.active) {
+          active = active & (255 ^ 2);
+        }
+        parameter01 = __f64x2_of(__f64x2_lane(parameter01, 0), lane1.parameter);
+        real01 = __f64x2_of(__f64x2_lane(real01, 0), lane1.real);
+        imaginary01 = __f64x2_of(__f64x2_lane(imaginary01, 0), lane1.imaginary);
+      }
+      if ((finished & 4) != 0) {
+        let stop: i32 = lane2.start + (round - lane2.born) * 4;
+        let count: i32 = stop;
+        let magnitude: f64 = -1.0;
+        if ((periodic & 4) == 0) {
+          count = stop - 4;
+          let zr: f64 = __f64x2_lane(first_real23, 0);
+          let zi: f64 = __f64x2_lane(first_imaginary23, 0);
+          while (count <= stop && count < view.limit) {
+            let rr: f64 = zr * zr;
+            let ii: f64 = zi * zi;
+            if (rr + ii > 65536.0) {
+              magnitude = rr + ii;
+              break;
+            }
+            zi = 2.0 * zr * zi + imaginary;
+            zr = rr - ii + lane2.parameter;
+            count = count + 1;
+          }
+        }
+        let at: i32 = row * view.size + lane2.column;
+        counts = counts.with(at, count);
+        magnitudes = magnitudes.with(at, f64_bits(magnitude));
+        iterations = iterations + (count - lane2.start + lane2.work) as i64;
+        lane2 = seed(lane2, view, imaginary, next, round, ref);
+        next = lane2.column + 1;
+        if (!lane2.active) {
+          active = active & (255 ^ 4);
+        }
+        parameter23 = __f64x2_of(lane2.parameter, __f64x2_lane(parameter23, 1));
+        real23 = __f64x2_of(lane2.real, __f64x2_lane(real23, 1));
+        imaginary23 = __f64x2_of(lane2.imaginary, __f64x2_lane(imaginary23, 1));
+      }
+      if ((finished & 8) != 0) {
+        let stop: i32 = lane3.start + (round - lane3.born) * 4;
+        let count: i32 = stop;
+        let magnitude: f64 = -1.0;
+        if ((periodic & 8) == 0) {
+          count = stop - 4;
+          let zr: f64 = __f64x2_lane(first_real23, 1);
+          let zi: f64 = __f64x2_lane(first_imaginary23, 1);
+          while (count <= stop && count < view.limit) {
+            let rr: f64 = zr * zr;
+            let ii: f64 = zi * zi;
+            if (rr + ii > 65536.0) {
+              magnitude = rr + ii;
+              break;
+            }
+            zi = 2.0 * zr * zi + imaginary;
+            zr = rr - ii + lane3.parameter;
+            count = count + 1;
+          }
+        }
+        let at: i32 = row * view.size + lane3.column;
+        counts = counts.with(at, count);
+        magnitudes = magnitudes.with(at, f64_bits(magnitude));
+        iterations = iterations + (count - lane3.start + lane3.work) as i64;
+        lane3 = seed(lane3, view, imaginary, next, round, ref);
+        next = lane3.column + 1;
+        if (!lane3.active) {
+          active = active & (255 ^ 8);
+        }
+        parameter23 = __f64x2_of(__f64x2_lane(parameter23, 0), lane3.parameter);
+        real23 = __f64x2_of(__f64x2_lane(real23, 0), lane3.real);
+        imaginary23 = __f64x2_of(__f64x2_lane(imaginary23, 0), lane3.imaginary);
+      }
+      if ((finished & 16) != 0) {
+        let stop: i32 = lane4.start + (round - lane4.born) * 4;
+        let count: i32 = stop;
+        let magnitude: f64 = -1.0;
+        if ((periodic & 16) == 0) {
+          count = stop - 4;
+          let zr: f64 = __f64x2_lane(first_real45, 0);
+          let zi: f64 = __f64x2_lane(first_imaginary45, 0);
+          while (count <= stop && count < view.limit) {
+            let rr: f64 = zr * zr;
+            let ii: f64 = zi * zi;
+            if (rr + ii > 65536.0) {
+              magnitude = rr + ii;
+              break;
+            }
+            zi = 2.0 * zr * zi + imaginary;
+            zr = rr - ii + lane4.parameter;
+            count = count + 1;
+          }
+        }
+        let at: i32 = row * view.size + lane4.column;
+        counts = counts.with(at, count);
+        magnitudes = magnitudes.with(at, f64_bits(magnitude));
+        iterations = iterations + (count - lane4.start + lane4.work) as i64;
+        lane4 = seed(lane4, view, imaginary, next, round, ref);
+        next = lane4.column + 1;
+        if (!lane4.active) {
+          active = active & (255 ^ 16);
+        }
+        parameter45 = __f64x2_of(lane4.parameter, __f64x2_lane(parameter45, 1));
+        real45 = __f64x2_of(lane4.real, __f64x2_lane(real45, 1));
+        imaginary45 = __f64x2_of(lane4.imaginary, __f64x2_lane(imaginary45, 1));
+      }
+      if ((finished & 32) != 0) {
+        let stop: i32 = lane5.start + (round - lane5.born) * 4;
+        let count: i32 = stop;
+        let magnitude: f64 = -1.0;
+        if ((periodic & 32) == 0) {
+          count = stop - 4;
+          let zr: f64 = __f64x2_lane(first_real45, 1);
+          let zi: f64 = __f64x2_lane(first_imaginary45, 1);
+          while (count <= stop && count < view.limit) {
+            let rr: f64 = zr * zr;
+            let ii: f64 = zi * zi;
+            if (rr + ii > 65536.0) {
+              magnitude = rr + ii;
+              break;
+            }
+            zi = 2.0 * zr * zi + imaginary;
+            zr = rr - ii + lane5.parameter;
+            count = count + 1;
+          }
+        }
+        let at: i32 = row * view.size + lane5.column;
+        counts = counts.with(at, count);
+        magnitudes = magnitudes.with(at, f64_bits(magnitude));
+        iterations = iterations + (count - lane5.start + lane5.work) as i64;
+        lane5 = seed(lane5, view, imaginary, next, round, ref);
+        next = lane5.column + 1;
+        if (!lane5.active) {
+          active = active & (255 ^ 32);
+        }
+        parameter45 = __f64x2_of(__f64x2_lane(parameter45, 0), lane5.parameter);
+        real45 = __f64x2_of(__f64x2_lane(real45, 0), lane5.real);
+        imaginary45 = __f64x2_of(__f64x2_lane(imaginary45, 0), lane5.imaginary);
+      }
+      if ((finished & 64) != 0) {
+        let stop: i32 = lane6.start + (round - lane6.born) * 4;
+        let count: i32 = stop;
+        let magnitude: f64 = -1.0;
+        if ((periodic & 64) == 0) {
+          count = stop - 4;
+          let zr: f64 = __f64x2_lane(first_real67, 0);
+          let zi: f64 = __f64x2_lane(first_imaginary67, 0);
+          while (count <= stop && count < view.limit) {
+            let rr: f64 = zr * zr;
+            let ii: f64 = zi * zi;
+            if (rr + ii > 65536.0) {
+              magnitude = rr + ii;
+              break;
+            }
+            zi = 2.0 * zr * zi + imaginary;
+            zr = rr - ii + lane6.parameter;
+            count = count + 1;
+          }
+        }
+        let at: i32 = row * view.size + lane6.column;
+        counts = counts.with(at, count);
+        magnitudes = magnitudes.with(at, f64_bits(magnitude));
+        iterations = iterations + (count - lane6.start + lane6.work) as i64;
+        lane6 = seed(lane6, view, imaginary, next, round, ref);
+        next = lane6.column + 1;
+        if (!lane6.active) {
+          active = active & (255 ^ 64);
+        }
+        parameter67 = __f64x2_of(lane6.parameter, __f64x2_lane(parameter67, 1));
+        real67 = __f64x2_of(lane6.real, __f64x2_lane(real67, 1));
+        imaginary67 = __f64x2_of(lane6.imaginary, __f64x2_lane(imaginary67, 1));
+      }
+      if ((finished & 128) != 0) {
+        let stop: i32 = lane7.start + (round - lane7.born) * 4;
+        let count: i32 = stop;
+        let magnitude: f64 = -1.0;
+        if ((periodic & 128) == 0) {
+          count = stop - 4;
+          let zr: f64 = __f64x2_lane(first_real67, 1);
+          let zi: f64 = __f64x2_lane(first_imaginary67, 1);
+          while (count <= stop && count < view.limit) {
+            let rr: f64 = zr * zr;
+            let ii: f64 = zi * zi;
+            if (rr + ii > 65536.0) {
+              magnitude = rr + ii;
+              break;
+            }
+            zi = 2.0 * zr * zi + imaginary;
+            zr = rr - ii + lane7.parameter;
+            count = count + 1;
+          }
+        }
+        let at: i32 = row * view.size + lane7.column;
+        counts = counts.with(at, count);
+        magnitudes = magnitudes.with(at, f64_bits(magnitude));
+        iterations = iterations + (count - lane7.start + lane7.work) as i64;
+        lane7 = seed(lane7, view, imaginary, next, round, ref);
+        next = lane7.column + 1;
+        if (!lane7.active) {
+          active = active & (255 ^ 128);
+        }
+        parameter67 = __f64x2_of(__f64x2_lane(parameter67, 0), lane7.parameter);
+        real67 = __f64x2_of(__f64x2_lane(real67, 0), lane7.real);
+        imaginary67 = __f64x2_of(__f64x2_lane(imaginary67, 0), lane7.imaginary);
+      }
+      if (finished != 0) {
+        next_stop = 2000000000;
+        if (lane0.stop < next_stop) {
+          next_stop = lane0.stop;
+        }
+        if (lane1.stop < next_stop) {
+          next_stop = lane1.stop;
+        }
+        if (lane2.stop < next_stop) {
+          next_stop = lane2.stop;
+        }
+        if (lane3.stop < next_stop) {
+          next_stop = lane3.stop;
+        }
+        if (lane4.stop < next_stop) {
+          next_stop = lane4.stop;
+        }
+        if (lane5.stop < next_stop) {
+          next_stop = lane5.stop;
+        }
+        if (lane6.stop < next_stop) {
+          next_stop = lane6.stop;
+        }
+        if (lane7.stop < next_stop) {
+          next_stop = lane7.stop;
+        }
+      }
+    }
+    row = row + 1;
+  }
+  return Pixels { counts: counts, magnitudes: magnitudes, iterations: iterations };
+}

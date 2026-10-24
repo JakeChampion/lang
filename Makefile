@@ -4,7 +4,7 @@ BINS     := $(addprefix build/,$(EXAMPLES))
 # diagnostics pin line and column, and testdata inputs kept as written.
 FERN_SRCS := $(shell git ls-files '*.fern' | grep -v -e '^conformance/' -e '/testdata/')
 
-.PHONY: all build test vet deadcode actionlint hooks testnames freeze check-sources selfhost-cli bootstrap distcheck clean examples run-% fmt fmt-check gofmt gofmt-check lint-all ci-selftest fern-test-cache digest-check log-table-check huffman-table-check net-bench-rows-check perf-history-check
+.PHONY: all build test vet deadcode actionlint hooks testnames freeze check-sources selfhost-cli bootstrap distcheck clean examples run-% fmt fmt-check gofmt gofmt-check lint-all ci-selftest fern-test-cache digest-check log-table-check huffman-table-check net-bench-rows-check deflate-bench-rows-check perf-history-check
 
 all: build test
 
@@ -66,6 +66,10 @@ huffman-table-check:
 # JSON and h2load's summary, the server-CPU-per-request denominator among them.
 net-bench-rows-check:
 	uv run --no-project python -B -m unittest discover -s scripts/net-bench.d -p test_net_bench_rows.py
+
+# scripts/deflate-bench's summary: the nearest-level choice and the medians.
+deflate-bench-rows-check:
+	uv run --no-project python -B -m unittest discover -s scripts/deflate-bench.d -p test_deflate_bench_rows.py
 
 # scripts/perf-history show: the trend reader must walk past commits that
 # carry no note rather than stop at the first one.
@@ -275,14 +279,14 @@ gofmt-check:
 # (`make -j -k lint-fast`): each is seconds of work and independent of the
 # others. check-sources and fern-test-cache stay apart: the cache probe appends
 # to a source file while it runs, which a concurrent source check would read.
-lint-fast: vet gofmt-check fmt-check deadcode actionlint testnames ci-selftest digest-check log-table-check huffman-table-check net-bench-rows-check perf-history-check
+lint-fast: vet gofmt-check fmt-check deadcode actionlint testnames ci-selftest digest-check log-table-check huffman-table-check net-bench-rows-check deflate-bench-rows-check perf-history-check
 
 lint-all:
 	@status=0; \
 	for gate in "go build ./..." "go vet ./..." "$(MAKE) gofmt-check" "$(MAKE) fmt-check" \
 	            "$(MAKE) check-sources" "$(MAKE) deadcode" "$(MAKE) actionlint" \
 	            "$(MAKE) testnames" "$(MAKE) ci-selftest" "$(MAKE) digest-check" "$(MAKE) log-table-check" \
-	            "$(MAKE) huffman-table-check" "$(MAKE) net-bench-rows-check" "$(MAKE) perf-history-check" "$(MAKE) freeze"; do \
+	            "$(MAKE) huffman-table-check" "$(MAKE) net-bench-rows-check" "$(MAKE) deflate-bench-rows-check" "$(MAKE) perf-history-check" "$(MAKE) freeze"; do \
 		echo "==> $$gate"; \
 		if ! sh -c "$$gate"; then echo "FAILED: $$gate"; status=1; fi; \
 	done; \

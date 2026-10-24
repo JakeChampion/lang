@@ -1,13 +1,9 @@
 package e2e
 
-// Differential + stability coverage for std/sort's `sort_by`.
-//
-// It was a FIXED bottom-up merge sort: ceil(log2 n) passes, each one
-// materialising a fresh full copy of the array, with no regard for the input —
-// an already-sorted array cost exactly as much as a random one. It is now the
-// comparator-closure sibling of core/cmp's adaptive sort: insertion sort below
-// 32, natural ascending/descending run detection with descending runs reversed
-// in place, then balanced merge rounds.
+// Differential + stability coverage for core/cmp's `sort_by`, the
+// comparator-closure sibling of `sort`: insertion sort below 32, natural
+// ascending/descending run detection with descending runs reversed in place,
+// then balanced merge rounds.
 //
 // Note the existing sort_by_test.go cases do NOT cover this. Each of them
 // defines its own inline `sort_by` in the test program — they exercise closure
@@ -32,7 +28,7 @@ package e2e
 import "testing"
 
 const sortByAdaptiveProg = `
-import "std/sort" as sort;
+import "core/cmp";
 
 function asc(a: i32, b: i32): i32 { if (a < b) { return 0 - 1; } if (a > b) { return 1; } return 0; }
 
@@ -86,32 +82,32 @@ function main(): i32 {
         let i: i32 = 0;
         while (i < n) { seed = nextr(seed); xs = xs.append(seed % 7); i = i + 1; }
 
-        let got: i32[] = sort.sort_by(xs, asc);
+        let got: i32[] = cmp.sort_by(xs, asc);
         if (!eq_arr(got, ref_sort(xs))) { return 1; }
-        if (!sort.is_sorted_by(got, asc)) { return 2; }
+        if (!cmp.is_sorted_by(got, asc)) { return 2; }
 
         // Already sorted -- the single-run path, which must be a no-op in
         // ordering terms rather than a reshuffle.
-        if (!eq_arr(sort.sort_by(got, asc), got)) { return 3; }
+        if (!eq_arr(cmp.sort_by(got, asc), got)) { return 3; }
 
         // Reverse-sorted -- the descending-run detection + in-place reversal.
         let rev: i32[] = [];
         let r: i32 = n - 1;
         while (r >= 0) { rev = rev.append(got[r]); r = r - 1; }
-        if (!eq_arr(sort.sort_by(rev, asc), got)) { return 4; }
+        if (!eq_arr(cmp.sort_by(rev, asc), got)) { return 4; }
 
         // All-equal -- a single ascending run under a non-strict compare, and
         // the shape a strict/non-strict mix-up in run detection breaks.
         let flat: i32[] = [];
         let f: i32 = 0;
         while (f < n) { flat = flat.append(5); f = f + 1; }
-        if (!eq_arr(sort.sort_by(flat, asc), flat)) { return 5; }
+        if (!eq_arr(cmp.sort_by(flat, asc), flat)) { return 5; }
 
         // Two sorted runs concatenated -- exactly one merge, whatever n is.
         let two: i32[] = [];
         let h: i32 = 0;
         while (h < n) { two = two.append(h % 2); h = h + 1; }
-        let twos: i32[] = sort.sort_by(two, asc);
+        let twos: i32[] = cmp.sort_by(two, asc);
         if (!eq_arr(twos, ref_sort(two))) { return 6; }
 
         // The input is never mutated.
@@ -134,7 +130,7 @@ function main(): i32 {
         pairs = pairs.append((s2 % 5) * 1000 + t);
         t = t + 1;
     }
-    let st: i32[] = sort.sort_by(pairs, (a: i32, b: i32) => (a / 1000) - (b / 1000));
+    let st: i32[] = cmp.sort_by(pairs, (a: i32, b: i32) => (a / 1000) - (b / 1000));
     let p: i32 = 1;
     while (p < st.len()) {
         let prevk: i32 = st[p - 1] / 1000;
@@ -146,7 +142,7 @@ function main(): i32 {
     }
 
     // A reverse comparator sorts descending through the same body.
-    let d: i32[] = sort.sort_by([3, 1, 4, 1, 5, 9, 2, 6], (a: i32, b: i32) => b - a);
+    let d: i32[] = cmp.sort_by([3, 1, 4, 1, 5, 9, 2, 6], (a: i32, b: i32) => b - a);
     let q: i32 = 1;
     while (q < d.len()) {
         if (d[q] > d[q - 1]) { return 10; }

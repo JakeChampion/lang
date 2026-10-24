@@ -17,9 +17,9 @@ import (
 // which names neither the fix nor a reason to look further. The advice ran out
 // one step after it was given, and the list implied `to_owned` did not exist —
 // when in fact it needed `import "std/string"`, the same import its `string`
-// sibling has always been told about. scalarModuleFor simply had no StrType
-// case, so a `str` receiver fell past the hint to the two builtins it carries
-// without the import.
+// sibling has always been told about. The hint had no case for a `str`
+// receiver, so it fell past the hint to the two builtins it carries without
+// the import.
 //
 // Each step below is the previous step's diagnostic acted on verbatim, and the
 // last one must check clean. All three run through checkModuleSource, because

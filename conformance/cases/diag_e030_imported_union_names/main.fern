@@ -1,0 +1,25 @@
+// An imported union's members and an imported enum matched through a nested
+// sub-pattern are named as the source spells them (`Ring`, `shapes.Outer`),
+// not by the module-mangled names the loader gives them.
+import "./shapes";
+
+function f(s: shapes.Shape): i32 {
+    match (s) {
+        shapes.Dot(d) => { return d.x; },
+        shapes.Dot(e) => { return 1; },
+        shapes.Dott(q) => { return 2; },
+        shapes.Dot(a, b) => { return 3; },
+    }
+    return 0;
+}
+
+function g(o: shapes.Outer): i32 {
+    match (o) {
+        shapes.Outer.In(Some(x)) => { return x; },
+    }
+    return 0;
+}
+
+function main(): i32 {
+    return 0;
+}

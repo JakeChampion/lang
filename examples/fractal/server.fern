@@ -8,7 +8,9 @@ import "std/http/websocket";
 import "std/json";
 import "std/platform";
 import "std/serve";
-import "./binary";
+import "std/parse";
+import "std/result";
+import "std/binary";
 import "./fractal";
 import "./source";
 
@@ -67,14 +69,14 @@ struct Rendered {
   elapsed_ns: i64,
 }
 
-function (state: Stats) render(z: i32, x: i64, y: i64): Rendered {
+function (state: Stats) render(z: i32, x: i64, y: i64): Result[Rendered, fractal.RenderError] {
   let started_ns: i64 = now_ns();
-  let tile: fractal.Tile = fractal.render(z, x, y);
+  let tile: fractal.Tile = fractal.render(z, x, y)?;
   let elapsed_ns: i64 = now_ns() - started_ns;
   state.tiles.set(state.tiles.get() + 1);
   state.iterations.set(state.iterations.get() + tile.iterations);
   state.render_ns.set(state.render_ns.get() + elapsed_ns);
-  return Rendered { tile: tile, elapsed_ns: elapsed_ns };
+  return Ok(Rendered { tile: tile, elapsed_ns: elapsed_ns });
 }
 
 pub function routes[P: platform.Platform](state: Stats, web: string, sources: source.Page[]): router.Router[P] {
@@ -93,12 +95,12 @@ pub function routes[P: platform.Platform](state: Stats, web: string, sources: so
 
 function tile(state: Stats, params: router.Params): Result[HttpResponse, dyn http.ToResponse] {
   let z: i32 = params.int("z")?;
-  let x: i64 = parse_i64(params.param("x")?);
-  let y: i64 = parse_i64(params.param("y")?);
+  let x: i64 = coordinate(params, "x")?;
+  let y: i64 = coordinate(params, "y")?;
   if (!fractal.valid(z, x, y)) {
     return Ok(http.bad_request("no such tile"));
   }
-  let rendered: Rendered = state.render(z, x, y);
+  let rendered: Rendered = state.render(z, x, y).map_err((error: fractal.RenderError): http.HttpError => http.fail(500, "tile renderer failed"))?;
   let response: HttpResponse = http.bytes(200, rendered.tile.png).with_content_type("image/png");
   response = response.with_header("Cache-Control", "public, max-age=31536000, immutable");
   response = response.with_header("Netlify-CDN-Cache-Control", "public, durable, max-age=31536000, immutable");
@@ -125,7 +127,17 @@ function session(state: Stats): websocket.Handlers {
 function on_message(state: Stats, connection: websocket.Conn, message: websocket.Message): void {
   match (message) {
     Text(request) => {
-      let sent: websocket.SendResult = connection.send_binary(answer(state, request));
+      match (answer(state, request)) {
+        Ok(response) => {
+          let sent: websocket.SendResult = connection.send_binary(response);
+        },
+        Err(Rendering(_)) => {
+          connection.close(1011, "tile renderer failed");
+        },
+        Err(_) => {
+          connection.close(1008, "invalid tile request");
+        }
+      }
     },
     Binary(bytes) => {
       connection.close(1003, "send tile requests as text");
@@ -133,45 +145,67 @@ function on_message(state: Stats, connection: websocket.Conn, message: websocket
   }
 }
 
-function answer(state: Stats, request: string): u8[] {
-  let fields: string[] = request.split(" ");
-  if (fields.len() != 4) {
-    return [];
-  }
-  let id: i64 = parse_i64(fields[0]);
-  let z: i64 = parse_i64(fields[1]);
-  let x: i64 = parse_i64(fields[2]);
-  let y: i64 = parse_i64(fields[3]);
-  let response: u8[] = binary.append_u32_be([], id as u32);
-  if (z > fractal.MAX_ZOOM as i64 || !fractal.valid(z as i32, x, y)) {
-    return response;
-  }
-  let rendered: Rendered = state.render(z as i32, x, y);
-  // The 20-byte header contains id:u32, microseconds:u32, iterations:u64, and tiles:u32, all big-endian.
-  response = binary.append_u32_be(response, (rendered.elapsed_ns / 1000) as u32);
-  response = binary.append_u32_be(response, (rendered.tile.iterations >> 32) as u32);
-  response = binary.append_u32_be(response, (rendered.tile.iterations & 4294967295) as u32);
-  response = binary.append_u32_be(response, state.tiles.get() as u32);
-  return binary.append_bytes(response, rendered.tile.png);
+pub struct TileRequest { id: u32, z: i32, x: i64, y: i64 }
+
+pub enum RequestError {
+  InvalidFields,
+  InvalidNumber(string, parse.IntError),
+  OutOfRange,
+  Rendering(fractal.RenderError),
 }
 
-// Accept up to 18 decimal digits. Return -1 for invalid input.
-function parse_i64(text: string): i64 {
-  let bytes: [u8] = text.as_bytes();
-  if (bytes.len() == 0 || bytes.len() > 18) {
-    return -1;
+pub function parse_request(request: string): Result[TileRequest, RequestError] {
+  let fields: string[] = request.split(" ");
+  if (fields.len() != 4) {
+    return Err(InvalidFields);
   }
-  let value: i64 = 0;
-  let index: i32 = 0;
-  while (index < bytes.len()) {
-    let digit: i32 = bytes[index] as i32 - 48;
-    if (digit < 0 || digit > 9) {
-      return -1;
+  let id: i64 = request_integer(fields[0], "id")?;
+  let z: i64 = request_integer(fields[1], "zoom")?;
+  let x: i64 = request_integer(fields[2], "x")?;
+  let y: i64 = request_integer(fields[3], "y")?;
+  if (!request_range(id, z) || !fractal.valid(z as i32, x, y)) {
+    return Err(OutOfRange);
+  }
+  return Ok(TileRequest { id: id as u32, z: z as i32, x: x, y: y });
+}
+
+// Check the wider integers before narrowing the protocol fields.
+fip function request_range(id: i64, z: i64): boolean {
+  return id >= 0 && id <= 4294967295 && z >= 0 && z <= fractal.MAX_ZOOM as i64;
+}
+
+function answer(state: Stats, request: string): Result[u8[], RequestError] {
+  let tile: TileRequest = parse_request(request)?;
+  let rendered: Rendered = state.render(tile.z, tile.x, tile.y).map_err((error: fractal.RenderError): RequestError => Rendering(error))?;
+  let response: u8[] = binary.append_u32_be([], tile.id);
+  // The 20-byte header contains id:u32, microseconds:u32, iterations:u64, and tiles:u32, all big-endian.
+  response = binary.append_u32_be(response, (rendered.elapsed_ns / 1000) as u32);
+  response = binary.append_u64_be(response, rendered.tile.iterations as u64);
+  response = binary.append_u32_be(response, state.tiles.get() as u32);
+  return Ok(binary.append_bytes(response, rendered.tile.png));
+}
+
+function request_integer(text: string, field: string): Result[i64, RequestError] {
+  match (parse.int64(text)) {
+    Ok(value) => {
+      return Ok(value);
+    },
+    Err(error) => {
+      return Err(InvalidNumber(field, error));
     }
-    value = value * 10 + digit as i64;
-    index = index + 1;
   }
-  return value;
+}
+
+function coordinate(params: router.Params, name: string): Result[i64, http.HttpError] {
+  let text: string = params.param(name)?;
+  match (parse.int64(text)) {
+    Ok(value) => {
+      return Ok(value);
+    },
+    Err(_) => {
+      return Err(http.fail(400, "path parameter " + name + " is not an integer"));
+    }
+  }
 }
 
 // Format nanoseconds as milliseconds with three decimal places.

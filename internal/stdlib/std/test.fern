@@ -1921,7 +1921,7 @@ pub function assert_in_range_f32(v: f32, lo: f32, hi: f32): TestOutcome {
 
 // `assert_sorted_asc_string(arr)` — lexicographic
 // non-decreasing order on strings. Delegates to the
-// `sort.string_cmp` ordering used elsewhere in the stdlib
+// `Ord for string` ordering used elsewhere in the stdlib
 // so "sorted" here means the same thing as
 // `cmp.sort(arr)` would produce.
 
