@@ -14,6 +14,12 @@ const errors = [];
 context.on("page", (p) => p.on("pageerror", (e) => errors.push(e.message)));
 const a = await context.newPage(),
   b = await context.newPage();
+await a.goto(base + "/");
+await a.getByRole("button", { name: "Make something", exact: true }).click();
+assert.equal(await a.locator(".example:visible").count(), 3);
+await a.getByRole("button", { name: "All six", exact: true }).click();
+assert.equal(await a.locator(".example:visible").count(), 6);
+console.log("gallery filters OK");
 await a.goto(base + "/rally/");
 await a.waitForFunction(() =>
   document.querySelector("#connection").textContent.includes("Live"),

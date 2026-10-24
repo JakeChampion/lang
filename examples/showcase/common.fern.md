@@ -112,7 +112,7 @@ pub function redirect(location: string): HttpResponse {
 
 pub function page(title: string, app: string, body: string): string {
   return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-    + "<title>" + escape(title) + " · Fern, in action</title><link rel=\"stylesheet\" href=\"/assets/showcase.css\"></head>"
+    + "<link rel=\"icon\" type=\"image/svg+xml\" href=\"/favicon.svg\"><title>" + escape(title) + " · Fern, in action</title><link rel=\"stylesheet\" href=\"/assets/showcase.css\"></head>"
     + "<body class=\"app-page " + app + "-page\"><a class=\"skip-link\" href=\"#main\">Skip to content</a>"
     + "<header class=\"app-nav\"><a class=\"brand\" href=\"/\"><span class=\"brand-mark\">✳</span> fern<span class=\"brand-suffix\"> / in action</span></a>"
     + "<nav><a href=\"/\">All examples</a><a href=\"/_src/showcase/" + app + ".fern\">View source ↗</a></nav></header>"
