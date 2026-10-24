@@ -41,16 +41,17 @@ pub function load(dir: string): LoadResult {
       sdir = dir + "/" + rel;
     }
     let entries: string[] = [];
-    let listed: boolean = false;
     match (read_dir(sdir)) {
       Ok(ns) => {
         entries = ns;
-        listed = true;
       },
-      Err(e) => {}
-    }
-    if (!listed) {
-      continue;
+      Err(e) => {
+        let message: string = "-embed " + dir + ": cannot read directory " + sdir;
+        if let InvalidUtf8(_) = e {
+          message = "-embed " + dir + ": a file name is not valid UTF-8";
+        }
+        return LoadResult { assets: no_assets(), err: message };
+      }
     }
     let i: i32 = 0;
     while (i < entries.len()) {

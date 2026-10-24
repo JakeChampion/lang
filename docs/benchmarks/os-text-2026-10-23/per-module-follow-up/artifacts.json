@@ -1,0 +1,132 @@
+{
+  "source_commit": "4cf99931a22d65f665f6266c43b182929dcdc7c7",
+  "native_source_commit": "14395d0eeb43d7df0894a594c3b3b534725a48ac",
+  "dependency_base": "77602f33f56372f4eabbfc7229bd13fce2eb928d",
+  "source_sha256": "ec34f6955a5ba7a388474db0f6bced3db847d24f71d96cd0bd591a100c899eb4",
+  "source_files": 498,
+  "native_sha256": "9161f9860e0abbf5d4d4d8e26a9e3e511788a7f34601caf165d8ec98fb26a3a0",
+  "tests": {
+    "all-ci-fixes.jsonl": {
+      "cases": 335,
+      "source_commit": "14395d0eeb43d7df0894a594c3b3b534725a48ac"
+    },
+    "byte-results-regression.jsonl": {
+      "cases": 4,
+      "source_commit": "4cf99931a22d65f665f6266c43b182929dcdc7c7"
+    }
+  },
+  "matrix_commands": 38,
+  "balanced_censuses": 9,
+  "matrix_oracle_source": "3048da4e51442f2baa9e8b045f5003329d72d214",
+  "matrix_oracle_sha256": "61adba8a76c22784efb1dd6779ff9501a0addcdbd3f7406460956a0aca07b154",
+  "source_patch_excludes": [
+    "docs/benchmarks"
+  ],
+  "artifacts": [
+    {
+      "path": "all-ci-fixes.jsonl.gz",
+      "bytes": 20341,
+      "sha256": "4797b5214f5ab2d8ed117677aeb43f5892716b1fd5c11b001e9c23a0e468af11"
+    },
+    {
+      "path": "byte-results-regression.jsonl.gz",
+      "bytes": 559,
+      "sha256": "f980202bc613909f854ee3960bdfbb7bf17aed5192b3a611371c95faf3b04dce"
+    },
+    {
+      "path": "bootstrap-final/bootstrap.json.gz",
+      "bytes": 348,
+      "sha256": "1002baf9c22af7e64d5c23acbac8bc66e106fd7524c36493ae4fe6f8296e4206"
+    },
+    {
+      "path": "bootstrap-final/stage1.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "bootstrap-final/stage2.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "bootstrap-final/stage3.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "driver-builds.json.gz",
+      "bytes": 1107,
+      "sha256": "710a6ca982af227bc645ec8c975eb7fa7a52192448f27dbf73b7bdcd633d2148"
+    },
+    {
+      "path": "driver-sizes.txt",
+      "bytes": 358,
+      "sha256": "c1fe585ce9ac3dd80d23b13e238c7d8c70294e4dd5cf0a2447082d2f3ff0f5ad"
+    },
+    {
+      "path": "driver-gate.log",
+      "bytes": 896,
+      "sha256": "6de181df9e2712cd862188a611d4b1a555a730822d7ab76d35704f0e9121ff96"
+    },
+    {
+      "path": "check-sizes.py.gz",
+      "bytes": 1040,
+      "sha256": "7b11b34caf2fa95d0ad9e802c2b0d6066916e78c9e88e1357c1521e67800b235"
+    },
+    {
+      "path": "sizes.log",
+      "bytes": 908,
+      "sha256": "6984fb925b30f02f2b77718c949a8d7b1a89f76509970c7eafe76c413a13f74d"
+    },
+    {
+      "path": "format.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "gofmt.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "vet.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "byte-matrix.json.gz",
+      "bytes": 1642,
+      "sha256": "16d164f004959f34c8acffa51e1bf29b1355ba42d3219d0efb776f010fa1095a"
+    },
+    {
+      "path": "byte-matrix.py.gz",
+      "bytes": 1625,
+      "sha256": "3cb06ac10a5281d98a0555ce4520fdd216a342c6bb8d47f860efbc6a26e1d845"
+    },
+    {
+      "path": "byte-matrix.log.gz",
+      "bytes": 1252,
+      "sha256": "9489cf6a167318dfdbcfd54e4c3a44d382792e030141ad3de2b3917e57158f41"
+    },
+    {
+      "path": "seal-proofs.py.gz",
+      "bytes": 1754,
+      "sha256": "717312214d4f955acbca50a31a3683c9cd9474cb4f77ba0ccd2571f0a2981797"
+    },
+    {
+      "path": "source-files.json",
+      "bytes": 78405,
+      "sha256": "e638904b43a34bb938693fcadd172922ce668b58698307262827748844be4bd5"
+    },
+    {
+      "path": "source-change.patch.gz",
+      "bytes": 1976,
+      "sha256": "ef1dc8f565ecb96130edfe525e1100202abc2933337b3f0511b74164a5640d8e"
+    },
+    {
+      "path": "byte-matrix-inputs-and-logs.tar.gz",
+      "bytes": 1872,
+      "sha256": "dfea2776754720e7f7723ae16e581250df6c73c0d4376a9da9d8cd19f9197bef"
+    }
+  ]
+}

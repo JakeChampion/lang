@@ -545,6 +545,7 @@ func New() *Interp {
 	i.Builtins["open_dir"] = &Builtin{Fn: builtinOpenDir}
 	i.Builtins["__method_Dir_open_dir"] = &Builtin{Fn: builtinDirOpenDir}
 	i.Builtins["__method_Dir_entries"] = &Builtin{Fn: builtinDirEntries}
+	i.Builtins["__method_Dir_entries_bytes"] = &Builtin{Fn: builtinDirEntriesBytes}
 	i.Builtins["__method_Dir_stat"] = &Builtin{Fn: builtinDirStat(true)}
 	i.Builtins["__method_Dir_lstat"] = &Builtin{Fn: builtinDirStat(false)}
 	i.Builtins["__method_Dir_access"] = &Builtin{Fn: builtinDirAccess}
@@ -1337,6 +1338,7 @@ func New() *Interp {
 	i.Builtins["mounts"] = &Builtin{Fn: builtinMounts}
 	i.Builtins["sysctl"] = &Builtin{Fn: builtinSysctl}
 	i.Builtins["temp_dir"] = &Builtin{Fn: builtinTempDir}
+	i.Builtins["read_dir_bytes"] = &Builtin{Fn: builtinReadDirBytes}
 	i.Builtins["read_dir"] = &Builtin{Fn: builtinReadDir}
 	i.Builtins["read_dir_all"] = &Builtin{Fn: builtinReadDirAll}
 	i.Builtins["read_dir_ino"] = &Builtin{Fn: builtinReadDirIno}
@@ -1374,6 +1376,7 @@ func New() *Interp {
 	i.Builtins["clone_file"] = &Builtin{Fn: builtinCloneFile}
 	i.Builtins["create_symlink"] = &Builtin{Fn: builtinCreateSymlink}
 	i.Builtins["read_link"] = &Builtin{Fn: builtinReadLink}
+	i.Builtins["read_link_bytes"] = &Builtin{Fn: builtinReadLinkBytes}
 	i.Builtins["getxattr"] = &Builtin{Fn: builtinGetxattr}
 	i.Builtins["lgetxattr"] = &Builtin{Fn: builtinLgetxattr}
 	i.Builtins["setxattr"] = &Builtin{Fn: builtinSetxattr}
@@ -2927,11 +2930,27 @@ func builtinTempDir(_ *Interp, args []Value) (Value, error) {
 	if strings.ContainsRune(string(prefix), '/') {
 		return resultErr(ioErrorOther(string(prefix), syscall.EINVAL)), nil
 	}
-	dir, err := os.MkdirTemp("", string(prefix)+"-*")
+	tempRoot := os.TempDir()
+	if !utf8.ValidString(tempRoot) {
+		return resultErr(ioErrorOfErrno(string(prefix), syscall.EILSEQ)), nil
+	}
+	dir, err := os.MkdirTemp(tempRoot, string(prefix)+"-*")
 	if err != nil {
 		return resultErr(classifyIoError(string(prefix), err)), nil
 	}
 	return resultOk(String(dir)), nil
+}
+
+func builtinReadDirBytes(_ *Interp, args []Value) (Value, error) {
+	entries, res, err := readDirEntriesMode("read_dir_bytes", true, args, true)
+	if entries == nil {
+		return res, err
+	}
+	out := newArray(len(entries))
+	for k, e := range entries {
+		out.E[k] = byteArray([]byte(e.name))
+	}
+	return resultOk(out), nil
 }
 
 func builtinReadDir(_ *Interp, args []Value) (Value, error) {
@@ -2984,6 +3003,10 @@ type dirent struct {
 }
 
 func readDirEntries(name string, skipDots bool, args []Value) ([]dirent, Value, error) {
+	return readDirEntriesMode(name, skipDots, args, false)
+}
+
+func readDirEntriesMode(name string, skipDots bool, args []Value, raw bool) ([]dirent, Value, error) {
 	if len(args) != 1 {
 		return nil, nil, fmt.Errorf("%s: expected 1 arg, got %d", name, len(args))
 	}
@@ -2997,6 +3020,9 @@ func readDirEntries(name string, skipDots bool, args []Value) ([]dirent, Value, 
 	}
 	kept := []dirent{}
 	for _, e := range entries {
+		if !raw && !utf8.ValidString(e.name) {
+			return nil, resultErr(ioErrorOfErrno(string(path), syscall.EILSEQ)), nil
+		}
 		if !skipDots || e.name != "." && e.name != ".." {
 			kept = append(kept, e)
 		}
@@ -3399,6 +3425,9 @@ func builtinHostname(_ *Interp, args []Value) (Value, error) {
 	if err != nil {
 		return String(""), nil
 	}
+	if !utf8.ValidString(h) {
+		return String(""), nil
+	}
 	return String(h), nil
 }
 
@@ -3415,6 +3444,9 @@ func builtinUnameField(_ *Interp, args []Value) (Value, error) {
 	if i < 0 || i >= len(fields) {
 		return String(""), nil
 	}
+	if !utf8.ValidString(fields[i]) {
+		return String(""), nil
+	}
 	return String(fields[i]), nil
 }
 
@@ -3425,6 +3457,9 @@ func builtinGetcwd(_ *Interp, args []Value) (Value, error) {
 	wd, err := syscall.Getwd()
 	if err != nil {
 		return resultErr(classifyIoError("", err)), nil
+	}
+	if !utf8.ValidString(wd) {
+		return resultErr(ioErrorOfErrno("", syscall.EILSEQ)), nil
 	}
 	return resultOk(String(wd)), nil
 }
@@ -3565,6 +3600,9 @@ func builtinMounts(_ *Interp, args []Value) (Value, error) {
 	}
 	out := newArray(len(rows))
 	for i, m := range rows {
+		if !utf8.ValidString(m.source) || !utf8.ValidString(m.target) || !utf8.ValidString(m.fstype) {
+			return resultErr(ioErrorOfErrno("", syscall.EILSEQ)), nil
+		}
 		out.E[i] = &Struct{
 			TypeName: "MountEntry",
 			Fields: map[string]Value{
@@ -3796,7 +3834,19 @@ func builtinCreateSymlink(_ *Interp, args []Value) (Value, error) {
 }
 
 func builtinReadLink(_ *Interp, args []Value) (Value, error) {
-	p, err := pathArgs("read_link", args, 1)
+	return readLinkResult(args, false)
+}
+
+func builtinReadLinkBytes(_ *Interp, args []Value) (Value, error) {
+	return readLinkResult(args, true)
+}
+
+func readLinkResult(args []Value, raw bool) (Value, error) {
+	name := "read_link"
+	if raw {
+		name = "read_link_bytes"
+	}
+	p, err := pathArgs(name, args, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -3807,6 +3857,16 @@ func builtinReadLink(_ *Interp, args []Value) (Value, error) {
 			return resultErr(classifyIoError(p[0], err)), nil
 		}
 		if n < size {
+			if raw {
+				out := newArray(n)
+				for j, b := range buf[:n] {
+					out.E[j] = Number(b)
+				}
+				return resultOk(out), nil
+			}
+			if !utf8.Valid(buf[:n]) {
+				return resultErr(ioErrorOfErrno(p[0], syscall.EILSEQ)), nil
+			}
 			return resultOk(String(buf[:n])), nil
 		}
 	}

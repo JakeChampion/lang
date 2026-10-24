@@ -1,0 +1,9 @@
+WARNING docs/string-log/2026-10-23-os-text.md:par2 [rule 3.5] "listing": an "-ing" form is permitted only in a technical name.
+WARNING docs/string-log/2026-10-23-os-text.md:par3 [rule 3.5] "filtering": an "-ing" form is permitted only in a technical name.
+WARNING docs/string-log/2026-10-23-os-text.md:par3 [rule 3.5] "existing": an "-ing" form is permitted only in a technical name.
+WARNING docs/string-log/2026-10-23-os-text.md:par11 [rule 3.5] "listing": an "-ing" form is permitted only in a technical name.
+WARNING docs/string-log/2026-10-23-os-text.md:par11 [rule 3.5] "preserving": an "-ing" form is permitted only in a technical name.
+
+Result: 0 errors, 5 warnings.
+The text obeys the STE structural rules that this tool can check.
+This tool cannot make sure that each word has its approved meaning.

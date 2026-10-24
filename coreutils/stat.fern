@@ -1055,7 +1055,7 @@ function do_file(o: io_buffered.BufWriter, pieces: Piece[], device_pieces: Piece
       let link: string = "";
       let is_link: boolean = is_symlink(st);
       if (is_link) {
-        match (read_link(name)) {
+        match (canon.byte_link_target(name)) {
           Ok(t) => {
             link = t;
           },

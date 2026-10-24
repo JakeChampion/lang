@@ -1,0 +1,490 @@
+[
+  {
+    "path": "matrix/native-build-arm64-darwin.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/native-build-arm64-darwin.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/native-build-arm64-linux.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/native-build-arm64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/native-build-x86-64-linux.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/native-build-x86-64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/native-go-check.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/native-go-check.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/native-go-interp.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/native-go-interp.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/native-run-arm64-linux.stderr",
+    "sha256": "caa7acbe9d76195d4f01dff5153db38d7bf47b3a4cc6d89af7489c14bfa487bd"
+  },
+  {
+    "path": "matrix/native-run-arm64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/native-run-x86-64-linux.stderr",
+    "sha256": "caa7acbe9d76195d4f01dff5153db38d7bf47b3a4cc6d89af7489c14bfa487bd"
+  },
+  {
+    "path": "matrix/native-run-x86-64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/native-self-check.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/native-self-check.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/native-self-interp.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/native-self-interp.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/native.fern",
+    "sha256": "9bf5a6f7f03b0867ee4d7930f402c7fbafc2a4a334d6a7e7f445c39c6bfae4e9"
+  },
+  {
+    "path": "matrix/portable-build-arm64-darwin.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/portable-build-arm64-darwin.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/portable-build-arm64-linux.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/portable-build-arm64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/portable-build-wasm32-wasi.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/portable-build-wasm32-wasi.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/portable-build-x86-64-linux.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/portable-build-x86-64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/portable-go-check.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/portable-go-check.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/portable-go-interp.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/portable-go-interp.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/portable-run-arm64-linux.stderr",
+    "sha256": "59e950b0fe8b80ef4142886f6b8321af53f73ee289f9fe762896d466859b8c70"
+  },
+  {
+    "path": "matrix/portable-run-arm64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/portable-run-wasm32-wasi.stderr",
+    "sha256": "59c15492ec74c99df966eb998f63cf0d346072cc97b12754619e9c2e49fe840e"
+  },
+  {
+    "path": "matrix/portable-run-wasm32-wasi.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/portable-run-x86-64-linux.stderr",
+    "sha256": "59e950b0fe8b80ef4142886f6b8321af53f73ee289f9fe762896d466859b8c70"
+  },
+  {
+    "path": "matrix/portable-run-x86-64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/portable-self-check.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/portable-self-check.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/portable-self-interp.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/portable-self-interp.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "matrix/portable.fern",
+    "sha256": "966f15e805e36e593cc109b43d06e771d4f251ffd6200373e859dbb08c8e8624"
+  },
+  {
+    "path": "byte-matrix/directory-build-arm64-darwin.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-build-arm64-darwin.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-build-arm64-linux.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-build-arm64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-build-x86-64-linux.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-build-x86-64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-go-check.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-go-check.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-go-interp.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-go-interp.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-handle-build-arm64-darwin.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-handle-build-arm64-darwin.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-handle-build-arm64-linux.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-handle-build-arm64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-handle-build-x86-64-linux.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-handle-build-x86-64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-handle-go-check.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-handle-go-check.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-handle-go-interp.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-handle-go-interp.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-handle-run-arm64-linux.stderr",
+    "sha256": "12bf28a6f3af38739c774c6369eeae51d9bbbd020fed023a7c37d0506c374c3e"
+  },
+  {
+    "path": "byte-matrix/directory-handle-run-arm64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-handle-run-x86-64-linux.stderr",
+    "sha256": "12bf28a6f3af38739c774c6369eeae51d9bbbd020fed023a7c37d0506c374c3e"
+  },
+  {
+    "path": "byte-matrix/directory-handle-run-x86-64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-handle-self-check.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-handle-self-check.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-handle-self-interp.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-handle-self-interp.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-handle.fern",
+    "sha256": "177ee25d9ff7f6d992909b0a84d7cbdabed71eaf3e4935b46666cdb800762088"
+  },
+  {
+    "path": "byte-matrix/directory-run-arm64-linux.stderr",
+    "sha256": "12bf28a6f3af38739c774c6369eeae51d9bbbd020fed023a7c37d0506c374c3e"
+  },
+  {
+    "path": "byte-matrix/directory-run-arm64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-run-x86-64-linux.stderr",
+    "sha256": "12bf28a6f3af38739c774c6369eeae51d9bbbd020fed023a7c37d0506c374c3e"
+  },
+  {
+    "path": "byte-matrix/directory-run-x86-64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-self-check.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-self-check.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-self-interp.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory-self-interp.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/directory.fern",
+    "sha256": "50f32c41351ddd351564dcfb52458f112abe1d420499d075322b5b4d0e31244e"
+  },
+  {
+    "path": "byte-matrix/portable-build-arm64-darwin.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/portable-build-arm64-darwin.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/portable-build-arm64-linux.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/portable-build-arm64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/portable-build-wasm32-wasi.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/portable-build-wasm32-wasi.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/portable-build-x86-64-linux.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/portable-build-x86-64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/portable-go-check.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/portable-go-check.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/portable-go-interp.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/portable-go-interp.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/portable-run-arm64-linux.stderr",
+    "sha256": "31ecb41710574e6409d9e188c3bd84d90746af21b83b46a300f643bdbc12cd87"
+  },
+  {
+    "path": "byte-matrix/portable-run-arm64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/portable-run-wasm32-wasi.stderr",
+    "sha256": "26ff135eb413bc08cbd84887788db8a1b483eb098aa1f1062d36af87afa526f7"
+  },
+  {
+    "path": "byte-matrix/portable-run-wasm32-wasi.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/portable-run-x86-64-linux.stderr",
+    "sha256": "31ecb41710574e6409d9e188c3bd84d90746af21b83b46a300f643bdbc12cd87"
+  },
+  {
+    "path": "byte-matrix/portable-run-x86-64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/portable-self-check.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/portable-self-check.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/portable-self-interp.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/portable-self-interp.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/portable.fern",
+    "sha256": "645c75ee3e4ca339e2ff746a12aebb763176100f747daf9745dfcdc7054cc81e"
+  },
+  {
+    "path": "byte-matrix/raw-build-arm64-darwin.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/raw-build-arm64-darwin.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/raw-build-arm64-linux.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/raw-build-arm64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/raw-build-x86-64-linux.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/raw-build-x86-64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/raw-go-check.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/raw-go-check.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/raw-go-interp.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/raw-go-interp.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/raw-run-arm64-linux.stderr",
+    "sha256": "e02ce262a6d59c50dfd032da5d4a2c002e82ee9e3a218da33d6a679e9a3b03af"
+  },
+  {
+    "path": "byte-matrix/raw-run-arm64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/raw-run-x86-64-linux.stderr",
+    "sha256": "e02ce262a6d59c50dfd032da5d4a2c002e82ee9e3a218da33d6a679e9a3b03af"
+  },
+  {
+    "path": "byte-matrix/raw-run-x86-64-linux.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/raw-self-check.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/raw-self-check.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/raw-self-interp.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/raw-self-interp.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "byte-matrix/raw.fern",
+    "sha256": "3fad15ddcfe549bac568804e46b4e2db56c5f769555186261259483365f0817d"
+  }
+]
