@@ -3181,7 +3181,11 @@ pub function rt_src_dir_chmod(t: string): string {
 }
 
 pub function rt_src_dir_entries(t: string): string {
-  return "function __fern_dir_entries(fd: i32): Result[string[], IoError] { let rw: i32 = __syscall3(" + sysno(t, "lseek") + ", fd as i64, 0, 0) as i32; if (rw < 0) { return Err(__fern_io_error(0 - rw, \"\")); } " + dir_drain_src(t, "string", true, false) + "if (bad < 0) { return Err(__fern_io_error(0 - bad, \"\")); } return Ok(names); }";
+  return "function __fern_dir_entries(fd: i32): Result[string[], IoError] { let rw: i32 = __syscall3(" + sysno(t, "lseek") + ", fd as i64, 0, 0) as i32; if (rw < 0) { return Err(__fern_io_error(0 - rw, \"\")); } " + dir_drain_src(t, "string", true, false, false) + "if (bad < 0) { return Err(__fern_io_error(0 - bad, \"\")); } return Ok(names); }";
+}
+
+pub function rt_src_dir_entries_bytes(t: string): string {
+  return "function __fern_dir_entries_bytes(fd: i32): Result[i32[][], IoError] { let rw: i32 = __syscall3(" + sysno(t, "lseek") + ", fd as i64, 0, 0) as i32; if (rw < 0) { return Err(__fern_io_error(0 - rw, \"\")); } " + dir_drain_src(t, "i32[]", true, false, true) + "if (bad < 0) { return Err(__fern_io_error(0 - bad, \"\")); } return Ok(names); }";
 }
 
 pub function rt_src_dir_stat(t: string): string {
@@ -3198,6 +3202,9 @@ pub function rt_src_dir_leaves(t: string, s: EmitState): string {
   }
   if (s.has_need("dir_entries")) {
     out = out + " " + rt_src_dir_entries(t);
+  }
+  if (s.has_need("dir_entries_bytes")) {
+    out = out + " " + rt_src_dir_entries_bytes(t);
   }
   if (s.has_need("dir_stat")) {
     out = out + " " + rt_src_dir_stat(t);
@@ -3317,6 +3324,10 @@ function rt_src_rename_flagged(t: string, fname: string, flags: string): string 
 
 pub function rt_src_read_link(t: string): string {
   return "function __fern_read_link(path: string): Result[string, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let buf: usize = __raw_alloc(4096); let n: i32 = __syscall4(" + sysno(t, "readlinkat") + ", " + at_fdcwd(t) + ", pathz as i64, buf as i64, 4096) as i32; let pathz_own: string = __raw_string(pathz, plen + 1); let buf_own: string = __raw_string(buf, 4096); if (n < 0) { return Err(__fern_io_error(0 - n, __fern_path_copy(pathz_own, plen))); } if (n >= 4096) { return Err(__fern_io_error(" + errno_on(t, 36) + ", __fern_path_copy(pathz_own, plen))); } if (__fern_utf8_valid(buf, n) == 0) { return Err(InvalidUtf8(__fern_path_copy(pathz_own, plen))); } return Ok(__fern_path_copy(buf_own, n)); }";
+}
+
+pub function rt_src_read_link_bytes(t: string): string {
+  return "function __fern_read_link_bytes(path: string): Result[i32[], IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let buf: usize = __raw_alloc(4096); let n: i32 = __syscall4(" + sysno(t, "readlinkat") + ", " + at_fdcwd(t) + ", pathz as i64, buf as i64, 4096) as i32; let pathz_own: string = __raw_string(pathz, plen + 1); let buf_own: string = __raw_string(buf, 4096); if (n < 0) { return Err(__fern_io_error(0 - n, __fern_path_copy(pathz_own, plen))); } if (n >= 4096) { return Err(__fern_io_error(" + errno_on(t, 36) + ", __fern_path_copy(pathz_own, plen))); } " + packed_box("out", "n") + " __memcpy(out + 8, buf, n); return Ok(__raw_array(out)); }";
 }
 
 pub function rt_src_getxattr(t: string, follow: boolean): string {
@@ -3550,6 +3561,10 @@ pub function rt_src_read_dir(t: string): string {
   return rt_src_read_dir_like(t, "__fern_read_dir", true, false);
 }
 
+pub function rt_src_read_dir_bytes(t: string): string {
+  return rt_src_read_dir_like(t, "__fern_read_dir_bytes", true, false);
+}
+
 pub function rt_src_read_dir_all(t: string): string {
   return rt_src_read_dir_like(t, "__fern_read_dir_all", false, false);
 }
@@ -3567,15 +3582,25 @@ function rt_src_read_dir_like(t: string, fname: string, skip_dots: boolean, ino:
   if (ino) {
     elem = "DirEntry";
   }
-  return "function " + fname + "(path: string): Result[" + elem + "[], IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, " + oflag(t, "rd_directory") + ") as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen))); } " + dir_drain_src(t, elem, skip_dots, ino) + "__syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); if (bad < 0) { return Err(__fern_io_error(0 - bad, __fern_path_copy(pathz_own, plen))); } return Ok(names); }";
+  if (fname == "__fern_read_dir_bytes") {
+    elem = "i32[]";
+  }
+  return "function " + fname + "(path: string): Result[" + elem + "[], IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, " + oflag(t, "rd_directory") + ") as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen))); } " + dir_drain_src(t, elem, skip_dots, ino, elem == "i32[]") + "__syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); if (bad < 0) { return Err(__fern_io_error(0 - bad, __fern_path_copy(pathz_own, plen))); } return Ok(names); }";
 }
 
-function dir_drain_src(t: string, elem: string, skip_dots: boolean, ino: boolean): string {
+function dir_drain_src(t: string, elem: string, skip_dots: boolean, ino: boolean, raw: boolean): string {
   let nameoff: string = direntoff(t, "name");
   let eilseq: string = util.i32_to_string(strerror_errno(t, util.index_of_str(strerror_texts(), "Invalid or incomplete multibyte or wide character")));
   let entry: string = "__raw_string(nbuf, nlen)";
   if (ino) {
     entry = "DirEntry { name: __raw_string(nbuf, nlen), ino: __load_i64((buf + pos + " + direntoff(t, "ino") + ")), kind: (__raw_load8(buf, pos + " + direntoff(t, "type") + ") as u32) << 12 }";
+  }
+  let copy: string = "let nbuf: usize = __raw_alloc(nlen); __memcpy(nbuf, buf + pos + " + nameoff + ", nlen); ";
+  let validation: string = "if (__fern_utf8_valid(buf + pos + " + nameoff + ", nlen) == 0) { bad = 0 - " + eilseq + "; done = 1; pos = n; } else { ";
+  if (raw) {
+    entry = "name_bytes";
+    copy = packed_box("nbuf", "nlen") + " __memcpy(nbuf + 8, buf + pos + " + nameoff + ", nlen); let name_bytes: i32[] = __raw_array(nbuf); ";
+    validation = "{ ";
   }
   let guard_open: string = "";
   let guard_close: string = "";
@@ -3583,7 +3608,7 @@ function dir_drain_src(t: string, elem: string, skip_dots: boolean, ino: boolean
     guard_open = "let skip: i32 = 0; if (nlen == 1) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { skip = 1; } } if (nlen == 2) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { if (__raw_load8(buf, pos + " + nameoff + " + 1) == 46) { skip = 1; } } } if (skip == 0) { ";
     guard_close = "} ";
   }
-  return "let basep: usize = __raw_alloc(8); let names: " + elem + "[] = []; let bad: i32 = 0; let done: i32 = 0; while (done == 0) { let buf: usize = __raw_alloc(65536); let n: i32 = __syscall4(" + sysno(t, "getdents") + ", fd as i64, buf as i64, 65536, basep as i64) as i32; if (n <= 0) { done = 1; bad = n; } else { let pos: i32 = 0; while (pos < n) { let reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; " + dirent_name_len(t) + "if (__fern_utf8_valid(buf + pos + " + nameoff + ", nlen) == 0) { bad = 0 - " + eilseq + "; done = 1; pos = n; } else { " + guard_open + "let nbuf: usize = __raw_alloc(nlen); __memcpy(nbuf, buf + pos + " + nameoff + ", nlen); names = names.append(" + entry + "); " + guard_close + "pos = pos + reclen; } } } let buf_own: string = __raw_string(buf, 65536); } let basep_own: string = __raw_string(basep, 8); ";
+  return "let basep: usize = __raw_alloc(8); let names: " + elem + "[] = []; let bad: i32 = 0; let done: i32 = 0; while (done == 0) { let buf: usize = __raw_alloc(65536); let n: i32 = __syscall4(" + sysno(t, "getdents") + ", fd as i64, buf as i64, 65536, basep as i64) as i32; if (n <= 0) { done = 1; bad = n; } else { let pos: i32 = 0; while (pos < n) { let reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; " + dirent_name_len(t) + "" + validation + guard_open + copy + "names = names.append(" + entry + "); " + guard_close + "pos = pos + reclen; } } } let buf_own: string = __raw_string(buf, 65536); } let basep_own: string = __raw_string(basep, 8); ";
 }
 
 pub function rt_src_remove_dir_all(t: string): string {
@@ -5861,7 +5886,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "read_link" || id.name == "getcwd") {
     return ty_result(ty_string());
   }
-  if (id.name == "getxattr_bytes" || id.name == "lgetxattr_bytes") {
+  if (id.name == "read_link_bytes" || id.name == "getxattr_bytes" || id.name == "lgetxattr_bytes") {
     return ty_result(ty_array_i32());
   }
   if (id.name == "getxattr" || id.name == "lgetxattr") {
@@ -5878,6 +5903,9 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   }
   if (id.name == "temp_dir") {
     return ty_result(ty_string());
+  }
+  if (id.name == "read_dir_bytes") {
+    return ty_result(ty_array());
   }
   if (id.name == "read_dir" || id.name == "read_dir_all") {
     return ty_result(ty_array_string());
@@ -6487,7 +6515,7 @@ pub function runtime_need_deps(name: string): string[] {
     let d8: string[] = ["heap", "arr_push", "arr_push_owned", "str_concat"];
     return d8;
   }
-  if (name == "read_dir" || name == "read_dir_all" || name == "read_dir_ino" || name == "read_dir_ino_all") {
+  if (name == "read_dir_bytes" || name == "read_dir" || name == "read_dir_all" || name == "read_dir_ino" || name == "read_dir_ino_all") {
     let d9: string[] = ["heap", "arr_push", "arr_push_owned"];
     return d9;
   }

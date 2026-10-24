@@ -1,3 +1,4 @@
+import "./lib/canon";
 import "std/string";
 import "std/array";
 import "std/u64";
@@ -516,11 +517,11 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
           let held: Option[Dir] = None;
           let listed: Result[string[], IoError] = Err(Unsupported);
           if (target_os() == "wasi") {
-            listed = read_dir(p_path);
+            listed = canon.byte_dir_names(read_dir_bytes(p_path));
           } else {
             match (open_child(stack, sp, p_path, p_name, p_via_link)) {
               Ok(d) => {
-                listed = d.entries();
+                listed = canon.byte_dir_names(d.entries_bytes());
                 held = Some(d);
               },
               Err(e) => {

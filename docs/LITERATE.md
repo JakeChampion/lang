@@ -297,6 +297,30 @@ remap the entry document gets. A **multi-file** (`file=`) document has no
 single importable module, so importing one is an error (compile it as an
 entry, or import a specific generated `.fern` instead).
 
+## Standard library modules
+
+Standard library modules can use `.fern.md` sources. Imports retain their
+public names, such as `import "std/option"`. The compiler expands the
+document in memory before it checks or compiles the module.
+
+The first three modules are
+[`std/option`](../internal/stdlib/std/option.fern.md),
+[`std/result`](../internal/stdlib/std/result.fern.md), and
+[`std/csv`](../internal/stdlib/std/csv.fern.md). Each document contains STE
+explanations, named chunks, and executable examples. Brief declaration
+comments provide the text for API reference pages and editor hovers.
+
+```sh
+fern -doctest internal/stdlib/std/option.fern.md
+fern -weave -html -o option.html internal/stdlib/std/option.fern.md
+fern -doc internal/stdlib/std/option.fern.md
+```
+
+The Go loader retains the logical `.fern` module key and the document's
+source map. Module discovery includes both source formats. The build,
+embedded library, and standalone import checks also include `.fern.md`
+files. A plain `.fern` module takes precedence when both formats exist.
+
 ## Scope and current limitations
 
 - The chunk grammar uses the `<<name>>` delimiters from `noweb`/WEB.

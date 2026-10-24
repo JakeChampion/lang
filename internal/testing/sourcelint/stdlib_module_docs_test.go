@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/stdlib"
 )
 
 func TestEveryStdlibModuleHasAModuleIntroduction(t *testing.T) {
@@ -15,12 +17,23 @@ func TestEveryStdlibModuleHasAModuleIntroduction(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".fern") || strings.HasPrefix(entry.Name(), "_") {
+		if entry.IsDir() || stdlib.ModuleName(path) == "" || strings.HasPrefix(entry.Name(), "_") {
 			return nil
 		}
 		text, err := os.ReadFile(path)
 		if err != nil {
 			return err
+		}
+		if strings.HasSuffix(path, ".fern.md") {
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			module, err := stdlib.ReadModule(stdlib.ModuleName(filepath.ToSlash(rel)))
+			if err != nil {
+				return err
+			}
+			text = []byte(module.Code)
 		}
 		count++
 		lines := strings.Split(string(text), "\n")

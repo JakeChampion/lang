@@ -497,6 +497,9 @@ function counted_bit(op: ir.Op): i32 {
 }
 
 function packed_suffix(op: ir.Op): string {
+  if (op.kind_tag == 171 && op.i32_imm != 0) {
+    return "_bytes";
+  }
   if (ir.is_packed(op)) {
     return "_u8";
   }

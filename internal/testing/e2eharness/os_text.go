@@ -92,3 +92,50 @@ func MakeInvalidCwdFixture(t *testing.T) OSTextFixture {
 }
 `}
 }
+
+// MakeOSBytesFixture checks byte readers alongside the validating text readers.
+// WASI components expose host names through WIT strings, so malformed byte
+// preservation is a native filesystem property; valid byte names work on WASI.
+func MakeOSBytesFixture(t *testing.T, handles bool, malformed bool) OSTextFixture {
+	t.Helper()
+	f := MakeOSTextFixture(t, handles)
+	end := strings.LastIndex(f.Source, "return 0;")
+	if end < 0 {
+		t.Fatal("OS text fixture has no success return")
+	}
+	var extra strings.Builder
+	extra.WriteString(`match (read_link_bytes("valid-link")) { Ok(b) => { if (string_from_bytes_unchecked(b) != "é-文件") { return 200; } }, Err(_) => { return 201; } }
+match (read_dir_bytes("valid")) { Ok(names) => { if (names.len() != 3) { return 202; } let found: boolean = false; for n in names { if (string_from_bytes_unchecked(n) == "é-文件") { found = true; } } if (!found) { return 203; } }, Err(_) => { return 204; } }
+match (read_link_bytes("absent")) { Err(NotFound(_)) => {}, _ => { return 205; } }
+match (read_dir_bytes("absent")) { Err(NotFound(_)) => {}, _ => { return 206; } }
+`)
+	if malformed {
+		bad := []string{"\x80", "\xff", "\xc0\x80", "\xc2", "\xe0\x80\x80", "\xe2\x82", "\xed\xa0\x80", "\xf0\x80\x80\x80", "\xf0\x9f\x98", "\xf4\x90\x80\x80", "\xf5\x80\x80\x80", "\xc2A", strings.Repeat("a", 180) + "\xff"}
+		bytesLiteral := func(s string) string {
+			parts := make([]string, len(s))
+			for i, b := range []byte(s) {
+				parts[i] = fmt.Sprintf("%du8", b)
+			}
+			return "[" + strings.Join(parts, ", ") + "]"
+		}
+		for i, name := range bad {
+			fmt.Fprintf(&extra, `match (read_link_bytes("link%d")) { Ok(b) => { if (!same_bytes(b, %s)) { return 210; } }, Err(_) => { return 211; } }
+match (read_dir_bytes("bad%d")) { Ok(names) => { let found: boolean = false; for n in names { if (same_bytes(n, %s)) { found = true; } } if (names.len() != 2 || !found) { return 212; } }, Err(_) => { return 213; } }
+`, i, bytesLiteral(name), i, bytesLiteral("bad_"+name))
+			if handles {
+				fmt.Fprintf(&extra, `match (open_dir("bad%d")) { Ok(d) => {
+match (d.entries()) { Err(InvalidUtf8(_)) => {}, _ => { return 214; } }
+let i: i32 = 0; while (i < 2) {
+match (d.entries_bytes()) { Ok(names) => { let found: boolean = false; for n in names { if (same_bytes(n, %s)) { found = true; } } if (names.len() != 2 || !found) { return 215; } }, Err(_) => { return 216; } }
+i = i + 1; } d.close(); }, Err(_) => { return 217; } }
+`, i, bytesLiteral("bad_"+name))
+			}
+		}
+	}
+	f.Source = `function same_bytes(a: u8[], b: u8[]): boolean {
+ if (a.len() != b.len()) { return false; } let i: i32 = 0;
+ while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; } return true;
+}
+` + f.Source[:end] + extra.String() + f.Source[end:]
+	return f
+}

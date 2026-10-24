@@ -2,7 +2,7 @@ EXAMPLES := $(basename $(notdir $(wildcard examples/*.fern examples/tests/*.fern
 BINS     := $(addprefix build/,$(EXAMPLES))
 # Every tracked .fern source but the conformance fixtures, whose expected
 # diagnostics pin line and column, and testdata inputs kept as written.
-FERN_SRCS := $(shell git ls-files '*.fern' | grep -v -e '^conformance/' -e '/testdata/')
+FERN_SRCS := $(shell git ls-files '*.fern' '*.fern.md' | grep -v -e '^conformance/' -e '/testdata/')
 
 .PHONY: all build test vet deadcode actionlint hooks testnames freeze check-sources selfhost-cli bootstrap distcheck clean examples run-% fmt fmt-check gofmt gofmt-check lint-all ci-selftest fern-test-cache digest-check log-table-check huffman-table-check net-bench-rows-check deflate-bench-rows-check perf-history-check
 
@@ -11,7 +11,7 @@ all: build test
 build: bin/fern
 
 HOST_TARGET := $(shell uname -sm | sed -e 's/^Darwin.*/arm64-darwin/' -e 's/^Linux aarch64/arm64-linux/' -e 's/^Linux x86_64/x86-64-linux/')
-STDLIB_SRCS := $(shell find internal/stdlib -name '*.fern')
+STDLIB_SRCS := $(shell find internal/stdlib \( -name '*.fern' -o -name '*.fern.md' \))
 
 # bin/fern is the shipped compiler: compiler/fern_main.fern, built by the
 # self-host compiler with the stdlib and the diagnostic explanations embedded

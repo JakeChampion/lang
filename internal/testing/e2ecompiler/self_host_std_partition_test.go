@@ -79,16 +79,16 @@ func TestSelfHostStdPartitionAgreesWithNative(t *testing.T) {
 
 func stdModuleNames(t *testing.T) []string {
 	t.Helper()
-	ents, err := fs.ReadDir(stdlib.FS(), "std")
+	modules, err := stdlib.Modules()
 	if err != nil {
 		t.Fatalf("read embedded std/: %v", err)
 	}
 	var out []string
-	for _, e := range ents {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".fern") {
+	for _, mod := range modules {
+		if !strings.HasPrefix(mod, "std/") || strings.Count(mod, "/") != 1 {
 			continue
 		}
-		out = append(out, "std/"+strings.TrimSuffix(e.Name(), ".fern"))
+		out = append(out, mod)
 	}
 	sort.Strings(out)
 	return out
@@ -103,7 +103,7 @@ func writeEmbeddedStdlib(t *testing.T, dir string) {
 		if d.IsDir() {
 			return os.MkdirAll(filepath.Join(dir, p), 0o755)
 		}
-		if !strings.HasSuffix(p, ".fern") {
+		if stdlib.ModuleName(p) == "" {
 			return nil
 		}
 		src, rerr := fs.ReadFile(stdlib.FS(), p)

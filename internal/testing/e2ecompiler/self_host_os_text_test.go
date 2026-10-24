@@ -100,3 +100,13 @@ func TestSelfHostArm64DarwinOSText(t *testing.T) {
 	checkSelfHostOSText(t, cli, "arm64-darwin", e2eharness.MakeOSTextFixture(t, true))
 	checkSelfHostOSText(t, cli, "arm64-darwin", e2eharness.MakeInvalidCwdFixture(t))
 }
+
+func TestSelfHostOSBytes(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi", "component", "interp"} {
+		t.Run(target, func(t *testing.T) {
+			native := target != "wasm32-wasi" && target != "component"
+			checkSelfHostOSText(t, cli, target, e2eharness.MakeOSBytesFixture(t, native, native))
+		})
+	}
+}

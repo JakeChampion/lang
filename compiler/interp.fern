@@ -2078,6 +2078,21 @@ function stat_result_value(r: Result[FileStat, IoError]): Value {
   }
 }
 
+function strings_as_bytes_result_value(r: Result[string[], IoError]): Value {
+  match (r) {
+    Ok(names) => {
+      let out: Value[] = [];
+      for name in names {
+        out = out.append(byte_array_value(name.bytes()));
+      }
+      return ok_value(v_arr_of(out, "u8[]"));
+    },
+    Err(e) => {
+      return io_err_value(e);
+    }
+  }
+}
+
 function dir_entries_result_value(r: Result[DirEntry[], IoError]): Value {
   match (r) {
     Ok(es) => {
@@ -2860,6 +2875,16 @@ function call_host_fs_read(name: string, path: string): Value {
   if (name == "read_link") {
     return string_result_value(read_link(path));
   }
+  if (name == "read_link_bytes") {
+    match (read_link(path)) {
+      Ok(text) => {
+        return bytes_result_value(Ok(text.bytes()));
+      },
+      Err(e) => {
+        return bytes_result_value(Err(e));
+      }
+    }
+  }
   if (name == "temp_dir") {
     return string_result_value(temp_dir(path));
   }
@@ -2873,6 +2898,9 @@ function call_host_fs_read(name: string, path: string): Value {
 }
 
 function call_host_fs_list(name: string, path: string): Value {
+  if (name == "read_dir_bytes") {
+    return strings_as_bytes_result_value(read_dir(path));
+  }
   if (name == "read_dir") {
     return strings_result_value(read_dir(path));
   }
@@ -3167,7 +3195,7 @@ function is_handle_method(kind: string, name: string): boolean {
     return true;
   }
   if (kind == "Dir") {
-    return util.has_str(["open_dir", "entries", "lstat", "access", "remove_file", "remove_dir", "chmod", "chown"], name);
+    return util.has_str(["open_dir", "entries", "entries_bytes", "lstat", "access", "remove_file", "remove_dir", "chmod", "chown"], name);
   }
   if (util.has_str(["seek", "flags", "isatty", "fsync", "fdatasync", "syncfs", "drop_cache", "dup_onto"], name)) {
     return true;
@@ -3338,6 +3366,9 @@ function dir_method(d: Dir, name: string, args: Value[]): Value {
   let entry: string = arg_str(args, 0);
   if (name == "open_dir") {
     return dir_result_value(d.open_dir(entry));
+  }
+  if (name == "entries_bytes") {
+    return strings_as_bytes_result_value(d.entries());
   }
   if (name == "entries") {
     return strings_result_value(d.entries());

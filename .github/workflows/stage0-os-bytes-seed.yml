@@ -1,0 +1,12 @@
+name: Publish the OS byte API bootstrap seed
+on:
+  push:
+    branches: [fix/validate-os-text-ready]
+    paths: [.github/workflows/stage0-os-bytes-seed.yml]
+permissions:
+  contents: write
+jobs:
+  seed:
+    uses: ./.github/workflows/bootstrap.yml
+    with:
+      publish: true

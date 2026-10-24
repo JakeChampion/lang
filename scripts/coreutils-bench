@@ -259,7 +259,7 @@ fi
 # $target. Staleness is judged against the compiler's and the launcher's
 # sources.
 if [ ! -x bin/fern-selfhost ] || [ -n "$(find compiler cmd internal \
-     \( -name '*.fern' -o -name '*.go' \) -newer bin/fern-selfhost -print -quit 2>/dev/null)" ]; then
+     \( -name '*.fern' -o -name '*.fern.md' -o -name '*.go' \) -newer bin/fern-selfhost -print -quit 2>/dev/null)" ]; then
   echo "coreutils-bench: building bin/fern-selfhost (missing or stale)" >&2
   make selfhost-cli >&2
 fi

@@ -712,6 +712,10 @@ pub function op_dir_entries(): Op {
   return op0(422);
 }
 
+pub function op_dir_entries_bytes(): Op {
+  return Op { ...op0(422), i32_imm: 1 };
+}
+
 pub function op_dir_stat(follow: i32): Op {
   return Op { source: 0, decl: 0 - 1, kind_tag: 423, i32_imm: follow, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
@@ -798,6 +802,10 @@ pub function op_clone_file(): Op {
 
 pub function op_read_link(): Op {
   return op0(264);
+}
+
+pub function op_read_link_bytes(): Op {
+  return Op { ...op0(264), i32_imm: 1 };
 }
 
 pub function op_rename(): Op {
@@ -1214,6 +1222,10 @@ pub function op_create_dir_all(): Op {
 
 pub function op_read_dir(): Op {
   return op0(171);
+}
+
+pub function op_read_dir_bytes(): Op {
+  return Op { ...op0(171), i32_imm: 1 };
 }
 
 pub function op_read_dir_all(): Op {

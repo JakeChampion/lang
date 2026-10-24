@@ -29,3 +29,7 @@ func checkInterpreterOSText(t *testing.T, f e2eharness.OSTextFixture) {
 		t.Fatalf("run: %v\n%s", err, out)
 	}
 }
+
+func TestInterpreterOSBytes(t *testing.T) {
+	checkInterpreterOSText(t, e2eharness.MakeOSBytesFixture(t, true, true))
+}

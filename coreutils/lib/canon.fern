@@ -67,7 +67,7 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
     let is_link: boolean = false;
     let err: IoError = Unsupported;
     if (!logical) {
-      match (read_link(rname)) {
+      match (byte_link_target(rname)) {
         Ok(t) => {
           target = t;
           is_link = true;
@@ -264,4 +264,32 @@ function stood_here(seen: Seen[], key: string, dev: i64, ino: i64): boolean {
     i = i + 1;
   }
   return false;
+}
+
+// POSIX path bytes can be invalid UTF-8. Keep this unsafe representation local
+// to the byte-oriented coreutils path resolver; public text readers validate.
+pub function byte_link_target(path: string): Result[string, IoError] {
+  match (read_link_bytes(path)) {
+    Ok(bytes) => {
+      return Ok(string_from_bytes_unchecked(bytes));
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
+}
+
+pub function byte_dir_names(names: Result[u8[][], IoError]): Result[string[], IoError] {
+  match (names) {
+    Ok(entries) => {
+      let out: string[] = [];
+      for entry in entries {
+        out = out.append(string_from_bytes_unchecked(entry));
+      }
+      return Ok(out);
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
 }

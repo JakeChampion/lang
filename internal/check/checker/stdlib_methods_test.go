@@ -36,10 +36,10 @@ func buildStdlibMethodIndex(t *testing.T) (map[string]map[string]string, map[str
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !strings.HasSuffix(path, ".fern") {
+		mod := stdlib.ModuleName(path)
+		if d.IsDir() || mod == "" {
 			return nil
 		}
-		mod := strings.TrimSuffix(path, ".fern")
 		src, ok := stdlib.Resolve(mod)
 		if !ok {
 			return fmt.Errorf("no source for %s", mod)
