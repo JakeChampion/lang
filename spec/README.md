@@ -176,7 +176,7 @@ the whole suite runs in ~5 seconds.
    four productions that were invented rather than extracted:
 
    - `race { … }` and `concurrent { … }` — a **retired** surface.
-     `internal/stdlib/std/async.fern` records that the keyword form was
+     `internal/stdlib/std/async.fern.md` records that the keyword form was
      replaced by plain library functions over `Future[T]`. The parser
      rejects both.
    - `resource Foo { … }` — assembled from a keyword in the parser's

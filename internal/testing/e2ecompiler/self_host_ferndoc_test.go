@@ -84,7 +84,7 @@ func TestSelfHostFernDocMode(t *testing.T) {
 		}
 	}
 
-	one := exec.Command(fernBin, "-doc", filepath.Join(stdlib, "std", "io.fern"))
+	one := exec.Command(fernBin, "-doc", filepath.Join(stdlib, "std", "io.fern.md"))
 	got, err := one.Output()
 	if err != nil {
 		t.Fatalf("fern -doc <file>: %v", err)

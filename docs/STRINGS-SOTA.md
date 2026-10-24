@@ -1531,6 +1531,6 @@ grapheme clusters — landed against #5552 directly.
 - [MoonBit updates 2025-02-10](https://www.moonbitlang.com/updates/2025/02/10/index) / [2025-03-24](https://www.moonbitlang.com/updates/2025/03/24/index) (UTF-16 storage, `@string.View`)
 - Fern, in-tree: `docs/SSO-PLAN.md`, `docs/RC-STRINGS-PLAN.md`,
   `docs/LANGUAGE-DIRECTION.md`, `docs/STDLIB-ROADMAP.md` §17,
-  `internal/stdlib/std/{string,utf8,unicode}.fern`,
+  `internal/stdlib/std/string.fern.md`, `internal/stdlib/std/utf8.fern.md`, and `internal/stdlib/std/unicode.fern`,
   `cmd/unicodegen/main.go`, `internal/syntax/lexer/lexer.go`,
   `compiler/{semsource,asmcore}.fern`

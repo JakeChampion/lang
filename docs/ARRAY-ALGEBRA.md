@@ -157,7 +157,7 @@ strict and the opt-in is explicit and local.
 ## 4. Shape mismatch
 
 **The shipped rule is truncation, and it is uniform.** Every
-positionally-paired function in `internal/stdlib/std/array.fern` runs to
+positionally-paired function in `internal/stdlib/std/array.fern.md` runs to
 the shorter input and drops the longer tail: `zip`, `dot_f64`,
 `distance_f64`, `add_f64`. None traps, none returns an `Option`, and
 each says so in its doc comment ("truncated to the shorter input (the

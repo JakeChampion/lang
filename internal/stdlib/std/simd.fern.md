@@ -1,0 +1,872 @@
+# Generic scalar and vector kernels
+
+This module evaluates numeric kernels with scalar or SIMD operations.
+
+## Model
+
+Lane traits express numeric operations for scalar and SIMD types. Dual numbers retain a value and derivative, while double-double values retain high and low components.
+
+## Contracts
+
+Generic kernels use the lane trait contract. Approximation accuracy and exceptional-value behavior still depend on the selected operation and concrete lane type.
+
+## Module assembly
+
+The root chunk preserves the declaration order. The chunks below contain the complete implementation.
+
+```fern
+<<*>>=
+<<module introduction>>
+
+<<dependencies 2>>
+
+<<3 pub trait Lanes: num.Num + num.Neg>>
+
+<<4 function pow2_f64(k: f64): f64>>
+
+<<5 impl Lanes for f32>>
+
+<<6 impl Lanes for f32x4>>
+
+<<7 pub function eq[T: Lanes](a: T, b: T): T>>
+
+<<8 pub struct Dual[T]>>
+
+<<9 pub function seed[T: Lanes](x: f64): Dual[T]>>
+
+<<10 impl[T: Lanes] num.Add for Dual[T]>>
+
+<<11 pub function dd[T: Lanes](hi: T, lo: T): DoubleDouble[T]>>
+
+<<12 function two_sum[T: Lanes](a: T, b: T): DoubleDouble[T]>>
+
+<<13 impl[T: Lanes] num.Add for DoubleDouble[T]>>
+
+<<14 pub function dd_of[T: Lanes](x: T): DoubleDouble[T]>>
+
+<<15 function dd_select[T: Lanes](m: T, a: DoubleDouble[T], b: DoubleDouble[T]): DoubleDouble[T]>>
+
+<<16 impl[T: Lanes] Lanes for DoubleDouble[T]>>
+
+<<17 function dd_ln2[T: Lanes](): DoubleDouble[T]>>
+
+<<18 struct Reduced[T]>>
+
+<<19 function dd_quadrant[T: Lanes](x: DoubleDouble[T]): Reduced[T]>>
+
+<<20 impl[T: Math] Math for DoubleDouble[T]>>
+```
+
+### `module introduction`
+
+```fern
+<<module introduction>>=
+// This module evaluates numeric kernels with scalar or SIMD operations.
+```
+
+### `dependencies 2`
+
+```fern
+<<dependencies 2>>=
+import "std/num" as num;
+import "std/f64";
+```
+
+### `3 pub trait Lanes: num.Num + num.Neg`
+
+```fern
+<<3 pub trait Lanes: num.Num + num.Neg>>=
+pub trait Lanes: num.Num + num.Neg {
+  const LANES: i32;
+  const SPLIT: f64;
+  function splat(x: f64): Self;
+  function lane(self: Self, i: i32): f64;
+  function mul_add(self: Self, b: Self, c: Self): Self;
+  function sqrt(self: Self): Self;
+  function abs(self: Self): Self;
+  function floor(self: Self): Self;
+  function round(self: Self): Self;
+  function min(self: Self, o: Self): Self;
+  function max(self: Self, o: Self): Self;
+  function lt(self: Self, o: Self): Self;
+  function ne(self: Self, o: Self): Self;
+  function select(m: Self, a: Self, b: Self): Self;
+  function ldexp(self: Self, k: Self): Self;
+}
+
+pub trait Math: Lanes {
+  function exp(self: Self): Self;
+  function log(self: Self): Self;
+  function sin(self: Self): Self;
+  function cos(self: Self): Self;
+  function tan(self: Self): Self;
+  function tanh(self: Self): Self;
+  function atan(self: Self): Self;
+  function expm1(self: Self): Self;
+  function log1p(self: Self): Self;
+  function pow(self: Self, y: Self): Self;
+}
+
+impl Lanes for f64 {
+  const LANES: i32 = 1;
+  const SPLIT: f64 = 134217729.0;
+  function splat(x: f64): f64 {
+    return x;
+  }
+  function lane(self: f64, i: i32): f64 {
+    return self;
+  }
+  function lt(self: f64, o: f64): f64 {
+    if (self < o) {
+      return 1.0;
+    }
+    return 0.0;
+  }
+  function ne(self: f64, o: f64): f64 {
+    if (self != o) {
+      return 1.0;
+    }
+    return 0.0;
+  }
+  function select(m: f64, a: f64, b: f64): f64 {
+    if (m != 0.0) {
+      return a;
+    }
+    return b;
+  }
+  function ldexp(self: f64, k: f64): f64 {
+    return self * pow2_f64(k);
+  }
+}
+
+impl Math for f64 {}
+```
+
+### `4 function pow2_f64(k: f64): f64`
+
+```fern
+<<4 function pow2_f64(k: f64): f64>>=
+function pow2_f64(k: f64): f64 {
+  let kk: i64 = k as i64;
+  if (kk > 2046) {
+    kk = 2046;
+  }
+  if (kk < -2044) {
+    kk = -2044;
+  }
+  let k1: i64 = kk >> 1;
+  return f64_from_bits(k1 + 1023 << 52) * f64_from_bits(kk - k1 + 1023 << 52);
+}
+```
+
+### `5 impl Lanes for f32`
+
+```fern
+<<5 impl Lanes for f32>>=
+impl Lanes for f32 {
+  const LANES: i32 = 1;
+  const SPLIT: f64 = 4097.0;
+  function splat(x: f64): f32 {
+    return x as f32;
+  }
+  function lane(self: f32, i: i32): f64 {
+    return self as f64;
+  }
+  function lt(self: f32, o: f32): f32 {
+    if (self < o) {
+      return 1.0;
+    }
+    return 0.0;
+  }
+  function ne(self: f32, o: f32): f32 {
+    if (self != o) {
+      return 1.0;
+    }
+    return 0.0;
+  }
+  function select(m: f32, a: f32, b: f32): f32 {
+    if (m != 0.0) {
+      return a;
+    }
+    return b;
+  }
+  function ldexp(self: f32, k: f32): f32 {
+    return (self as f64 * pow2_f64(k as f64)) as f32;
+  }
+}
+
+impl Math for f32 {}
+
+impl Lanes for f64x2 {
+  const LANES: i32 = 2;
+  const SPLIT: f64 = 134217729.0;
+  function splat(x: f64): f64x2 {
+    return __f64x2_splat(x);
+  }
+  function lane(self: f64x2, i: i32): f64 {
+    if (i == 0) {
+      return __f64x2_lane(self, 0);
+    }
+    return __f64x2_lane(self, 1);
+  }
+  function mul_add(self: f64x2, b: f64x2, c: f64x2): f64x2 {
+    return __f64x2_mul_add(self, b, c);
+  }
+  function sqrt(self: f64x2): f64x2 {
+    return __f64x2_sqrt(self);
+  }
+  function abs(self: f64x2): f64x2 {
+    return __f64x2_abs(self);
+  }
+  function floor(self: f64x2): f64x2 {
+    return __f64x2_floor(self);
+  }
+  function round(self: f64x2): f64x2 {
+    return __f64x2_round(self);
+  }
+  function min(self: f64x2, o: f64x2): f64x2 {
+    return __f64x2_min(self, o);
+  }
+  function max(self: f64x2, o: f64x2): f64x2 {
+    return __f64x2_max(self, o);
+  }
+  function lt(self: f64x2, o: f64x2): f64x2 {
+    return __f64x2_select(__f64x2_splat(1.0), __f64x2_splat(0.0), __f64x2_lt(self, o));
+  }
+  function ne(self: f64x2, o: f64x2): f64x2 {
+    return __f64x2_select(__f64x2_splat(1.0), __f64x2_splat(0.0), __f64x2_ne(self, o));
+  }
+  function select(m: f64x2, a: f64x2, b: f64x2): f64x2 {
+    return __f64x2_select(a, b, __f64x2_ne(m, __f64x2_splat(0.0)));
+  }
+  function ldexp(self: f64x2, k: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0) * pow2_f64(__f64x2_lane(k, 0)), __f64x2_lane(self, 1) * pow2_f64(__f64x2_lane(k, 1)));
+  }
+}
+
+impl Math for f64x2 {
+  function exp(self: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0).exp(), __f64x2_lane(self, 1).exp());
+  }
+  function log(self: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0).log(), __f64x2_lane(self, 1).log());
+  }
+  function sin(self: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0).sin(), __f64x2_lane(self, 1).sin());
+  }
+  function cos(self: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0).cos(), __f64x2_lane(self, 1).cos());
+  }
+  function tan(self: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0).tan(), __f64x2_lane(self, 1).tan());
+  }
+  function tanh(self: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0).tanh(), __f64x2_lane(self, 1).tanh());
+  }
+  function atan(self: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0).atan(), __f64x2_lane(self, 1).atan());
+  }
+  function expm1(self: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0).expm1(), __f64x2_lane(self, 1).expm1());
+  }
+  function log1p(self: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0).log1p(), __f64x2_lane(self, 1).log1p());
+  }
+  function pow(self: f64x2, y: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0).pow(__f64x2_lane(y, 0)), __f64x2_lane(self, 1).pow(__f64x2_lane(y, 1)));
+  }
+}
+```
+
+### `6 impl Lanes for f32x4`
+
+```fern
+<<6 impl Lanes for f32x4>>=
+impl Lanes for f32x4 {
+  const LANES: i32 = 4;
+  const SPLIT: f64 = 4097.0;
+  function splat(x: f64): f32x4 {
+    return __f32x4_splat(x as f32);
+  }
+  function lane(self: f32x4, i: i32): f64 {
+    if (i == 0) {
+      return __f32x4_lane(self, 0) as f64;
+    }
+    if (i == 1) {
+      return __f32x4_lane(self, 1) as f64;
+    }
+    if (i == 2) {
+      return __f32x4_lane(self, 2) as f64;
+    }
+    return __f32x4_lane(self, 3) as f64;
+  }
+  function mul_add(self: f32x4, b: f32x4, c: f32x4): f32x4 {
+    return __f32x4_mul_add(self, b, c);
+  }
+  function sqrt(self: f32x4): f32x4 {
+    return __f32x4_sqrt(self);
+  }
+  function abs(self: f32x4): f32x4 {
+    return __f32x4_abs(self);
+  }
+  function floor(self: f32x4): f32x4 {
+    return __f32x4_floor(self);
+  }
+  function round(self: f32x4): f32x4 {
+    return __f32x4_round(self);
+  }
+  function min(self: f32x4, o: f32x4): f32x4 {
+    return __f32x4_min(self, o);
+  }
+  function max(self: f32x4, o: f32x4): f32x4 {
+    return __f32x4_max(self, o);
+  }
+  function lt(self: f32x4, o: f32x4): f32x4 {
+    return __f32x4_select(__f32x4_splat(1.0), __f32x4_splat(0.0), __f32x4_lt(self, o));
+  }
+  function ne(self: f32x4, o: f32x4): f32x4 {
+    return __f32x4_select(__f32x4_splat(1.0), __f32x4_splat(0.0), __f32x4_ne(self, o));
+  }
+  function select(m: f32x4, a: f32x4, b: f32x4): f32x4 {
+    return __f32x4_select(a, b, __f32x4_ne(m, __f32x4_splat(0.0)));
+  }
+  function ldexp(self: f32x4, k: f32x4): f32x4 {
+    return __f32x4_of((__f32x4_lane(self, 0) as f64 * pow2_f64(__f32x4_lane(k, 0) as f64)) as f32, (__f32x4_lane(self, 1) as f64 * pow2_f64(__f32x4_lane(k, 1) as f64)) as f32, (__f32x4_lane(self, 2) as f64 * pow2_f64(__f32x4_lane(k, 2) as f64)) as f32, (__f32x4_lane(self, 3) as f64 * pow2_f64(__f32x4_lane(k, 3) as f64)) as f32);
+  }
+}
+
+impl Math for f32x4 {
+  function exp(self: f32x4): f32x4 {
+    return __f32x4_of(__f32x4_lane(self, 0).exp(), __f32x4_lane(self, 1).exp(), __f32x4_lane(self, 2).exp(), __f32x4_lane(self, 3).exp());
+  }
+  function log(self: f32x4): f32x4 {
+    return __f32x4_of(__f32x4_lane(self, 0).log(), __f32x4_lane(self, 1).log(), __f32x4_lane(self, 2).log(), __f32x4_lane(self, 3).log());
+  }
+  function sin(self: f32x4): f32x4 {
+    return __f32x4_of(__f32x4_lane(self, 0).sin(), __f32x4_lane(self, 1).sin(), __f32x4_lane(self, 2).sin(), __f32x4_lane(self, 3).sin());
+  }
+  function cos(self: f32x4): f32x4 {
+    return __f32x4_of(__f32x4_lane(self, 0).cos(), __f32x4_lane(self, 1).cos(), __f32x4_lane(self, 2).cos(), __f32x4_lane(self, 3).cos());
+  }
+  function tan(self: f32x4): f32x4 {
+    return __f32x4_of(__f32x4_lane(self, 0).tan(), __f32x4_lane(self, 1).tan(), __f32x4_lane(self, 2).tan(), __f32x4_lane(self, 3).tan());
+  }
+  function tanh(self: f32x4): f32x4 {
+    return __f32x4_of(__f32x4_lane(self, 0).tanh(), __f32x4_lane(self, 1).tanh(), __f32x4_lane(self, 2).tanh(), __f32x4_lane(self, 3).tanh());
+  }
+  function atan(self: f32x4): f32x4 {
+    return __f32x4_of(__f32x4_lane(self, 0).atan(), __f32x4_lane(self, 1).atan(), __f32x4_lane(self, 2).atan(), __f32x4_lane(self, 3).atan());
+  }
+  function expm1(self: f32x4): f32x4 {
+    return __f32x4_of(__f32x4_lane(self, 0).expm1(), __f32x4_lane(self, 1).expm1(), __f32x4_lane(self, 2).expm1(), __f32x4_lane(self, 3).expm1());
+  }
+  function log1p(self: f32x4): f32x4 {
+    return __f32x4_of(__f32x4_lane(self, 0).log1p(), __f32x4_lane(self, 1).log1p(), __f32x4_lane(self, 2).log1p(), __f32x4_lane(self, 3).log1p());
+  }
+  function pow(self: f32x4, y: f32x4): f32x4 {
+    return __f32x4_of(__f32x4_lane(self, 0).pow(__f32x4_lane(y, 0)), __f32x4_lane(self, 1).pow(__f32x4_lane(y, 1)), __f32x4_lane(self, 2).pow(__f32x4_lane(y, 2)), __f32x4_lane(self, 3).pow(__f32x4_lane(y, 3)));
+  }
+}
+```
+
+### `7 pub function eq[T: Lanes](a: T, b: T): T`
+
+```fern
+<<7 pub function eq[T: Lanes](a: T, b: T): T>>=
+pub function eq[T: Lanes](a: T, b: T): T {
+  return T.splat(1.0) - a.ne(b);
+}
+
+pub function horner[T: Lanes](x: T, c: f64[]): T {
+  let acc: T = T.splat(c[c.len() - 1]);
+  let i: i32 = c.len() - 2;
+  while (i >= 0) {
+    acc = acc.mul_add(x, T.splat(c[i]));
+    i = i - 1;
+  }
+  return acc;
+}
+```
+
+### `8 pub struct Dual[T]`
+
+```fern
+<<8 pub struct Dual[T]>>=
+pub struct Dual[T] { v: T, d: T }
+```
+
+### `9 pub function seed[T: Lanes](x: f64): Dual[T]`
+
+```fern
+<<9 pub function seed[T: Lanes](x: f64): Dual[T]>>=
+pub function seed[T: Lanes](x: f64): Dual[T] {
+  return Dual { v: T.splat(x), d: T.splat(1.0) };
+}
+
+pub function dual[T: Lanes](v: T, d: T): Dual[T] {
+  return Dual { v: v, d: d };
+}
+```
+
+### `10 impl[T: Lanes] num.Add for Dual[T]`
+
+```fern
+<<10 impl[T: Lanes] num.Add for Dual[T]>>=
+impl[T: Lanes] num.Add for Dual[T] {
+  function add(self: Dual[T], o: Dual[T]): Dual[T] {
+    return Dual { v: self.v + o.v, d: self.d + o.d };
+  }
+}
+
+impl[T: Lanes] num.Sub for Dual[T] {
+  function sub(self: Dual[T], o: Dual[T]): Dual[T] {
+    return Dual { v: self.v - o.v, d: self.d - o.d };
+  }
+}
+
+impl[T: Lanes] num.Mul for Dual[T] {
+  function mul(self: Dual[T], o: Dual[T]): Dual[T] {
+    return Dual { v: self.v * o.v, d: self.d * o.v + self.v * o.d };
+  }
+}
+
+impl[T: Lanes] num.Div for Dual[T] {
+  function div(self: Dual[T], o: Dual[T]): Dual[T] {
+    return Dual { v: self.v / o.v, d: (self.d * o.v - self.v * o.d) / (o.v * o.v) };
+  }
+}
+
+impl[T: Lanes] num.Neg for Dual[T] {
+  function neg(self: Dual[T]): Dual[T] {
+    return Dual { v: -self.v, d: -self.d };
+  }
+}
+
+impl[T: Lanes] num.Num for Dual[T] {}
+
+impl[T: Lanes] Lanes for Dual[T] {
+  const LANES: i32 = T.LANES;
+  const SPLIT: f64 = T.SPLIT;
+  function splat(x: f64): Dual[T] {
+    return Dual { v: T.splat(x), d: T.splat(0.0) };
+  }
+  function lane(self: Dual[T], i: i32): f64 {
+    return self.v.lane(i);
+  }
+  function mul_add(self: Dual[T], b: Dual[T], c: Dual[T]): Dual[T] {
+    return Dual { v: self.v.mul_add(b.v, c.v), d: self.d * b.v + self.v * b.d + c.d };
+  }
+  function sqrt(self: Dual[T]): Dual[T] {
+    let r: T = self.v.sqrt();
+    return Dual { v: r, d: self.d / (r + r) };
+  }
+  function abs(self: Dual[T]): Dual[T] {
+    let neg: T = self.v.lt(T.splat(0.0));
+    return Dual { v: self.v.abs(), d: T.select(neg, -self.d, self.d) };
+  }
+  function floor(self: Dual[T]): Dual[T] {
+    return Dual { v: self.v.floor(), d: T.splat(0.0) };
+  }
+  function round(self: Dual[T]): Dual[T] {
+    return Dual { v: self.v.round(), d: T.splat(0.0) };
+  }
+  function min(self: Dual[T], o: Dual[T]): Dual[T] {
+    let m: T = o.v.lt(self.v);
+    return Dual { v: T.select(m, o.v, self.v), d: T.select(m, o.d, self.d) };
+  }
+  function max(self: Dual[T], o: Dual[T]): Dual[T] {
+    let m: T = self.v.lt(o.v);
+    return Dual { v: T.select(m, o.v, self.v), d: T.select(m, o.d, self.d) };
+  }
+  function lt(self: Dual[T], o: Dual[T]): Dual[T] {
+    return Dual { v: self.v.lt(o.v), d: T.splat(0.0) };
+  }
+  function ne(self: Dual[T], o: Dual[T]): Dual[T] {
+    return Dual { v: self.v.ne(o.v), d: T.splat(0.0) };
+  }
+  function select(m: Dual[T], a: Dual[T], b: Dual[T]): Dual[T] {
+    return Dual { v: T.select(m.v, a.v, b.v), d: T.select(m.v, a.d, b.d) };
+  }
+  function ldexp(self: Dual[T], k: Dual[T]): Dual[T] {
+    return Dual { v: self.v.ldexp(k.v), d: self.d.ldexp(k.v) };
+  }
+}
+
+impl[T: Math] Math for Dual[T] {
+  function exp(self: Dual[T]): Dual[T] {
+    let e: T = self.v.exp();
+    return Dual { v: e, d: self.d * e };
+  }
+  function log(self: Dual[T]): Dual[T] {
+    return Dual { v: self.v.log(), d: self.d / self.v };
+  }
+  function sin(self: Dual[T]): Dual[T] {
+    return Dual { v: self.v.sin(), d: self.d * self.v.cos() };
+  }
+  function cos(self: Dual[T]): Dual[T] {
+    return Dual { v: self.v.cos(), d: -(self.d * self.v.sin()) };
+  }
+  function tan(self: Dual[T]): Dual[T] {
+    let t: T = self.v.tan();
+    return Dual { v: t, d: self.d * (T.splat(1.0) + t * t) };
+  }
+  function tanh(self: Dual[T]): Dual[T] {
+    let t: T = self.v.tanh();
+    return Dual { v: t, d: self.d * (T.splat(1.0) - t * t) };
+  }
+  function atan(self: Dual[T]): Dual[T] {
+    return Dual { v: self.v.atan(), d: self.d / (T.splat(1.0) + self.v * self.v) };
+  }
+  function expm1(self: Dual[T]): Dual[T] {
+    return Dual { v: self.v.expm1(), d: self.d * self.v.exp() };
+  }
+  function log1p(self: Dual[T]): Dual[T] {
+    return Dual { v: self.v.log1p(), d: self.d / (T.splat(1.0) + self.v) };
+  }
+  function pow(self: Dual[T], y: Dual[T]): Dual[T] {
+    let p: T = self.v.pow(y.v);
+    return Dual { v: p, d: p * (y.d * self.v.log() + y.v * self.d / self.v) };
+  }
+}
+
+pub struct DoubleDouble[T] { hi: T, lo: T }
+```
+
+### `11 pub function dd[T: Lanes](hi: T, lo: T): DoubleDouble[T]`
+
+```fern
+<<11 pub function dd[T: Lanes](hi: T, lo: T): DoubleDouble[T]>>=
+pub function dd[T: Lanes](hi: T, lo: T): DoubleDouble[T] {
+  return DoubleDouble { hi: hi, lo: lo };
+}
+```
+
+### `12 function two_sum[T: Lanes](a: T, b: T): DoubleDouble[T]`
+
+```fern
+<<12 function two_sum[T: Lanes](a: T, b: T): DoubleDouble[T]>>=
+function two_sum[T: Lanes](a: T, b: T): DoubleDouble[T] {
+  let s: T = a + b;
+  let bb: T = s - a;
+  return DoubleDouble { hi: s, lo: a - (s - bb) + (b - bb) };
+}
+
+function quick_two_sum[T: Lanes](a: T, b: T): DoubleDouble[T] {
+  let s: T = a + b;
+  return DoubleDouble { hi: s, lo: b - (s - a) };
+}
+
+function split[T: Lanes](a: T): DoubleDouble[T] {
+  let t: T = T.splat(T.SPLIT) * a;
+  let hi: T = t - (t - a);
+  return DoubleDouble { hi: hi, lo: a - hi };
+}
+
+function two_prod[T: Lanes](a: T, b: T): DoubleDouble[T] {
+  let p: T = a * b;
+  let sa: DoubleDouble[T] = split(a);
+  let sb: DoubleDouble[T] = split(b);
+  let e: T = sa.hi * sb.hi - p + sa.hi * sb.lo + sa.lo * sb.hi + sa.lo * sb.lo;
+  return DoubleDouble { hi: p, lo: e };
+}
+```
+
+### `13 impl[T: Lanes] num.Add for DoubleDouble[T]`
+
+```fern
+<<13 impl[T: Lanes] num.Add for DoubleDouble[T]>>=
+impl[T: Lanes] num.Add for DoubleDouble[T] {
+  function add(self: DoubleDouble[T], o: DoubleDouble[T]): DoubleDouble[T] {
+    let s: DoubleDouble[T] = two_sum(self.hi, o.hi);
+    let t: DoubleDouble[T] = two_sum(self.lo, o.lo);
+    let u: DoubleDouble[T] = quick_two_sum(s.hi, s.lo + t.hi);
+    return quick_two_sum(u.hi, u.lo + t.lo);
+  }
+}
+
+impl[T: Lanes] num.Sub for DoubleDouble[T] {
+  function sub(self: DoubleDouble[T], o: DoubleDouble[T]): DoubleDouble[T] {
+    return self + -o;
+  }
+}
+
+impl[T: Lanes] num.Mul for DoubleDouble[T] {
+  function mul(self: DoubleDouble[T], o: DoubleDouble[T]): DoubleDouble[T] {
+    let p: DoubleDouble[T] = two_prod(self.hi, o.hi);
+    return quick_two_sum(p.hi, p.lo + (self.hi * o.lo + self.lo * o.hi));
+  }
+}
+
+impl[T: Lanes] num.Div for DoubleDouble[T] {
+  function div(self: DoubleDouble[T], o: DoubleDouble[T]): DoubleDouble[T] {
+    let q1: T = self.hi / o.hi;
+    let r: DoubleDouble[T] = self - o * dd_of(q1);
+    let q2: T = r.hi / o.hi;
+    r = r - o * dd_of(q2);
+    let q3: T = r.hi / o.hi;
+    let q: DoubleDouble[T] = quick_two_sum(q1, q2);
+    return q + dd_of(q3);
+  }
+}
+
+impl[T: Lanes] num.Neg for DoubleDouble[T] {
+  function neg(self: DoubleDouble[T]): DoubleDouble[T] {
+    return DoubleDouble { hi: -self.hi, lo: -self.lo };
+  }
+}
+
+impl[T: Lanes] num.Num for DoubleDouble[T] {}
+```
+
+### `14 pub function dd_of[T: Lanes](x: T): DoubleDouble[T]`
+
+```fern
+<<14 pub function dd_of[T: Lanes](x: T): DoubleDouble[T]>>=
+pub function dd_of[T: Lanes](x: T): DoubleDouble[T] {
+  return DoubleDouble { hi: x, lo: T.splat(0.0) };
+}
+
+pub function dd_splat[T: Lanes](x: f64): DoubleDouble[T] {
+  return DoubleDouble { hi: T.splat(x), lo: T.splat(0.0) };
+}
+
+pub function dd_value[T: Lanes](x: DoubleDouble[T]): T {
+  return x.hi + x.lo;
+}
+```
+
+### `15 function dd_select[T: Lanes](m: T, a: DoubleDouble[T], b: DoubleDouble[T]): DoubleDouble[T]`
+
+```fern
+<<15 function dd_select[T: Lanes](m: T, a: DoubleDouble[T], b: DoubleDouble[T]): DoubleDouble[T]>>=
+function dd_select[T: Lanes](m: T, a: DoubleDouble[T], b: DoubleDouble[T]): DoubleDouble[T] {
+  return DoubleDouble { hi: T.select(m, a.hi, b.hi), lo: T.select(m, a.lo, b.lo) };
+}
+```
+
+### `16 impl[T: Lanes] Lanes for DoubleDouble[T]`
+
+```fern
+<<16 impl[T: Lanes] Lanes for DoubleDouble[T]>>=
+impl[T: Lanes] Lanes for DoubleDouble[T] {
+  const LANES: i32 = T.LANES;
+  const SPLIT: f64 = T.SPLIT;
+  function splat(x: f64): DoubleDouble[T] {
+    return DoubleDouble { hi: T.splat(x), lo: T.splat(0.0) };
+  }
+  function lane(self: DoubleDouble[T], i: i32): f64 {
+    return self.hi.lane(i) + self.lo.lane(i);
+  }
+  function mul_add(self: DoubleDouble[T], b: DoubleDouble[T], c: DoubleDouble[T]): DoubleDouble[T] {
+    return self * b + c;
+  }
+  function sqrt(self: DoubleDouble[T]): DoubleDouble[T] {
+    let x: T = self.hi.sqrt();
+    let xd: DoubleDouble[T] = dd_of(x);
+    let r: DoubleDouble[T] = (self - xd * xd) / (xd + xd);
+    let zero: T = self.hi.lt(T.splat(0.0)) + eq(self.hi, T.splat(0.0));
+    let root: DoubleDouble[T] = xd + r;
+    return DoubleDouble { hi: T.select(zero, x, root.hi), lo: T.select(zero, T.splat(0.0), root.lo) };
+  }
+  function abs(self: DoubleDouble[T]): DoubleDouble[T] {
+    let neg: T = self.hi.lt(T.splat(0.0));
+    return DoubleDouble { hi: T.select(neg, -self.hi, self.hi), lo: T.select(neg, -self.lo, self.lo) };
+  }
+  function floor(self: DoubleDouble[T]): DoubleDouble[T] {
+    let f: T = self.hi.floor();
+    let whole: T = eq(f, self.hi);
+    return quick_two_sum(f, T.select(whole, self.lo.floor(), T.splat(0.0)));
+  }
+  function round(self: DoubleDouble[T]): DoubleDouble[T] {
+    let r: T = self.hi.round();
+    let whole: T = eq(r, self.hi);
+    return quick_two_sum(r, T.select(whole, self.lo.round(), T.splat(0.0)));
+  }
+  function min(self: DoubleDouble[T], o: DoubleDouble[T]): DoubleDouble[T] {
+    return dd_select(o.lt(self).hi, o, self);
+  }
+  function max(self: DoubleDouble[T], o: DoubleDouble[T]): DoubleDouble[T] {
+    return dd_select(self.lt(o).hi, o, self);
+  }
+  function lt(self: DoubleDouble[T], o: DoubleDouble[T]): DoubleDouble[T] {
+    let m: T = self.hi.lt(o.hi) + eq(self.hi, o.hi) * self.lo.lt(o.lo);
+    return DoubleDouble { hi: m, lo: T.splat(0.0) };
+  }
+  function ne(self: DoubleDouble[T], o: DoubleDouble[T]): DoubleDouble[T] {
+    return DoubleDouble { hi: T.splat(1.0) - eq(self.hi, o.hi) * eq(self.lo, o.lo), lo: T.splat(0.0) };
+  }
+  function select(m: DoubleDouble[T], a: DoubleDouble[T], b: DoubleDouble[T]): DoubleDouble[T] {
+    return DoubleDouble { hi: T.select(m.hi, a.hi, b.hi), lo: T.select(m.hi, a.lo, b.lo) };
+  }
+  function ldexp(self: DoubleDouble[T], k: DoubleDouble[T]): DoubleDouble[T] {
+    return DoubleDouble { hi: self.hi.ldexp(k.hi), lo: self.lo.ldexp(k.hi) };
+  }
+}
+```
+
+### `17 function dd_ln2[T: Lanes](): DoubleDouble[T]`
+
+```fern
+<<17 function dd_ln2[T: Lanes](): DoubleDouble[T]>>=
+function dd_ln2[T: Lanes](): DoubleDouble[T] {
+  return DoubleDouble { hi: T.splat(6.93147180559945286227e-01), lo: T.splat(2.31904681384629955842e-17) };
+}
+
+function dd_pio2[T: Lanes](): DoubleDouble[T] {
+  return DoubleDouble { hi: T.splat(1.57079632679489655800e+00), lo: T.splat(6.12323399573676603587e-17) };
+}
+
+function dd_series[T: Lanes](x: DoubleDouble[T], first: i32, last: i32, acc: DoubleDouble[T]): DoubleDouble[T] {
+  let term: DoubleDouble[T] = dd_splat[T](1.0);
+  let k: i32 = 1;
+  let sum: DoubleDouble[T] = acc;
+  while (k <= last) {
+    term = term * x / dd_splat[T](k as f64);
+    if (k >= first) {
+      sum = sum + term;
+    }
+    k = k + 1;
+  }
+  return sum;
+}
+
+function dd_exp_reduced[T: Lanes](r: DoubleDouble[T]): DoubleDouble[T] {
+  let s: DoubleDouble[T] = r.ldexp(dd_splat[T](-9.0));
+  let p: DoubleDouble[T] = dd_series(s, 1, 12, dd_splat[T](0.0));
+  let two: DoubleDouble[T] = dd_splat[T](2.0);
+  let i: i32 = 0;
+  while (i < 9) {
+    p = p * (p + two);
+    i = i + 1;
+  }
+  return p;
+}
+
+function dd_sin_reduced[T: Lanes](r: DoubleDouble[T]): DoubleDouble[T] {
+  let x2: DoubleDouble[T] = r * r;
+  let term: DoubleDouble[T] = r;
+  let sum: DoubleDouble[T] = r;
+  let k: i32 = 1;
+  while (k < 15) {
+    let n: f64 = (2 * k) as f64;
+    term = -(term * x2) / dd_splat[T](n * (n + 1.0));
+    sum = sum + term;
+    k = k + 1;
+  }
+  return sum;
+}
+
+function dd_cos_reduced[T: Lanes](r: DoubleDouble[T]): DoubleDouble[T] {
+  let x2: DoubleDouble[T] = r * r;
+  let term: DoubleDouble[T] = dd_splat[T](1.0);
+  let sum: DoubleDouble[T] = term;
+  let k: i32 = 1;
+  while (k < 15) {
+    let n: f64 = (2 * k) as f64;
+    term = -(term * x2) / dd_splat[T](n * (n - 1.0));
+    sum = sum + term;
+    k = k + 1;
+  }
+  return sum;
+}
+```
+
+### `18 struct Reduced[T]`
+
+```fern
+<<18 struct Reduced[T]>>=
+struct Reduced[T] { r: DoubleDouble[T], q: T }
+```
+
+### `19 function dd_quadrant[T: Lanes](x: DoubleDouble[T]): Reduced[T]`
+
+```fern
+<<19 function dd_quadrant[T: Lanes](x: DoubleDouble[T]): Reduced[T]>>=
+function dd_quadrant[T: Lanes](x: DoubleDouble[T]): Reduced[T] {
+  let k: T = (x.hi / dd_pio2[T]().hi).round();
+  let r: DoubleDouble[T] = x - dd_pio2[T]() * dd_of(k);
+  let four: T = T.splat(4.0);
+  let q: T = k - four * (k / four).floor();
+  return Reduced { r: r, q: q };
+}
+
+function dd_pick[T: Lanes](q: T, s: DoubleDouble[T], c: DoubleDouble[T], shift: f64): DoubleDouble[T] {
+  let qq: T = q + T.splat(shift);
+  qq = qq - T.splat(4.0) * (qq / T.splat(4.0)).floor();
+  let odd: T = eq(qq, T.splat(1.0)) + eq(qq, T.splat(3.0));
+  let flip: T = eq(qq, T.splat(2.0)) + eq(qq, T.splat(3.0));
+  let y: DoubleDouble[T] = dd_select(odd, c, s);
+  return dd_select(flip, -y, y);
+}
+```
+
+### `20 impl[T: Math] Math for DoubleDouble[T]`
+
+```fern
+<<20 impl[T: Math] Math for DoubleDouble[T]>>=
+impl[T: Math] Math for DoubleDouble[T] {
+  function exp(self: DoubleDouble[T]): DoubleDouble[T] {
+    let k: T = (self.hi / dd_ln2[T]().hi).round();
+    let r: DoubleDouble[T] = self - dd_ln2[T]() * dd_of(k);
+    let e: DoubleDouble[T] = dd_exp_reduced(r) + dd_splat[T](1.0);
+    return e.ldexp(dd_of(k));
+  }
+  function log(self: DoubleDouble[T]): DoubleDouble[T] {
+    let y: DoubleDouble[T] = dd_of(self.hi.log());
+    let one: DoubleDouble[T] = dd_splat[T](1.0);
+    y = y + self * (-y).exp() - one;
+    y = y + self * (-y).exp() - one;
+    return y;
+  }
+  function sin(self: DoubleDouble[T]): DoubleDouble[T] {
+    let red: Reduced[T] = dd_quadrant(self);
+    return dd_pick(red.q, dd_sin_reduced(red.r), dd_cos_reduced(red.r), 0.0);
+  }
+  function cos(self: DoubleDouble[T]): DoubleDouble[T] {
+    let red: Reduced[T] = dd_quadrant(self);
+    return dd_pick(red.q, dd_sin_reduced(red.r), dd_cos_reduced(red.r), 1.0);
+  }
+  function tan(self: DoubleDouble[T]): DoubleDouble[T] {
+    return self.sin() / self.cos();
+  }
+  function tanh(self: DoubleDouble[T]): DoubleDouble[T] {
+    let e: DoubleDouble[T] = (self + self).expm1();
+    return e / (e + dd_splat[T](2.0));
+  }
+  function atan(self: DoubleDouble[T]): DoubleDouble[T] {
+    let y: DoubleDouble[T] = dd_of(self.hi.atan());
+    let i: i32 = 0;
+    while (i < 2) {
+      let s: DoubleDouble[T] = y.sin();
+      let c: DoubleDouble[T] = y.cos();
+      y = y - (s - self * c) / (c + self * s);
+      i = i + 1;
+    }
+    return y;
+  }
+  function expm1(self: DoubleDouble[T]): DoubleDouble[T] {
+    let small: T = self.hi.abs().lt(T.splat(0.5));
+    let direct: DoubleDouble[T] = dd_series(self, 1, 30, dd_splat[T](0.0));
+    let far: DoubleDouble[T] = self.exp() - dd_splat[T](1.0);
+    return dd_select(small, direct, far);
+  }
+  function log1p(self: DoubleDouble[T]): DoubleDouble[T] {
+    let small: T = self.hi.abs().lt(T.splat(0.5));
+    let s: DoubleDouble[T] = self / (self + dd_splat[T](2.0));
+    let s2: DoubleDouble[T] = s * s;
+    let term: DoubleDouble[T] = s;
+    let sum: DoubleDouble[T] = s;
+    let k: i32 = 1;
+    while (k < 26) {
+      term = term * s2;
+      sum = sum + term / dd_splat[T]((2 * k + 1) as f64);
+      k = k + 1;
+    }
+    let far: DoubleDouble[T] = (self + dd_splat[T](1.0)).log();
+    return dd_select(small, sum + sum, far);
+  }
+  function pow(self: DoubleDouble[T], y: DoubleDouble[T]): DoubleDouble[T] {
+    return (y * self.log()).exp();
+  }
+}
+```

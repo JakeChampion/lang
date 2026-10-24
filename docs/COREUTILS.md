@@ -1666,7 +1666,7 @@ identical numbers. **`b2sum` is the row that carries information**: GNU's
 links no libcrypto and is plain portable C, and Fern is 4× off it at the
 identical algorithm.
 
-`internal/stdlib/std/crypto.fern`'s kernels are where that goes, and #8782
+`internal/stdlib/std/crypto.fern.md`'s kernels are where that goes, and #8782
 takes it apart: `__blake2b_blocks` compiles to 10 160 instructions where a C
 compiler needs about 1 150, 5 139 of them `mov`, because the x86-64 emitter
 is a stack machine and every one of the 32 hot 64-bit locals is a stack slot.

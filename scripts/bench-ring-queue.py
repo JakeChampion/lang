@@ -84,7 +84,7 @@ def main():
     source = output / "source"
     source.mkdir()
     inputs = [root / "examples/fip" / name for name in ("ring_queue.fern", "bounded_ring.fern", "queue_inline.fern", "queue_array.fern")]
-    inputs += [Path(__file__).resolve(), root / "bootstrap/stage0.lock", root / "internal/stdlib/std/bench.fern", root / "internal/stdlib/std/array.fern"]
+    inputs += [Path(__file__).resolve(), root / "bootstrap/stage0.lock", root / "internal/stdlib/std/bench.fern.md", root / "internal/stdlib/std/array.fern.md"]
     hashes = {}
     for path in inputs:
         shutil.copy2(path, source / path.name)

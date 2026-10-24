@@ -18,11 +18,13 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/jakechampion/lang/internal/tools/literate"
 )
 
 func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(root, "internal/stdlib/std/serve.fern"))
+	data, err := literate.ReadFile(filepath.Join(root, "internal/stdlib/std/serve.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}

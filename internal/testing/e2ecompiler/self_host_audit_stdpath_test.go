@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/tools/literate"
 )
 
 var auditStdPathCases = []struct {
@@ -19,7 +21,7 @@ var auditStdPathCases = []struct {
 
 func stdPathSource(t *testing.T, mainBody string) []byte {
 	t.Helper()
-	src, err := os.ReadFile("../../stdlib/std/path.fern")
+	src, err := literate.ReadFile("../../stdlib/std/path.fern")
 	if err != nil {
 		t.Fatalf("read std/path.fern: %v", err)
 	}

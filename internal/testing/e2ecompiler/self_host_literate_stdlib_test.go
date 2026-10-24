@@ -1,12 +1,53 @@
 package e2ecompiler
 
 import (
+	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
+
+func TestSelfHostStandardLibraryDoctests(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	examples := 0
+	err := filepath.WalkDir(cli.stdlib, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".fern.md") {
+			return err
+		}
+		document, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		count := strings.Count(string(document), "```fern test")
+		if count == 0 {
+			return nil
+		}
+		examples += count
+		rel, err := filepath.Rel(cli.stdlib, path)
+		if err != nil {
+			return err
+		}
+		t.Run(filepath.ToSlash(rel), func(t *testing.T) {
+			cmd := runX86_64Bin(cli.runner, cli.bin, "-doctest", path, cli.stdlib)
+			output, err := cmd.CombinedOutput()
+			if err != nil || !strings.HasPrefix(string(output), fmt.Sprintf("1..%d\n", count)) || strings.Contains(string(output), "\nnot ok ") {
+				t.Fatalf("doctests: %v\n%s", err, output)
+			}
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if examples == 0 {
+		t.Fatal("no standard-library doctests found")
+	}
+	t.Logf("checked %d standard-library examples", examples)
+}
 
 const literateStdlibProgram = `import "std/option";
 import "std/result";

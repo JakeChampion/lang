@@ -760,7 +760,7 @@ sizes chosen, and to the wasm bodies, which are `wasm_ir.fern`'s own.
 ## Generated digest sources
 
 The lint lane runs `make digest-check` on every PR and main push. It compares
-the generated region of `internal/stdlib/std/crypto.fern` with
+the generated region of `internal/stdlib/std/crypto.fern.md` with
 `scripts/gen_digests.py` without writing the file. A stale region or missing,
 duplicated, or reversed markers fails the gate. Tests also prove a deliberate
 generated edit is rejected while handwritten content outside the markers is

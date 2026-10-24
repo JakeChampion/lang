@@ -122,7 +122,7 @@ re-exports.
 
 Tasks:
 
-1. Create `internal/stdlib/std/i32.fern`. Move every
+1. Create `internal/stdlib/std/i32.fern.md`. Move every
    `function (n: i32) X(): Y { ... }` from `prelude.fern` into
    this file. Roughly 40-50 helpers (abs, clamp, gcd, lcm,
    is_prime, factorial, etc.).

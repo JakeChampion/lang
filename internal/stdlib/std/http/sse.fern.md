@@ -1,0 +1,311 @@
+# Server-sent event text
+
+This module reads and writes server-sent events.
+
+## Model
+
+An event retains data, event name, identifier, and retry delay. Text output uses separate lines for these fields and terminates each event with a blank line.
+
+## Contracts
+
+The decoder retains partial input between calls. The response helpers obtain events through a callback and can apply a keep-alive duration.
+
+## Executable example
+
+```fern test name=std-http-sse-example
+import "std/http/sse";
+
+function main(): i32 {
+  if (sse.event("hello").encode() != "data: hello\n\n") { return 1; }
+  return 0;
+}
+```
+
+## Module assembly
+
+The root chunk preserves the declaration order. The chunks below contain the complete implementation.
+
+```fern
+<<*>>=
+<<module introduction>>
+
+<<dependencies 2>>
+
+<<3 pub struct Event>>
+
+<<4 pub function event(data: string): Event>>
+
+<<5 function __headed(r: HttpResponse): HttpResponse>>
+
+<<6 pub struct Decoder>>
+
+<<7 pub function decoder(): Decoder>>
+
+<<8 function __unmarked(d: Decoder, buf: u8[]): (Decoder, u8[])>>
+```
+
+### `module introduction`
+
+```fern
+<<module introduction>>=
+// This module reads and writes server-sent events.
+```
+
+### `dependencies 2`
+
+```fern
+<<dependencies 2>>=
+import "std/http";
+import "std/time";
+import "std/utf8";
+import "std/array";
+```
+
+### `3 pub struct Event`
+
+```fern
+<<3 pub struct Event>>=
+pub struct Event { data: string, name: string, id: string, retry: i32 }
+```
+
+### `4 pub function event(data: string): Event`
+
+```fern
+<<4 pub function event(data: string): Event>>=
+pub function event(data: string): Event {
+  return Event { data: data, name: "", id: "", retry: -1 };
+}
+
+pub function (e: Event) with_name(name: string): Event {
+  return Event { ...e, name: name };
+}
+
+pub function (e: Event) with_id(id: string): Event {
+  return Event { ...e, id: id };
+}
+
+pub function (e: Event) with_retry(ms: i32): Event {
+  return Event { ...e, retry: ms };
+}
+
+pub function (e: Event) encode(): string {
+  let out: string = "";
+  if (e.name.len() > 0) {
+    out = out + "event: " + __one_line(e.name) + "\n";
+  }
+  if (e.id.len() > 0) {
+    out = out + "id: " + __one_line(e.id) + "\n";
+  }
+  if (e.retry >= 0) {
+    out = out + "retry: " + e.retry.to_string() + "\n";
+  }
+  for line in __lines(e.data) {
+    out = out + "data: " + line + "\n";
+  }
+  return out + "\n";
+}
+
+pub function comment(text: string): string {
+  return ": " + __one_line(text) + "\n\n";
+}
+
+pub function respond(next: (i32) => Option[Event]): HttpResponse {
+  return __headed(http.chunks(200, (i: i32): Option[u8[]] => __encoded(next(i))));
+}
+
+pub function respond_with(keep_alive: Duration, next: (i32) => Option[Event]): HttpResponse {
+  return __headed(http.chunks_idle(200, (i: i32): Option[u8[]] => __encoded(next(i)), keep_alive, comment("keep-alive").bytes()));
+}
+
+pub function last_event_id(req: HttpRequest): Option[string] {
+  return req.headers.get("last-event-id");
+}
+```
+
+### `5 function __headed(r: HttpResponse): HttpResponse`
+
+```fern
+<<5 function __headed(r: HttpResponse): HttpResponse>>=
+function __headed(r: HttpResponse): HttpResponse {
+  return r.with_header("Content-Type", "text/event-stream").with_header("Cache-Control", "no-cache");
+}
+
+function __encoded(e: Option[Event]): Option[u8[]] {
+  match (e) {
+    Some(ev) => {
+      return Some(ev.encode().bytes());
+    },
+    None => {
+      return None;
+    }
+  }
+  return None;
+}
+
+function __one_line(s: string): string {
+  let out: string = "";
+  for line in __lines(s) {
+    out = out + line;
+  }
+  return out;
+}
+
+function __lines(s: string): string[] {
+  let out: string[] = [];
+  let bs: u8[] = s.bytes();
+  let start: i32 = 0;
+  let i: i32 = 0;
+  while (i < bs.len()) {
+    if (bs[i] == 10 || bs[i] == 13) {
+      out = out.append(utf8.from_bytes_lossy(array.slice(bs, start, i)));
+      if (bs[i] == 13 && i + 1 < bs.len() && bs[i + 1] == 10) {
+        i = i + 1;
+      }
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return out.append(utf8.from_bytes_lossy(array.slice(bs, start, bs.len())));
+}
+```
+
+### `6 pub struct Decoder`
+
+```fern
+<<6 pub struct Decoder>>=
+pub struct Decoder { buf: u8[], data: string, name: string, last_id: string, retry: i32, started: boolean }
+```
+
+### `7 pub function decoder(): Decoder`
+
+```fern
+<<7 pub function decoder(): Decoder>>=
+pub function decoder(): Decoder {
+  let none: u8[] = [];
+  return Decoder { buf: none, data: "", name: "", last_id: "", retry: -1, started: false };
+}
+
+pub function (d: Decoder) feed(bytes: u8[]): (Decoder, Event[]) {
+  let unmarked: (Decoder, u8[]) = __unmarked(d, d.buf.concat(bytes));
+  d = unmarked.0;
+  let buf: u8[] = unmarked.1;
+  let out: Event[] = [];
+  let start: i32 = 0;
+  let i: i32 = 0;
+  while (i < buf.len()) {
+    let brk: i32 = __break_at(buf, i);
+    if (brk < 0) {
+      break;
+    }
+    if (brk > 0) {
+      let lined: (Decoder, Option[Event]) = __line(d, utf8.from_bytes_lossy(array.slice(buf, start, i)));
+      d = lined.0;
+      match (lined.1) {
+        Some(e) => {
+          out = out.append(e);
+        },
+        None => {}
+      }
+      i = i + brk - 1;
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return (Decoder { ...d, buf: array.slice(buf, start, buf.len()) }, out);
+}
+```
+
+### `8 function __unmarked(d: Decoder, buf: u8[]): (Decoder, u8[])`
+
+```fern
+<<8 function __unmarked(d: Decoder, buf: u8[]): (Decoder, u8[])>>=
+function __unmarked(d: Decoder, buf: u8[]): (Decoder, u8[]) {
+  if (d.started || buf.len() < 3) {
+    return (d, buf);
+  }
+  d = Decoder { ...d, started: true };
+  if (buf[0] == 239 && buf[1] == 187 && buf[2] == 191) {
+    return (d, array.slice(buf, 3, buf.len()));
+  }
+  return (d, buf);
+}
+
+function __break_at(buf: u8[], i: i32): i32 {
+  if (buf[i] == 10) {
+    return 1;
+  }
+  if (buf[i] != 13) {
+    return 0;
+  }
+  if (i + 1 >= buf.len()) {
+    return -1;
+  }
+  if (buf[i + 1] == 10) {
+    return 2;
+  }
+  return 1;
+}
+
+function __line(d: Decoder, line: string): (Decoder, Option[Event]) {
+  if (line.len() == 0) {
+    return __dispatch(d);
+  }
+  if (line.starts_with(":")) {
+    return (d, None);
+  }
+  let field: string = line;
+  let value: string = "";
+  if let Some(at) = line.index_of(":") {
+    field = line.slice_snap(0, at);
+    value = line.slice_snap(at + 1, line.len());
+    if (value.starts_with(" ")) {
+      value = value.slice_snap(1, value.len());
+    }
+  }
+  return (__field(d, field, value), None);
+}
+
+function __field(d: Decoder, field: string, value: string): Decoder {
+  if (field == "event") {
+    return Decoder { ...d, name: value };
+  }
+  if (field == "data") {
+    return Decoder { ...d, data: d.data + value + "\n" };
+  }
+  if (field == "id") {
+    if (__has_nul(value)) {
+      return d;
+    }
+    return Decoder { ...d, last_id: value };
+  }
+  if (field == "retry" && value.is_ascii_numeric()) {
+    match (value.parse_int()) {
+      Some(ms) => {
+        return Decoder { ...d, retry: ms };
+      },
+      None => {
+        return d;
+      }
+    }
+  }
+  return d;
+}
+
+function __has_nul(s: string): boolean {
+  for b in s.bytes() {
+    if (b == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function __dispatch(d: Decoder): (Decoder, Option[Event]) {
+  let cleared: Decoder = Decoder { ...d, data: "", name: "" };
+  if (d.data.len() == 0) {
+    return (cleared, None);
+  }
+  let data: string = d.data.slice_snap(0, d.data.len() - 1);
+  return (cleared, Some(Event { data: data, name: d.name, id: d.last_id, retry: -1 }));
+}
+```

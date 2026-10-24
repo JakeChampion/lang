@@ -1,6 +1,6 @@
 // web/wasi-http-shim.js implements exactly the host functions the handler
 // core imports, and that core's imports are the `@import` declarations of
-// the incoming half of internal/stdlib/std/wasi_http.fern, the entry every
+// the incoming half of internal/stdlib/std/wasi_http.fern.md, the entry every
 // wasi:http handler is compiled with. Two files in two languages state one
 // list; this pins them equal, so an import added to the entry without its
 // host function fails here by name instead of as a LinkError in the browser,
@@ -19,7 +19,7 @@ import { runHttpHandler } from "../../wasi-http-shim.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const shim = readFileSync(join(repoRoot, "web/wasi-http-shim.js"), "utf8");
-const entry = readFileSync(join(repoRoot, "internal/stdlib/std/wasi_http.fern"), "utf8");
+const entry = readFileSync(join(repoRoot, "internal/stdlib/std/wasi_http.fern.md"), "utf8");
 const divider = entry.indexOf("\n// The outgoing side:");
 assert.notEqual(divider, -1, "the entry has no `// The outgoing side:` divider");
 const incoming = entry.slice(0, divider);

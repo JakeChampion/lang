@@ -1,0 +1,231 @@
+# Byte streams
+
+This module constructs and reads byte streams.
+
+## Model
+
+The `ByteStream` reader stores bytes or reads them from a body source. Its state records content, position, and a source.
+
+## Contracts
+
+Remaining length, end of input, and faults describe different states. A caller must preserve progress rather than reread from an earlier stream value.
+
+## Module assembly
+
+The root chunk preserves the declaration order. The chunks below contain the complete implementation.
+
+```fern
+<<*>>=
+<<dependencies 1>>
+
+<<2 pub function stream_from_bytes(bs: u8[]): ByteStream>>
+
+<<3 function __fill(s: ByteStream): ByteStream>>
+
+<<4 pub function (s: ByteStream) len(): i32>>
+
+<<5 function __without_cr(line: u8[]): u8[]>>
+```
+
+### `dependencies 1`
+
+```fern
+<<dependencies 1>>=
+// This module constructs and reads byte streams.
+import "std/string";
+import "std/utf8" as utf8;
+import "core/int";
+```
+
+### `2 pub function stream_from_bytes(bs: u8[]): ByteStream`
+
+```fern
+<<2 pub function stream_from_bytes(bs: u8[]): ByteStream>>=
+pub function stream_from_bytes(bs: u8[]): ByteStream {
+  return ByteStream { data: bs, pos: 0, source: None };
+}
+
+pub function stream_from_string(s: string): ByteStream {
+  return ByteStream { data: s.bytes(), pos: 0, source: None };
+}
+
+pub function stream_empty(): ByteStream {
+  let empty: u8[] = [];
+  return ByteStream { data: empty, pos: 0, source: None };
+}
+
+pub function stream_from_source(src: BodySource): ByteStream {
+  let empty: u8[] = [];
+  return ByteStream { data: empty, pos: 0, source: Some(src) };
+}
+
+pub function (s: ByteStream) fault(): i32 {
+  match (s.source) {
+    Some(src) => {
+      return src.fault.get();
+    },
+    None => {
+      return 0;
+    }
+  }
+  return 0;
+}
+```
+
+### `3 function __fill(s: ByteStream): ByteStream`
+
+```fern
+<<3 function __fill(s: ByteStream): ByteStream>>=
+function __fill(s: ByteStream): ByteStream {
+  let out: ByteStream = s;
+  while (out.pos >= out.data.len()) {
+    match (out.source) {
+      Some(src) => {
+        match (src.next()) {
+          Some(chunk) => {
+            out = ByteStream { ...out, data: chunk, pos: 0 };
+          },
+          None => {
+            return out;
+          }
+        }
+      },
+      None => {
+        return out;
+      }
+    }
+  }
+  return out;
+}
+```
+
+### `4 pub function (s: ByteStream) len(): i32`
+
+```fern
+<<4 pub function (s: ByteStream) len(): i32>>=
+pub function (s: ByteStream) len(): i32 {
+  return s.data.len();
+}
+
+pub function (s: ByteStream) remaining(): i32 {
+  let total: i32 = s.data.len();
+  if (s.pos >= total) {
+    return 0;
+  }
+  return total - s.pos;
+}
+
+pub function (s: ByteStream) is_empty(): boolean {
+  return s.pos >= s.data.len();
+}
+
+pub function (s: ByteStream) read_all(): (u8[], ByteStream) {
+  let out: u8[] = [];
+  let cur: ByteStream = __fill(s);
+  while (cur.pos < cur.data.len()) {
+    if (cur.pos == 0) {
+      out = out.concat(cur.data);
+    } else {
+      let i: i32 = cur.pos;
+      while (i < cur.data.len()) {
+        out = out.append(cur.data[i]);
+        i = i + 1;
+      }
+    }
+    cur = __fill(ByteStream { ...cur, pos: cur.data.len() });
+  }
+  return (out, cur);
+}
+
+pub function (s: ByteStream) read_all_string(): (Option[string], ByteStream) {
+  let (bytes, s2) = s.read_all();
+  return (utf8.from_bytes(bytes), s2);
+}
+
+pub function (s: ByteStream) read_byte(): (Option[u8], ByteStream) {
+  let cur: ByteStream = __fill(s);
+  if (cur.pos >= cur.data.len()) {
+    return (None, cur);
+  }
+  let b: u8 = cur.data[cur.pos];
+  return (Some(b), ByteStream { ...cur, pos: cur.pos + 1 });
+}
+
+pub function (s: ByteStream) read_n(n: i32): (u8[], ByteStream) {
+  let out: u8[] = [];
+  if (n <= 0) {
+    return (out, s);
+  }
+  let cur: ByteStream = __fill(s);
+  while (out.len() < n && cur.pos < cur.data.len()) {
+    let pos: i32 = cur.pos;
+    let end: i32 = pos + (n - out.len());
+    if (end > cur.data.len()) {
+      end = cur.data.len();
+    }
+    while (pos < end) {
+      out = out.append(cur.data[pos]);
+      pos = pos + 1;
+    }
+    cur = ByteStream { ...cur, pos: pos };
+    if (out.len() < n) {
+      cur = __fill(cur);
+    }
+  }
+  return (out, cur);
+}
+
+pub function (s: ByteStream) read_some(): (u8[], ByteStream) {
+  let out: u8[] = [];
+  let cur: ByteStream = __fill(s);
+  let pos: i32 = cur.pos;
+  while (pos < cur.data.len()) {
+    out = out.append(cur.data[pos]);
+    pos = pos + 1;
+  }
+  return (out, ByteStream { ...cur, pos: pos });
+}
+
+pub function (s: ByteStream) read_line(): (Option[string], ByteStream) {
+  let cur: ByteStream = __fill(s);
+  if (cur.pos >= cur.data.len()) {
+    return (None, cur);
+  }
+  let line_bytes: u8[] = [];
+  while (true) {
+    let pos: i32 = cur.pos;
+    while (pos < cur.data.len()) {
+      let b: i32 = cur.data[pos] as i32;
+      pos = pos + 1;
+      if (b == 10) {
+        return (Some(utf8.from_bytes_lossy(__without_cr(line_bytes))), ByteStream { ...cur, pos: pos });
+      }
+      line_bytes = line_bytes.append(b as u8);
+    }
+    cur = __fill(ByteStream { ...cur, pos: pos });
+    if (cur.pos >= cur.data.len()) {
+      return (Some(utf8.from_bytes_lossy(line_bytes)), cur);
+    }
+  }
+  return (None, cur);
+}
+```
+
+### `5 function __without_cr(line: u8[]): u8[]`
+
+```fern
+<<5 function __without_cr(line: u8[]): u8[]>>=
+function __without_cr(line: u8[]): u8[] {
+  let n: i32 = line.len();
+  if (n == 0 || line[n - 1] as i32 != 13) {
+    return line;
+  }
+  let stripped: u8[] = [];
+  let i: i32 = 0;
+  while (i < n - 1) {
+    stripped = stripped.append(line[i]);
+    i = i + 1;
+  }
+  return stripped;
+}
+```

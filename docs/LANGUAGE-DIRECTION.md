@@ -1204,7 +1204,7 @@ tests.
     (`-2^31..=2^31-1`) is exact. **Migrated to the Fern
     prelude** in PR 174, which replaced about 190 lines of WAT with
     about 25 lines of Fern at that time. The current implementation is
-    in `internal/stdlib/std/string.fern`.
+    in `internal/stdlib/std/string.fern.md`.
   - **`s.parse_float()` shipped.** `string` method returning
     `Option[f64]` (originally f32; flipped with the #5363
     f64-default decision). Grammar: `[-]<digits>[.<digits>]

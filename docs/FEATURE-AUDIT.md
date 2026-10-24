@@ -3239,7 +3239,7 @@ generic-`Iterator[T]` caveat is updated accordingly.
 ### 2026-06-20 — core/iter: numeric Iterator trait + Range on native and the self-host IR path ([#2686](https://github.com/JakeChampion/lang/issues/2686))
 
 First slice of the iterator protocol (the trait-spine epic #2691 step 6, and the
-open tail of the Range issue #2699). New `internal/stdlib/core/iter.fern`: a
+open tail of the Range issue #2699). New `internal/stdlib/core/iter.fern.md`: a
 numeric (i32) `Iterator` trait — `next(self): Option[(i32, Self)]`, value-
 semantic (advancing yields a fresh iterator, no interior mutation) — an integer
 `Range` (`[lo, hi)`) implementing it, a `range(lo, hi)` constructor, and eager
@@ -3866,7 +3866,7 @@ low-value div/rem), oracle-checked against the interpreter. Fixpoint intact.
 ### 2026-06-14 — std/base64 via the self-host IR path (coverage)
 
 Same vehicle as the std/hex coverage: `TestSelfHostBase64IR` compiles the real
-`internal/stdlib/std/base64.fern` source concatenated with a main (single-module,
+`internal/stdlib/std/base64.fern.md` source concatenated with a main (single-module,
 no imports), routing-pinned to `"ir"` and oracle-checked on x86-64 + wasm (verified
 on arm64 via qemu): `encode` (padded + exact-multiple inputs, output
 digit), `decode`, and encode→decode round-trips. Coverage-only, no compiler
@@ -3877,7 +3877,7 @@ change. std/base64 S column flipped to ✅.
 Confirmed `std/hex` (`encode` / `decode`) lowers through the self-host IR
 path end-to-end, now that the wasm `string_from_bytes_unchecked` / `arr_push` helper-gate
 fixes unblocked the byte→string primitives it builds on. `TestSelfHostHexIR`
-compiles the REAL `internal/stdlib/std/hex.fern` source concatenated with a main
+compiles the REAL `internal/stdlib/std/hex.fern.md` source concatenated with a main
 (the single-module trick the std/json self-host test uses — std/hex has no
 imports), routing-pinned to `"ir"` and oracle-checked on x86-64 + wasm (verified
 on arm64 via qemu too): encode length / digit, decode length / char, and

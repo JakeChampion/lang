@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/tools/literate"
 )
 
 func TestSelfHostWasiHttpByteWriterCleanup(t *testing.T) {
-	source, err := os.ReadFile("../../stdlib/std/wasi_http.fern")
+	source, err := literate.ReadFile("../../stdlib/std/wasi_http.fern")
 	if err != nil {
 		t.Fatal(err)
 	}

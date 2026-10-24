@@ -106,8 +106,8 @@ func TestStdlibHashCoversTheStdlibTree(t *testing.T) {
 	if got := stdlibHash(t); got != want {
 		t.Errorf("stdlibHash = %s, treeHash(%s) = %s", got, root, want)
 	}
-	if _, err := os.Stat(filepath.Join(root, "core", "int.fern")); err != nil {
-		t.Errorf("the stdlib root does not hold core/int.fern: %v", err)
+	if _, err := os.Stat(filepath.Join(root, "core", "int.fern.md")); err != nil {
+		t.Errorf("the stdlib root does not hold core/int.fern.md: %v", err)
 	}
 }
 

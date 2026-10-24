@@ -194,7 +194,7 @@ them taking `[u8]` as a **parameter**.
 
 It is almost only parameter position: never a return type, never a struct
 field, never an array element, and one local binding
-(`internal/stdlib/std/io_buffered.fern:47`, `let bs: [u8] = s.as_bytes()`).
+(`internal/stdlib/std/io_buffered.fern.md`, `let bs: [u8] = s.as_bytes()`).
 A local is still non-escaping, so the argument holds — but "only in parameter
 position" overstated it.
 

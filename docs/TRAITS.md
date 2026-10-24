@@ -39,7 +39,7 @@ fall out, and the codebase already complains about all three:
 - **The stdlib hand-monomorphises.** `std/test` carries
   `assert_eq_i32`, `assert_eq_i64`, `assert_eq_u32`, `assert_eq_u64`,
   `assert_eq_string`, `assert_eq_f32_near`, … one per type. A comment at
-  `internal/stdlib/std/test.fern:749` says verbatim: *"As soon as a
+  `internal/stdlib/std/test.fern.md` says verbatim: *"As soon as a
   `Display`/`ToString` trait lands, these collapse into one generic
   helper per family."* `time.fern:149` echoed the same wish, as did
   `std/format` until its `Display`-accepting entry points landed (#2684).

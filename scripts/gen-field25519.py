@@ -161,5 +161,5 @@ def region():
     return "\n".join(fns[k] for k in ("mul", "sq", "add", "sub", "mul_small", "__canonical"))
 
 if __name__ == "__main__":
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "internal", "stdlib", "std", "crypto", "field25519.fern")
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "internal", "stdlib", "std", "crypto", "field25519.fern.md")
     write_region(path, "FIELD25519 ARITHMETIC", "gen-field25519.py", region())

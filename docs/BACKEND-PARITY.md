@@ -573,7 +573,7 @@ natives (50% memory). `Map[i32, u8]` would drop further (4 B +
 1 B = 8 B with alignment).
 
 Every `core/map` entry is `2 * __ptr_width()` bytes whatever K
-and V are (`internal/stdlib/core/map.fern`). Sizing it per
+and V are (`internal/stdlib/core/map.fern.md`). Sizing it per
 instantiation is the per-(K, V) monomorphisation in
 `docs/MAP-SPECIALIZATION.md`.
 
