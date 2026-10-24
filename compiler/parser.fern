@@ -3795,6 +3795,14 @@ function parse_block_items(p: Par): (ast.Stmt[], boolean, ast.Expr, boolean, Par
   }
   p = p.advance();
   while (p.peek_punct() != "}" && !p.at_end()) {
+    if (p.peek_keyword() == "match") {
+      let (valueless, stmt, next) = valueless_branch_tail(p);
+      if (valueless) {
+        leading = leading.append(stmt);
+        p = next;
+        continue;
+      }
+    }
     let (is_stmt, ip) = item_is_stmt(p);
     p = ip;
     if (is_stmt) {
@@ -3864,12 +3872,15 @@ function valueless_branch_tail(p: Par): (boolean, ast.Stmt, Par) {
 }
 
 function match_arms_braced(p: Par): boolean {
+  if (p.too_deep_by(BLOCK_NEST_UNITS)) {
+    return false;
+  }
   let depth: i32 = 0;
   let k: i32 = 1;
   while (p.pos + k < p.toks.len()) {
     let t: string = p.peek_punct_at(k);
     if (t == "=>" && depth == 1) {
-      let body_start: Par = Par { ...p, pos: p.pos + k + 1 };
+      let body_start: Par = Par { ...p, pos: p.pos + k + 1, depth: p.depth + BLOCK_NEST_UNITS };
       let (leading, have_tail, tail, ok, after) = parse_block_items(body_start);
       if (!ok || have_tail || after.type_errs.len() != p.type_errs.len()) {
         return false;

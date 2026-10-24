@@ -2580,6 +2580,10 @@ func (p *parser) parseIfLetExpr(pos ast.Position) (ast.Expr, error) {
 }
 
 func (p *parser) parseBranchBody() (ast.Expr, error) {
+	if err := p.enter(); err != nil {
+		return nil, err
+	}
+	defer p.leave()
 	open, err := p.expect(lexer.Punct, "{")
 	if err != nil {
 		return nil, err
@@ -2587,6 +2591,12 @@ func (p *parser) parseBranchBody() (ast.Expr, error) {
 	var stmts []ast.Stmt
 	var tail ast.Expr
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
+		if p.match(lexer.Keyword, "match") {
+			if stmt, ok := p.valuelessBranchTail(); ok {
+				stmts = append(stmts, stmt)
+				continue
+			}
+		}
 		if p.branchStmtStart() && !p.nestedBlockTail() {
 			s, err := p.parseStmt()
 			if err != nil {

@@ -22,6 +22,18 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	{"nested-valueless-match-lambda", `function main(): i32 {
+  let count = cell_new(0);
+  let visit = (n: i32): void => {
+    match (n) {
+      0 => { match (n) { 0 => { count.set(1); }, _ => { count.set(2); } } },
+      _ => { count.set(3); }
+    }
+  };
+  visit(0);
+  return count.get() - 1;
+}
+`},
 	{"qualified-record-binding-sites", `import "./shapes";
 function f(whole @ shapes.Open { n, .. }: shapes.Open): i32 { return whole.n + n; }
 function main(): i32 {
