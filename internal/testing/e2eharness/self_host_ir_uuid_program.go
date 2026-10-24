@@ -4,7 +4,7 @@
 // internal/testing/e2e/self_host_ir_uuid_program_test.go.
 package e2eharness
 
-// UuidV4Program is a self-contained (single-module) uuid_v4 implementation used
+// UuidV4Program is a self-contained (single-module) v4 implementation used
 // by the self-host IR-path tests (issue #2682). It inlines the std/uuid helpers
 // because the self-host differential drivers parse one module without modload.
 // It builds the canonical 8-4-4-4-12 lowercase hex string from the

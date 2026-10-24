@@ -3756,7 +3756,7 @@ function __proxy_auth(full: string): string {
   if (!userinfo.contains(":")) {
     userinfo = userinfo + ":";
   }
-  return "Basic " + base64.base64_encode(userinfo.bytes());
+  return "Basic " + base64.encode(userinfo.bytes());
 }
 
 // ---------------------------------------------------------------------------

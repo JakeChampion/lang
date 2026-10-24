@@ -1,5 +1,6 @@
 import "std/test";
 import "std/hex";
+import "std/codec";
 import "std/crypto/p256";
 
 // tests/stdlib/p256_test.fern: std/crypto/p256 at its edges, against values
@@ -21,11 +22,11 @@ const MIXED: string = "0123456789abcdeffedcba98765432100f1e2d3c4b5a69788796a5b4c
 const TOP_BIT: string = "8000000000000000000000000000000000000000000000000000000000000000";
 
 function one_hot(at: i32, v: u8): string {
-  return hex.hex_encode(__alloc_u8(32).with(at, v));
+  return hex.encode(__alloc_u8(32).with(at, v));
 }
 
 function base(k: string): string {
-  return hex.hex_encode(p256.base_point(hex.hex_decode(k)));
+  return hex.encode(p256.base_point(__codec_bytes(hex.decode(k))));
 }
 
 function test_base_point(): test.TestOutcome {
@@ -46,7 +47,7 @@ function test_base_point(): test.TestOutcome {
 }
 
 function times_x(k: string, point: string): string {
-  return hex.hex_encode(p256.scalar_mul_x(hex.hex_decode(k), hex.hex_decode(point)));
+  return hex.encode(p256.scalar_mul_x(__codec_bytes(hex.decode(k)), __codec_bytes(hex.decode(point))));
 }
 
 function test_scalar_mul(): test.TestOutcome {
@@ -65,7 +66,7 @@ function test_scalar_mul(): test.TestOutcome {
 }
 
 function range(k: string): i64 {
-  return p256.in_scalar_range(hex.hex_decode(k));
+  return p256.in_scalar_range(__codec_bytes(hex.decode(k)));
 }
 
 function test_scalar_range(): test.TestOutcome {
@@ -79,7 +80,7 @@ function test_scalar_range(): test.TestOutcome {
 }
 
 function reduced(k: string): string {
-  return hex.hex_encode(p256.scalar_reduce(hex.hex_decode(k)));
+  return hex.encode(p256.scalar_reduce(__codec_bytes(hex.decode(k))));
 }
 
 function test_scalar_reduce(): test.TestOutcome {
@@ -96,4 +97,18 @@ function main(): i32 {
   r = r.it("scalar range", test_scalar_range);
   r = r.it("scalar reduction", test_scalar_reduce);
   return r.finish();
+}
+
+// Decode a valid fixture. Report a malformed fixture before the test exits.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

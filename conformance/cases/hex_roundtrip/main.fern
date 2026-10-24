@@ -1,10 +1,26 @@
 import "std/hex";
+import "std/codec";
 import "std/string";
+
 // hex encode/decode round-trip from the prelude.
 function main(): i32 {
-    let s: string = "Hi there";
-    if (string_from_bytes_unchecked(hex.hex_decode(hex.hex_encode(s.bytes()))) == s) {
-        return 42;
+  let s: string = "Hi there";
+  if (string_from_bytes_unchecked(__codec_bytes(hex.decode(hex.encode(s.bytes())))) == s) {
+    return 42;
+  }
+  return 1;
+}
+
+// Decode a valid fixture. Report a malformed fixture before the test exits.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
     }
-    return 1;
+  }
 }

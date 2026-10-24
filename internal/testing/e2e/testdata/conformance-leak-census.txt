@@ -155,6 +155,7 @@ closure_field_match                                  0
 closure_field_rebind                                 0
 closure_returns_composite                            0
 cmp_float_traits                                     0
+codec_errors                                         0
 compound_assign_wider                                0
 concat_of_empties                                    0
 concrete_view_methods                                0
@@ -910,6 +911,7 @@ result_of_a_call_through_a_function_field_is_released 0
 result_register_pair                                 0
 scalar_edge_cases                                    0
 scalar_sum_reassign                                  0
+semver_uuid_errors                                   0
 sentinel_roundtrip                                   0
 shadow_captured_by_lambda                            0
 shadow_depth_2                                       0

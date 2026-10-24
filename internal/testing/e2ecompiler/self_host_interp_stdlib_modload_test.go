@@ -115,8 +115,8 @@ function main(): i32 {
 	// std/string's search family bottoms out in the __memchr scan kernel.
 	{"split-find", "import \"std/string\";\nfunction main(): i32 {\n  let parts: string[] = \"a,b,c\".split(\",\");\n  if (parts.len() == 3 && parts[1] == \"b\") { return 7; }\n  return 1;\n}\n"},
 	{"trim-replace-repeat", "import \"std/string\";\nfunction main(): i32 {\n  let t: string = \"  hello world  \".trim().to_owned();\n  if (t != \"hello world\") { return 1; }\n  if (t.replace(\"world\", \"there\") != \"hello there\") { return 2; }\n  if (\"ab\".repeat(3) != \"ababab\") { return 3; }\n  return 7;\n}\n"},
-	{"hex-encode", "import \"std/hex\";\nimport \"std/string\";\nfunction main(): i32 {\n  if (hex.hex_encode(\"AB\".bytes()) == \"4142\") { return 7; }\n  return 1;\n}\n"},
-	{"base64-encode", "import \"std/base64\";\nimport \"std/string\";\nfunction main(): i32 {\n  if (base64.base64_encode(\"hi\".bytes()) == \"aGk=\") { return 7; }\n  return 1;\n}\n"},
+	{"hex-encode", "import \"std/hex\";\nimport \"std/string\";\nfunction main(): i32 {\n  if (hex.encode(\"AB\".bytes()) == \"4142\") { return 7; }\n  return 1;\n}\n"},
+	{"base64-encode", "import \"std/base64\";\nimport \"std/string\";\nfunction main(): i32 {\n  if (base64.encode(\"hi\".bytes()) == \"aGk=\") { return 7; }\n  return 1;\n}\n"},
 	// core/map is the stdlib's heaviest raw-memory consumer — its kv buffer
 	// is hand-laid-out through __load_i32 / __store_ptr / __ptr_width. Both
 	// engines answer Map from a native map value instead of running those

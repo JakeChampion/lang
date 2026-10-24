@@ -118,7 +118,7 @@ function __hex_char(d: i32): i32 {
 // Output is exactly 2·len bytes, so fill one preallocated buffer
 // (O(n)) rather than the `out = out + …` concat chain, which recopied
 // the whole prefix each step (O(n²) — the #4379 hot path). Same
-// preallocated-u8[] shape hex_encode uses; byte-for-byte identical.
+// preallocated-u8[] shape encode uses; byte-for-byte identical.
 function __bytes_to_hex(b: [u8]): string {
   let n: i32 = b.len();
   if (n == 0) {

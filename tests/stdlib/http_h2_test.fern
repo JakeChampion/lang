@@ -140,7 +140,7 @@ function describe(c: Client, f: frame.Frame): Shown {
       return Shown { client: c, text: out };
     },
     frame.Ping(ack, bytes) => {
-      return Shown { client: c, text: "PING" + flag(ack, "ACK") + " " + hex.hex_encode(bytes) };
+      return Shown { client: c, text: "PING" + flag(ack, "ACK") + " " + hex.encode(bytes) };
     },
     frame.GoAway(g) => {
       return Shown { client: c, text: "GOAWAY last " + int.int_to_string(g.last_stream) + " " + int.int_to_string(g.code) + " " + string_from_bytes_unchecked(g.debug) };

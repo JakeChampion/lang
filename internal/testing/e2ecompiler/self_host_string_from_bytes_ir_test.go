@@ -38,11 +38,11 @@ var stringFromBytesIRCases = []struct {
 	{"direct-len", `function main(): i32 { let b: u8[] = __alloc_u8(2); b = b.with(0, 72 as u8); b = b.with(1, 105 as u8); return string_from_bytes_unchecked(b).len(); }`},
 	// Round-trip a byte through the packed string: [65]("A")[0] = 65.
 	{"direct-byte", `function main(): i32 { let b: u8[] = __alloc_u8(1); b = b.with(0, 65 as u8); return string_from_bytes_unchecked(b)[0] as i32; }`},
-	// hex_encode: "A" -> "41"; first digit '4' = 52.
+	// encode: "A" -> "41"; first digit '4' = 52.
 	{"hex-digit0", stringFromBytesPrelude + `function main(): i32 { return hexenc("A")[0] as i32; }`},
-	// hex_encode: "z" (0x7a) -> "7a"; second digit 'a' = 97.
+	// encode: "z" (0x7a) -> "7a"; second digit 'a' = 97.
 	{"hex-digit1", stringFromBytesPrelude + `function main(): i32 { return hexenc("z")[1] as i32; }`},
-	// hex_encode length: "hello" -> 10 hex chars.
+	// encode length: "hello" -> 10 hex chars.
 	{"hex-len", stringFromBytesPrelude + `function main(): i32 { return hexenc("hello").len(); }`},
 }
 

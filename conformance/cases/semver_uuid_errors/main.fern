@@ -1,0 +1,94 @@
+import "std/semver";
+import "std/uuid";
+import "std/error";
+import "core/cmp";
+
+function sv_invalid(text: string, offset: i32, kind: semver.ParseErrorKind): boolean {
+  match (semver.parse(text)) {
+    Err(problem) => {
+      return problem.offset == offset && problem.kind == kind && display(problem) == message(problem);
+    },
+    Ok(_) => {
+      return false;
+    }
+  }
+}
+
+function uuid_invalid(text: string, offset: i32, kind: uuid.ParseErrorKind): boolean {
+  match (uuid.version(text)) {
+    Err(problem) => {
+      return problem.offset == offset && problem.kind == kind && display(problem) == message(problem);
+    },
+    Ok(_) => {
+      return false;
+    }
+  }
+}
+
+function display[T: cmp.Display](value: T): string {
+  return value.to_string();
+}
+
+function message(value: dyn error.Error): string {
+  return value.message();
+}
+
+function main(): i32 {
+  if (!sv_invalid("1.2.3-alpha!", 11, semver.InvalidByte(33 as u8))) {
+    return 1;
+  }
+  if (!sv_invalid("1.2.3+build!", 11, semver.InvalidByte(33 as u8))) {
+    return 2;
+  }
+  if (!sv_invalid("1.2.3+a..b", 8, semver.EmptyIdentifier)) {
+    return 3;
+  }
+  if (!sv_invalid("1.2.3-01", 6, semver.LeadingZero)) {
+    return 4;
+  }
+  if (!sv_invalid("01.2.3", 0, semver.LeadingZero)) {
+    return 5;
+  }
+  if (!sv_invalid("1.2.x", 4, semver.InvalidByte(120 as u8))) {
+    return 6;
+  }
+  if (!sv_invalid("2147483648.0.0", 0, semver.NumberOutOfRange)) {
+    return 7;
+  }
+  if (!sv_invalid("1.2", 3, semver.ExpectedCore)) {
+    return 8;
+  }
+  if (!sv_invalid("1.2.3+", 6, semver.EmptyIdentifier)) {
+    return 9;
+  }
+  if (!sv_invalid("1.2.3-α", 6, semver.InvalidByte(206 as u8))) {
+    return 10;
+  }
+  for text in ["0.0.0", "2147483647.2.3", "1.2.3-0A+01", "1.2.3-alpha.1+build.2", "1.2.3-99999999999999999999999"] {
+    let Ok(value) = semver.parse(text) else {
+      return 11;
+    };
+    if (value.to_string() != text) {
+      return 12;
+    }
+  }
+  if (!uuid_invalid("", 0, uuid.InvalidLength)) {
+    return 13;
+  }
+  if (!uuid_invalid("550e8400+e29b-41d4-a716-446655440000", 8, uuid.InvalidSeparator)) {
+    return 14;
+  }
+  if (!uuid_invalid("550e8400-e29b-41d4-a716-44665544000g", 35, uuid.InvalidByte(103 as u8))) {
+    return 15;
+  }
+  let Ok(nil_version) = uuid.version(uuid.NIL) else {
+    return 16;
+  };
+  let Ok(upper_version) = uuid.version("550E8400-E29B-A1D4-A716-446655440000") else {
+    return 17;
+  };
+  if (nil_version != 0 || upper_version != 10 || !uuid.is_nil(uuid.NIL)) {
+    return 18;
+  }
+  return 0;
+}

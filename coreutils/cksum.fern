@@ -569,9 +569,9 @@ function help_text(): string {
 // `digest_text(c, bin)` — the digest as the line carries it.
 function digest_text(c: Conf, bin: u8[]): string {
   if (c.b64) {
-    return base64.base64_encode(bin);
+    return base64.encode(bin);
   }
-  return hex.hex_encode(bin);
+  return hex.encode(bin);
 }
 
 function delim(c: Conf): string {

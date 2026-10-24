@@ -2,46 +2,55 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/base64.base64url_decode_strict across
-// backends: round-trips of base64url_encode output (unpadded), padded
+// Differential coverage for std/base64.decode_url across
+// backends: round-trips of encode_url output (unpadded), padded
 // url input, the empty string, url-safe -/_ acceptance, and the None
 // rejections — the non-url-safe +/ characters, junk, misaligned
 // padding, and an impossible n%4==1 run. Returns 42 iff every check
 // holds. Each leg skips itself when its toolchain is absent.
 const base64urlStrictProg = `
 import "std/base64" as b64;
+import "std/codec";
 import "std/string";
-function opt(o: Option[u8[]], fb: string): string {
+function opt(o: Result[u8[], codec.DecodeError], fb: string): string {
     // The fixtures here are ASCII; a real ingest path would use
     // std/utf8.from_bytes instead of the unchecked read.
-    match (o) { Some(v) => { return string_from_bytes_unchecked(v); }, None => { return fb; } }
+    match (o) { Ok(v) => { return string_from_bytes_unchecked(v); }, Err(_) => { return fb; } }
 }
-function isnone(o: Option[u8[]]): boolean {
-    match (o) { Some(v) => { return false; }, None => { return true; } }
+function isnone(o: Result[u8[], codec.DecodeError]): boolean {
+    match (o) { Ok(v) => { return false; }, Err(_) => { return true; } }
 }
 // Re-encodes decoded bytes so a non-UTF-8 payload can be compared
 // without ever being read back as text.
-function reenc(o: Option[u8[]]): string {
-    match (o) { Some(v) => { return b64.base64url_encode(v); }, None => { return "X"; } }
+function reenc(o: Result[u8[], codec.DecodeError]): string {
+    match (o) { Ok(v) => { return b64.encode_url(v); }, Err(_) => { return "X"; } }
 }
 function main(): i32 {
-    if (opt(b64.base64url_decode_strict(b64.base64url_encode("Hello".bytes())), "X") != "Hello") { return 1; }
-    if (opt(b64.base64url_decode_strict(b64.base64url_encode("".bytes())), "X") != "") { return 2; }
-    if (opt(b64.base64url_decode_strict("SGVsbG8"), "X") != "Hello") { return 3; }
-    if (opt(b64.base64url_decode_strict("SGVsbG8="), "X") != "Hello") { return 4; }
+    if (opt(b64.decode_url(b64.encode_url("Hello".bytes())), "X") != "Hello") { return 1; }
+    if (opt(b64.decode_url(b64.encode_url("".bytes())), "X") != "") { return 2; }
+    if (opt(b64.decode_url("SGVsbG8"), "X") != "Hello") { return 3; }
+    if (opt(b64.decode_url("SGVsbG8="), "X") != "Hello") { return 4; }
     // Bytes that use the url-safe -/_ alphabet round-trip via encode.
     // FF FE FD is not valid UTF-8, so it stays u8[] (#5730) and the
     // comparison goes through the encoded text.
-    let raw: u8[] = b64.base64_decode("//79");
-    let rawenc: string = b64.base64url_encode(raw);
-    if (reenc(b64.base64url_decode_strict(rawenc)) != rawenc) { return 5; }
-    if (opt(b64.base64url_decode_strict(""), "X") != "") { return 6; }
-    if (!isnone(b64.base64url_decode_strict("SGVsbG8+"))) { return 7; }
-    if (!isnone(b64.base64url_decode_strict("SGVs/bG8"))) { return 8; }
-    if (!isnone(b64.base64url_decode_strict("SG!sbG8"))) { return 9; }
-    if (!isnone(b64.base64url_decode_strict("SGVsbG8=="))) { return 10; }
-    if (!isnone(b64.base64url_decode_strict("A"))) { return 11; }
+    let raw: u8[] = __codec_bytes(b64.decode("//79"));
+    let rawenc: string = b64.encode_url(raw);
+    if (reenc(b64.decode_url(rawenc)) != rawenc) { return 5; }
+    if (opt(b64.decode_url(""), "X") != "") { return 6; }
+    if (!isnone(b64.decode_url("SGVsbG8+"))) { return 7; }
+    if (!isnone(b64.decode_url("SGVs/bG8"))) { return 8; }
+    if (!isnone(b64.decode_url("SG!sbG8"))) { return 9; }
+    if (!isnone(b64.decode_url("SGVsbG8=="))) { return 10; }
+    if (!isnone(b64.decode_url("A"))) { return 11; }
     return 42;
+}
+
+// Decode a valid fixture. Report a malformed fixture before ending the test.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => { return bytes; },
+    Err(problem) => { eprint(problem.message()); exit(98); return []; }
+  }
 }
 `
 

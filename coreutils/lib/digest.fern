@@ -592,7 +592,7 @@ function digest_reader(r: Reader, kind: i32, bits: i32, owned: boolean): Sum {
     r.close();
   }
   let bin: u8[] = ctx_bytes(c);
-  return Sum { hex: hex.hex_encode(bin), bin: bin, err: None, failed: false };
+  return Sum { hex: hex.encode(bin), bin: bin, err: None, failed: false };
 }
 
 // `digest_path(path, kind, bits)` — one operand digested. `-` is
@@ -727,12 +727,12 @@ function read_digest(s: Settings, bytes: u8[], n: i32): Digest {
 
 function read_digest_text(s: Settings, field: string, n: i32): Digest {
   if (s.cksum && field.len() == base64_len(n)) {
-    match (base64.base64_decode_strict(field)) {
+    match (base64.decode(field)) {
       Some(bs) => {
         if (bs.len() != n) {
           return bad_digest();
         }
-        return Digest { ok: true, hex: hex.hex_encode(bs) };
+        return Digest { ok: true, hex: hex.encode(bs) };
       },
       None => {
         return bad_digest();

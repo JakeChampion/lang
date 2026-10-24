@@ -2,6 +2,7 @@ import "std/string";
 import "std/option";
 import "std/result";
 import "std/hex" as hex;
+import "std/codec";
 import "std/utf8" as utf8;
 import "std/deflate" as deflate;
 import "std/zstd" as zstd;
@@ -34,27 +35,27 @@ function main(): i32 {
   if (c != 0) {
     return c;
   }
-  let raw_bytes: u8[] = [0 as u8].concat(hex.hex_decode("cb48cdc9c9d751c840a214caf38b7252b800")).append(0 as u8);
+  let raw_bytes: u8[] = [0 as u8].concat(__codec_bytes(hex.decode("cb48cdc9c9d751c840a214caf38b7252b800"))).append(0 as u8);
   if (utf8.from_bytes_lossy(deflate.inflate(raw_bytes[1:raw_bytes.len() - 1], 1024).unwrap_or(deflate.Inflated { out: [], consumed: 0 }).out) != text) {
     return 12;
   }
-  let gzip_bytes: u8[] = [0 as u8].concat(hex.hex_decode("1f8b0800000000000203cb48cdc9c9d751c840a214caf38b7252b800875d462b1a000000")).append(0 as u8);
+  let gzip_bytes: u8[] = [0 as u8].concat(__codec_bytes(hex.decode("1f8b0800000000000203cb48cdc9c9d751c840a214caf38b7252b800875d462b1a000000"))).append(0 as u8);
   if (utf8.from_bytes_lossy(deflate.gunzip(gzip_bytes[1:gzip_bytes.len() - 1], 1024).unwrap_or([])) != text) {
     return 29;
   }
-  let zlib_bytes: u8[] = [0 as u8].concat(hex.hex_decode("789ccb48cdc9c9d751c840a214caf38b7252b8007dae0927")).append(0 as u8);
+  let zlib_bytes: u8[] = [0 as u8].concat(__codec_bytes(hex.decode("789ccb48cdc9c9d751c840a214caf38b7252b8007dae0927"))).append(0 as u8);
   if (utf8.from_bytes_lossy(deflate.zlib_decode(zlib_bytes[1:zlib_bytes.len() - 1], 1024).unwrap_or([])) != text) {
     return 20;
   }
-  let zstd_bytes: u8[] = [0 as u8].concat(hex.hex_decode("28b52ffd201aa500007068656c6c6f2c2020776f726c640a0100e28a11")).append(0 as u8);
+  let zstd_bytes: u8[] = [0 as u8].concat(__codec_bytes(hex.decode("28b52ffd201aa500007068656c6c6f2c2020776f726c640a0100e28a11"))).append(0 as u8);
   if (utf8.from_bytes_lossy(zstd.decompress(zstd_bytes[1:zstd_bytes.len() - 1], 1024).unwrap_or([])) != text) {
     return 26;
   }
-  let brotli_bytes: u8[] = [0 as u8].concat(hex.hex_decode("8b0c8068656c6c6f2c2068656c6c6f2c2068656c6c6f20776f726c640a03")).append(0 as u8);
+  let brotli_bytes: u8[] = [0 as u8].concat(__codec_bytes(hex.decode("8b0c8068656c6c6f2c2068656c6c6f2c2068656c6c6f20776f726c640a03"))).append(0 as u8);
   if (utf8.from_bytes_lossy(brotli.decompress(brotli_bytes[1:brotli_bytes.len() - 1], 1024).unwrap_or([])) != text) {
     return 12;
   }
-  let zone_bytes: u8[] = [0 as u8].concat(hex.hex_decode("545a69663200000000000000000000000000000000000000000000000000000000000000000000010000000400000000000055544300545a696632000000000000000000000000000000000000000000000000000000000000000000000100000004000000000000555443000a555443300a")).append(0 as u8);
+  let zone_bytes: u8[] = [0 as u8].concat(__codec_bytes(hex.decode("545a69663200000000000000000000000000000000000000000000000000000000000000000000010000000400000000000055544300545a696632000000000000000000000000000000000000000000000000000000000000000000000100000004000000000000555443000a555443300a"))).append(0 as u8);
   let zone: Option[tz.Zone] = tz.parse_tzif(zone_bytes[1:zone_bytes.len() - 1]);
   if (!zone.is_some()) {
     return 40;
@@ -66,4 +67,18 @@ function main(): i32 {
   }
   print("binary codecs passed");
   return 0;
+}
+
+// Decode a valid fixture. Report a malformed fixture before ending the test.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

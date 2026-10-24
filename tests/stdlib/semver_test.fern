@@ -9,17 +9,17 @@ import "std/semver" as semver;
 // compare two version strings by precedence; 99 if either won't parse.
 function cmp(x: string, y: string): i32 {
   match (semver.parse(x)) {
-    Some(a) => {
+    Ok(a) => {
       match (semver.parse(y)) {
-        Some(b) => {
+        Ok(b) => {
           return a.compare(b);
         },
-        None => {
+        Err(_) => {
           return 99;
         }
       }
     },
-    None => {
+    Err(_) => {
       return 99;
     }
   }
@@ -27,10 +27,10 @@ function cmp(x: string, y: string): i32 {
 
 function parses(s: string): boolean {
   match (semver.parse(s)) {
-    Some(v) => {
+    Ok(v) => {
       return true;
     },
-    None => {
+    Err(_) => {
       return false;
     }
   }
@@ -38,11 +38,11 @@ function parses(s: string): boolean {
 
 function test_parse_fields(): test.TestOutcome {
   match (semver.parse("1.2.3-rc.1+build.5")) {
-    Some(v) => {
+    Ok(v) => {
       return test.assert_true(v.major == 1 && v.minor == 2 && v.patch == 3
         && v.prerelease == "rc.1" && v.build == "build.5");
     },
-    None => {
+    Err(_) => {
       return test.fail("valid version failed to parse");
     }
   }
@@ -50,10 +50,10 @@ function test_parse_fields(): test.TestOutcome {
 
 function test_to_string(): test.TestOutcome {
   match (semver.parse("1.2.3-rc.1+build.5")) {
-    Some(v) => {
+    Ok(v) => {
       return test.assert_eq(v.to_string(), "1.2.3-rc.1+build.5");
     },
-    None => {
+    Err(_) => {
       return test.fail("parse failed");
     }
   }
@@ -100,6 +100,11 @@ function test_build_ignored(): test.TestOutcome {
 }
 
 function test_rejects_malformed(): test.TestOutcome {
+  for invalid in ["1.2.3-alpha!", "1.2.3+build!", "1.2.3+a..b", "1.2.3-α", "1.2.3+a."] {
+    if (parses(invalid)) {
+      return test.fail("accepted invalid identifier");
+    }
+  }
   if (parses("1.2")) {
     return test.fail("two-part accepted");
   }

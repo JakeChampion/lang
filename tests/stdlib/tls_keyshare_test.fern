@@ -1,5 +1,6 @@
 import "std/test";
 import "std/hex";
+import "std/codec";
 import "std/crypto";
 import "std/tls/keyshare";
 
@@ -44,7 +45,7 @@ function sha256(b: u8[]): string {
 function shown(r: Result[u8[], keyshare.KeyShareError]): string {
   match (r) {
     Ok(b) => {
-      return hex.hex_encode(b);
+      return hex.encode(b);
     },
     Err(e) => {
       return e.message();
@@ -152,20 +153,20 @@ function test_p256_mlkem_exchange(): test.TestOutcome {
   }
   match (keyshare.client_share(keyshare.Secp256r1MlKem768, client_draw)) {
     Ok(c) => {
-      if (c.public.len() != 1249 || hex.hex_encode(cat(c.public[0:65], [])) != rfc5903_gi()) {
+      if (c.public.len() != 1249 || hex.encode(cat(c.public[0:65], [])) != rfc5903_gi()) {
         return test.fail("the client's share");
       }
       match (keyshare.server_share(keyshare.Secp256r1MlKem768, c.public, server_draw)) {
         Ok(s) => {
-          if (s.public.len() != 1153 || hex.hex_encode(cat(s.public[0:65], [])) != rfc5903_gr()) {
+          if (s.public.len() != 1153 || hex.encode(cat(s.public[0:65], [])) != rfc5903_gr()) {
             return test.fail("the server's share");
           }
           if (sha256(cat(s.public[65:1153], [])) != sha256(cat(other[0:1088], []))) {
             return test.fail("the ciphertext is not the X25519 hybrid's");
           }
           let want: string = rfc5903_shared() + hybrid_shared().slice_snap(0, 64);
-          if (hex.hex_encode(s.shared_secret) != want) {
-            return test.fail("the server's secret: " + hex.hex_encode(s.shared_secret));
+          if (hex.encode(s.shared_secret) != want) {
+            return test.fail("the server's secret: " + hex.encode(s.shared_secret));
           }
           return test.assert_eq(shown(c.shared_secret(s.public)), want);
         },
@@ -197,7 +198,7 @@ function p256_hybrid_client_public(): u8[] {
 
 // A 40-byte draw whose high eight bytes are zero: the scalar itself.
 function p256_draw(scalar: string): u8[] {
-  return cat(__alloc_u8(8), hex.hex_decode(scalar));
+  return cat(__alloc_u8(8), __codec_bytes(hex.decode(scalar)));
 }
 
 function p256_client(draw: u8[]): Result[keyshare.ClientShare, keyshare.KeyShareError] {
@@ -220,16 +221,16 @@ function rfc5903_shared(): string {
 function test_p256_rfc5903(): test.TestOutcome {
   match (p256_client(p256_draw("c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433"))) {
     Ok(c) => {
-      if (hex.hex_encode(c.public) != rfc5903_gi()) {
-        return test.fail("the initiator's point: " + hex.hex_encode(c.public));
+      if (hex.encode(c.public) != rfc5903_gi()) {
+        return test.fail("the initiator's point: " + hex.encode(c.public));
       }
       match (keyshare.server_share(keyshare.Secp256r1, c.public, p256_draw("c6ef9c5d78ae012a011164acb397ce2088685d8f06bf9be0b283ab46476bee53"))) {
         Ok(s) => {
-          if (hex.hex_encode(s.public) != rfc5903_gr()) {
-            return test.fail("the responder's point: " + hex.hex_encode(s.public));
+          if (hex.encode(s.public) != rfc5903_gr()) {
+            return test.fail("the responder's point: " + hex.encode(s.public));
           }
-          if (hex.hex_encode(s.shared_secret) != rfc5903_shared()) {
-            return test.fail("the responder's secret: " + hex.hex_encode(s.shared_secret));
+          if (hex.encode(s.shared_secret) != rfc5903_shared()) {
+            return test.fail("the responder's secret: " + hex.encode(s.shared_secret));
           }
           return test.assert_eq(shown(c.shared_secret(s.public)), rfc5903_shared());
         },
@@ -257,17 +258,17 @@ function test_p256_reduction(): test.TestOutcome {
   }
   match (p256_client(ff)) {
     Ok(c) => {
-      if (hex.hex_encode(c.public) != "04308c2fb68f6e65f14ee1df366524bfc8df178610bc047fde25e8fc6b1ed3e38c1d63c2f55110ef43a518689849130e469f5545bacca33538b7bc1a35ed95579a") {
-        return test.fail("forty 0xff: " + hex.hex_encode(c.public));
+      if (hex.encode(c.public) != "04308c2fb68f6e65f14ee1df366524bfc8df178610bc047fde25e8fc6b1ed3e38c1d63c2f55110ef43a518689849130e469f5545bacca33538b7bc1a35ed95579a") {
+        return test.fail("forty 0xff: " + hex.encode(c.public));
       }
     },
     Err(e) => {
       return test.fail(e.message());
     }
   }
-  match (p256_client(cat(hex.hex_decode("0102030405060708"), hex.hex_decode("1111111111111111111111111111111111111111111111111111111111111111")))) {
+  match (p256_client(cat(__codec_bytes(hex.decode("0102030405060708")), __codec_bytes(hex.decode("1111111111111111111111111111111111111111111111111111111111111111"))))) {
     Ok(c) => {
-      return test.assert_eq(hex.hex_encode(c.public), "0448ab0fd6aa263aaae5b3ff39220089e5708ec088e8bd253878e260c6bce83c575d117b9635dadca3ff2f31262580308ba6453264d4a109dd8d9fa0505b72c802");
+      return test.assert_eq(hex.encode(c.public), "0448ab0fd6aa263aaae5b3ff39220089e5708ec088e8bd253878e260c6bce83c575d117b9635dadca3ff2f31262580308ba6453264d4a109dd8d9fa0505b72c802");
     },
     Err(e) => {
       return test.fail(e.message());
@@ -278,7 +279,7 @@ function test_p256_reduction(): test.TestOutcome {
 
 function test_p256_refusals(): test.TestOutcome {
   let draw: u8[] = p256_draw("c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433");
-  let off: u8[] = hex.hex_decode(rfc5903_gr());
+  let off: u8[] = __codec_bytes(hex.decode(rfc5903_gr()));
   off = off.with(64, off[64] ^ 1 as u8);
   if (server_refusal(keyshare.server_share(keyshare.Secp256r1, off, draw)) != "tls keyshare: the peer's secp256r1 point is not an uncompressed point on the curve") {
     return test.fail("a point off the curve");
@@ -303,17 +304,17 @@ function test_p256_refusals(): test.TestOutcome {
 // RFC 8448 §3: the client's and the server's ephemeral keys, and the IKM of
 // the handshake secret.
 function test_x25519_trace(): test.TestOutcome {
-  match (keyshare.client_share(keyshare.X25519, hex.hex_decode("49af42ba7f7994852d713ef2784bcbcaa7911de26adc5642cb634540e7ea5005"))) {
+  match (keyshare.client_share(keyshare.X25519, __codec_bytes(hex.decode("49af42ba7f7994852d713ef2784bcbcaa7911de26adc5642cb634540e7ea5005")))) {
     Ok(c) => {
-      if (hex.hex_encode(c.public) != "99381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e529aaf2c") {
+      if (hex.encode(c.public) != "99381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e529aaf2c") {
         return test.fail("client share");
       }
-      match (keyshare.server_share(keyshare.X25519, c.public, hex.hex_decode("b1580eeadf6dd589b8ef4f2d5652578cc810e9980191ec8d058308cea216a21e"))) {
+      match (keyshare.server_share(keyshare.X25519, c.public, __codec_bytes(hex.decode("b1580eeadf6dd589b8ef4f2d5652578cc810e9980191ec8d058308cea216a21e")))) {
         Ok(s) => {
-          if (hex.hex_encode(s.public) != "c9828876112095fe66762bdbf7c672e156d6cc253b833df1dd69b1b04e751f0f") {
+          if (hex.encode(s.public) != "c9828876112095fe66762bdbf7c672e156d6cc253b833df1dd69b1b04e751f0f") {
             return test.fail("server share");
           }
-          if (hex.hex_encode(s.shared_secret) != "8bd4054fb55b9d63fdfbacf9f04b9f0d35e6d63f537563efd46272900f89492d") {
+          if (hex.encode(s.shared_secret) != "8bd4054fb55b9d63fdfbacf9f04b9f0d35e6d63f537563efd46272900f89492d") {
             return test.fail("server's shared secret");
           }
           return test.assert_eq(shown(c.shared_secret(s.public)), "8bd4054fb55b9d63fdfbacf9f04b9f0d35e6d63f537563efd46272900f89492d");
@@ -333,7 +334,7 @@ function test_x25519_trace(): test.TestOutcome {
 function test_hybrid_client_share(): test.TestOutcome {
   match (keyshare.client_share(keyshare.X25519MlKem768, hybrid_client_entropy())) {
     Ok(c) => {
-      if (c.public.len() != 1216 || hex.hex_encode(cat(c.public[1184:1216], [])) != "8f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f") {
+      if (c.public.len() != 1216 || hex.encode(cat(c.public[1184:1216], [])) != "8f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f") {
         return test.fail("the X25519 key is last");
       }
       return test.assert_eq(sha256(c.public), "512cd4183ba01d01c97c1cd0ccd5c2785c8f324182aa86361253e0f653367c60");
@@ -350,13 +351,13 @@ function test_hybrid_exchange(): test.TestOutcome {
     Ok(c) => {
       match (keyshare.server_share(keyshare.X25519MlKem768, c.public, hybrid_server_entropy())) {
         Ok(s) => {
-          if (s.public.len() != 1120 || hex.hex_encode(cat(s.public[1088:1120], [])) != "493e82fc74464a59268817623d2053c5eb8e2cc4a988b4fee179ec6b010d531d") {
+          if (s.public.len() != 1120 || hex.encode(cat(s.public[1088:1120], [])) != "493e82fc74464a59268817623d2053c5eb8e2cc4a988b4fee179ec6b010d531d") {
             return test.fail("the X25519 key is last");
           }
           if (sha256(s.public) != "888eae70c1f80945f4f6ee24975b892ac4591dccc1a539534c186f118a4ed19a") {
             return test.fail("server share");
           }
-          if (hex.hex_encode(s.shared_secret) != hybrid_shared()) {
+          if (hex.encode(s.shared_secret) != hybrid_shared()) {
             return test.fail("server's shared secret");
           }
           return test.assert_eq(shown(c.shared_secret(s.public)), hybrid_shared());
@@ -383,11 +384,11 @@ function test_hybrid_tampered_ciphertext(): test.TestOutcome {
           let bad: u8[] = s.public.with(0, s.public[0] ^ 1 as u8);
           match (c.shared_secret(bad)) {
             Ok(got) => {
-              if (got.len() != 64 || hex.hex_encode(got) == hybrid_shared()) {
-                return test.fail(hex.hex_encode(got));
+              if (got.len() != 64 || hex.encode(got) == hybrid_shared()) {
+                return test.fail(hex.encode(got));
               }
               // The X25519 half still agrees.
-              return test.assert_eq(hex.hex_encode(cat(got[32:64], [])), hex.hex_encode(cat(s.shared_secret[32:64], [])));
+              return test.assert_eq(hex.encode(cat(got[32:64], [])), hex.encode(cat(s.shared_secret[32:64], [])));
             },
             Err(e) => {
               return test.fail(e.message());
@@ -477,4 +478,18 @@ function main(): i32 {
   r = r.it("secp256r1 refusals", test_p256_refusals);
   r = r.it("SecP256r1MLKEM768 exchange", test_p256_mlkem_exchange);
   return r.finish();
+}
+
+// Decode a valid fixture. Report a malformed fixture before the test exits.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

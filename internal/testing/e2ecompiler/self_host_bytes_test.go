@@ -27,26 +27,27 @@ func u8ArrayLit(s string) string {
 func TestSelfHostBytesX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
-	// hex_decode and base64_decode both yield u8[] (#5730), so each
+	// Successful decode results contain u8[], so each
 	// result needs reading back as text before `write`. Note the
 	// failure mode if this is wrong: the self-host compiler accepts
 	// `write(u8[])` and silently emits NOTHING rather than raising a
 	// type error (#5742), so the decode half just vanishes from the
 	// output.
 	cases := []struct {
-		mod, input, encoded, decodeFmt string
+		mod, input, encoded string
 	}{
-		{"hex", "Hello, World!", "48656c6c6f2c20576f726c6421", "string_from_bytes_unchecked(%s)"},
-		{"base64", "Hello, World!", "SGVsbG8sIFdvcmxkIQ==", "string_from_bytes_unchecked(%s)"},
+		{"hex", "Hello, World!", "48656c6c6f2c20576f726c6421"},
+		{"base64", "Hello, World!", "SGVsbG8sIFdvcmxkIQ=="},
 	}
 	for _, tc := range cases {
 		t.Run(tc.mod, func(t *testing.T) {
 			// encode → write the encoded form, then `|`, then decode.
 			mainSrc := "import \"std/" + tc.mod + "\";\n" +
 				"function main(): i32 {\n" +
-				"    let e: string = " + tc.mod + "." + tc.mod + "_encode(" + u8ArrayLit(tc.input) + ");\n" +
+				"    let e: string = " + tc.mod + ".encode(" + u8ArrayLit(tc.input) + ");\n" +
 				"    write(e); write(\"|\");\n" +
-				"    write(" + fmt.Sprintf(tc.decodeFmt, tc.mod+"."+tc.mod+"_decode(e)") + ");\n" +
+				"    let Ok(d) = " + tc.mod + ".decode(e) else { return 1; };\n" +
+				"    write(string_from_bytes_unchecked(d));\n" +
 				"    return 0;\n" +
 				"}\n"
 			asm, progDir := compileSourceModload(t, runner, driverBin, mainSrc)
@@ -76,25 +77,26 @@ func TestSelfHostBytesArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
 
-	// hex_decode and base64_decode both yield u8[] (#5730), so each
+	// Successful decode results contain u8[], so each
 	// result needs reading back as text before `write`. Note the
 	// failure mode if this is wrong: the self-host compiler accepts
 	// `write(u8[])` and silently emits NOTHING rather than raising a
 	// type error (#5742), so the decode half just vanishes from the
 	// output.
 	cases := []struct {
-		mod, input, encoded, decodeFmt string
+		mod, input, encoded string
 	}{
-		{"hex", "Hello, World!", "48656c6c6f2c20576f726c6421", "string_from_bytes_unchecked(%s)"},
-		{"base64", "Hello, World!", "SGVsbG8sIFdvcmxkIQ==", "string_from_bytes_unchecked(%s)"},
+		{"hex", "Hello, World!", "48656c6c6f2c20576f726c6421"},
+		{"base64", "Hello, World!", "SGVsbG8sIFdvcmxkIQ=="},
 	}
 	for _, tc := range cases {
 		t.Run(tc.mod, func(t *testing.T) {
 			mainSrc := "import \"std/" + tc.mod + "\";\n" +
 				"function main(): i32 {\n" +
-				"    let e: string = " + tc.mod + "." + tc.mod + "_encode(" + u8ArrayLit(tc.input) + ");\n" +
+				"    let e: string = " + tc.mod + ".encode(" + u8ArrayLit(tc.input) + ");\n" +
 				"    write(e); write(\"|\");\n" +
-				"    write(" + fmt.Sprintf(tc.decodeFmt, tc.mod+"."+tc.mod+"_decode(e)") + ");\n" +
+				"    let Ok(d) = " + tc.mod + ".decode(e) else { return 1; };\n" +
+				"    write(string_from_bytes_unchecked(d));\n" +
 				"    return 0;\n" +
 				"}\n"
 			asm, progDir := compileSourceModload(t, x86runner, driverBin, mainSrc, "-target", "arm64-linux")

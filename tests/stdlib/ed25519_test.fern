@@ -1,5 +1,6 @@
 import "std/test";
 import "std/hex";
+import "std/codec";
 import "std/crypto/ed25519";
 
 // tests/stdlib/ed25519_test.fern — std/crypto/ed25519 against RFC 8032
@@ -10,7 +11,7 @@ import "std/crypto/ed25519";
 function shown(r: Result[u8[], ed25519.Ed25519Error]): string {
   match (r) {
     Ok(b) => {
-      return hex.hex_encode(b);
+      return hex.encode(b);
     },
     Err(e) => {
       return e.message();
@@ -22,8 +23,8 @@ function shown(r: Result[u8[], ed25519.Ed25519Error]): string {
 // vector checks a seed's public key, its signature over msg, and that the
 // signature verifies.
 function vector(seed: string, msg: string, public: string, sig: string): test.TestOutcome {
-  let s: u8[] = hex.hex_decode(seed);
-  let m: u8[] = hex.hex_decode(msg);
+  let s: u8[] = __codec_bytes(hex.decode(seed));
+  let m: u8[] = __codec_bytes(hex.decode(msg));
   let got: string = shown(ed25519.public_key(s));
   if (got != public) {
     return test.assert_eq(got, public);
@@ -32,7 +33,7 @@ function vector(seed: string, msg: string, public: string, sig: string): test.Te
   if (got != sig) {
     return test.assert_eq(got, sig);
   }
-  return test.assert_true(ed25519.verify(hex.hex_decode(public), m, hex.hex_decode(sig)));
+  return test.assert_true(ed25519.verify(__codec_bytes(hex.decode(public)), m, __codec_bytes(hex.decode(sig))));
 }
 
 function test_rfc_1(): test.TestOutcome {
@@ -129,16 +130,16 @@ function test_go(): test.TestOutcome {
 }
 
 function test2_public(): u8[] {
-  return hex.hex_decode("3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c");
+  return __codec_bytes(hex.decode("3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c"));
 }
 
 function test2_sig(): u8[] {
-  return hex.hex_decode("92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00");
+  return __codec_bytes(hex.decode("92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00"));
 }
 
 // TEST 2 with one bit flipped at each end of R and of S.
 function test_flipped_signature(): test.TestOutcome {
-  let msg: u8[] = hex.hex_decode("72");
+  let msg: u8[] = __codec_bytes(hex.decode("72"));
   let sig: u8[] = test2_sig();
   let at: i32[] = [0, 31, 32, 63];
   let i: i32 = 0;
@@ -152,31 +153,31 @@ function test_flipped_signature(): test.TestOutcome {
 }
 
 function test_flipped_message(): test.TestOutcome {
-  if (ed25519.verify(test2_public(), hex.hex_decode("73"), test2_sig())) {
+  if (ed25519.verify(test2_public(), __codec_bytes(hex.decode("73")), test2_sig())) {
     return test.fail("a flipped message bit verified");
   }
-  return test.assert_false(ed25519.verify(test2_public(), hex.hex_decode("7200"), test2_sig()));
+  return test.assert_false(ed25519.verify(test2_public(), __codec_bytes(hex.decode("7200")), test2_sig()));
 }
 
 // TEST 1's signature with S replaced by S + L, which Go's crypto/ed25519
 // refuses too.
 function test_non_canonical_s(): test.TestOutcome {
   return test.assert_false(ed25519.verify(
-    hex.hex_decode("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"),
-    hex.hex_decode(""),
-    hex.hex_decode("e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155"
-      + "4c8c7872aa064e049dbb3013fbf29380d25bf5f0595bbe24655141438e7a101b"),
+    __codec_bytes(hex.decode("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")),
+    __codec_bytes(hex.decode("")),
+    __codec_bytes(hex.decode("e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155"
+      + "4c8c7872aa064e049dbb3013fbf29380d25bf5f0595bbe24655141438e7a101b")),
   ));
 }
 
 function test_lengths(): test.TestOutcome {
-  if (shown(ed25519.public_key(hex.hex_decode("00"))) != "ed25519: the seed is 1 bytes, want 32") {
+  if (shown(ed25519.public_key(__codec_bytes(hex.decode("00")))) != "ed25519: the seed is 1 bytes, want 32") {
     return test.fail("a short seed's public key");
   }
-  if (shown(ed25519.sign(test2_sig(), hex.hex_decode("72"))) != "ed25519: the seed is 64 bytes, want 32") {
+  if (shown(ed25519.sign(test2_sig(), __codec_bytes(hex.decode("72")))) != "ed25519: the seed is 64 bytes, want 32") {
     return test.fail("a long seed's signature");
   }
-  let msg: u8[] = hex.hex_decode("72");
+  let msg: u8[] = __codec_bytes(hex.decode("72"));
   if (ed25519.verify(test2_sig(), msg, test2_sig())) {
     return test.fail("a 64-byte public key verified");
   }
@@ -188,19 +189,19 @@ function test_lengths(): test.TestOutcome {
 // as RFC 8032 §5.1.3 requires and Go does not, as are y = 2, for which no x
 // exists, and x = 0 with the sign bit set.
 function test_public_keys_that_do_not_decode(): test.TestOutcome {
-  let msg: u8[] = hex.hex_decode("616263");
-  let sig: u8[] = hex.hex_decode("5866666666666666666666666666666666666666666666666666666666666666"
-    + "0100000000000000000000000000000000000000000000000000000000000000");
-  if (!ed25519.verify(hex.hex_decode("0100000000000000000000000000000000000000000000000000000000000000"), msg, sig)) {
+  let msg: u8[] = __codec_bytes(hex.decode("616263"));
+  let sig: u8[] = __codec_bytes(hex.decode("5866666666666666666666666666666666666666666666666666666666666666"
+    + "0100000000000000000000000000000000000000000000000000000000000000"));
+  if (!ed25519.verify(__codec_bytes(hex.decode("0100000000000000000000000000000000000000000000000000000000000000")), msg, sig)) {
     return test.fail("the canonical identity did not verify");
   }
-  if (ed25519.verify(hex.hex_decode("eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"), msg, sig)) {
+  if (ed25519.verify(__codec_bytes(hex.decode("eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f")), msg, sig)) {
     return test.fail("y = p + 1 verified");
   }
-  if (ed25519.verify(hex.hex_decode("0200000000000000000000000000000000000000000000000000000000000000"), msg, sig)) {
+  if (ed25519.verify(__codec_bytes(hex.decode("0200000000000000000000000000000000000000000000000000000000000000")), msg, sig)) {
     return test.fail("y = 2 verified");
   }
-  return test.assert_false(ed25519.verify(hex.hex_decode("0100000000000000000000000000000000000000000000000000000000000080"), msg, sig));
+  return test.assert_false(ed25519.verify(__codec_bytes(hex.decode("0100000000000000000000000000000000000000000000000000000000000080")), msg, sig));
 }
 
 function main(): i32 {
@@ -217,4 +218,18 @@ function main(): i32 {
   r = r.it("seed, key and signature lengths", test_lengths);
   r = r.it("public keys that do not decode", test_public_keys_that_do_not_decode);
   return r.finish();
+}
+
+// Decode a valid fixture. Report a malformed fixture before the test exits.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

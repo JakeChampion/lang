@@ -2755,26 +2755,35 @@ func TestWASMBase64(t *testing.T) {
 	src := `
 import "core/int";
 import "std/base64";
+import "std/codec";
 import "std/string";
 function main(): i32 {
-    if (base64.base64_encode("".bytes()) != "") { return 1; }
-    if (base64.base64_encode("f".bytes()) != "Zg==") { return 2; }
-    if (base64.base64_encode("fo".bytes()) != "Zm8=") { return 3; }
-    if (base64.base64_encode("foo".bytes()) != "Zm9v") { return 4; }
-    if (base64.base64_encode("foob".bytes()) != "Zm9vYg==") { return 5; }
-    if (base64.base64_encode("fooba".bytes()) != "Zm9vYmE=") { return 6; }
-    if (base64.base64_encode("foobar".bytes()) != "Zm9vYmFy") { return 7; }
-    if (base64.base64_encode("hello world".bytes()) != "aGVsbG8gd29ybGQ=") { return 8; }
-    if (string_from_bytes_unchecked(base64.base64_decode("")) != "") { return 9; }
-    if (string_from_bytes_unchecked(base64.base64_decode("Zg==")) != "f") { return 10; }
-    if (string_from_bytes_unchecked(base64.base64_decode("Zm8=")) != "fo") { return 11; }
-    if (string_from_bytes_unchecked(base64.base64_decode("Zm9v")) != "foo") { return 12; }
-    if (string_from_bytes_unchecked(base64.base64_decode("Zm9vYg==")) != "foob") { return 13; }
-    if (string_from_bytes_unchecked(base64.base64_decode("Zm9vYmE=")) != "fooba") { return 14; }
-    if (string_from_bytes_unchecked(base64.base64_decode("Zm9vYmFy")) != "foobar") { return 15; }
-    if (string_from_bytes_unchecked(base64.base64_decode("aGVsbG8gd29ybGQ=")) != "hello world") { return 16; }
+    if (base64.encode("".bytes()) != "") { return 1; }
+    if (base64.encode("f".bytes()) != "Zg==") { return 2; }
+    if (base64.encode("fo".bytes()) != "Zm8=") { return 3; }
+    if (base64.encode("foo".bytes()) != "Zm9v") { return 4; }
+    if (base64.encode("foob".bytes()) != "Zm9vYg==") { return 5; }
+    if (base64.encode("fooba".bytes()) != "Zm9vYmE=") { return 6; }
+    if (base64.encode("foobar".bytes()) != "Zm9vYmFy") { return 7; }
+    if (base64.encode("hello world".bytes()) != "aGVsbG8gd29ybGQ=") { return 8; }
+    if (string_from_bytes_unchecked(__codec_bytes(base64.decode(""))) != "") { return 9; }
+    if (string_from_bytes_unchecked(__codec_bytes(base64.decode("Zg=="))) != "f") { return 10; }
+    if (string_from_bytes_unchecked(__codec_bytes(base64.decode("Zm8="))) != "fo") { return 11; }
+    if (string_from_bytes_unchecked(__codec_bytes(base64.decode("Zm9v"))) != "foo") { return 12; }
+    if (string_from_bytes_unchecked(__codec_bytes(base64.decode("Zm9vYg=="))) != "foob") { return 13; }
+    if (string_from_bytes_unchecked(__codec_bytes(base64.decode("Zm9vYmE="))) != "fooba") { return 14; }
+    if (string_from_bytes_unchecked(__codec_bytes(base64.decode("Zm9vYmFy"))) != "foobar") { return 15; }
+    if (string_from_bytes_unchecked(__codec_bytes(base64.decode("aGVsbG8gd29ybGQ="))) != "hello world") { return 16; }
     return 0;
-}`
+}
+// Decode a valid fixture. Report a malformed fixture before ending the test.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => { return bytes; },
+    Err(problem) => { eprint(problem.message()); exit(98); return []; }
+  }
+}
+`
 	if got := runWasm(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (base64)", got)
 	}
@@ -6342,31 +6351,40 @@ func TestWASMHex(t *testing.T) {
 	src := `
 import "core/int";
 import "std/hex";
+import "std/codec";
 import "std/string";
 function main(): i32 {
 		// empty round-trips to empty
-		if ((hex.hex_encode("".bytes())).len() != 0) { return 1; }
-		if ((hex.hex_decode("")).len() != 0) { return 2; }
+		if ((hex.encode("".bytes())).len() != 0) { return 1; }
+		if ((__codec_bytes(hex.decode(""))).len() != 0) { return 2; }
 
 		// "hi" -> "6869"
-		if (hex.hex_encode("hi".bytes()) != "6869") { return 3; }
-		if (string_from_bytes_unchecked(hex.hex_decode("6869")) != "hi") { return 4; }
+		if (hex.encode("hi".bytes()) != "6869") { return 3; }
+		if (string_from_bytes_unchecked(__codec_bytes(hex.decode("6869"))) != "hi") { return 4; }
 
 		// every nibble: byte 0xab -> "ab"
-		if (hex.hex_encode("hello world".bytes()) != "68656c6c6f20776f726c64") { return 5; }
-		if (string_from_bytes_unchecked(hex.hex_decode("68656c6c6f20776f726c64")) != "hello world") { return 6; }
+		if (hex.encode("hello world".bytes()) != "68656c6c6f20776f726c64") { return 5; }
+		if (string_from_bytes_unchecked(__codec_bytes(hex.decode("68656c6c6f20776f726c64"))) != "hello world") { return 6; }
 
 		// uppercase hex digits decode the same
-		if (string_from_bytes_unchecked(hex.hex_decode("48454C4C4F")) != "HELLO") { return 7; }
+		if (string_from_bytes_unchecked(__codec_bytes(hex.decode("48454C4C4F"))) != "HELLO") { return 7; }
 
-		// odd-length tail and non-hex char both halt the decoder.
-		// "414" -> "A" (the trailing "4" is incomplete and dropped).
-		if (string_from_bytes_unchecked(hex.hex_decode("414")) != "A") { return 8; }
-		// "41xx" -> "A" (decoder bails at the first non-hex byte).
-		if (string_from_bytes_unchecked(hex.hex_decode("41xx")) != "A") { return 9; }
+		// Odd lengths and invalid bytes reject the complete input.
+		// The error offset points to the end of an incomplete pair.
+		match (hex.decode("414")) { Err(e) => { if (e.offset != 3 || e.kind != codec.InvalidLength) { return 8; } }, Ok(_) => { return 8; } }
+		// Invalid-byte errors identify the first invalid byte.
+		match (hex.decode("41xx")) { Err(e) => { if (e.offset != 2 || e.kind != codec.InvalidByte(120 as u8)) { return 9; } }, Ok(_) => { return 9; } }
 
 		return 0;
-	}`
+	}
+// Decode a valid fixture. Report a malformed fixture before ending the test.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => { return bytes; },
+    Err(problem) => { eprint(problem.message()); exit(98); return []; }
+  }
+}
+`
 	if got := runWasm(t, src); got != 0 {
 		t.Errorf("WASM hex: exit = %d, want 0", got)
 	}

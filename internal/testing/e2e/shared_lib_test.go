@@ -1025,18 +1025,27 @@ func TestStdlibInSharedLib(t *testing.T) {
 	// hold. 63 == all six pass.
 	src := `import "std/string";
 import "std/base64";
+import "std/codec";
 import "std/hex";
 function check(env: usize, cls: usize): i32 {
     let ok: i32 = 0;
     if (("HELLO").to_lower() == "hello") { ok = ok + 1; }
     if (("hello").to_upper() == "HELLO") { ok = ok + 2; }
-    if (base64.base64_encode("Man".bytes()) == "TWFu") { ok = ok + 4; }
-    if (string_from_bytes_unchecked(base64.base64_decode("TWFu")) == "Man") { ok = ok + 8; }
-    if (hex.hex_encode("AB".bytes()) == "4142") { ok = ok + 16; }
-    if (string_from_bytes_unchecked(hex.hex_decode("4142")) == "AB") { ok = ok + 32; }
+    if (base64.encode("Man".bytes()) == "TWFu") { ok = ok + 4; }
+    if (string_from_bytes_unchecked(__codec_bytes(base64.decode("TWFu"))) == "Man") { ok = ok + 8; }
+    if (hex.encode("AB".bytes()) == "4142") { ok = ok + 16; }
+    if (string_from_bytes_unchecked(__codec_bytes(hex.decode("4142"))) == "AB") { ok = ok + 32; }
     return ok;
 }
-function main(): i32 { return 0; }`
+function main(): i32 { return 0; }
+// Decode a valid fixture. Report a malformed fixture before ending the test.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => { return bytes; },
+    Err(problem) => { eprint(problem.message()); exit(98); return []; }
+  }
+}
+`
 	exps := []string{"check"}
 	so := selfHostSharedX86(t, src, exps...)
 	dir := t.TempDir()

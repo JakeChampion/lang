@@ -48,10 +48,10 @@ function sums(text: string): i32 {
 }
 
 function codecs(bytes: [u8]): i32 {
-  if (hex.hex_encode(bytes) != "616263" || hex.hex_encode_upper(bytes) != "616263") {
+  if (hex.encode(bytes) != "616263" || hex.encode_upper(bytes) != "616263") {
     return 10;
   }
-  if (b64.base64_encode(bytes) != "YWJj" || b64.base64url_encode(bytes) != "YWJj" || b32.base32_encode(bytes) != "MFRGG===") {
+  if (b64.encode(bytes) != "YWJj" || b64.encode_url(bytes) != "YWJj" || b32.encode(bytes) != "MFRGG===") {
     return 11;
   }
   if (hash.xxh64(bytes, 0 as u64) != 0x44bc2cf5ad770999 || hash.cksum_of(bytes) != 1219131554 || hash.crc32_of(bytes) != 891568578 || hash.bsd_sum_of(bytes) != 16556 || hash.sysv_sum_of(bytes) != 294) {
@@ -61,49 +61,49 @@ function codecs(bytes: [u8]): i32 {
   if (crypto.md5_hex(bytes) != "900150983cd24fb0d6963f7d28e17f72") {
     return 20;
   }
-  if (hex.hex_encode(crypto.md5_bytes(bytes)) != "900150983cd24fb0d6963f7d28e17f72") {
+  if (hex.encode(crypto.md5_bytes(bytes)) != "900150983cd24fb0d6963f7d28e17f72") {
     return 21;
   }
   if (crypto.sha1_hex(bytes) != "a9993e364706816aba3e25717850c26c9cd0d89d") {
     return 22;
   }
-  if (hex.hex_encode(crypto.sha1_bytes(bytes)) != "a9993e364706816aba3e25717850c26c9cd0d89d") {
+  if (hex.encode(crypto.sha1_bytes(bytes)) != "a9993e364706816aba3e25717850c26c9cd0d89d") {
     return 23;
   }
   if (crypto.sha224_hex(bytes) != "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7") {
     return 24;
   }
-  if (hex.hex_encode(crypto.sha224_bytes(bytes)) != "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7") {
+  if (hex.encode(crypto.sha224_bytes(bytes)) != "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7") {
     return 25;
   }
   if (crypto.sha256_hex(bytes) != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") {
     return 26;
   }
-  if (hex.hex_encode(crypto.sha256_bytes(bytes)) != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") {
+  if (hex.encode(crypto.sha256_bytes(bytes)) != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") {
     return 27;
   }
   if (crypto.sha384_hex(bytes) != "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7") {
     return 28;
   }
-  if (hex.hex_encode(crypto.sha384_bytes(bytes)) != "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7") {
+  if (hex.encode(crypto.sha384_bytes(bytes)) != "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7") {
     return 29;
   }
   if (crypto.sha512_hex(bytes) != "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f") {
     return 30;
   }
-  if (hex.hex_encode(crypto.sha512_bytes(bytes)) != "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f") {
+  if (hex.encode(crypto.sha512_bytes(bytes)) != "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f") {
     return 31;
   }
   if (crypto.sm3_hex(bytes) != "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0") {
     return 32;
   }
-  if (hex.hex_encode(crypto.sm3_bytes(bytes)) != "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0") {
+  if (hex.encode(crypto.sm3_bytes(bytes)) != "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0") {
     return 33;
   }
   if (crypto.blake2b_hex(bytes, 64) != "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923") {
     return 34;
   }
-  if (hex.hex_encode(crypto.blake2b_bytes(bytes, 64)) != "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923") {
+  if (hex.encode(crypto.blake2b_bytes(bytes, 64)) != "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923") {
     return 35;
   }
   if (crypto.sha3_256_hex(bytes) != "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532") {
@@ -131,13 +131,13 @@ function main(): i32 {
   }
   let key: [u8] = "key".as_bytes();
   let mac: u8[] = crypto.hmac_sha256(key, view);
-  if (hex.hex_encode(mac) != "9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab" || crypto.hmac_sha256_hex(key, view) != "9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab" || !crypto.hmac_verify(key, view, mac) || !crypto.hmac_verify_hex(key, view, "9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab")) {
+  if (hex.encode(mac) != "9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab" || crypto.hmac_sha256_hex(key, view) != "9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab" || !crypto.hmac_verify(key, view, mac) || !crypto.hmac_verify_hex(key, view, "9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab")) {
     return 50;
   }
   let password: [u8] = "password".as_bytes();
   let salt: [u8] = "salt".as_bytes();
   let derived: u8[] = crypto.pbkdf2_sha256(password, salt, 1, 32);
-  if (hex.hex_encode(derived) != "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b" || !crypto.pbkdf2_verify(password, salt, 1, derived) || !crypto.pbkdf2_verify_hex(password, salt, 1, "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b")) {
+  if (hex.encode(derived) != "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b" || !crypto.pbkdf2_verify(password, salt, 1, derived) || !crypto.pbkdf2_verify_hex(password, salt, 1, "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b")) {
     return 51;
   }
   if (!crypto.consteq(view, slice) || crypto.consteq(view, "abd".as_bytes()) || crypto.consteq(view, "ab".as_bytes())) {

@@ -1,5 +1,6 @@
 import "std/test";
 import "std/hex";
+import "std/codec";
 import "std/i32";
 import "std/tls/client";
 import "std/tls/handshake";
@@ -108,7 +109,7 @@ const CLIENT_PKCS8: string = "-----BEGIN PRIVATE KEY-----\n"
   + "-----END PRIVATE KEY-----\n";
 
 function roots(): verify.Roots {
-  return verify.roots([hex.hex_decode(ROOT)]);
+  return verify.roots([__codec_bytes(hex.decode(ROOT))]);
 }
 
 function key_outcome(r: Result[identity.PrivateKey, identity.KeyError]): string {
@@ -116,10 +117,10 @@ function key_outcome(r: Result[identity.PrivateKey, identity.KeyError]): string 
     Ok(k) => {
       match (k) {
         identity.EcdsaKey(e) => {
-          return "ec " + hex.hex_encode(e.public_point()).take(20);
+          return "ec " + hex.encode(e.public_point()).take(20);
         },
         identity.Ed25519Seed(seed) => {
-          return "ed25519 " + hex.hex_encode(seed).take(8);
+          return "ed25519 " + hex.encode(seed).take(8);
         }
       }
     },
@@ -164,7 +165,7 @@ function test_key_refusals(): test.TestOutcome {
     return test.fail("sec1: " + key_outcome(identity.sec1([0x30 as u8, 3 as u8, 2 as u8, 1 as u8, 1 as u8])));
   }
   // A scalar of zeros is out of range.
-  let zero_scalar: u8[] = hex.hex_decode("303102010104200000000000000000000000000000000000000000000000000000000000000000a00a06082a8648ce3d030107");
+  let zero_scalar: u8[] = __codec_bytes(hex.decode("303102010104200000000000000000000000000000000000000000000000000000000000000000a00a06082a8648ce3d030107"));
   return test.assert_eq(key_outcome(identity.sec1(zero_scalar)), "tls identity: ecdsa: the private scalar is not in [1, n) at the curve's size");
 }
 
@@ -198,7 +199,7 @@ function test_identity(): test.TestOutcome {
 function identity_of(leaf: string, key_pem: string): identity.Identity {
   match (identity.private_key_from_pem(key_pem)) {
     Ok(k) => {
-      match (identity.pair([hex.hex_decode(leaf)], k)) {
+      match (identity.pair([__codec_bytes(hex.decode(leaf))], k)) {
         Ok(id) => {
           return id;
         },
@@ -434,7 +435,7 @@ function test_no_common_scheme(): test.TestOutcome {
               return test.fail("accepted");
             },
             Err(f) => {
-              return test.assert_eq(f.message() + " " + hex.hex_encode(f.alert), "tls handshake: no signature scheme in common 15030300020228");
+              return test.assert_eq(f.message() + " " + hex.encode(f.alert), "tls handshake: no signature scheme in common 15030300020228");
             }
           }
         },
@@ -454,7 +455,7 @@ function test_no_common_scheme(): test.TestOutcome {
 // to `start` without that check fails when the client checks the
 // CertificateVerify.
 function test_wrong_key(): test.TestOutcome {
-  let id: identity.Identity = identity.Identity { chain: [hex.hex_decode(P256_LEAF)], key: identity_of(P384_LEAF, P384_PKCS8).key };
+  let id: identity.Identity = identity.Identity { chain: [__codec_bytes(hex.decode(P256_LEAF))], key: identity_of(P384_LEAF, P384_PKCS8).key };
   let cc: client.Config = client.config("tls.example", roots());
   match (connect(cc, server.config(id))) {
     Ok(p) => {
@@ -602,7 +603,7 @@ function test_resumption(): test.TestOutcome {
   if (how(connect(cc.with_ticket(t), sc)) != "resumed ping pong 1") {
     return test.fail("resumed: " + how(connect(cc.with_ticket(t), sc)));
   }
-  let other: server.Config = sc.with_ticket_key(hex.hex_decode("0000000000000000000000000000000000000000000000000000000000000000"));
+  let other: server.Config = sc.with_ticket_key(__codec_bytes(hex.decode("0000000000000000000000000000000000000000000000000000000000000000")));
   if (how(connect(cc.with_ticket(t), other)) != "full ping pong 1") {
     return test.fail("another key: " + how(connect(cc.with_ticket(t), other)));
   }
@@ -710,11 +711,11 @@ function refused_with(cc: client.Config, sc: server.Config): string {
 function test_client_signature_refused(): test.TestOutcome {
   let cc: client.Config = client.config("tls.example", roots());
   let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8)).with_client_roots(roots());
-  let other_ed: identity.Identity = identity.Identity { ...identity_of(ED_LEAF, ED_PKCS8), chain: [hex.hex_decode(CLIENT_LEAF)] };
+  let other_ed: identity.Identity = identity.Identity { ...identity_of(ED_LEAF, ED_PKCS8), chain: [__codec_bytes(hex.decode(CLIENT_LEAF))] };
   if (refused_with(cc.with_identity(other_ed), sc) != "server: the client's CertificateVerify does not verify / client: tls handshake: the peer sent alert 51") {
     return test.fail("another key: " + refused_with(cc.with_identity(other_ed), sc));
   }
-  let p256: identity.Identity = identity.Identity { ...identity_of(P256_LEAF, P256_PKCS8), chain: [hex.hex_decode(CLIENT_LEAF)] };
+  let p256: identity.Identity = identity.Identity { ...identity_of(P256_LEAF, P256_PKCS8), chain: [__codec_bytes(hex.decode(CLIENT_LEAF))] };
   return test.assert_eq(refused_with(cc.with_identity(p256), sc), "server: the client's CertificateVerify names a scheme its key cannot make / client: tls handshake: the peer sent alert 47");
 }
 
@@ -1023,4 +1024,18 @@ function main(): i32 {
   r = r.it("client signature refused", test_client_signature_refused);
   r = r.it("client certificate and resumption", test_client_certificate_resumed);
   return r.finish();
+}
+
+// Decode a valid fixture. Report a malformed fixture before the test exits.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

@@ -138,8 +138,8 @@ function __challenge(status: i32, detail: string, challenge: string): HttpRespon
 // name may not hold one, a password may. Neither may hold a control
 // character (RFC 7617 §2).
 function __user_pass(encoded: string): Option[(string, string)] {
-  match (base64.base64_decode_strict(encoded)) {
-    Some(bytes) => {
+  match (base64.decode(encoded)) {
+    Ok(bytes) => {
       match (utf8.from_bytes(bytes)) {
         Some(text) => {
           let Some(colon) = text.index_of(":") else {
@@ -155,7 +155,7 @@ function __user_pass(encoded: string): Option[(string, string)] {
         }
       }
     },
-    None => {
+    Err(_) => {
       return None;
     }
   }

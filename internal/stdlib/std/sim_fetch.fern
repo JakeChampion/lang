@@ -230,7 +230,7 @@ pub function (n: Net) sent(i: i32): u8[] {
     let none: u8[] = [];
     return none;
   }
-  return hex.hex_decode(all[i]);
+  return __journal_bytes(all[i]);
 }
 
 impl fetch.Transport for Net {
@@ -295,7 +295,7 @@ impl fetch.Transport for Net {
     }
     // Cell admits strings but not arrays. Encode the shared journal as
     // ASCII instead of keeping arbitrary request bytes in a string.
-    let encoded: string = hex.hex_encode(bytes);
+    let encoded: string = hex.encode(bytes);
     self.sent.set(self.sent.get() + int.int_to_string(encoded.len()) + ":" + encoded);
     if (__busy(self, row)) {
       return bytes.len();
@@ -415,7 +415,7 @@ pub function taped(req: fetch.Request, resp: HttpResponse): string {
     },
     None => {
       keys = keys.append("body_hex");
-      values = values.append(json.JString(hex.hex_encode(body)));
+      values = values.append(json.JString(hex.encode(body)));
     }
   }
   return json.json_encode(json.JObject(json.object_of(keys, values))) + "\n";
@@ -512,7 +512,10 @@ function __exchange_of(o: json.JsonObject): Option[__Exchange] {
   if (u.query.len() > 0) {
     target = target + "?" + u.query;
   }
-  let resp: HttpResponse = HttpResponse { status: status, body: BodyBytes(__body_member(o)), headers: __headers_member(o), trailers: headers.header_map_new(), background: None };
+  let Some(body) = __body_member(o) else {
+    return None;
+  };
+  let resp: HttpResponse = HttpResponse { status: status, body: BodyBytes(body), headers: __headers_member(o), trailers: headers.header_map_new(), background: None };
   return Some(__Exchange { host: u.host, port: port, target: target, answer: raw_bytes(http.http_serialize_response_to_bytes(method, "HTTP/1.1", resp, false)) });
 }
 
@@ -577,11 +580,18 @@ function __text(v: json.JsonValue): string {
   return "";
 }
 
-function __body_member(o: json.JsonObject): u8[] {
+function __body_member(o: json.JsonObject): Option[u8[]] {
   if (o.contains("body_hex")) {
-    return hex.hex_decode(__string_member(o, "body_hex"));
+    match (hex.decode(__string_member(o, "body_hex"))) {
+      Ok(bytes) => {
+        return Some(bytes);
+      },
+      Err(_) => {
+        return None;
+      }
+    }
   }
-  return __string_member(o, "body").bytes();
+  return Some(__string_member(o, "body").bytes());
 }
 
 // `__replayed(n, e)` — `n` with `e`'s answer appended to the route its
@@ -808,7 +818,7 @@ function __response_entry(s: Server, bytes: u8[]): string {
       if (f.keep_alive) {
         flag = "k";
       }
-      return flag + hex.hex_encode(http.http_serialize_response_to_bytes(f.request.method, f.version, resp, f.keep_alive));
+      return flag + hex.encode(http.http_serialize_response_to_bytes(f.request.method, f.version, resp, f.keep_alive));
     },
     http.Incomplete => {
       return __refused_entry();
@@ -824,7 +834,7 @@ function __response_entry(s: Server, bytes: u8[]): string {
 }
 
 function __refused_entry(): string {
-  return "c" + hex.hex_encode(http.http_serialize_response_conn_bytes(http.text(400, "bad request"), false));
+  return "c" + hex.encode(http.http_serialize_response_conn_bytes(http.text(400, "bad request"), false));
 }
 
 // `__answer(n, route, i)` — the answer to `route`'s `i`-th request, the
@@ -833,7 +843,7 @@ function __refused_entry(): string {
 function __answer(n: Net, route: i32, i: i32): Answer {
   if (route <= 0 - 3) {
     let entry: string = __journal_all(n.made.get())[0 - 3 - route];
-    return Answer { bytes: hex.hex_decode(slice_unchecked(entry, 1, entry.len()).to_owned()), first_ms: 0, chunk_ms: 0, chunk: 0, close: entry[0] == b'c' };
+    return Answer { bytes: __journal_bytes(slice_unchecked(entry, 1, entry.len()).to_owned()), first_ms: 0, chunk_ms: 0, chunk: 0, close: entry[0] == b'c' };
   }
   if (route < 0) {
     return reply(404, "");
@@ -945,4 +955,18 @@ function __journal_all(log: string): string[] {
     at = at + len;
   }
   return out;
+}
+
+// Journal entries contain only hex produced by this module.
+function __journal_bytes(encoded: string): u8[] {
+  match (hex.decode(encoded)) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint("sim_fetch: invalid internal journal: " + problem.message());
+      exit(1);
+    }
+  }
+  return [];
 }

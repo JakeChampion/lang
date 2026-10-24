@@ -42,14 +42,14 @@ function main(): i32 {
     // The digest pipes straight into an encoder — no intervening
     // unchecked construction — and agrees with the _hex variant, which
     // does still return text.
-    if (hex.hex_encode(d) != crypto.sha256_hex("abc".as_bytes())) { return 4; }
-    if (hex.hex_encode(d) != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") { return 5; }
+    if (hex.encode(d) != crypto.sha256_hex("abc".as_bytes())) { return 4; }
+    if (hex.encode(d) != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") { return 5; }
 
     // An HMAC key is u8[]; the message stays text.
     let key: u8[] = "key".bytes();
     let mac: u8[] = crypto.hmac_sha256(key, "The quick brown fox jumps over the lazy dog".as_bytes());
     if (mac.len() != 32) { return 6; }
-    if (hex.hex_encode(mac) != "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8") { return 7; }
+    if (hex.encode(mac) != "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8") { return 7; }
 
     // consteq compares u8[], so hmac_verify takes the digest directly.
     if (!crypto.consteq(mac, mac)) { return 8; }
@@ -60,7 +60,7 @@ function main(): i32 {
     // PBKDF2: password is text, salt and the derived key are bytes.
     let dk: u8[] = crypto.pbkdf2_sha256("password".as_bytes(), "salt".bytes(), 1, 32);
     if (dk.len() != 32) { return 12; }
-    if (hex.hex_encode(dk) != "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b") { return 13; }
+    if (hex.encode(dk) != "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b") { return 13; }
     if (!crypto.pbkdf2_verify("password".as_bytes(), "salt".bytes(), 1, dk)) { return 14; }
     if (crypto.pbkdf2_verify("wrongpw".as_bytes(), "salt".bytes(), 1, dk)) { return 15; }
 
@@ -74,18 +74,18 @@ function main(): i32 {
     let info: u8[] = [240 as u8,241 as u8,242 as u8,243 as u8,244 as u8,245 as u8,246 as u8,247 as u8,248 as u8,249 as u8];
     let prk: u8[] = crypto.hkdf_extract(salt, ikm);
     if (prk.len() != 32) { return 16; }
-    if (hex.hex_encode(prk) != "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5") { return 17; }
+    if (hex.encode(prk) != "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5") { return 17; }
     // extract's output feeds expand's prk directly — the coupling that
     // made this slice indivisible.
     let okm: u8[] = crypto.hkdf_expand(prk, info, 42);
     if (okm.len() != 42) { return 18; }
-    if (hex.hex_encode(okm) != "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865") { return 19; }
+    if (hex.encode(okm) != "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865") { return 19; }
     if (!crypto.consteq(okm, crypto.hkdf_sha256(salt, ikm, info, 42))) { return 20; }
-    if (crypto.hkdf_sha256_hex(salt, ikm, info, 42) != hex.hex_encode(okm)) { return 21; }
+    if (crypto.hkdf_sha256_hex(salt, ikm, info, 42) != hex.encode(okm)) { return 21; }
 
     // TOTP: a base32-decoded secret is exactly what the key parameter
     // wants now, with no conversion in between (RFC 6238 App. B).
-    let secret: u8[] = b32.base32_decode(b32.base32_encode("12345678901234567890123456789012".bytes()));
+    let secret: u8[] = b32.decode(b32.encode("12345678901234567890123456789012".bytes()));
     if (crypto.totp_sha256(secret, 59, 30, 8) != 46119246) { return 22; }
     if (crypto.hotp_sha256(secret, 1, 8) != 46119246) { return 23; }
 

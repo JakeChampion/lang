@@ -8,22 +8,31 @@ import "testing"
 // skips itself when its toolchain is absent.
 const base32Prog = `
 import "std/base32" as b32;
+import "std/codec";
 import "std/string";
 function main(): i32 {
-    if (b32.base32_encode("f".bytes()) != "MY======") { return 1; }
-    if (b32.base32_encode("fo".bytes()) != "MZXQ====") { return 2; }
-    if (b32.base32_encode("foo".bytes()) != "MZXW6===") { return 3; }
-    if (b32.base32_encode("foob".bytes()) != "MZXW6YQ=") { return 4; }
-    if (b32.base32_encode("fooba".bytes()) != "MZXW6YTB") { return 5; }
-    if (b32.base32_encode("foobar".bytes()) != "MZXW6YTBOI======") { return 6; }
-    if (string_from_bytes_unchecked(b32.base32_decode("MZXW6YTBOI======")) != "foobar") { return 7; }
-    if (string_from_bytes_unchecked(b32.base32_decode("")) != "" || b32.base32_encode("".bytes()) != "") { return 8; }
+    if (b32.encode("f".bytes()) != "MY======") { return 1; }
+    if (b32.encode("fo".bytes()) != "MZXQ====") { return 2; }
+    if (b32.encode("foo".bytes()) != "MZXW6===") { return 3; }
+    if (b32.encode("foob".bytes()) != "MZXW6YQ=") { return 4; }
+    if (b32.encode("fooba".bytes()) != "MZXW6YTB") { return 5; }
+    if (b32.encode("foobar".bytes()) != "MZXW6YTBOI======") { return 6; }
+    if (string_from_bytes_unchecked(__codec_bytes(b32.decode("MZXW6YTBOI======"))) != "foobar") { return 7; }
+    if (string_from_bytes_unchecked(__codec_bytes(b32.decode(""))) != "" || b32.encode("".bytes()) != "") { return 8; }
     // Arbitrary bytes (incl. 0x00 / 0xFF) stay u8[] end to end (#5730);
     // compare through the encoded text, since u8[] has no structural ==.
     let raw: u8[] = [0 as u8, 255 as u8, 128 as u8, 1 as u8, 254 as u8];
-    let enc: string = b32.base32_encode(raw);
-    if (b32.base32_encode(b32.base32_decode(enc)) != enc) { return 9; }
+    let enc: string = b32.encode(raw);
+    if (b32.encode(__codec_bytes(b32.decode(enc))) != enc) { return 9; }
     return 42;
+}
+
+// Decode a valid fixture. Report a malformed fixture before ending the test.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => { return bytes; },
+    Err(problem) => { eprint(problem.message()); exit(98); return []; }
+  }
 }
 `
 

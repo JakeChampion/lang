@@ -1,5 +1,6 @@
 import "std/test";
 import "std/hex";
+import "std/codec";
 import "std/string";
 import "std/crypto/chacha20poly1305";
 
@@ -12,7 +13,7 @@ import "std/crypto/chacha20poly1305";
 function shown(r: Result[u8[], chacha20poly1305.AeadError]): string {
   match (r) {
     Ok(b) => {
-      return hex.hex_encode(b);
+      return hex.encode(b);
     },
     Err(e) => {
       return e.message();
@@ -36,11 +37,11 @@ function sunscreen(): u8[] {
 }
 
 function aead_nonce(): u8[] {
-  return hex.hex_decode("070000004041424344454647");
+  return __codec_bytes(hex.decode("070000004041424344454647"));
 }
 
 function aead_aad(): u8[] {
-  return hex.hex_decode("50515253c0c1c2c3c4c5c6c7");
+  return __codec_bytes(hex.decode("50515253c0c1c2c3c4c5c6c7"));
 }
 
 function rfc_sealed(): string {
@@ -48,23 +49,23 @@ function rfc_sealed(): string {
 }
 
 function test_block(): test.TestOutcome {
-  let zeros: u8[] = hex.hex_decode("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000");
+  let zeros: u8[] = __codec_bytes(hex.decode("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"));
   return test.assert_eq(
-    shown(chacha20poly1305.chacha20_xor(key_seq(0), hex.hex_decode("000000090000004a00000000"), 1 as u32, zeros)),
+    shown(chacha20poly1305.chacha20_xor(key_seq(0), __codec_bytes(hex.decode("000000090000004a00000000")), 1 as u32, zeros)),
     "10f1e7e4d13b5915500fdd1fa32071c4c7d1f4c733c068030422aa9ac3d46c4ed2826446079faa0914c2d705d98b02a2b5129cd1de164eb9cbd083e8a2503c4e",
   );
 }
 
 function test_cipher(): test.TestOutcome {
   return test.assert_eq(
-    shown(chacha20poly1305.chacha20_xor(key_seq(0), hex.hex_decode("000000000000004a00000000"), 1 as u32, sunscreen())),
+    shown(chacha20poly1305.chacha20_xor(key_seq(0), __codec_bytes(hex.decode("000000000000004a00000000")), 1 as u32, sunscreen())),
     "6e2e359a2568f98041ba0728dd0d6981e97e7aec1d4360c20a27afccfd9fae0bf91b65c5524733ab8f593dabcd62b3571639d624e65152ab8f530c359f0861d807ca0dbf500d6a6156a38e088a22b65e52bc514d16ccf806818ce91ab77937365af90bbf74a35be6b40b8eedf2785e42874d",
   );
 }
 
 function test_poly1305(): test.TestOutcome {
   return test.assert_eq(
-    shown(chacha20poly1305.poly1305(hex.hex_decode("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b"), "Cryptographic Forum Research Group".bytes())),
+    shown(chacha20poly1305.poly1305(__codec_bytes(hex.decode("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b")), "Cryptographic Forum Research Group".bytes())),
     "a8061dc1305136c6c22b8baf0c0127a9",
   );
 }
@@ -73,7 +74,7 @@ function test_poly1305(): test.TestOutcome {
 function test_poly1305_ones(): test.TestOutcome {
   let ff: string = "ffffffffffffffffffffffffffffffff";
   return test.assert_eq(
-    shown(chacha20poly1305.poly1305(hex.hex_decode(ff + ff), hex.hex_decode(ff + ff + ff + ff))),
+    shown(chacha20poly1305.poly1305(__codec_bytes(hex.decode(ff + ff)), __codec_bytes(hex.decode(ff + ff + ff + ff)))),
     "900fe32bc15fa8d7bca8efe4c7e37eb1",
   );
 }
@@ -81,7 +82,7 @@ function test_poly1305_ones(): test.TestOutcome {
 // h lands in [2^130 - 5, 2^130), so the final reduction must subtract p.
 function test_poly1305_reduces(): test.TestOutcome {
   return test.assert_eq(
-    shown(chacha20poly1305.poly1305(hex.hex_decode("0200000000000000000000000000000000000000000000000000000000000000"), hex.hex_decode("ffffffffffffffffffffffffffffffff"))),
+    shown(chacha20poly1305.poly1305(__codec_bytes(hex.decode("0200000000000000000000000000000000000000000000000000000000000000")), __codec_bytes(hex.decode("ffffffffffffffffffffffffffffffff")))),
     "03000000000000000000000000000000",
   );
 }
@@ -91,7 +92,7 @@ function test_seal(): test.TestOutcome {
 }
 
 function test_open(): test.TestOutcome {
-  return test.assert_eq(shown(chacha20poly1305.open(key_seq(128), aead_nonce(), hex.hex_decode(rfc_sealed()), aead_aad())), hex.hex_encode(sunscreen()));
+  return test.assert_eq(shown(chacha20poly1305.open(key_seq(128), aead_nonce(), __codec_bytes(hex.decode(rfc_sealed())), aead_aad())), hex.encode(sunscreen()));
 }
 
 function test_seal_empty(): test.TestOutcome {
@@ -128,7 +129,7 @@ function test_seal_long(): test.TestOutcome {
 }
 
 function test_open_long(): test.TestOutcome {
-  return test.assert_eq(shown(chacha20poly1305.open(key_seq(128), aead_nonce(), hex.hex_decode(long_sealed()), long_aad())), hex.hex_encode(long_plaintext()));
+  return test.assert_eq(shown(chacha20poly1305.open(key_seq(128), aead_nonce(), __codec_bytes(hex.decode(long_sealed())), long_aad())), hex.encode(long_plaintext()));
 }
 
 function forged(r: Result[u8[], chacha20poly1305.AeadError]): boolean {
@@ -153,7 +154,7 @@ function forged(r: Result[u8[], chacha20poly1305.AeadError]): boolean {
 // A flipped bit in the tag or the ciphertext, other additional data, or a
 // message shorter than a tag does not open.
 function test_open_refuses(): test.TestOutcome {
-  let sealed: u8[] = hex.hex_decode(rfc_sealed());
+  let sealed: u8[] = __codec_bytes(hex.decode(rfc_sealed()));
   let last: i32 = sealed.len() - 1;
   if (!forged(chacha20poly1305.open(key_seq(128), aead_nonce(), sealed.with(last, sealed[last] ^ 1 as u8), aead_aad()))) {
     return test.fail("a flipped tag bit opened");
@@ -164,7 +165,7 @@ function test_open_refuses(): test.TestOutcome {
   if (!forged(chacha20poly1305.open(key_seq(128), aead_nonce(), sealed, "other".bytes()))) {
     return test.fail("other additional data opened");
   }
-  if (!forged(chacha20poly1305.open(key_seq(128), aead_nonce(), hex.hex_decode("00112233"), aead_aad()))) {
+  if (!forged(chacha20poly1305.open(key_seq(128), aead_nonce(), __codec_bytes(hex.decode("00112233")), aead_aad()))) {
     return test.fail("a message shorter than a tag opened");
   }
   return test.pass();
@@ -172,10 +173,10 @@ function test_open_refuses(): test.TestOutcome {
 
 function test_lengths(): test.TestOutcome {
   let none: u8[] = [];
-  if (shown(chacha20poly1305.seal(hex.hex_decode("0011"), aead_nonce(), none, none)) != "chacha20poly1305: the key is 2 bytes, want 32") {
+  if (shown(chacha20poly1305.seal(__codec_bytes(hex.decode("0011")), aead_nonce(), none, none)) != "chacha20poly1305: the key is 2 bytes, want 32") {
     return test.fail("a short key was not refused by its length");
   }
-  return test.assert_eq(shown(chacha20poly1305.seal(key_seq(0), hex.hex_decode("00"), none, none)), "chacha20poly1305: the nonce is 1 bytes, want 12");
+  return test.assert_eq(shown(chacha20poly1305.seal(key_seq(0), __codec_bytes(hex.decode("00")), none, none)), "chacha20poly1305: the nonce is 1 bytes, want 12");
 }
 
 function main(): i32 {
@@ -193,4 +194,18 @@ function main(): i32 {
   r = r.it("open refuses a forgery", test_open_refuses);
   r = r.it("key and nonce lengths", test_lengths);
   return r.finish();
+}
+
+// Decode a valid fixture. Report a malformed fixture before the test exits.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

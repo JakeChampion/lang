@@ -1,0 +1,134 @@
+import "std/hex";
+import "std/base32";
+import "std/base64";
+import "std/codec";
+import "std/error";
+import "core/cmp";
+
+function matches(value: Result[u8[], codec.DecodeError], expected: u8[]): boolean {
+  match (value) {
+    Err(_) => {
+      return false;
+    },
+    Ok(bytes) => {
+      if (bytes.len() != expected.len()) {
+        return false;
+      }
+      for i in 0..bytes.len() {
+        if (bytes[i] != expected[i]) {
+          return false;
+        }
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+function invalid(value: Result[u8[], codec.DecodeError], kind: codec.DecodeErrorKind, offset: i32): boolean {
+  match (value) {
+    Err(e) => {
+      return e.kind == kind && e.offset == offset && e.message() == e.to_string();
+    },
+    Ok(_) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function display[T: cmp.Display](value: T): string {
+  return value.to_string();
+}
+
+function main(): i32 {
+  let f: u8[] = [102 as u8];
+  if (hex.encode(f) != "66" || base32.encode(f) != "MY======" || base64.encode(f) != "Zg==") {
+    return 1;
+  }
+  if (!matches(hex.decode("fF"), [255 as u8]) || !matches(base32.decode("MY"), f) || !matches(base64.decode("Zg"), f)) {
+    return 2;
+  }
+  if (!matches(base64.decode_url("-w"), [251 as u8]) || !matches(base64.decode_url("_w=="), [255 as u8])) {
+    return 3;
+  }
+  if (!invalid(hex.decode("0"), codec.InvalidLength, 1)) {
+    return 4;
+  }
+  if (!invalid(hex.decode("xz"), codec.InvalidByte(120 as u8), 0)) {
+    return 5;
+  }
+  if (!invalid(base32.decode("MZ======"), codec.NonZeroTrailingBits, 1)) {
+    return 6;
+  }
+  if (!invalid(base64.decode("Zh=="), codec.NonZeroTrailingBits, 1)) {
+    return 7;
+  }
+  if (!invalid(base64.decode_url("_x"), codec.NonZeroTrailingBits, 1)) {
+    return 8;
+  }
+  if (!invalid(base64.decode_url("+w=="), codec.InvalidByte(43 as u8), 0)) {
+    return 9;
+  }
+  if (!invalid(base64.decode("Zg==="), codec.InvalidPadding, 4)) {
+    return 10;
+  }
+  if (!invalid(base32.decode("MY====="), codec.InvalidPadding, 2)) {
+    return 11;
+  }
+  if (!matches(hex.decode(""), []) || !matches(base32.decode(""), []) || !matches(base64.decode(""), [])) {
+    return 12;
+  }
+  for i in 0..256 {
+    let bytes: u8[] = [i as u8];
+    if (!matches(hex.decode(hex.encode(bytes)), bytes)) {
+      return 13;
+    }
+    if (!matches(base32.decode(base32.encode(bytes)), bytes)) {
+      return 14;
+    }
+    if (!matches(base64.decode(base64.encode(bytes)), bytes)) {
+      return 15;
+    }
+    if (!matches(base64.decode_url(base64.encode_url(bytes)), bytes)) {
+      return 16;
+    }
+  }
+  let problem: codec.DecodeError = codec.error("hex", 1, codec.InvalidLength);
+  let common: dyn error.Error = problem;
+  if (common.message() != "hex byte 1: invalid input length" || display(problem) != common.message()) {
+    return 17;
+  }
+  if (!invalid(hex.decode("66é"), codec.InvalidByte(195 as u8), 2)) {
+    return 18;
+  }
+  if (!invalid(base32.decode("A"), codec.InvalidLength, 1)) {
+    return 19;
+  }
+  if (!invalid(base64.decode("A"), codec.InvalidLength, 1)) {
+    return 20;
+  }
+  if (!invalid(base64.decode("Zg==x"), codec.InvalidPadding, 4)) {
+    return 21;
+  }
+  if (!invalid(base32.decode("MY======x"), codec.InvalidPadding, 8)) {
+    return 22;
+  }
+  let bytes: u8[] = [];
+  for n in 0..130 {
+    if (!matches(hex.decode(hex.encode_upper(bytes)), bytes)) {
+      return 23;
+    }
+    if (!matches(base32.decode(base32.encode(bytes)), bytes)) {
+      return 24;
+    }
+    if (!matches(base64.decode(base64.encode(bytes)), bytes)) {
+      return 25;
+    }
+    if (!matches(base64.decode_url(base64.encode_url(bytes)), bytes)) {
+      return 26;
+    }
+    bytes = bytes.append((n * 37 + 128) as u8);
+  }
+  return 0;
+}

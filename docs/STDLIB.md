@@ -23,6 +23,10 @@ Keep a blank line between that introduction and the code or declaration document
 `core/` contains foundations such as comparison traits, maps, iterators, and big integers.
 Both namespaces have public APIs for application code.
 
+Module function names omit the module name prefix: use `hex.encode` and `uuid.v4`.
+Constructors use `new`, `of`, or `from`.
+Constants use uppercase names and `pub const`, such as `uuid.NIL`.
+
 Import a module to use its functions and receiver methods.
 A qualified call uses the final path segment, or an explicit `as` alias.
 A receiver method uses the value's type to select an implementation.
@@ -72,6 +76,45 @@ Use a checked UTF-8 conversion for external bytes before you treat them as text.
 
 String byte offsets and Unicode character positions are different units.
 The `std/utf8` and `std/unicode` modules describe code-point and text operations.
+
+## Byte encodings
+
+`std/hex`, `std/base32`, and `std/base64` encode byte views as text.
+Their `decode` functions return `Result[u8[], codec.DecodeError]`.
+`base64.decode_url` checks the URL-safe alphabet.
+
+A decode error contains the encoding name, a byte offset, and an error kind.
+The error kinds identify invalid bytes, invalid lengths, invalid padding, and nonzero unused bits.
+An incomplete final group reports the input length as its offset.
+An invalid byte or nonzero unused bits report the position of the affected byte.
+Decode errors implement `error.Error` and `cmp.Display`.
+
+Hexadecimal text accepts either case and requires complete byte pairs.
+Base32 uses uppercase letters and digits from 2 through 7.
+Base32 and Base64 accept complete padded or unpadded input.
+All decoders accept empty input and reject malformed input without a partial result.
+
+```fern
+import "std/hex";
+
+function main(): i32 {
+  match (hex.decode("4869")) {
+    Ok(bytes) => { print(hex.encode(bytes)); },
+    Err(problem) => { eprint(problem.message()); return 1; }
+  }
+  return 0;
+}
+```
+
+`semver.parse` returns `Result[SemVer, semver.ParseError]`.
+It checks identifier characters, empty identifiers, and numeric leading zeros.
+Numeric core components must fit `i32`.
+Numeric prerelease identifiers have no size limit.
+
+`uuid.version` returns `Result[i32, uuid.ParseError]` after it checks the canonical UUID shape.
+It accepts either hexadecimal case.
+`uuid.v4` and `uuid.v7` create UUIDs, and `uuid.NIL` is the nil value.
+Both parse error types provide a byte offset and implement `error.Error` and `cmp.Display`.
 
 ## Host capabilities
 

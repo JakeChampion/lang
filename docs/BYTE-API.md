@@ -13,10 +13,10 @@ import "std/crypto" as crypto;
 
 function main(): i32 {
   let bytes: [u8] = "abc".as_bytes();
-  let encoded: string = hex.hex_encode(bytes);
+  let encoded: string = hex.encode(bytes);
   let digest: u8[] = crypto.sha256_new().update(bytes).final_bytes();
   print(encoded);
-  print(hex.hex_encode(digest));
+  print(hex.encode(digest));
   return 0;
 }
 ```

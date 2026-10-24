@@ -221,8 +221,8 @@ records their bugs in the audit log.
 | `std/io` | | | | | | ⬜ | |
 | `std/io_buffered` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | In-memory BytesWriter: byte writes, extraction and reset. into_string returns Option[string] after UTF-8 validation. Actual module coverage on bootstrap interp/x86/ARM/wasm/Darwin and primary compiler x86/ARM/wasm: TestSelfHostBytesWriterIR and the shared BytesWriterUTF8Program corpus. The prior copied BW fixture has been removed. |
 | `std/path` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | join/file_name/extension — `audit_std_path_numeric` + `self_host_audit_stdpath_test` |
-| `std/base64` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_codec_roundtrip` — 300 random inputs, full byte range; self-host IR path: `base64_encode`/`base64_decode` lower end-to-end (real std/base64 source, routing-pinned `TestSelfHostBase64IR`, x86-64 + wasm + arm64 oracle-checked) |
-| `std/hex` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_codec_roundtrip`; self-host IR path: `hex_encode`/`hex_decode` lower end-to-end (real std/hex source, routing-pinned `TestSelfHostHexIR`, x86-64 + wasm + arm64 oracle-checked) — unblocked by the wasm `string_from_bytes_unchecked` helper-gate fix |
+| `std/base64` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_codec_roundtrip` — 300 random inputs, full byte range; self-host IR path: `encode`/`decode` lower end-to-end (real std/base64 source, routing-pinned `TestSelfHostBase64IR`, x86-64 + wasm + arm64 oracle-checked) |
+| `std/hex` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_codec_roundtrip`; self-host IR path: `encode`/`decode` lower end-to-end (real std/hex source, routing-pinned `TestSelfHostHexIR`, x86-64 + wasm + arm64 oracle-checked) — unblocked by the wasm `string_from_bytes_unchecked` helper-gate fix |
 | `std/crypto` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | SHA-256 vectors ✅ native (`audit_std_crypto`); self-host now correct via the IR path — u32 wrapping + array builders + byte builtins ([#2861](https://github.com/JakeChampion/lang/issues/2861) fixed, #2891; `TestSelfHostU32WrapIR`) |
 | `std/uuid` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | v4 length/dashes/version/uniqueness — `audit_std_uuid`; self-host v4 + v7 via the IR path (`TestSelfHostUuidIR`) |
 | `std/url` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_url_roundtrip` — 300 text inputs and 300 full-byte-range inputs, all four backends; the arm64 heap-corruption ([#2817](https://github.com/JakeChampion/lang/issues/2817)) is fixed (two-word `string_from_bytes_unchecked` now uses `__fern_alloc_rc1`); self-host via the IR path (x86-64 + wasm): `url_encode`/`url_decode` percent-coding (`TestSelfHostUrlCodecIR`) + `url_parse` URL decomposition (`TestSelfHostUrlParseIR` — 6-field struct w/ mixed string+i32 fields, repeated struct-spread updates, `Option[Url]` + payload `match`) + `query_parse` (`TestSelfHostUrlQueryIR` — `Map[string, string[]]` w/ string-ARRAY values via `Map {}`/`.get`/`.insert`, incl. the duplicate-key append-to-existing case) — byte classification, bit ops, `u8[]` literals + `as u8` casts, and the `string_from_bytes_unchecked` builtin all lower; native via the `url_codec` fixture (encode/decode + `url_parse` + `query_parse` incl. dup-key accumulation). (The dup-key wasm-IR map miscompile [#3495](https://github.com/JakeChampion/lang/issues/3495) is now fixed — `op_map_set` threads value-pointerness into the wasm `vis` flag — and the dup-key case is the regression guard.) |
@@ -2625,7 +2625,7 @@ Notably the `url_parse` path — struct-spread update (`Url { ...u, scheme: … 
 + `Option[Url]` match — routes cleanly through the self-host IR (no AST
 fallback), a step beyond the pure byte-buffer encoders.
 
-### 2026-06-21 — std/hex: pure-Fern std/test migration coverage (`hex_encode` / `hex_decode`)
+### 2026-06-21 — std/hex: pure-Fern std/test migration coverage (`encode` / `decode`)
 
 `std/hex`'s lowercase encode / decode had Go-side coverage but no
 migration-shaped (pure-Fern, `std/test`-driven) companion. Added
@@ -3868,13 +3868,13 @@ low-value div/rem), oracle-checked against the interpreter. Fixpoint intact.
 Same vehicle as the std/hex coverage: `TestSelfHostBase64IR` compiles the real
 `internal/stdlib/std/base64.fern` source concatenated with a main (single-module,
 no imports), routing-pinned to `"ir"` and oracle-checked on x86-64 + wasm (verified
-on arm64 via qemu): `base64_encode` (padded + exact-multiple inputs, output
-digit), `base64_decode`, and encode→decode round-trips. Coverage-only, no compiler
+on arm64 via qemu): `encode` (padded + exact-multiple inputs, output
+digit), `decode`, and encode→decode round-trips. Coverage-only, no compiler
 change. std/base64 S column flipped to ✅.
 
 ### 2026-06-14 — std/hex via the self-host IR path (coverage)
 
-Confirmed `std/hex` (`hex_encode` / `hex_decode`) lowers through the self-host IR
+Confirmed `std/hex` (`encode` / `decode`) lowers through the self-host IR
 path end-to-end, now that the wasm `string_from_bytes_unchecked` / `arr_push` helper-gate
 fixes unblocked the byte→string primitives it builds on. `TestSelfHostHexIR`
 compiles the REAL `internal/stdlib/std/hex.fern` source concatenated with a main
@@ -3913,7 +3913,7 @@ emitted the helper. Fix: export `wasm.string_from_bytes_helper` and gate it on
 `module_allocates` already pulls in.)
 
 New routing-pinned `TestSelfHostStringFromBytesIR` (x86-64 + wasm, oracle-checked:
-direct pack + length / byte round-trip, plus a `hex_encode` built on
+direct pack + length / byte round-trip, plus a `encode` built on
 `__alloc_u8` + `.with` + `string_from_bytes_unchecked`). Verified end-to-end on x86-64,
 wasm, and arm64; x86-64 + stage2 fixpoint hold. (Found while probing pure-Fern
 stdlib modules — `std/hex` etc. — for self-host IR coverage.)

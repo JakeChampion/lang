@@ -1,5 +1,6 @@
 import "std/test";
 import "std/hex";
+import "std/codec";
 import "std/crypto" as crypto;
 import "std/crypto/mlkem768";
 
@@ -61,7 +62,7 @@ function encaps(ek: [u8], m: [u8]): mlkem768.Encapsulation {
 function shown(r: Result[u8[], mlkem768.MlKemError]): string {
   match (r) {
     Ok(b) => {
-      return hex.hex_encode(b);
+      return hex.encode(b);
     },
     Err(e) => {
       return e.message();
@@ -99,11 +100,11 @@ function seq_keys(): mlkem768.KeyPair {
 }
 
 function hex_keys(): mlkem768.KeyPair {
-  return keys(hex.hex_decode("7c9935a0b07694aa0c6d10e4db6b1add2fd81a25ccb148032dcd739936737f2d"), hex.hex_decode("b505d7cfad1b497499323c8686325e4792f267aafa3f87ca60d01cb54f29202a"));
+  return keys(__codec_bytes(hex.decode("7c9935a0b07694aa0c6d10e4db6b1add2fd81a25ccb148032dcd739936737f2d")), __codec_bytes(hex.decode("b505d7cfad1b497499323c8686325e4792f267aafa3f87ca60d01cb54f29202a")));
 }
 
 function hex_m(): u8[] {
-  return hex.hex_decode("147c03f7a5bebba406c8fae1874d7f13c80efe79a3a9a874cc09fe76f6997615");
+  return __codec_bytes(hex.decode("147c03f7a5bebba406c8fae1874d7f13c80efe79a3a9a874cc09fe76f6997615"));
 }
 
 function test_keygen(): test.TestOutcome {
@@ -126,7 +127,7 @@ function test_round_trip(): test.TestOutcome {
   if (s.ciphertext.len() != 1088 || __h(s.ciphertext) != "b4cfbd24cef67afd3764276c6980e0f88f8e9ca57f59b7f12fe1a9c1e72f4710") {
     return test.fail("ciphertext");
   }
-  if (hex.hex_encode(s.shared_secret) != ss) {
+  if (hex.encode(s.shared_secret) != ss) {
     return test.fail("encapsulated secret");
   }
   return test.assert_eq(shown(mlkem768.decaps(k.decapsulation_key, s.ciphertext)), ss);
@@ -145,7 +146,7 @@ function test_second_pair(): test.TestOutcome {
   if (__h(s.ciphertext) != "6e777e2cf8054659136a971d9e70252f301226930c19c470ee0688163a63c15b") {
     return test.fail("ciphertext");
   }
-  if (hex.hex_encode(s.shared_secret) != ss) {
+  if (hex.encode(s.shared_secret) != ss) {
     return test.fail("encapsulated secret");
   }
   return test.assert_eq(shown(mlkem768.decaps(k.decapsulation_key, s.ciphertext)), ss);
@@ -161,10 +162,10 @@ function test_implicit_rejection(): test.TestOutcome {
   }
   let last: u8[] = __flip(ct, 1087, 0x80 as u8);
   let j: u8[] = crypto.shake256_new().update(__seq(32)).update(last).reader().squeeze(32).0;
-  if (hex.hex_encode(j) != "7d194c520c0dc58f59ee1712f1242d3cbfbf8cee04bf1d7b64b56904cca784f0") {
+  if (hex.encode(j) != "7d194c520c0dc58f59ee1712f1242d3cbfbf8cee04bf1d7b64b56904cca784f0") {
     return test.fail("J(z || c)");
   }
-  return test.assert_eq(shown(mlkem768.decaps(k.decapsulation_key, last)), hex.hex_encode(j));
+  return test.assert_eq(shown(mlkem768.decaps(k.decapsulation_key, last)), hex.encode(j));
 }
 
 function test_second_pair_rejection(): test.TestOutcome {
@@ -227,4 +228,18 @@ function main(): i32 {
   r = r.it("modulus check", test_modulus_check);
   r = r.it("hash check", test_hash_check);
   return r.finish();
+}
+
+// Decode a valid fixture. Report a malformed fixture before the test exits.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

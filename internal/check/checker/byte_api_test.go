@@ -14,12 +14,12 @@ import "std/hash" as hash;
 import "std/crypto" as crypto;
 `
 	cases := []struct{ name, body, diagnostic string }{
-		{"borrowed-codec", `let bytes: [u8] = "abc".as_bytes(); let result: string = hex.hex_encode(bytes);`, ""},
-		{"owned-codec", `let bytes: u8[] = [97 as u8]; let result: string = hex.hex_encode(bytes);`, ""},
+		{"borrowed-codec", `let bytes: [u8] = "abc".as_bytes(); let result: string = hex.encode(bytes);`, ""},
+		{"owned-codec", `let bytes: u8[] = [97 as u8]; let result: string = hex.encode(bytes);`, ""},
 		{"borrowed-update", `let h = crypto.sha256_new().update("abc".as_bytes()); let c = hash.cksum_new().update([97 as u8]);`, ""},
 		{"single-byte-result", `let first: Option[u8] = "abc".first(); let last: Option[u8] = "abc".last(); let at: Option[u8] = "abc".at(1);`, ""},
 		{"character-fill", `let result = "a".pad_start(4, 'é').pad_end(6, '中').center(10, '-');`, ""},
-		{"text-needs-view", `hex.hex_encode("abc");`, "expected [u8], got string"},
+		{"text-needs-view", `hex.encode("abc");`, "expected [u8], got string"},
 		{"update-bytes-removed", `crypto.sha256_new().update_bytes([97 as u8]);`, `no field or method "update_bytes"`},
 		{"update-array-removed", `hash.cksum_new().update_array([97 as u8]);`, `no field or method "update_array"`},
 		{"hmac-duplicate-removed", `crypto.hmac_sha256_bytes([97 as u8], "abc");`, "hmac_sha256_bytes"},

@@ -1017,6 +1017,13 @@ function test_cassette_https_and_refusal(): test.TestOutcome {
   if (__message(got) != "status 201" || __body(got) != "made") {
     return test.fail(__message(got) + " " + __body(got));
   }
+  let bad_hex: string = "{\"method\":\"GET\",\"url\":\"http://api.test/x\",\"status\":200,\"body_hex\":\"0g\"}\n";
+  match (sim_fetch.net(d).replay(bad_hex)) {
+    Ok(_) => {
+      return test.fail("invalid body hex is not an exchange");
+    },
+    Err(_) => {}
+  }
   match (sim_fetch.net(d).replay(cassette + "[1,2]\n")) {
     Ok(_) => {
       return test.fail("an array is not an exchange");

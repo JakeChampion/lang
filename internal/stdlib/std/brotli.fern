@@ -673,7 +673,14 @@ function __copy_step(buf: [u8], m: __Mb, s: __St, c: __Cs, cmd: __Cmd, dst: u8[]
   if (d.0 > max) {
     let loaded: __Cs = d.2;
     if (loaded.dict.len() == 0) {
-      loaded = __Cs { ...loaded, dict: dictionary.bytes() };
+      match (dictionary.bytes()) {
+        Ok(bytes) => {
+          loaded = __Cs { ...loaded, dict: bytes };
+        },
+        Err(problem) => {
+          return Err(BrotliMalformed("dictionary: " + problem.message()));
+        }
+      }
     }
     return Ok(__Step { bytes: __dict_word(s.t, loaded.dict, d.0 - max - 1, cmd.copy)?, c: loaded });
   }

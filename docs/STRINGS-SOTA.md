@@ -920,12 +920,12 @@ env/args, FFI returns" — is incomplete in a way that matters. It misses
 the stdlib's own **byte-container APIs**, which use `string` as a raw
 byte bag and routinely hold bytes that are not UTF-8 at all:
 `crypto.sha256_bytes` / `hmac_sha256` / `pbkdf2_sha256` /
-`hkdf_*`, `base64_decode`, `base32_decode`, `hex_decode`, and the
+`hkdf_*`, `decode`, `decode`, `decode`, and the
 `tcp_recv` / `read_file` builtins (`random_bytes` has since moved to
 `u8[]`). A 32-byte SHA-256
 digest is essentially never valid UTF-8, so under a validating
 constructor `sha256_bytes` would return `None` for almost every input.
-These are not edge cases — `base64_decode` of a PNG is the normal use.
+These are not edge cases — `decode` of a PNG is the normal use.
 
 Those APIs took the unchecked constructor when slice 2 landed. Making
 the invariant *true* required migrating them off `string` to `u8[]` —
