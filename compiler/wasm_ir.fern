@@ -5072,7 +5072,32 @@ function needs_fd_sync(needs: string[]): boolean {
 }
 
 pub function needs_io_error(needs: string[]): boolean {
-  return need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "create_dir") || need(needs, "remove_dir") || need(needs, "create_link") || need(needs, "create_symlink") || need(needs, "rename") || need(needs, "set_file_times") || need(needs, "truncate") || need(needs, "read_link") || need_dir_list(needs) || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || (need(needs, "write_file") || need(needs, "write_file_bytes")) || need_open_file(needs) || need(needs, "writer_write") || (need(needs, "write_some") || need(needs, "write_bytes") || need(needs, "write_some_bytes")) || need(needs, "reader_close") || need(needs, "read_chunk") || need(needs, "read_chunk_bytes") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || need(needs, "fd_flags") || needs_fd_sync(needs);
+  return needs_path_query_error(needs) || needs_path_change_error(needs)
+    || needs_file_data_error(needs) || needs_file_handle_error(needs);
+}
+
+function needs_path_query_error(needs: string[]): boolean {
+  return need(needs, "stat") || need(needs, "lstat") || need(needs, "read_link")
+    || need_dir_list(needs) || need(needs, "temp_dir");
+}
+
+function needs_path_change_error(needs: string[]): boolean {
+  return need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "create_dir")
+    || need(needs, "remove_dir") || need(needs, "create_link") || need(needs, "create_symlink")
+    || need(needs, "rename") || need(needs, "set_file_times") || need(needs, "truncate");
+}
+
+function needs_file_data_error(needs: string[]): boolean {
+  return need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file")
+    || need(needs, "write_file_bytes") || need(needs, "writer_write") || need(needs, "write_some")
+    || need(needs, "write_bytes") || need(needs, "write_some_bytes") || need(needs, "read_chunk")
+    || need(needs, "read_chunk_bytes");
+}
+
+function needs_file_handle_error(needs: string[]): boolean {
+  return need_open_file(needs) || need(needs, "reader_close") || need(needs, "fd_stat")
+    || need(needs, "reader_seek") || need(needs, "writer_truncate") || need(needs, "fd_flags")
+    || needs_fd_sync(needs);
 }
 
 pub function with_strerror_texts(sv: string[]): string[] {
@@ -9341,6 +9366,12 @@ function kernel_helper_parts(needs: string[], parts0: string[]): string[] {
 }
 
 function path_fs_bodies(parts: string[], needs: string[], mode: i32): string[] {
+  parts = path_fs_metadata_bodies(parts, needs);
+  parts = path_fs_link_bodies(parts, needs, mode);
+  return path_fs_directory_bodies(parts, needs, mode);
+}
+
+function path_fs_metadata_bodies(parts: string[], needs: string[]): string[] {
   if (need(needs, "stat")) {
     parts = parts.append(stat_func());
   }
@@ -9359,6 +9390,10 @@ function path_fs_bodies(parts: string[], needs: string[], mode: i32): string[] {
   if (need(needs, "remove_dir")) {
     parts = parts.append(remove_dir_func());
   }
+  return parts;
+}
+
+function path_fs_link_bodies(parts: string[], needs: string[], mode: i32): string[] {
   if (need(needs, "create_link")) {
     parts = parts.append(create_link_func());
   }
@@ -9377,6 +9412,10 @@ function path_fs_bodies(parts: string[], needs: string[], mode: i32): string[] {
   if (need(needs, "truncate")) {
     parts = parts.append(truncate_body(mode));
   }
+  return parts;
+}
+
+function path_fs_directory_bodies(parts: string[], needs: string[], mode: i32): string[] {
   for name in ["read_dir", "read_dir_all", "read_dir_ino", "read_dir_ino_all"] {
     if (need(needs, name)) {
       parts = parts.append(read_dir_body("__fern_" + name, mode));

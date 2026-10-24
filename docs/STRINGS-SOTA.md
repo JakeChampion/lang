@@ -78,7 +78,9 @@ partial strings. Raw CLI output matches GNU; text rendering validates only
 after those pieces have been joined.
 
 The [OS text audit](string-log/2026-10-23-os-text.md) covers directory
-names and the other runtime OS text producers.
+names and the other runtime OS text producers. Native byte callers use
+`read_link_bytes`, `read_dir_bytes`, and `Dir.entries_bytes` to preserve
+path bytes without passing through text validation.
 
 The OS text contract remains a deliberate exception:
 

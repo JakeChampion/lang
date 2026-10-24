@@ -38,7 +38,7 @@ func checkSelfHostOSText(t *testing.T, cli *selfHostCLI, target string, f e2ehar
 		src = filepath.Join(dir, "os-text-interp.fern")
 		code := fmt.Sprintf(`import "./lexer"; import "./parser"; import "./interp";
 function main(): i32 { let m: parser.Module = parser.parse_module(lexer.tokenize(%q));
- match (interp.eval_module(m)) { interp.VInt(v) => { return v.v; }, _ => { return 254; } } }
+ match (interp.eval_module(m)) { interp.VInt(v) => { return v.v; }, interp.VErr(e) => { eprint(e.msg); return 253; }, _ => { return 254; } } }
 `, f.Source)
 		if err := os.WriteFile(src, []byte(code), 0o600); err != nil {
 			t.Fatal(err)

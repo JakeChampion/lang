@@ -56,10 +56,6 @@ name: Bootstrap
 # stays so the lane can be run on its own, outside that queue.
 on:
   workflow_call:
-    inputs:
-      publish:
-        type: boolean
-        default: false
   workflow_dispatch:
     inputs:
       publish:
@@ -151,7 +147,7 @@ jobs:
         run: STAGE0=build/candidate make distcheck
 
   publish:
-    if: inputs.publish
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
     # A later publish supersedes an earlier one — both would tag the same
     # release. Job-level, per host: a workflow-level group is not this lane's
     # to hold (ci.yml owns it when this lane is called), and one group across
