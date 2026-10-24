@@ -3,6 +3,7 @@
 import "std/binary";
 import "std/deflate";
 import "std/hash";
+import "core/cmp";
 import "std/error";
 
 pub enum EncodeError { InvalidDimensions, InvalidBufferLength }
@@ -18,7 +19,13 @@ pub function (e: EncodeError) message(): string {
   }
 }
 
+pub function (e: EncodeError) to_string(): string {
+  return e.message();
+}
+
 impl error.Error for EncodeError {}
+
+impl cmp.Display for EncodeError {}
 
 pub enum Filter { Unfiltered, Sub, Up, Average, Paeth, Adaptive }
 
