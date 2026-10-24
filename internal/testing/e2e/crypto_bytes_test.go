@@ -14,9 +14,8 @@ import "testing"
 // bytes really cannot be a `string`.
 //
 // It also pins the shape of the migration: the `*_hex` variants still
-// return a `string` (hex output genuinely is text), the message to hash
-// and the password to stretch are still `string`, and the whole
-// key / salt / IKM / info side is `u8[]`.
+// return a `string`. Messages, passwords, keys and salts borrow byte views.
+// Each digest owns its result bytes.
 //
 // Exits 0 on success, a distinct code per failed step.
 const cryptoBytesProgram = `
@@ -45,7 +44,7 @@ function main(): i32 {
     if (hex.encode(d) != crypto.sha256_hex("abc".as_bytes())) { return 4; }
     if (hex.encode(d) != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") { return 5; }
 
-    // An HMAC key is u8[]; the message stays text.
+    // The HMAC key and message borrow byte views.
     let key: u8[] = "key".bytes();
     let mac: u8[] = crypto.hmac_sha256(key, "The quick brown fox jumps over the lazy dog".as_bytes());
     if (mac.len() != 32) { return 6; }
@@ -57,7 +56,7 @@ function main(): i32 {
     if (!crypto.hmac_verify(key, "The quick brown fox jumps over the lazy dog".as_bytes(), mac)) { return 10; }
     if (crypto.hmac_verify("wrongkey".bytes(), "The quick brown fox jumps over the lazy dog".as_bytes(), mac)) { return 11; }
 
-    // PBKDF2: password is text, salt and the derived key are bytes.
+    // PBKDF2 borrows the password and salt bytes. The derived key owns its bytes.
     let dk: u8[] = crypto.pbkdf2_sha256("password".as_bytes(), "salt".bytes(), 1, 32);
     if (dk.len() != 32) { return 12; }
     if (hex.encode(dk) != "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b") { return 13; }
