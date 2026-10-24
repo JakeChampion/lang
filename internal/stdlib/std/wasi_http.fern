@@ -297,6 +297,7 @@ function write_all(stream: i32, body: u8[]): void {
   buf_free(chunk);
 }
 
+// The outgoing side: host request imports.
 @import("wasi:http/types@0.2.0", "[constructor]outgoing-request")
 function request_new(headers: i32): i32;
 

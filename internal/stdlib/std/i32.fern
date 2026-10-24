@@ -3,6 +3,7 @@
 import "core/int";
 import "std/string";
 
+// Return the absolute value. The minimum value wraps to itself.
 pub function (n: i32) abs(): i32 {
   if (n < 0) {
     let w: i64 = 0 - n as i64;
