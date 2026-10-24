@@ -61,7 +61,7 @@ function test_line_links(): test.TestOutcome {
 
 function test_routes(): test.TestOutcome {
   let pages: source.Page[] = [source.Page { name: "fractal.fern", html: source.render("fractal.fern", "pub const SIZE: i32 = 256;\n") }];
-  let routes = server.routes[platform.Host](server.stats("test", 0, 0), "web", pages);
+  let routes = server.routes[platform.Host](server.stats("test", 0, 0, "test-version"), "web", pages);
   let index: HttpResponse = routes.handle(http.request("GET", "/_src/"), platform.host());
   let file: HttpResponse = routes.handle(http.request("GET", "/_src/fractal.fern"), platform.host());
   let missing: HttpResponse = routes.handle(http.request("GET", "/_src/missing.fern"), platform.host());
@@ -100,11 +100,53 @@ function test_request_errors(): test.TestOutcome {
       return test.fail("malformed request was accepted");
     }
   }
-  let routes = server.routes[platform.Host](server.stats("test", 0, 0), "web", []);
-  for path in ["/tile/0/9223372036854775808/0", "/tile/42/-1/0", "/tile/43/0/0", "/tile/0/x/0"] {
+  let routes = server.routes[platform.Host](server.stats("test", 0, 0, "test-version"), "web", []);
+  for path in ["/tile/test-version/0/9223372036854775808/0", "/tile/test-version/42/-1/0", "/tile/test-version/43/0/0", "/tile/test-version/0/x/0"] {
     if (routes.handle(http.request("GET", path), platform.host()).status != 400) {
       return test.fail("malformed tile route did not return 400");
     }
+  }
+  return test.pass();
+}
+
+function test_version_and_cancel(): test.TestOutcome {
+  let state: server.Stats = server.stats("test", 0, 1, "test-version");
+  let routes = server.routes[platform.Host](state, "web", []);
+  let config: HttpResponse = routes.handle(http.request("GET", "/api/config"), platform.host());
+  let old: HttpResponse = routes.handle(http.request("GET", "/tile/42/0/0"), platform.host());
+  let wrong: HttpResponse = routes.handle(http.request("GET", "/tile/old-version/42/0/0"), platform.host());
+  if (config.status != 200 || !config.body_string().contains("test-version") || config.headers.get("Cache-Control").unwrap_or("") != "no-store") {
+    return test.fail("renderer configuration is missing or cacheable");
+  }
+  if (old.headers.get("Location").unwrap_or("") != "/tile/test-version/42/0/0" || old.headers.get("Cache-Control").unwrap_or("") != "no-store" || wrong.status != 404) {
+    return test.fail("renderer versions share a cache URL");
+  }
+  let session_id: string = "0123456789abcdef";
+  let cancelled: HttpResponse = routes.handle(http.request("POST", "/cancel/" + session_id + "/1"), platform.host());
+  let request: HttpRequest = http.request("GET", "/tile/test-version/42/0/0").with_header("X-Fern-Session", session_id).with_header("X-Fern-Request", "1");
+  let refused: HttpResponse = routes.handle(request, platform.host());
+  if (cancelled.status != 204 || refused.status != 499 || state.tiles.get() != 0 || state.cancelled.get().len() != 0) {
+    return test.fail("cancelled work was rendered or retained");
+  }
+  let rendered: HttpResponse = routes.handle(http.request("GET", "/tile/test-version/42/0/0"), platform.host());
+  if (rendered.status != 200 || rendered.headers.get("X-Fern-Renderer").unwrap_or("") != "test-version"
+    || !rendered.headers.get("Server-Timing").unwrap_or("").contains("png;dur=")
+    || rendered.headers.get("Cache-Control").unwrap_or("") != "public, max-age=31536000, immutable") {
+    return test.fail("versioned PNG response metadata differs");
+  }
+  if (server.request_key(session_id, "4294967295").unwrap_or("") != session_id + ":4294967295"
+    || server.request_key(session_id, "4294967296").is_ok() || server.request_key("short", "1").is_ok()
+    || server.request_key("0123456789abcdef/", "1").is_ok() || server.request_key(session_id, "0").is_ok()) {
+    return test.fail("cancellation token bounds differ");
+  }
+  let no_binary = server.routes[platform.Host](server.stats("test", 0, 0, "source-version"), "web", []);
+  let uncacheable: HttpResponse = no_binary.handle(http.request("GET", "/tile/source-version/42/0/0"), platform.host());
+  if (uncacheable.headers.get("Cache-Control").unwrap_or("") != "no-store") {
+    return test.fail("fallback identity received an immutable cache policy");
+  }
+  let invalid_token: HttpRequest = http.request("GET", "/tile/test-version/42/0/0").with_header("X-Fern-Session", "short");
+  if (routes.handle(invalid_token, platform.host()).status != 400) {
+    return test.fail("malformed cancellation headers were ignored");
   }
   return test.pass();
 }
@@ -120,5 +162,6 @@ function main(): i32 {
   runner = runner.it("source routes before static files", test_routes);
   runner = runner.it("unknown and traversal paths", test_unknown_paths);
   runner = runner.it("typed request errors and HTTP 400", test_request_errors);
+  runner = runner.it("renderer cache versions and cancellation", test_version_and_cancel);
   return runner.finish();
 }
