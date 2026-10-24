@@ -2,8 +2,6 @@ package stdlib
 
 import (
 	"embed"
-	"errors"
-	"fmt"
 	"io/fs"
 	"slices"
 	"strings"
@@ -19,12 +17,7 @@ func Resolve(importPath string) (string, bool) {
 	return m.Code, err == nil
 }
 
-type ModuleSource struct {
-	Code      string
-	DocPath   string
-	DocSource string
-	LineMap   []literate.Line
-}
+type ModuleSource = literate.Source
 
 func ReadModule(importPath string) (ModuleSource, error) {
 	if !IsStdlibPath(importPath) {
@@ -34,27 +27,7 @@ func ReadModule(importPath string) (ModuleSource, error) {
 }
 
 func readModule(files fs.FS, path string) (ModuleSource, error) {
-	data, err := fs.ReadFile(files, path)
-	if err == nil {
-		return ModuleSource{Code: string(data)}, nil
-	}
-	if !errors.Is(err, fs.ErrNotExist) {
-		return ModuleSource{}, err
-	}
-	docPath := path + ".md"
-	data, err = fs.ReadFile(files, docPath)
-	if err != nil {
-		return ModuleSource{}, err
-	}
-	doc := literate.Parse(string(data))
-	if doc.HasFiles() {
-		return ModuleSource{}, fmt.Errorf("%s: a standard library document must define one module", docPath)
-	}
-	code, lines, err := doc.Tangle()
-	if err != nil {
-		return ModuleSource{}, fmt.Errorf("%s: %w", docPath, err)
-	}
-	return ModuleSource{Code: code, DocPath: docPath, DocSource: string(data), LineMap: lines}, nil
+	return literate.ReadModule(files, path)
 }
 
 func ModuleName(path string) string {

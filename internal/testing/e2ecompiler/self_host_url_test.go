@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/tools/literate"
 )
 
 var urlCases = []struct {
@@ -20,7 +22,7 @@ var urlCases = []struct {
 
 func urlEntry(t *testing.T, mainBody string) string {
 	t.Helper()
-	src, err := os.ReadFile("../../stdlib/std/url.fern")
+	src, err := literate.ReadFile("../../stdlib/std/url.fern")
 	if err != nil {
 		t.Fatalf("read std/url.fern: %v", err)
 	}

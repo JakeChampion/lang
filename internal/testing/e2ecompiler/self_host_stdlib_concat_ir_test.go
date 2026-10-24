@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/tools/literate"
 )
 
 type stdlibConcatCase struct {
@@ -38,7 +40,7 @@ var mathIRCases = []stdlibConcatCase{
 
 func stdlibConcatSource(t *testing.T, mod, mainBody string) []byte {
 	t.Helper()
-	src, err := os.ReadFile(filepath.Join("../../stdlib/std", mod+".fern"))
+	src, err := literate.ReadFile(filepath.Join("../../stdlib/std", mod+".fern"))
 	if err != nil {
 		t.Fatalf("read std/%s.fern: %v", mod, err)
 	}

@@ -6,6 +6,9 @@ The [generated standard library reference](https://jakechampion.github.io/lang/s
 It includes every published module, its declarations, and its source documentation.
 This guide covers conventions across modules.
 
+The [literate source inventory](LITERATE-STDLIB.md) links to all 152 handwritten module documents.
+Their prose describes module behavior and contracts. Named code chunks supply the implementation, and test fences contain executable examples.
+
 To build a local reference from this checkout:
 
 ```sh

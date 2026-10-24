@@ -25,8 +25,9 @@ func TestSelfHostWasmIncrementalCache(t *testing.T) {
 	}
 	writeLeaf := func(t *testing.T, body string) {
 		t.Helper()
-		if err := os.WriteFile(filepath.Join(proj, "leaf.fern"), []byte(body), 0o644); err != nil {
-			t.Fatalf("write leaf.fern: %v", err)
+		document := "# Leaf\n\n```fern\n<<*>>=\n" + body + "\n```\n"
+		if err := os.WriteFile(filepath.Join(proj, "leaf.fern.md"), []byte(document), 0o644); err != nil {
+			t.Fatalf("write leaf.fern.md: %v", err)
 		}
 	}
 	entry := `import "./leaf";
@@ -107,6 +108,23 @@ function main(): i32 { return leaf.value() + leaf.small() + leaf.take([1, 2, 3])
 		for ns, verdict := range got {
 			if verdict != "cache-hit" {
 				t.Errorf("module %q reported %s with nothing edited, want cache-hit", ns, verdict)
+			}
+		}
+	})
+
+	t.Run("prose_only_edit_reuses_everything", func(t *testing.T) {
+		path := filepath.Join(proj, "leaf.fern.md")
+		document, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, append([]byte("A note about the leaf.\n\n"), document...), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got := emitBoth(t)
+		for ns, verdict := range got {
+			if verdict != "cache-hit" {
+				t.Errorf("module %q reported %s after a prose edit, want cache-hit", ns, verdict)
 			}
 		}
 	})

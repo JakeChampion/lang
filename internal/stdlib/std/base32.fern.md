@@ -1,0 +1,140 @@
+# Base32 text and byte data
+
+This module encodes and decodes Base32 data under RFC 4648.
+
+## Model
+
+The encoder borrows a byte view and writes the RFC 4648 uppercase alphabet. The decoder returns an owned byte array.
+
+## Contracts
+
+Decode validates the complete input. Invalid alphabet bytes, lengths, pad bytes, and nonzero unused bits produce a shared codec error.
+
+## Executable example
+
+```fern test name=std-base32-example
+import "std/base32";
+import "std/string";
+
+function main(): i32 {
+  if (base32.encode("foo".as_bytes()) != "MZXW6===") { return 1; }
+  let Ok(bytes) = base32.decode("MZXW6===") else { return 2; };
+  if (bytes.len() != 3 || bytes[0] != 102 as u8) { return 3; }
+  return 0;
+}
+```
+
+## Module assembly
+
+The root chunk preserves the declaration order. The chunks below contain the complete implementation.
+
+```fern
+<<*>>=
+<<module introduction>>
+
+<<dependencies 2>>
+
+<<3 function __b32_alphabet(v: i32): i32>>
+
+<<4 pub function encode(bs: [u8]): string>>
+```
+
+### `module introduction`
+
+```fern
+<<module introduction>>=
+// This module encodes and decodes Base32 data under RFC 4648.
+```
+
+### `dependencies 2`
+
+```fern
+<<dependencies 2>>=
+import "std/codec";
+```
+
+### `3 function __b32_alphabet(v: i32): i32`
+
+```fern
+<<3 function __b32_alphabet(v: i32): i32>>=
+function __b32_alphabet(v: i32): i32 {
+  if (v < 26) {
+    return v + 65;
+  }
+  return v + 24;
+}
+
+function __b32_decode_char(c: i32): i32 {
+  if (c >= 65 && c < 91) {
+    return c - 65;
+  }
+  if (c >= 50 && c < 56) {
+    return c - 24;
+  }
+  return 0 - 1;
+}
+```
+
+### `4 pub function encode(bs: [u8]): string`
+
+```fern
+<<4 pub function encode(bs: [u8]): string>>=
+pub function encode(bs: [u8]): string {
+  let out: u8[] = [];
+  let acc: i32 = 0;
+  let bits: i32 = 0;
+  let i: i32 = 0;
+  let n: i32 = bs.len();
+  while (i < n) {
+    acc = acc << 8 | bs[i] as i32;
+    bits = bits + 8;
+    while (bits >= 5) {
+      bits = bits - 5;
+      out = out.append(__b32_alphabet(acc >> bits & 31) as u8);
+    }
+    i = i + 1;
+  }
+  if (bits > 0) {
+    out = out.append(__b32_alphabet(acc << 5 - bits & 31) as u8);
+  }
+  while (out.len() % 8 != 0) {
+    out = out.append(61 as u8);
+  }
+  return string_from_bytes_unchecked(out);
+}
+
+pub function decode(input: string): Result[u8[], codec.DecodeError] {
+  let n: i32 = 0;
+  while (n < input.len() && input[n] != 61) {
+    if (__b32_decode_char(input[n] as i32) < 0) {
+      return Err(codec.error("base32", n, codec.InvalidByte(input[n])));
+    }
+    n = n + 1;
+  }
+  if let Some(problem) = codec.padding_error(input, n, 6, 8, "base32") {
+    return Err(problem);
+  }
+  let rem: i32 = n % 8;
+  if (rem == 1 || rem == 3 || rem == 6) {
+    return Err(codec.error("base32", n, codec.InvalidLength));
+  }
+  let trailing: i32 = rem * 5 % 8;
+  if (trailing > 0 && (__b32_decode_char(input[n - 1] as i32) & (1 << trailing) - 1) != 0) {
+    return Err(codec.error("base32", n - 1, codec.NonZeroTrailingBits));
+  }
+  let output: u8[] = __alloc_u8(n / 8 * 5 + rem * 5 / 8);
+  let at: i32 = 0;
+  let acc: i32 = 0;
+  let bits: i32 = 0;
+  for i in 0..n {
+    acc = acc << 5 | __b32_decode_char(input[i] as i32);
+    bits = bits + 5;
+    if (bits >= 8) {
+      bits = bits - 8;
+      output = output.with(at, (acc >> bits & 255) as u8);
+      at = at + 1;
+    }
+  }
+  return Ok(output);
+}
+```

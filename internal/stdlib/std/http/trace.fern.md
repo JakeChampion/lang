@@ -1,0 +1,284 @@
+# W3C Trace Context
+
+This module reads and writes W3C Trace Context headers.
+
+## Model
+
+A trace context separates the trace identifier, span identifier, flags, and trace state. A child keeps trace identity and receives a new span identifier.
+
+## Contracts
+
+The header parser validates the external text before it creates a context. New contexts and child contexts use an explicit random callback.
+
+## Module assembly
+
+The root chunk preserves the declaration order. The chunks below contain the complete implementation.
+
+```fern
+<<*>>=
+<<module introduction>>
+
+<<dependencies 2>>
+
+<<3 pub struct Context>>
+
+<<4 pub function (c: Context) sampled(): boolean>>
+
+<<5 function __parent_shape(s: string): boolean>>
+
+<<6 pub function parse_state(v: string): Option[string]>>
+
+<<7 function __state_key(k: string): boolean>>
+```
+
+### `module introduction`
+
+```fern
+<<module introduction>>=
+// This module reads and writes W3C Trace Context headers.
+```
+
+### `dependencies 2`
+
+```fern
+<<dependencies 2>>=
+import "std/headers";
+```
+
+### `3 pub struct Context`
+
+```fern
+<<3 pub struct Context>>=
+pub struct Context { trace_id: string, span_id: string, flags: i32, state: string }
+```
+
+### `4 pub function (c: Context) sampled(): boolean`
+
+```fern
+<<4 pub function (c: Context) sampled(): boolean>>=
+pub function (c: Context) sampled(): boolean {
+  return (c.flags & 1) != 0;
+}
+
+pub function (c: Context) header(): string {
+  return "00-" + c.trace_id + "-" + c.span_id + "-" + __hex(c.flags, 2);
+}
+
+pub function (c: Context) inject(h: HeaderMap): HeaderMap {
+  let out: HeaderMap = h.set("traceparent", c.header());
+  if (c.state.len() == 0) {
+    return out.remove("tracestate");
+  }
+  return out.set("tracestate", c.state);
+}
+
+pub function (c: Context) child(random: () => i32): Context {
+  return Context { ...c, span_id: __id(random, 2) };
+}
+
+pub function start(random: () => i32): Context {
+  return Context { trace_id: __id(random, 4), span_id: __id(random, 2), flags: 3, state: "" };
+}
+
+pub function continue_from(h: HeaderMap, random: () => i32): Context {
+  match (from_headers(h)) {
+    Some(caller) => {
+      return caller.child(random);
+    },
+    None => {
+      return start(random);
+    }
+  }
+  return start(random);
+}
+
+pub function from_headers(h: HeaderMap): Option[Context] {
+  let parents: string[] = h.get_all("traceparent");
+  if (parents.len() != 1) {
+    return None;
+  }
+  match (parse(parents[0])) {
+    Some(c) => {
+      match (parse_state(h.get_all("tracestate").join(","))) {
+        Some(s) => {
+          return Some(Context { ...c, state: s });
+        },
+        None => {
+          return Some(c);
+        }
+      }
+    },
+    None => {
+      return None;
+    }
+  }
+  return None;
+}
+
+pub function parse(v: string): Option[Context] {
+  let s: string = v.trim();
+  if (!__parent_shape(s)) {
+    return None;
+  }
+  let trace_id: string = s.drop(3).take(32);
+  let span_id: string = s.drop(36).take(16);
+  let flags: string = s.drop(53).take(2);
+  if (!__id_ok(trace_id) || !__id_ok(span_id) || !__lower_hex(flags)) {
+    return None;
+  }
+  return Some(Context { trace_id: trace_id, span_id: span_id, flags: __hex_value(flags), state: "" });
+}
+```
+
+### `5 function __parent_shape(s: string): boolean`
+
+```fern
+<<5 function __parent_shape(s: string): boolean>>=
+function __parent_shape(s: string): boolean {
+  if (s.len() < 55 || s[2] != b'-' || s[35] != b'-' || s[52] != b'-') {
+    return false;
+  }
+  let version: string = s.take(2);
+  if (!__lower_hex(version) || version == "ff") {
+    return false;
+  }
+  return s.len() == 55 || version != "00" && s[55] == b'-';
+}
+```
+
+### `6 pub function parse_state(v: string): Option[string]`
+
+```fern
+<<6 pub function parse_state(v: string): Option[string]>>=
+pub function parse_state(v: string): Option[string] {
+  let keys: string[] = [];
+  let members: string[] = [];
+  for raw in v.split(",") {
+    let m: string = raw.trim();
+    if (m.len() == 0) {
+      continue;
+    }
+    let Some(eq) = m.index_of("=") else {
+      return None;
+    };
+    if (eq == 0 || !__state_key(m.take(eq)) || !__state_value(m.drop(eq + 1))) {
+      return None;
+    }
+    let key: string = m.take(eq);
+    for k in keys {
+      if (k == key) {
+        return None;
+      }
+    }
+    keys = keys.append(key);
+    members = members.append(m);
+  }
+  if (members.len() > 32) {
+    return None;
+  }
+  return Some(members.join(","));
+}
+```
+
+### `7 function __state_key(k: string): boolean`
+
+```fern
+<<7 function __state_key(k: string): boolean>>=
+function __state_key(k: string): boolean {
+  let Some(at) = k.index_of("@") else {
+    return k.len() <= 256 && __key_start(k[0], false) && __key_rest(k.drop(1));
+  };
+  return __tenant_key(k.take(at), k.drop(at + 1));
+}
+
+function __tenant_key(tenant: string, system: string): boolean {
+  if (tenant.len() == 0 || tenant.len() > 241 || system.len() == 0 || system.len() > 14) {
+    return false;
+  }
+  return __key_start(tenant[0], true) && __key_rest(tenant.drop(1)) && __key_start(system[0], false) && __key_rest(system.drop(1));
+}
+
+function __key_start(b: u8, digit: boolean): boolean {
+  return b >= b'a' && b <= b'z' || digit && b >= b'0' && b <= b'9';
+}
+
+function __key_rest(s: string): boolean {
+  for b in s.bytes() {
+    let ok: boolean = b >= b'a' && b <= b'z' || b >= b'0' && b <= b'9' || b == b'_' || b == b'-' || b == b'*' || b == b'/';
+    if (!ok) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function __state_value(v: string): boolean {
+  if (v.len() == 0 || v.len() > 256 || v[v.len() - 1] == b' ') {
+    return false;
+  }
+  for b in v.bytes() {
+    if (b < 0x20 as u8 || b > 0x7e as u8 || b == b',' || b == b'=') {
+      return false;
+    }
+  }
+  return true;
+}
+
+function __id_ok(s: string): boolean {
+  if (!__lower_hex(s)) {
+    return false;
+  }
+  for b in s.bytes() {
+    if (b != b'0') {
+      return true;
+    }
+  }
+  return false;
+}
+
+function __lower_hex(s: string): boolean {
+  for b in s.bytes() {
+    if (!(b >= b'0' && b <= b'9' || b >= b'a' && b <= b'f')) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function __hex_value(s: string): i32 {
+  let n: i32 = 0;
+  for b in s.bytes() {
+    let d: i32 = (b - b'0') as i32;
+    if (b >= b'a') {
+      d = (b - b'a') as i32 + 10;
+    }
+    n = n * 16 + d;
+  }
+  return n;
+}
+
+function __id(random: () => i32, words: i32): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < words) {
+    out = out + __hex(random(), 8);
+    i = i + 1;
+  }
+  if (!__id_ok(out)) {
+    return out.take(out.len() - 1) + "1";
+  }
+  return out;
+}
+
+function __hex(n: i32, digits: i32): string {
+  let alphabet: string = "0123456789abcdef";
+  let out: string = "";
+  let i: i32 = digits - 1;
+  while (i >= 0) {
+    let nib: i32 = n >> i * 4 & 15;
+    out = out + alphabet.drop(nib).take(1);
+    i = i - 1;
+  }
+  return out;
+}
+```

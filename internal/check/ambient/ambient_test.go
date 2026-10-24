@@ -1,7 +1,6 @@
 package ambient
 
 import (
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -10,6 +9,7 @@ import (
 	"github.com/jakechampion/lang/internal/check/checker"
 	"github.com/jakechampion/lang/internal/check/constfold"
 	"github.com/jakechampion/lang/internal/pkg/modload"
+	"github.com/jakechampion/lang/internal/tools/literate"
 )
 
 func enforce(t *testing.T, src string) []Violation {
@@ -247,7 +247,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 
 func TestSuggestionsExistInStdPlatform(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join("..", "..", "stdlib", "std", "platform.fern"))
+	src, err := literate.ReadFile(filepath.Join("..", "..", "stdlib", "std", "platform.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}

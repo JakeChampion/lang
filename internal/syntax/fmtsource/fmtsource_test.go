@@ -1,6 +1,9 @@
 package fmtsource
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 const literateDoc = "# Title\n" +
 	"\n" +
@@ -97,5 +100,19 @@ func TestFormatLiterate(t *testing.T) {
 	}
 	if again := FormatLiterate(got); again != got {
 		t.Errorf("FormatLiterate is not idempotent:\n%s", again)
+	}
+}
+
+func TestFormatSourceDocumentWithGeneratedRegion(t *testing.T) {
+	src := "# Generated constants\n\nKeep this prose.\n\n```fern\n<<*>>=\n<<table>>\n```\n\n```fern\n<<table>>=\n// BEGIN GENERATED\npub const   VALUE:i32=42;\n// END GENERATED\n```\n"
+	got, err := Format(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "pub const VALUE: i32 = 42;") || !strings.Contains(got, "Keep this prose.") || !strings.Contains(got, "// END GENERATED\n```") {
+		t.Fatalf("formatted source document:\n%s", got)
+	}
+	if again, err := Format(got); err != nil || again != got {
+		t.Fatalf("source document is not stable: %v\n%s", err, again)
 	}
 }

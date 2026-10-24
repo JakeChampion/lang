@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/stdlib"
 )
 
 func TestSelfHostCheckAcceptsEveryStdlibImport(t *testing.T) {
@@ -29,11 +31,11 @@ func TestSelfHostCheckAcceptsEveryStdlibImport(t *testing.T) {
 	}
 	var mods []string
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".fern") {
+		if err != nil || d.IsDir() || stdlib.ModuleName(p) == "" {
 			return err
 		}
 		rel, _ := filepath.Rel(root, p)
-		mods = append(mods, strings.TrimSuffix(filepath.ToSlash(rel), ".fern"))
+		mods = append(mods, stdlib.ModuleName(filepath.ToSlash(rel)))
 		return nil
 	})
 	if err != nil {

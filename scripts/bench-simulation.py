@@ -145,7 +145,7 @@ def main():
     source = output / "source"
     source.mkdir()
     inputs = sorted((root / "examples/fip").glob("simulation*.fern"))
-    inputs += [Path(__file__).resolve(), root / "bootstrap/stage0.lock", root / "internal/stdlib/std/bench.fern"]
+    inputs += [Path(__file__).resolve(), root / "bootstrap/stage0.lock", root / "internal/stdlib/std/bench.fern.md"]
     hashes = {}
     for path in inputs:
         shutil.copy2(path, source / path.name)

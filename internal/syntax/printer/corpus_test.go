@@ -19,7 +19,11 @@ func corpusRoot(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return root
+	dst := t.TempDir()
+	if err := corpus.Materialize(root, dst, corpus.Sources); err != nil {
+		t.Fatal(err)
+	}
+	return dst
 }
 
 func corpusFiles(t *testing.T, root string) []string {

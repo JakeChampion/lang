@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strconv"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/tools/literate"
 )
 
 const selfHostSrc = "../../../compiler/asmcore.fern"
@@ -93,7 +95,7 @@ func TestSelfHostTableMatches(t *testing.T) {
 
 func TestStdErrnoMatches(t *testing.T) {
 	const stdErrnoSrc = "../../stdlib/std/errno.fern"
-	b, err := os.ReadFile(stdErrnoSrc)
+	b, err := literate.ReadFile(stdErrnoSrc)
 	if err != nil {
 		t.Fatalf("reading %s: %v", stdErrnoSrc, err)
 	}
@@ -133,7 +135,7 @@ func TestStdErrnoMatches(t *testing.T) {
 }
 
 func TestStdErrnoFromHostMatches(t *testing.T) {
-	b, err := os.ReadFile("../../stdlib/std/errno.fern")
+	b, err := literate.ReadFile("../../stdlib/std/errno.fern")
 	if err != nil {
 		t.Fatal(err)
 	}

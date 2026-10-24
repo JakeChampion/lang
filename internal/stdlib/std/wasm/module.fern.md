@@ -1,0 +1,208 @@
+# WebAssembly module assembly
+
+This module constructs WebAssembly modules.
+
+## Model
+
+A module value accumulates types, imports, functions, tables, memories, globals, exports, code, and data. Builder methods return the next module value.
+
+## Contracts
+
+Parallel arrays within a section must describe the same entries. Index references must match their index spaces before binary validation or execution.
+
+## Module assembly
+
+The root chunk preserves the declaration order. The chunks below contain the complete implementation.
+
+```fern
+<<*>>=
+<<module introduction>>
+
+<<dependencies 2>>
+
+<<3 pub struct Module>>
+
+<<4 pub function module_new(): Module>>
+```
+
+### `module introduction`
+
+```fern
+<<module introduction>>=
+// This module constructs WebAssembly modules.
+```
+
+### `dependencies 2`
+
+```fern
+<<dependencies 2>>=
+import "std/wasm/encode";
+import "std/wasm/sections";
+import "std/wasm/imports";
+```
+
+### `3 pub struct Module`
+
+```fern
+<<3 pub struct Module>>=
+pub struct Module {
+  type_params: u8[][],
+  type_results: u8[][],
+  import_modules: string[],
+  import_names: string[],
+  import_kinds: u8[],
+  import_descs: u8[][],
+  function_typeidxs: u32[],
+  table_present: boolean,
+  table_reftype: u8,
+  table_min: u32,
+  table_max: i32,
+  memory_present: boolean,
+  memory_min: u32,
+  memory_max: i32,
+  global_valtypes: u8[],
+  global_muts: u8[],
+  global_inits: u8[][],
+  export_names: string[],
+  export_kinds: u8[],
+  export_idxs: u32[],
+  has_start: boolean,
+  start_funcidx: u32,
+  elem_offsets: i32[],
+  elem_funcidxs: u32[][],
+  code_bodies: u8[][],
+  data_offsets: i32[],
+  data_inits: u8[][],
+}
+```
+
+### `4 pub function module_new(): Module`
+
+```fern
+<<4 pub function module_new(): Module>>=
+pub function module_new(): Module {
+  return Module {
+    type_params: [],
+    type_results: [],
+    import_modules: [],
+    import_names: [],
+    import_kinds: [],
+    import_descs: [],
+    function_typeidxs: [],
+    table_present: false,
+    table_reftype: 112u8,
+    table_min: 0u32,
+    table_max: 0 - 1,
+    memory_present: false,
+    memory_min: 0u32,
+    memory_max: 0 - 1,
+    global_valtypes: [],
+    global_muts: [],
+    global_inits: [],
+    export_names: [],
+    export_kinds: [],
+    export_idxs: [],
+    has_start: false,
+    start_funcidx: 0u32,
+    elem_offsets: [],
+    elem_funcidxs: [],
+    code_bodies: [],
+    data_offsets: [],
+    data_inits: [],
+  };
+}
+
+pub function (m: Module) with_types(params: u8[][], results: u8[][]): Module {
+  return Module { ...m, type_params: params, type_results: results };
+}
+
+pub function (m: Module) with_imports(modules: string[], names: string[], kinds: u8[], descs: u8[][]): Module {
+  return Module { ...m, import_modules: modules, import_names: names, import_kinds: kinds, import_descs: descs };
+}
+
+pub function (m: Module) with_functions(typeidxs: u32[]): Module {
+  return Module { ...m, function_typeidxs: typeidxs };
+}
+
+pub function (m: Module) with_table(reftype: u8, min: u32, max: i32): Module {
+  return Module { ...m, table_present: true, table_reftype: reftype, table_min: min, table_max: max };
+}
+
+pub function (m: Module) with_memory(min: u32, max: i32): Module {
+  return Module { ...m, memory_present: true, memory_min: min, memory_max: max };
+}
+
+pub function (m: Module) with_globals(valtypes: u8[], muts: u8[], inits: u8[][]): Module {
+  return Module { ...m, global_valtypes: valtypes, global_muts: muts, global_inits: inits };
+}
+
+pub function (m: Module) with_exports(names: string[], kinds: u8[], idxs: u32[]): Module {
+  return Module { ...m, export_names: names, export_kinds: kinds, export_idxs: idxs };
+}
+
+pub function (m: Module) with_start(funcidx: u32): Module {
+  return Module { ...m, has_start: true, start_funcidx: funcidx };
+}
+
+pub function (m: Module) with_elements(offsets: i32[], funcidxs: u32[][]): Module {
+  return Module { ...m, elem_offsets: offsets, elem_funcidxs: funcidxs };
+}
+
+pub function (m: Module) with_code(bodies: u8[][]): Module {
+  return Module { ...m, code_bodies: bodies };
+}
+
+pub function (m: Module) with_data(offsets: i32[], inits: u8[][]): Module {
+  return Module { ...m, data_offsets: offsets, data_inits: inits };
+}
+
+pub function build(m: Module): u8[] {
+  let bytes: u8[] = encode.put_module_header([]);
+
+  if (m.type_params.len() > 0) {
+    bytes = sections.encode_type_section(bytes, m.type_params, m.type_results);
+  }
+
+  if (m.import_modules.len() > 0) {
+    bytes = imports.encode_import_section(bytes, m.import_modules, m.import_names, m.import_kinds, m.import_descs);
+  }
+
+  if (m.function_typeidxs.len() > 0) {
+    bytes = sections.encode_function_section(bytes, m.function_typeidxs);
+  }
+
+  if (m.table_present) {
+    bytes = sections.encode_table_section(bytes, m.table_reftype, m.table_min, m.table_max);
+  }
+
+  if (m.memory_present) {
+    bytes = sections.encode_memory_section(bytes, m.memory_min, m.memory_max);
+  }
+
+  if (m.global_valtypes.len() > 0) {
+    bytes = imports.encode_global_section(bytes, m.global_valtypes, m.global_muts, m.global_inits);
+  }
+
+  if (m.export_names.len() > 0) {
+    bytes = sections.encode_export_section(bytes, m.export_names, m.export_kinds, m.export_idxs);
+  }
+
+  if (m.has_start) {
+    bytes = sections.encode_start_section(bytes, m.start_funcidx);
+  }
+
+  if (m.elem_offsets.len() > 0) {
+    bytes = sections.encode_element_section(bytes, m.elem_offsets, m.elem_funcidxs);
+  }
+
+  if (m.code_bodies.len() > 0) {
+    bytes = sections.encode_code_section(bytes, m.code_bodies);
+  }
+
+  if (m.data_offsets.len() > 0) {
+    bytes = sections.encode_data_section(bytes, m.data_offsets, m.data_inits);
+  }
+
+  return bytes;
+}
+```

@@ -166,7 +166,7 @@ def main():
     source.mkdir()
     hashes = {}
     inputs = sorted((root / "examples/fip").glob("storage*.fern"))
-    inputs += [Path(__file__).resolve(), root / "bootstrap/stage0.lock", root / "internal/stdlib/std/bench.fern"]
+    inputs += [Path(__file__).resolve(), root / "bootstrap/stage0.lock", root / "internal/stdlib/std/bench.fern.md"]
     for path in inputs:
         shutil.copy2(path, source / path.name)
         hashes[str(path.relative_to(root))] = digest(path)

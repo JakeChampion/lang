@@ -13,11 +13,11 @@ const netSrc = "std/net.fern"
 
 func readNet(t *testing.T) string {
 	t.Helper()
-	b, err := src.ReadFile(netSrc)
+	b, err := ReadModule(netSrc)
 	if err != nil {
 		t.Fatalf("reading %s: %v", netSrc, err)
 	}
-	return string(b)
+	return b.Code
 }
 
 func netListBody(t *testing.T, s, name string) string {

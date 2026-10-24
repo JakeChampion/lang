@@ -8,11 +8,12 @@ import (
 	"testing"
 
 	e2eharness "github.com/jakechampion/lang/internal/testing/e2eharness"
+	"github.com/jakechampion/lang/internal/tools/literate"
 )
 
 func dnsTCPBytesFaultSource(t *testing.T) string {
 	t.Helper()
-	module, err := os.ReadFile("../../stdlib/std/dns.fern")
+	module, err := literate.ReadFile("../../stdlib/std/dns.fern")
 	if err != nil {
 		t.Fatal(err)
 	}

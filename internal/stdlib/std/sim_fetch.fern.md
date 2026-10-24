@@ -1,0 +1,931 @@
+# Scripted HTTP network responses
+
+This module provides a scripted HTTP network with virtual time.
+
+## Model
+
+An answer combines response bytes with first-byte delay, chunk delay, chunk size, and close policy. A simulated network delivers these answers under virtual time.
+
+## Contracts
+
+Tests can model resets, silence, redirects, and partial responses. Scripted time values replace wall-clock delays and make transport outcomes repeatable.
+
+## Module assembly
+
+The root chunk preserves the declaration order. The chunks below contain the complete implementation.
+
+```fern
+<<*>>=
+<<dependencies 1>>
+
+<<2 pub struct Answer>>
+
+<<3 pub function reply(status: i32, body: string): Answer>>
+
+<<4 const CLOSING: string>>
+
+<<5 pub function raw(text: string): Answer>>
+
+<<6 pub struct Name>>
+
+<<7 pub function net(drv: sim.Sim): Net>>
+
+<<8 impl fetch.Transport for Net>>
+
+<<9 pub function taped(req: fetch.Request, resp: HttpResponse): string>>
+
+<<10 function __wire_only(name: string): boolean>>
+
+<<11 pub function send_taped[T: fetch.Transport](tr: T, tape: Cell[string], req: fetch.Request, policy: fetch.Po...>>
+
+<<12 struct __Exchange>>
+
+<<13 function __exchange(line: string): Option[__Exchange]>>
+
+<<14 function __replayed(n: Net, e: __Exchange): Net>>
+
+<<15 function __target(data: u8[]): string>>
+
+<<16 function __set_conn(n: Net, id: i32, row: string): i32>>
+```
+
+### `dependencies 1`
+
+```fern
+<<dependencies 1>>=
+// This module provides a scripted HTTP network with virtual time.
+import "std/sim";
+import "std/fetch";
+import "std/http";
+import "std/net";
+import "std/dns";
+import "std/i64";
+import "core/int";
+import "std/hex";
+import "std/utf8";
+import "std/url";
+import "std/json";
+import "std/headers";
+```
+
+### `2 pub struct Answer`
+
+```fern
+<<2 pub struct Answer>>=
+pub struct Answer { bytes: u8[], first_ms: i64, chunk_ms: i64, chunk: i32, close: boolean }
+```
+
+### `3 pub function reply(status: i32, body: string): Answer`
+
+```fern
+<<3 pub function reply(status: i32, body: string): Answer>>=
+pub function reply(status: i32, body: string): Answer {
+  return raw("HTTP/1.1 " + int.int_to_string(status) + " Status\r\nContent-Length: " + int.int_to_string(body.len()) + CLOSING + body);
+}
+
+pub function redirect(status: i32, location: string): Answer {
+  return raw("HTTP/1.1 " + int.int_to_string(status) + " Status\r\nLocation: " + location + "\r\nContent-Length: 0" + CLOSING);
+}
+```
+
+### `4 const CLOSING: string`
+
+```fern
+<<4 const CLOSING: string>>=
+const CLOSING: string = "\r\nConnection: close\r\n\r\n";
+```
+
+### `5 pub function raw(text: string): Answer`
+
+```fern
+<<5 pub function raw(text: string): Answer>>=
+pub function raw(text: string): Answer {
+  return raw_bytes(text.bytes());
+}
+
+pub function raw_bytes(bytes: u8[]): Answer {
+  return Answer { bytes: bytes, first_ms: 0, chunk_ms: 0, chunk: 0, close: true };
+}
+
+pub function reset(): Answer {
+  let none: u8[] = [];
+  return raw_bytes(none);
+}
+
+pub function silent(): Answer {
+  return Answer { ...reset(), close: false };
+}
+
+pub function (a: Answer) after(ms: i64): Answer {
+  return Answer { ...a, first_ms: ms };
+}
+
+pub function (a: Answer) in_chunks(size: i32, every_ms: i64): Answer {
+  return Answer { ...a, chunk: size, chunk_ms: every_ms };
+}
+
+pub function (a: Answer) held(): Answer {
+  return Answer { ...a, close: false };
+}
+
+pub function (a: Answer) kept(): Answer {
+  let at: i32 = __find_bytes(a.bytes, CLOSING.as_bytes());
+  let end: i32 = __find_bytes(a.bytes, "\r\n\r\n".as_bytes());
+  if (at < 0 || end < 0 || at + CLOSING.len() != end + 4) {
+    return a.held();
+  }
+  let h: usize = buf_new(a.bytes.len() - CLOSING.len() + 4);
+  buf_push_bytes_range(h, a.bytes, 0, at);
+  buf_push(h, "\r\n\r\n");
+  buf_push_bytes_range(h, a.bytes, at + CLOSING.len(), a.bytes.len());
+  let bytes: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  return Answer { ...a, bytes: bytes, close: false };
+}
+```
+
+### `6 pub struct Name`
+
+```fern
+<<6 pub struct Name>>=
+pub struct Name { host: string, addrs: string[] }
+
+pub struct Listener { addr: string, port: i32, connect_ms: i64 }
+
+pub struct Route { addr: string, port: i32, path: string, answers: Answer[] }
+
+pub struct Server { addr: string, port: i32, handler: (HttpRequest) => HttpResponse }
+
+pub struct Net { drv: sim.Sim, names: Name[], listeners: Listener[], routes: Route[], servers: Server[], conns: Cell[string], hits: Cell[string], sent: Cell[string], made: Cell[string], next: Cell[i32], pool: fetch.Idle }
+```
+
+### `7 pub function net(drv: sim.Sim): Net`
+
+```fern
+<<7 pub function net(drv: sim.Sim): Net>>=
+pub function net(drv: sim.Sim): Net {
+  let names: Name[] = [];
+  let listeners: Listener[] = [];
+  let routes: Route[] = [];
+  let servers: Server[] = [];
+  return Net { drv: drv, names: names, listeners: listeners, routes: routes, servers: servers, conns: cell_new(""), hits: cell_new(""), sent: cell_new(""), made: cell_new(""), next: cell_new(1), pool: fetch.idle() };
+}
+
+pub function (n: Net) pooling(pool: fetch.Idle): Net {
+  return Net { ...n, pool: pool };
+}
+
+pub function (n: Net) host(name: string, addrs: string[]): Net {
+  return Net { ...n, names: n.names.append(Name { host: name, addrs: addrs }) };
+}
+
+pub function (n: Net) listen(addr: string, port: i32, connect_ms: i64): Net {
+  return Net { ...n, listeners: n.listeners.append(Listener { addr: __canon(addr), port: port, connect_ms: connect_ms }) };
+}
+
+pub function (n: Net) route(addr: string, port: i32, path: string, answers: Answer[]): Net {
+  return Net { ...n, routes: n.routes.append(Route { addr: __canon(addr), port: port, path: path, answers: answers }) };
+}
+
+pub function (n: Net) serve(addr: string, port: i32, handler: (HttpRequest) => HttpResponse): Net {
+  let listening: Net = n.listen(addr, port, 0);
+  return Net { ...listening, servers: listening.servers.append(Server { addr: __canon(addr), port: port, handler: handler }) };
+}
+
+pub function (n: Net) connects(): i32 {
+  return n.next.get() - 1;
+}
+
+pub function (n: Net) open(): i32 {
+  let count: i32 = 0;
+  for row in __rows(n.conns.get()) {
+    if (row[7] == "1") {
+      count = count + 1;
+    }
+  }
+  return count;
+}
+
+pub function (n: Net) sent_count(): i32 {
+  return __sent_all(n).len();
+}
+
+pub function (n: Net) sent(i: i32): u8[] {
+  let all: string[] = __sent_all(n);
+  if (i < 0 || i >= all.len()) {
+    let none: u8[] = [];
+    return none;
+  }
+  return __journal_bytes(all[i]);
+}
+```
+
+### `8 impl fetch.Transport for Net`
+
+```fern
+<<8 impl fetch.Transport for Net>>=
+impl fetch.Transport for Net {
+  function now_ns(self: Net): i64 {
+    return self.drv.clock_ns.get();
+  }
+  function wall_ms(self: Net): i64 {
+    return self.drv.clock_ns.get() / 1000000;
+  }
+  function lookup(self: Net, host: string, checked: boolean): Result[fetch.Lookup, dns.DnsError] {
+    let found: net.IpAddr[] = __addrs_of(self, host);
+    if (found.len() == 0) {
+      return Err(dns.NoSuchName);
+    }
+    let none: net.IpAddr[] = [];
+    if (!checked) {
+      return Ok(fetch.Lookup { dial: found, named: none, judged: none });
+    }
+    return Ok(fetch.Lookup { dial: found, named: found, judged: found });
+  }
+  function connect(self: Net, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError] {
+    let fallback_ms: i64 = dns.dial_options().fallback.as_millis();
+    let start_ms: i64 = 0;
+    let best_ms: i64 = 0 - 1;
+    let best: string = "";
+    for a in addrs {
+      let key: string = a.to_string();
+      let delay: i64 = __connect_ms(self, key, port);
+      if (delay >= 0) {
+        let done_ms: i64 = start_ms + delay;
+        if (best_ms < 0 || done_ms < best_ms) {
+          best_ms = done_ms;
+          best = key;
+        }
+        start_ms = start_ms + fallback_ms;
+      }
+    }
+    if (timeout_ms <= 0) {
+      return Err(net.TimedOut);
+    }
+    if (best_ms < 0) {
+      return Err(net.ConnectionRefused);
+    }
+    if (best_ms > timeout_ms as i64) {
+      if (!self.drv.advance_to(self.drv.clock_ns.get() + timeout_ms as i64 * 1000000)) {
+        return Err(net.Interrupted);
+      }
+      return Err(net.TimedOut);
+    }
+    if (!self.drv.advance_to(self.drv.clock_ns.get() + best_ms * 1000000)) {
+      return Err(net.Interrupted);
+    }
+    let id: i32 = self.next.get();
+    self.next.set(id + 1);
+    self.conns.set(self.conns.get() + __row(id, best, port, 0 - 1, 0, 0, 0, 1));
+    return Ok(id);
+  }
+  function write(self: Net, conn: i32, bytes: u8[]): i32 {
+    let row: string[] = __conn(self, conn);
+    if (row.len() == 0 || row[7] != "1") {
+      return 0 - 9;
+    }
+    let encoded: string = hex.encode(bytes);
+    self.sent.set(self.sent.get() + int.int_to_string(encoded.len()) + ":" + encoded);
+    if (__busy(self, row)) {
+      return bytes.len();
+    }
+    let port: i32 = __field(row, 2);
+    let target: string = __target(bytes);
+    let route: i32 = 0 - 2;
+    let answer: i32 = 0;
+    let i: i32 = 0;
+    while (i < self.routes.len()) {
+      let r: Route = self.routes[i];
+      if (r.addr == row[1] && r.port == port && (r.path == target || r.path == "*")) {
+        route = i;
+        answer = __took(self, i);
+        break;
+      }
+      i = i + 1;
+    }
+    if (route == 0 - 2) {
+      route = __served(self, row[1], port, bytes);
+    }
+    let first_ms: i64 = 0;
+    if (route >= 0) {
+      first_ms = __answer(self, route, answer).first_ms;
+    }
+    __set_conn(self, conn, __row(conn, row[1], port, route, answer, 0, self.drv.clock_ns.get() + first_ms * 1000000, 1));
+    return bytes.len();
+  }
+  function read(self: Net, conn: i32, max: i32, wait_ms: i64): Result[net.Recv, net.NetError] {
+    let row: string[] = __conn(self, conn);
+    let now: i64 = self.drv.clock_ns.get();
+    let deadline: i64 = now + wait_ms * 1000000;
+    let route: i32 = __field(row, 3);
+    if (row.len() == 0 || route == 0 - 1) {
+      return Ok(__elapsed(self, deadline));
+    }
+    let a: Answer = __answer(self, route, __field(row, 4));
+    let offset: i32 = __field(row, 5);
+    if (offset >= a.bytes.len()) {
+      if (a.close) {
+        let none: u8[] = [];
+        return Ok(net.Chunk(none));
+      }
+      return Ok(__elapsed(self, deadline));
+    }
+    let ready: i64 = __field64(row, 6);
+    if (ready > deadline) {
+      return Ok(__elapsed(self, deadline));
+    }
+    if (!self.drv.advance_to(ready)) {
+      return Ok(net.Abandoned);
+    }
+    let size: i32 = a.bytes.len() - offset;
+    if (a.chunk > 0 && a.chunk < size) {
+      size = a.chunk;
+    }
+    if (max < size) {
+      size = max;
+    }
+    let out: u8[] = [];
+    let k: i32 = 0;
+    while (k < size) {
+      out = out.append(a.bytes[offset + k]);
+      k = k + 1;
+    }
+    __set_conn(self, conn, __row(conn, row[1], __field(row, 2), route, __field(row, 4), offset + size, self.drv.clock_ns.get() + a.chunk_ms * 1000000, 1));
+    return Ok(net.Chunk(out));
+  }
+  function close(self: Net, conn: i32): i32 {
+    let row: string[] = __conn(self, conn);
+    if (row.len() > 0) {
+      __set_conn(self, conn, __row(conn, row[1], __field(row, 2), __field(row, 3), __field(row, 4), __field(row, 5), __field64(row, 6), 0));
+    }
+    return 0;
+  }
+  function idle(self: Net): fetch.Idle {
+    return self.pool;
+  }
+  function socket(self: Net, conn: i32): i32 {
+    return 0 - 1;
+  }
+}
+```
+
+### `9 pub function taped(req: fetch.Request, resp: HttpResponse): string`
+
+```fern
+<<9 pub function taped(req: fetch.Request, resp: HttpResponse): string>>=
+pub function taped(req: fetch.Request, resp: HttpResponse): string {
+  let pairs: json.JsonValue[] = [];
+  let i: i32 = 0;
+  while (i < resp.headers.names.len()) {
+    let name: string = resp.headers.names[i].to_lower();
+    if (!__wire_only(name)) {
+      pairs = pairs.append(json.JArray([json.JString(name), json.JString(resp.headers.values[i])]));
+    }
+    i = i + 1;
+  }
+  let keys: string[] = ["method", "url", "status", "headers"];
+  let values: json.JsonValue[] = [json.JString(req.method), json.JString(req.url), json.JNumber(int.int_to_string(resp.status)), json.JArray(pairs)];
+  let body: u8[] = resp.body_bytes();
+  match (utf8.from_bytes(body)) {
+    Some(text) => {
+      keys = keys.append("body");
+      values = values.append(json.JString(text));
+    },
+    None => {
+      keys = keys.append("body_hex");
+      values = values.append(json.JString(hex.encode(body)));
+    }
+  }
+  return json.json_encode(json.JObject(json.object_of(keys, values))) + "\n";
+}
+```
+
+### `10 function __wire_only(name: string): boolean`
+
+```fern
+<<10 function __wire_only(name: string): boolean>>=
+function __wire_only(name: string): boolean {
+  return name == "content-length" || name == "content-encoding" || name == "transfer-encoding" || name == "connection";
+}
+```
+
+### `11 pub function send_taped[T: fetch.Transport](tr: T, tape: Cell[string], req: fetch.Request, policy: fetch.Po...`
+
+```fern
+<<11 pub function send_taped[T: fetch.Transport](tr: T, tape: Cell[string], req: fetch.Request, policy: fetch.Po...>>=
+pub function send_taped[T: fetch.Transport](tr: T, tape: Cell[string], req: fetch.Request, policy: fetch.Policy): Result[HttpResponse, fetch.FetchError] {
+  match (fetch.send_on(tr, req, policy)) {
+    Ok(resp) => {
+      tape.set(tape.get() + taped(req, resp));
+      return Ok(resp);
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
+}
+
+pub function (n: Net) replay(cassette: string): Result[Net, string] {
+  let out: Net = n;
+  let line_no: i32 = 0;
+  for line in cassette.split("\n") {
+    line_no = line_no + 1;
+    if (line.len() > 0) {
+      match (__exchange(line)) {
+        Some(e) => {
+          out = __replayed(out, e);
+        },
+        None => {
+          return Err("sim_fetch: cassette line " + int.int_to_string(line_no) + " is not an exchange");
+        }
+      }
+    }
+  }
+  return Ok(out);
+}
+```
+
+### `12 struct __Exchange`
+
+```fern
+<<12 struct __Exchange>>=
+struct __Exchange { host: string, port: i32, target: string, answer: Answer }
+```
+
+### `13 function __exchange(line: string): Option[__Exchange]`
+
+```fern
+<<13 function __exchange(line: string): Option[__Exchange]>>=
+function __exchange(line: string): Option[__Exchange] {
+  match (json.json_parse(line)) {
+    Some(v) => {
+      match (v) {
+        json.JObject(o) => {
+          return __exchange_of(o);
+        },
+        _ => {
+          return None;
+        }
+      }
+    },
+    None => {
+      return None;
+    }
+  }
+  return None;
+}
+
+function __exchange_of(o: json.JsonObject): Option[__Exchange] {
+  let method: string = __string_member(o, "method");
+  let status: i32 = __int(__string_member(o, "status"));
+  let Some(u) = url.url_parse(__string_member(o, "url")) else {
+    return None;
+  };
+  if (method.len() == 0 || status <= 0 || u.host.len() == 0) {
+    return None;
+  }
+  let port: i32 = u.port;
+  if (port == 0 || u.scheme == "https") {
+    port = 80;
+  }
+  let target: string = u.path;
+  if (target.len() == 0) {
+    target = "/";
+  }
+  if (u.query.len() > 0) {
+    target = target + "?" + u.query;
+  }
+  let Some(body) = __body_member(o) else {
+    return None;
+  };
+  let resp: HttpResponse = HttpResponse { status: status, body: BodyBytes(body), headers: __headers_member(o), trailers: headers.header_map_new(), background: None };
+  return Some(__Exchange { host: u.host, port: port, target: target, answer: raw_bytes(http.http_serialize_response_to_bytes(method, "HTTP/1.1", resp, false)) });
+}
+
+function __string_member(o: json.JsonObject, key: string): string {
+  match (o.get(key)) {
+    Some(v) => {
+      match (v) {
+        json.JString(s) => {
+          return s;
+        },
+        json.JNumber(digits) => {
+          return digits;
+        },
+        _ => {
+          return "";
+        }
+      }
+    },
+    None => {
+      return "";
+    }
+  }
+  return "";
+}
+
+function __headers_member(o: json.JsonObject): HeaderMap {
+  let out: HeaderMap = headers.header_map_new();
+  match (o.get("headers")) {
+    Some(v) => {
+      match (v) {
+        json.JArray(pairs) => {
+          for p in pairs {
+            match (p) {
+              json.JArray(kv) => {
+                if (kv.len() == 2) {
+                  out = out.append(__text(kv[0]), __text(kv[1]));
+                }
+              },
+              _ => {}
+            }
+          }
+        },
+        _ => {}
+      }
+    },
+    None => {}
+  }
+  return out;
+}
+
+function __text(v: json.JsonValue): string {
+  match (v) {
+    json.JString(s) => {
+      return s;
+    },
+    _ => {
+      return "";
+    }
+  }
+  return "";
+}
+
+function __body_member(o: json.JsonObject): Option[u8[]] {
+  if (o.contains("body_hex")) {
+    match (hex.decode(__string_member(o, "body_hex"))) {
+      Ok(bytes) => {
+        return Some(bytes);
+      },
+      Err(_) => {
+        return None;
+      }
+    }
+  }
+  return Some(__string_member(o, "body").bytes());
+}
+```
+
+### `14 function __replayed(n: Net, e: __Exchange): Net`
+
+```fern
+<<14 function __replayed(n: Net, e: __Exchange): Net>>=
+function __replayed(n: Net, e: __Exchange): Net {
+  let out: Net = n;
+  let addr: string = __replay_addr(out, e.host);
+  if (__addrs_of(out, e.host).len() == 0) {
+    out = out.host(e.host, [addr]);
+  }
+  if (__connect_ms(out, addr, e.port) < 0) {
+    out = out.listen(addr, e.port, 0);
+  }
+  let i: i32 = 0;
+  while (i < out.routes.len()) {
+    let r: Route = out.routes[i];
+    if (r.addr == addr && r.port == e.port && r.path == e.target) {
+      return Net { ...out, routes: out.routes.with(i, Route { ...r, answers: r.answers.append(e.answer) }) };
+    }
+    i = i + 1;
+  }
+  return out.route(addr, e.port, e.target, [e.answer]);
+}
+
+function __replay_addr(n: Net, host: string): string {
+  let known: net.IpAddr[] = __addrs_of(n, host);
+  if (known.len() > 0) {
+    return known[0].to_string();
+  }
+  let last: i32 = 34;
+  while (last < 255) {
+    let candidate: string = "93.184.216." + int.int_to_string(last);
+    if (!__addr_named(n, candidate)) {
+      return candidate;
+    }
+    last = last + 1;
+  }
+  return "93.184.216.255";
+}
+
+function __addr_named(n: Net, addr: string): boolean {
+  for name in n.names {
+    for a in name.addrs {
+      if (a == addr) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function __busy(n: Net, row: string[]): boolean {
+  let route: i32 = __field(row, 3);
+  if (route == 0 - 1) {
+    return false;
+  }
+  let a: Answer = __answer(n, route, __field(row, 4));
+  return a.close || __field(row, 5) < a.bytes.len();
+}
+
+function __canon(addr: string): string {
+  match (net.ip_parse(addr)) {
+    Some(a) => {
+      return a.to_string();
+    },
+    None => {
+      return addr;
+    }
+  }
+  return addr;
+}
+
+function __connect_ms(n: Net, addr: string, port: i32): i64 {
+  for l in n.listeners {
+    if (l.addr == addr && l.port == port) {
+      return l.connect_ms;
+    }
+  }
+  return 0 - 1;
+}
+
+function __addrs_of(n: Net, host: string): net.IpAddr[] {
+  let out: net.IpAddr[] = [];
+  match (net.ip_parse(host)) {
+    Some(a) => {
+      return out.append(a);
+    },
+    None => {}
+  }
+  for name in n.names {
+    if (name.host == host) {
+      for s in name.addrs {
+        match (net.ip_parse(s)) {
+          Some(a) => {
+            out = out.append(a);
+          },
+          None => {}
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function __elapsed(n: Net, to_ns: i64): net.Recv {
+  if (!n.drv.advance_to(to_ns)) {
+    return net.Abandoned;
+  }
+  return net.Elapsed;
+}
+
+function __find_bytes(data: [u8], needle: [u8]): i32 {
+  let at: i32 = 0;
+  while (at <= data.len() - needle.len()) {
+    let j: i32 = 0;
+    while (j < needle.len() && data[at + j] == needle[j]) {
+      j = j + 1;
+    }
+    if (j == needle.len()) {
+      return at;
+    }
+    at = at + 1;
+  }
+  return 0 - 1;
+}
+```
+
+### `15 function __target(data: u8[]): string`
+
+```fern
+<<15 function __target(data: u8[]): string>>=
+function __target(data: u8[]): string {
+  let end: i32 = __find_bytes(data, "\r\n".as_bytes());
+  if (end < 0) {
+    end = data.len();
+  }
+  let start: i32 = 0;
+  while (start < end && data[start] != 32 as u8) {
+    start = start + 1;
+  }
+  if (start == end) {
+    return "";
+  }
+  start = start + 1;
+  let stop: i32 = start;
+  while (stop < end && data[stop] != 32 as u8) {
+    stop = stop + 1;
+  }
+  let bytes: u8[] = __alloc_u8(stop - start);
+  let i: i32 = 0;
+  while (start + i < stop) {
+    bytes = bytes.with(i, data[start + i]);
+    i = i + 1;
+  }
+  match (utf8.from_bytes(bytes)) {
+    Some(target) => {
+      return target;
+    },
+    None => {
+      return "";
+    }
+  }
+}
+
+function __took(n: Net, route: i32): i32 {
+  let counts: string[] = n.hits.get().split(",");
+  let out: string = "";
+  let before: i32 = 0;
+  let i: i32 = 0;
+  while (i < n.routes.len()) {
+    let c: i32 = 0;
+    if (i < counts.len()) {
+      c = __int(counts[i]);
+    }
+    if (i == route) {
+      before = c;
+      c = c + 1;
+    }
+    out = out + int.int_to_string(c) + ",";
+    i = i + 1;
+  }
+  n.hits.set(out);
+  return before;
+}
+
+function __served(n: Net, addr: string, port: i32, bytes: u8[]): i32 {
+  for s in n.servers {
+    if (s.addr == addr && s.port == port) {
+      let k: i32 = __journal_all(n.made.get()).len();
+      let entry: string = __response_entry(s, bytes);
+      n.made.set(n.made.get() + int.int_to_string(entry.len()) + ":" + entry);
+      return 0 - 3 - k;
+    }
+  }
+  return 0 - 2;
+}
+
+function __response_entry(s: Server, bytes: u8[]): string {
+  match (http.http_parse_request_framed(bytes)) {
+    http.Framed(f) => {
+      let h: (HttpRequest) => HttpResponse = s.handler;
+      let resp: HttpResponse = h(f.request);
+      let flag: string = "c";
+      if (f.keep_alive) {
+        flag = "k";
+      }
+      return flag + hex.encode(http.http_serialize_response_to_bytes(f.request.method, f.version, resp, f.keep_alive));
+    },
+    http.Incomplete => {
+      return __refused_entry();
+    },
+    http.Continue => {
+      return __refused_entry();
+    },
+    http.Malformed(_) => {
+      return __refused_entry();
+    }
+  }
+  return __refused_entry();
+}
+
+function __refused_entry(): string {
+  return "c" + hex.encode(http.http_serialize_response_conn_bytes(http.text(400, "bad request"), false));
+}
+
+function __answer(n: Net, route: i32, i: i32): Answer {
+  if (route <= 0 - 3) {
+    let entry: string = __journal_all(n.made.get())[0 - 3 - route];
+    return Answer { bytes: __journal_bytes(slice_unchecked(entry, 1, entry.len()).to_owned()), first_ms: 0, chunk_ms: 0, chunk: 0, close: entry[0] == b'c' };
+  }
+  if (route < 0) {
+    return reply(404, "");
+  }
+  let answers: Answer[] = n.routes[route].answers;
+  if (answers.len() == 0) {
+    return reply(404, "");
+  }
+  if (i >= answers.len()) {
+    return answers[answers.len() - 1];
+  }
+  return answers[i];
+}
+
+function __row(id: i32, addr: string, port: i32, route: i32, answer: i32, offset: i32, ready_ns: i64, open: i32): string {
+  return int.int_to_string(id) + "|" + addr + "|" + int.int_to_string(port) + "|" + int.int_to_string(route) + "|" + int.int_to_string(answer) + "|" + int.int_to_string(offset) + "|" + ready_ns.to_string() + "|" + int.int_to_string(open) + ";";
+}
+
+function __rows(table: string): string[][] {
+  let rows: string[][] = [];
+  for entry in table.split(";") {
+    if (entry.len() > 0) {
+      rows = rows.append(entry.split("|"));
+    }
+  }
+  return rows;
+}
+
+function __conn(n: Net, id: i32): string[] {
+  for row in __rows(n.conns.get()) {
+    if (__field(row, 0) == id) {
+      return row;
+    }
+  }
+  let none: string[] = [];
+  return none;
+}
+```
+
+### `16 function __set_conn(n: Net, id: i32, row: string): i32`
+
+```fern
+<<16 function __set_conn(n: Net, id: i32, row: string): i32>>=
+function __set_conn(n: Net, id: i32, row: string): i32 {
+  let out: string = "";
+  for r in __rows(n.conns.get()) {
+    if (__field(r, 0) == id) {
+      out = out + row;
+    } else {
+      out = out + __row(__field(r, 0), r[1], __field(r, 2), __field(r, 3), __field(r, 4), __field(r, 5), __field64(r, 6), __field(r, 7));
+    }
+  }
+  n.conns.set(out);
+  return 0;
+}
+
+function __field(row: string[], i: i32): i32 {
+  if (i >= row.len()) {
+    return 0;
+  }
+  return __int(row[i]);
+}
+
+function __int(s: string): i32 {
+  if (s.len() > 0 && s[0] == b'-') {
+    return 0 - __int(s.split("-")[1]);
+  }
+  match (int.parse_int_radix(s, 10)) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+function __field64(row: string[], i: i32): i64 {
+  let v: i64 = 0;
+  if (i >= row.len()) {
+    return v;
+  }
+  for b in row[i].bytes() {
+    v = v * 10 + (b as i64 - 48);
+  }
+  return v;
+}
+
+function __sent_all(n: Net): string[] {
+  return __journal_all(n.sent.get());
+}
+
+function __journal_all(log: string): string[] {
+  let bs: u8[] = log.bytes();
+  let out: string[] = [];
+  let at: i32 = 0;
+  while (at < bs.len()) {
+    let len: i32 = 0;
+    while (at < bs.len() && bs[at] != 58 as u8) {
+      len = len * 10 + (bs[at] as i32 - 48);
+      at = at + 1;
+    }
+    at = at + 1;
+    out = out.append(slice_unchecked(log, at, at + len).to_owned());
+    at = at + len;
+  }
+  return out;
+}
+
+// Journal entries contain only hexadecimal data from this module.
+function __journal_bytes(encoded: string): u8[] {
+  match (hex.decode(encoded)) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint("sim_fetch: invalid internal journal: " + problem.message());
+      exit(1);
+    }
+  }
+  return [];
+}
+```

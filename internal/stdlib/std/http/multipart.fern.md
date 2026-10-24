@@ -1,0 +1,662 @@
+# Multipart form-data streams
+
+This module reads and writes multipart form data under RFC 7578.
+
+## Model
+
+A multipart reader separates part headers from part content. Each step returns the next reader state so input can advance without a complete body copy.
+
+## Contracts
+
+Part count, part size, total size, and header size have separate limits. A caller must finish or skip a part before it requests the next part.
+
+## Module assembly
+
+The root chunk preserves the declaration order. The chunks below contain the complete implementation.
+
+```fern
+<<*>>=
+<<module introduction>>
+
+<<dependencies 2>>
+
+<<3 pub struct Limits>>
+
+<<4 pub function limits(): Limits>>
+
+<<5 pub enum MultipartError>>
+
+<<6 pub function (e: MultipartError) to_string(): string>>
+
+<<7 impl error.Error for MultipartError>>
+
+<<8 pub function (e: MultipartError) message(): string>>
+
+<<9 impl http.ToResponse for MultipartError>>
+
+<<10 function __status(e: MultipartError): i32>>
+
+<<11 pub struct Part>>
+
+<<12 pub function open(req: HttpRequest, limits: Limits): Result[Reader, MultipartError]>>
+
+<<13 function __closing(r: Reader): boolean>>
+
+<<14 pub function (r: Reader) read(n: i32): Result[(u8[], boolean, Reader), MultipartError]>>
+
+<<15 function __take(r: Reader, n: i32, limit: i32): Result[(u8[], boolean, Reader), MultipartError]>>
+
+<<16 pub function (r: Reader) content(): Result[(u8[], Reader), MultipartError]>>
+
+<<17 function __put(m: Map[string, string[]], name: string, bytes: u8[]): Result[Map[string, string[]], Multipar...>>
+
+<<18 function __param(value: string, name: string): string>>
+
+<<19 pub struct Builder>>
+
+<<20 pub function builder(): Builder>>
+
+<<21 function __escape(s: string): string>>
+```
+
+### `module introduction`
+
+```fern
+<<module introduction>>=
+// This module reads and writes multipart form data under RFC 7578.
+```
+
+### `dependencies 2`
+
+```fern
+<<dependencies 2>>=
+import "std/http";
+import "std/headers";
+import "std/stream";
+import "std/string";
+import "std/array";
+import "std/hex";
+import "std/utf8" as utf8;
+import "core/int";
+import "std/error";
+import "core/cmp";
+```
+
+### `3 pub struct Limits`
+
+```fern
+<<3 pub struct Limits>>=
+pub struct Limits { parts: i32, part_bytes: i32, total_bytes: i32, header_bytes: i32 }
+```
+
+### `4 pub function limits(): Limits`
+
+```fern
+<<4 pub function limits(): Limits>>=
+pub function limits(): Limits {
+  return limits_from(http.http_limits());
+}
+
+pub function limits_from(l: http.HttpLimits): Limits {
+  return Limits { parts: l.header_fields, part_bytes: l.body, total_bytes: l.body, header_bytes: l.header_bytes };
+}
+```
+
+### `5 pub enum MultipartError`
+
+```fern
+<<5 pub enum MultipartError>>=
+pub enum MultipartError {
+  NotMultipart(string),
+  NoBoundary,
+  MalformedMultipart(string),
+  TooManyParts(i32),
+  PartTooLarge(i32),
+  MultipartTooLarge(i32),
+  PartHeadersTooLarge(i32),
+  MultipartBody(http.BodyError),
+}
+```
+
+### `6 pub function (e: MultipartError) to_string(): string`
+
+```fern
+<<6 pub function (e: MultipartError) to_string(): string>>=
+pub function (e: MultipartError) to_string(): string {
+  return e.message();
+}
+```
+
+### `7 impl error.Error for MultipartError`
+
+```fern
+<<7 impl error.Error for MultipartError>>=
+impl error.Error for MultipartError {}
+
+impl cmp.Display for MultipartError {}
+```
+
+### `8 pub function (e: MultipartError) message(): string`
+
+```fern
+<<8 pub function (e: MultipartError) message(): string>>=
+pub function (e: MultipartError) message(): string {
+  match (e) {
+    NotMultipart(ct) => {
+      if (ct.len() == 0) {
+        return "expected a Content-Type of multipart/form-data";
+      }
+      return "expected multipart/form-data, got " + ct;
+    },
+    NoBoundary => {
+      return "the Content-Type names no boundary";
+    },
+    MalformedMultipart(why) => {
+      return "malformed multipart body: " + why;
+    },
+    TooManyParts(n) => {
+      return "more than " + int.int_to_string(n) + " parts";
+    },
+    PartTooLarge(n) => {
+      return "a part is past " + int.int_to_string(n) + " bytes";
+    },
+    MultipartTooLarge(n) => {
+      return "the body is past " + int.int_to_string(n) + " bytes";
+    },
+    PartHeadersTooLarge(n) => {
+      return "a part's headers are past " + int.int_to_string(n) + " bytes";
+    },
+    MultipartBody(e) => {
+      return "the body did not arrive whole";
+    }
+  }
+  return "";
+}
+```
+
+### `9 impl http.ToResponse for MultipartError`
+
+```fern
+<<9 impl http.ToResponse for MultipartError>>=
+impl http.ToResponse for MultipartError {
+  function to_response(self: MultipartError): HttpResponse {
+    match (self) {
+      MultipartBody(e) => {
+        return e.to_response();
+      },
+      _ => {
+        return http.problem(__status(self), "", self.message());
+      }
+    }
+    return http.problem(500, "", "");
+  }
+}
+```
+
+### `10 function __status(e: MultipartError): i32`
+
+```fern
+<<10 function __status(e: MultipartError): i32>>=
+function __status(e: MultipartError): i32 {
+  match (e) {
+    NotMultipart(_) => {
+      return 415;
+    },
+    NoBoundary => {
+      return 400;
+    },
+    MalformedMultipart(_) => {
+      return 400;
+    },
+    PartHeadersTooLarge(_) => {
+      return 431;
+    },
+    _ => {
+      return 413;
+    }
+  }
+  return 500;
+}
+```
+
+### `11 pub struct Part`
+
+```fern
+<<11 pub struct Part>>=
+pub struct Part { name: string, filename: string, content_type: string, headers: HeaderMap }
+
+pub struct Reader { s: Stream, delim: u8[], carry: u8[], eof: boolean, limits: Limits, parts: i32, total: i32, part_total: i32, in_part: boolean, after_delim: boolean }
+
+pub enum Step {
+  NextPart(Part, Reader),
+  NoMoreParts,
+}
+```
+
+### `12 pub function open(req: HttpRequest, limits: Limits): Result[Reader, MultipartError]`
+
+```fern
+<<12 pub function open(req: HttpRequest, limits: Limits): Result[Reader, MultipartError]>>=
+pub function open(req: HttpRequest, limits: Limits): Result[Reader, MultipartError] {
+  let ct: string = "";
+  match (req.headers.get("content-type")) {
+    Some(v) => {
+      ct = v;
+    },
+    None => {}
+  }
+  if (__media_type(ct) != "multipart/form-data") {
+    return Err(NotMultipart(ct));
+  }
+  let boundary: string = __param(ct, "boundary");
+  if (boundary.len() == 0 || boundary.len() > 70) {
+    return Err(NoBoundary);
+  }
+  return Ok(Reader { s: req.body_stream(), delim: ("\r\n--" + boundary).bytes(), carry: [13 as u8, 10 as u8], eof: false, limits: limits, parts: 0, total: 0, part_total: 0, in_part: false, after_delim: false });
+}
+
+pub function (r: Reader) next(): Result[Step, MultipartError] {
+  let cur: Reader = r;
+  if (!cur.after_delim) {
+    cur = __to_delim(cur)?;
+  }
+  cur = __need(cur, 2)?;
+  if (__closing(cur)) {
+    return Ok(NoMoreParts);
+  }
+  cur = __boundary_line_end(cur)?;
+  let head: (Part, Reader) = __part_head(cur)?;
+  return __opened(head.0, head.1);
+}
+```
+
+### `13 function __closing(r: Reader): boolean`
+
+```fern
+<<13 function __closing(r: Reader): boolean>>=
+function __closing(r: Reader): boolean {
+  return r.carry.len() >= 2 && r.carry[0] == 45 as u8 && r.carry[1] == 45 as u8;
+}
+
+function __opened(part: Part, r: Reader): Result[Step, MultipartError] {
+  if (r.parts + 1 > r.limits.parts) {
+    return Err(TooManyParts(r.limits.parts));
+  }
+  return Ok(NextPart(part, Reader { ...r, parts: r.parts + 1, part_total: 0, in_part: true, after_delim: false }));
+}
+```
+
+### `14 pub function (r: Reader) read(n: i32): Result[(u8[], boolean, Reader), MultipartError]`
+
+```fern
+<<14 pub function (r: Reader) read(n: i32): Result[(u8[], boolean, Reader), MultipartError]>>=
+pub function (r: Reader) read(n: i32): Result[(u8[], boolean, Reader), MultipartError] {
+  let none: u8[] = [];
+  if (!r.in_part || n <= 0) {
+    return Ok((none, !r.in_part, r));
+  }
+  let cur: Reader = r;
+  while (true) {
+    let at: i32 = __find(cur.carry, cur.delim, 0);
+    if (at >= 0) {
+      return __take(cur, n, at);
+    }
+    let avail: i32 = cur.carry.len() - (cur.delim.len() - 1);
+    if (cur.eof) {
+      return Err(MalformedMultipart("a part is not terminated"));
+    }
+    if (avail > 0) {
+      return __take(cur, n, avail);
+    }
+    cur = __pull(cur)?;
+  }
+  return Ok((none, true, cur));
+}
+```
+
+### `15 function __take(r: Reader, n: i32, limit: i32): Result[(u8[], boolean, Reader), MultipartError]`
+
+```fern
+<<15 function __take(r: Reader, n: i32, limit: i32): Result[(u8[], boolean, Reader), MultipartError]>>=
+function __take(r: Reader, n: i32, limit: i32): Result[(u8[], boolean, Reader), MultipartError] {
+  let take: i32 = n;
+  if (take > limit) {
+    take = limit;
+  }
+  if (r.part_total + take > r.limits.part_bytes) {
+    return Err(PartTooLarge(r.limits.part_bytes));
+  }
+  let bytes: u8[] = array.slice(r.carry, 0, take);
+  let rest: u8[] = array.slice(r.carry, take, r.carry.len());
+  let complete: boolean = take == limit && __find(rest, r.delim, 0) == 0;
+  if (complete) {
+    rest = array.slice(rest, r.delim.len(), rest.len());
+    return Ok((bytes, true, Reader { ...r, carry: rest, part_total: r.part_total + take, in_part: false, after_delim: true }));
+  }
+  return Ok((bytes, false, Reader { ...r, carry: rest, part_total: r.part_total + take }));
+}
+```
+
+### `16 pub function (r: Reader) content(): Result[(u8[], Reader), MultipartError]`
+
+```fern
+<<16 pub function (r: Reader) content(): Result[(u8[], Reader), MultipartError]>>=
+pub function (r: Reader) content(): Result[(u8[], Reader), MultipartError] {
+  let out: u8[] = [];
+  let cur: Reader = r;
+  let done: boolean = !cur.in_part;
+  while (!done) {
+    let piece: (u8[], boolean, Reader) = cur.read(65536)?;
+    out = out.concat(piece.0);
+    done = piece.1;
+    cur = piece.2;
+  }
+  return Ok((out, cur));
+}
+
+pub function fields(req: HttpRequest, limits: Limits): Result[Map[string, string[]], MultipartError] {
+  let m: Map[string, string[]] = map_new(8);
+  let cur: Reader = open(req, limits)?;
+  while (true) {
+    match (cur.next()?) {
+      NextPart(part, r1) => {
+        cur = r1;
+        if (part.filename.len() == 0) {
+          let got: (u8[], Reader) = cur.content()?;
+          cur = got.1;
+          m = __put(m, part.name, got.0)?;
+        }
+      },
+      NoMoreParts => {
+        return Ok(m);
+      }
+    }
+  }
+  return Ok(m);
+}
+```
+
+### `17 function __put(m: Map[string, string[]], name: string, bytes: u8[]): Result[Map[string, string[]], Multipar...`
+
+```fern
+<<17 function __put(m: Map[string, string[]], name: string, bytes: u8[]): Result[Map[string, string[]], Multipar...>>=
+function __put(m: Map[string, string[]], name: string, bytes: u8[]): Result[Map[string, string[]], MultipartError] {
+  match (utf8.from_bytes(bytes)) {
+    Some(text) => {
+      match (m.get(name)) {
+        Some(vs) => {
+          return Ok(m.insert(name, vs.append(text)));
+        },
+        None => {
+          let one: string[] = [text];
+          return Ok(m.insert(name, one));
+        }
+      }
+    },
+    None => {
+      return Err(MultipartBody(http.NotUtf8));
+    }
+  }
+  return Err(MultipartBody(http.NotUtf8));
+}
+
+function __to_delim(r: Reader): Result[Reader, MultipartError] {
+  let cur: Reader = r;
+  while (true) {
+    let at: i32 = __find(cur.carry, cur.delim, 0);
+    if (at >= 0) {
+      return Ok(Reader { ...cur, carry: array.slice(cur.carry, at + cur.delim.len(), cur.carry.len()), in_part: false, after_delim: true });
+    }
+    if (cur.eof) {
+      return Err(MalformedMultipart("no boundary found"));
+    }
+    let keep: i32 = cur.delim.len() - 1;
+    if (cur.carry.len() > keep) {
+      cur = Reader { ...cur, carry: array.slice(cur.carry, cur.carry.len() - keep, cur.carry.len()) };
+    }
+    cur = __pull(cur)?;
+  }
+  return Ok(cur);
+}
+
+function __boundary_line_end(r: Reader): Result[Reader, MultipartError] {
+  let cur: Reader = r;
+  let i: i32 = 0;
+  while (true) {
+    cur = __need(cur, i + 2)?;
+    if (cur.carry.len() < i + 2) {
+      return Err(MalformedMultipart("a boundary line is cut short"));
+    }
+    let c: u8 = cur.carry[i];
+    if (c == 13 as u8 && cur.carry[i + 1] == 10 as u8) {
+      return Ok(Reader { ...cur, carry: array.slice(cur.carry, i + 2, cur.carry.len()) });
+    }
+    if (c != 32 as u8 && c != 9 as u8) {
+      return Err(MalformedMultipart("a boundary line does not end in CRLF"));
+    }
+    i = i + 1;
+  }
+  return Ok(cur);
+}
+
+function __part_head(r: Reader): Result[(Part, Reader), MultipartError] {
+  let cur: Reader = r;
+  let h: HeaderMap = headers.header_map_new();
+  let used: i32 = 0;
+  while (true) {
+    let line: (string, Reader) = __line(cur, cur.limits.header_bytes - used)?;
+    cur = line.1;
+    used = used + line.0.len() + 2;
+    if (line.0.len() == 0) {
+      return Ok((__part(h), cur));
+    }
+    h = __header(h, line.0)?;
+  }
+  return Err(MalformedMultipart("a part's headers are cut short"));
+}
+
+function __line(r: Reader, room: i32): Result[(string, Reader), MultipartError] {
+  let cur: Reader = r;
+  while (true) {
+    let at: i32 = __find(cur.carry, [13 as u8, 10 as u8], 0);
+    if (at >= 0) {
+      if (at > room) {
+        return Err(PartHeadersTooLarge(cur.limits.header_bytes));
+      }
+      let text: string = string_from_bytes_unchecked(array.slice(cur.carry, 0, at));
+      return Ok((text, Reader { ...cur, carry: array.slice(cur.carry, at + 2, cur.carry.len()) }));
+    }
+    if (cur.carry.len() > room + 1) {
+      return Err(PartHeadersTooLarge(cur.limits.header_bytes));
+    }
+    if (cur.eof) {
+      return Err(MalformedMultipart("a part's headers are cut short"));
+    }
+    cur = __pull(cur)?;
+  }
+  return Err(MalformedMultipart("a part's headers are cut short"));
+}
+
+function __header(h: HeaderMap, line: string): Result[HeaderMap, MultipartError] {
+  let Some(colon) = line.index_of(":") else {
+    return Err(MalformedMultipart("a part header has no name"));
+  };
+  if (colon == 0) {
+    return Err(MalformedMultipart("a part header has no name"));
+  }
+  return Ok(h.append(line.slice_snap(0, colon).trim(), line.slice_snap(colon + 1, line.len()).trim()));
+}
+
+function __part(h: HeaderMap): Part {
+  let disposition: string = "";
+  match (h.get("content-disposition")) {
+    Some(v) => {
+      disposition = v;
+    },
+    None => {}
+  }
+  let ct: string = "";
+  match (h.get("content-type")) {
+    Some(v) => {
+      ct = v;
+    },
+    None => {}
+  }
+  return Part { name: __param(disposition, "name"), filename: __param(disposition, "filename"), content_type: ct, headers: h };
+}
+
+function __media_type(ct: string): string {
+  let kind: string = ct;
+  if let Some(semi) = ct.index_of(";") {
+    kind = ct.slice_snap(0, semi);
+  }
+  return kind.trim().to_lower();
+}
+```
+
+### `18 function __param(value: string, name: string): string`
+
+```fern
+<<18 function __param(value: string, name: string): string>>=
+function __param(value: string, name: string): string {
+  let bs: u8[] = value.bytes();
+  let i: i32 = __param_end(bs, 0) + 1;
+  while (i < bs.len()) {
+    let end: i32 = __param_end(bs, i);
+    let p: string = string_from_bytes_unchecked(array.slice(bs, i, end)).trim();
+    if let Some(eq) = p.index_of("=") {
+      if (eq > 0 && p.slice_snap(0, eq).trim().to_lower() == name) {
+        return __unquote(p.slice_snap(eq + 1, p.len()).trim());
+      }
+    }
+    i = end + 1;
+  }
+  return "";
+}
+
+function __param_end(bs: u8[], from: i32): i32 {
+  let i: i32 = from;
+  let quoted: boolean = false;
+  while (i < bs.len()) {
+    let b: u8 = bs[i];
+    if (b == 34 as u8) {
+      quoted = !quoted;
+    } else if (quoted && b == 92 as u8) {
+      i = i + 1;
+    } else if (!quoted && b == 59 as u8) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return bs.len();
+}
+
+function __unquote(v: string): string {
+  if (v.len() < 2 || !v.starts_with("\"") || !v.ends_with("\"")) {
+    return v;
+  }
+  let inner: string = v.slice_snap(1, v.len() - 1);
+  if (!inner.contains("\\")) {
+    return inner;
+  }
+  let out: u8[] = [];
+  let bs: u8[] = inner.bytes();
+  let i: i32 = 0;
+  while (i < bs.len()) {
+    if (bs[i] == 92 as u8 && i + 1 < bs.len()) {
+      i = i + 1;
+    }
+    out = out.append(bs[i]);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(out);
+}
+
+function __need(r: Reader, n: i32): Result[Reader, MultipartError] {
+  let cur: Reader = r;
+  while (cur.carry.len() < n && !cur.eof) {
+    cur = __pull(cur)?;
+  }
+  return Ok(cur);
+}
+
+function __pull(r: Reader): Result[Reader, MultipartError] {
+  let got: (u8[], Stream) = r.s.read_n(4096);
+  if (got.0.len() == 0) {
+    if (got.1.fault() != 0) {
+      return Err(MultipartBody(http.EndedEarly(got.1.fault())));
+    }
+    return Ok(Reader { ...r, s: got.1, eof: true });
+  }
+  if (r.total + got.0.len() > r.limits.total_bytes) {
+    return Err(MultipartTooLarge(r.limits.total_bytes));
+  }
+  return Ok(Reader { ...r, s: got.1, carry: r.carry.concat(got.0), total: r.total + got.0.len() });
+}
+
+function __find(hay: u8[], needle: u8[], from: i32): i32 {
+  let i: i32 = from;
+  while (i + needle.len() <= hay.len()) {
+    let j: i32 = 0;
+    while (j < needle.len() && hay[i + j] == needle[j]) {
+      j = j + 1;
+    }
+    if (j == needle.len()) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+```
+
+### `19 pub struct Builder`
+
+```fern
+<<19 pub struct Builder>>=
+pub struct Builder { boundary: string, body: u8[] }
+```
+
+### `20 pub function builder(): Builder`
+
+```fern
+<<20 pub function builder(): Builder>>=
+pub function builder(): Builder {
+  return builder_with(hex.encode(random_bytes(16)));
+}
+
+pub function builder_with(boundary: string): Builder {
+  return Builder { boundary: boundary, body: [] };
+}
+
+pub function (b: Builder) field(name: string, value: string): Builder {
+  let head: string = "--" + b.boundary + "\r\nContent-Disposition: form-data; name=\"" + __escape(name) + "\"\r\n\r\n";
+  return Builder { ...b, body: b.body.concat(head.bytes()).concat(value.bytes()).concat([13 as u8, 10 as u8]) };
+}
+
+pub function (b: Builder) file(name: string, filename: string, content_type: string, content: u8[]): Builder {
+  let head: string = "--" + b.boundary + "\r\nContent-Disposition: form-data; name=\"" + __escape(name) + "\"; filename=\"" + __escape(filename) + "\"\r\nContent-Type: " + content_type + "\r\n\r\n";
+  return Builder { ...b, body: b.body.concat(head.bytes()).concat(content).concat([13 as u8, 10 as u8]) };
+}
+
+pub function (b: Builder) content_type(): string {
+  return "multipart/form-data; boundary=" + b.boundary;
+}
+
+pub function (b: Builder) bytes(): u8[] {
+  return b.body.concat(("--" + b.boundary + "--\r\n").bytes());
+}
+
+pub function (b: Builder) request(method: string, path: string): HttpRequest {
+  return HttpRequest { method: method, path: path, body: stream.stream_from_bytes(b.bytes()), headers: headers.header_map_new().set("content-type", b.content_type()), trailers: headers.header_map_new() };
+}
+```
+
+### `21 function __escape(s: string): string`
+
+```fern
+<<21 function __escape(s: string): string>>=
+function __escape(s: string): string {
+  return s.replace("\\", "\\\\").replace("\"", "%22").replace("\r", "%0D").replace("\n", "%0A");
+}
+```
