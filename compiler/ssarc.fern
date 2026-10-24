@@ -4660,7 +4660,7 @@ function dir_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
     return Lowered { found: true, r: emit(r, ir.op_dir_open()) };
   }
   if (m == "Dir.entries_bytes") {
-    return Lowered { found: true, r: emit(r, ir.op_dir_entries_bytes()) };
+    return Lowered { found: true, r: emit(r, ir.bytes_payload(ir.op_dir_entries())) };
   }
   if (m == "Dir.entries") {
     return Lowered { found: true, r: emit(r, ir.op_dir_entries()) };
@@ -4836,7 +4836,7 @@ function union_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowere
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_read_file_bytes())) };
   }
   if (ins.str == "read_dir_bytes") {
-    return Lowered { found: true, r: emit(r, ir.op_read_dir_bytes()) };
+    return Lowered { found: true, r: emit(r, ir.bytes_payload(ir.op_read_dir())) };
   }
   if (ins.str == "read_dir") {
     return Lowered { found: true, r: emit(r, ir.op_read_dir()) };
@@ -5033,7 +5033,7 @@ function fs_op_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
     return Lowered { found: true, r: emit(r, ir.op_temp_dir()) };
   }
   if (ins.str == "read_link_bytes") {
-    return Lowered { found: true, r: emit(r, ir.op_read_link_bytes()) };
+    return Lowered { found: true, r: emit(r, ir.bytes_payload(ir.op_read_link())) };
   }
   if (ins.str == "read_link") {
     return Lowered { found: true, r: emit(r, ir.op_read_link()) };

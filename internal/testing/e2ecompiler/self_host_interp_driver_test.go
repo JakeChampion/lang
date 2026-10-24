@@ -26,6 +26,32 @@ var interpProgs = []struct {
 	src  string
 	exit int
 }{
+	{"raw-filesystem-byte-results", `function main(): i32 {
+  let Ok(root) = temp_dir("fern-byte-results") else { return 1; };
+  defer { remove_dir_all(root); }
+  let raw = string_from_bytes_unchecked([255u8, 254u8]);
+  let Ok(_) = write_file(root + "/" + raw, "x") else { return 2; };
+  match (read_dir(root)) { Err(InvalidUtf8(_)) => {}, _ => { return 3; } }
+  match (read_dir_bytes(root)) {
+    Ok(names) => { if (names.len() != 1 || names[0].len() != 2 || names[0][0] != 255u8 || names[0][1] != 254u8) { return 4; } },
+    Err(_) => { return 5; }
+  }
+  let Ok(d) = open_dir(root) else { return 6; };
+  let good: boolean = false;
+  match (d.entries_bytes()) {
+    Ok(names) => { good = names.len() == 1 && names[0].len() == 2 && names[0][0] == 255u8 && names[0][1] == 254u8; },
+    Err(_) => {}
+  }
+  d.close();
+  if (!good) { return 7; }
+  let Ok(_) = create_symlink(raw, root + "/link") else { return 8; };
+  match (read_link_bytes(root + "/link")) {
+    Ok(bytes) => { if (bytes.len() != 2 || bytes[0] != 255u8 || bytes[1] != 254u8) { return 9; } },
+    Err(_) => { return 10; }
+  }
+  return 0;
+}`, 0},
+
 	{"return-literal", "function main(): i32 { return 42; }", 42},
 	{"arith", "function main(): i32 { return 6 * 7; }", 42},
 	{"hex-literal", "function main(): i32 { return 0x1F; }", 31},
