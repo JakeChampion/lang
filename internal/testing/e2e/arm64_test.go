@@ -7413,12 +7413,19 @@ function main(): i32 {
 }
 
 // Sixteenth stdlib bundle: string center / reverse_words,
-// i32 rotate_left / rotate_right, csv_parse_line,
+// i32 rotate_left / rotate_right, csv.parse_line,
 // http_header_value. 6 helpers.
 func TestArm64StdlibBundle16(t *testing.T) {
 	src := `
 import "std/csv";
 import "std/http";
+function __csv_fields(s: string): string[] {
+  match (csv.parse_line(s)) {
+    Ok(fields) => { return fields; },
+    Err(e) => { eprint(e.message()); exit(98); }
+  }
+  return [];
+}
 function main(): i32 {
     // center
     if ("hi".center(6, '-') != "--hi--") { return 1; }
@@ -7439,15 +7446,15 @@ function main(): i32 {
     if ((305419896).rotate_right(8).rotate_left(8) != 305419896) { return 12; }
     if ((123).rotate_left(7).rotate_right(7) != 123) { return 13; }
 
-    // csv_parse_line
-    let f: string[] = csv.csv_parse_line("a,b,c");
+    // csv.parse_line
+    let f: string[] = __csv_fields("a,b,c");
     if (f.len() != 3 || f[0] != "a" || f[2] != "c") { return 14; }
-    let fq: string[] = csv.csv_parse_line("\"a,b\",c");
+    let fq: string[] = __csv_fields("\"a,b\",c");
     if (fq.len() != 2 || fq[0] != "a,b") { return 15; }
-    let fe: string[] = csv.csv_parse_line("\"a\"\"b\",c");
+    let fe: string[] = __csv_fields("\"a\"\"b\",c");
     if (fe.len() != 2 || fe[0] != "a\"b") { return 16; }
-    if ((csv.csv_parse_line("")).len() != 1) { return 17; }
-    let fmt: string[] = csv.csv_parse_line("a,,b");
+    if ((__csv_fields("")).len() != 1) { return 17; }
+    let fmt: string[] = __csv_fields("a,,b");
     if (fmt.len() != 3 || fmt[1] != "") { return 18; }
 
     // http_header_value
@@ -7521,7 +7528,7 @@ function main(): i32 {
 }
 
 // Fourteenth stdlib bundle: trim_start_chars / trim_end_chars,
-// random_int, format_bytes, csv_escape / csv_join. 6 helpers.
+// random_int, format_bytes, csv.escape / csv.join. 6 helpers.
 func TestArm64StdlibBundle14(t *testing.T) {
 	src := `
 import "std/csv";
@@ -7549,12 +7556,12 @@ function main(): i32 {
     if (format.format_bytes(1024 * 1024) != "1 MiB") { return 13; }
     if (format.format_bytes(0 - 512) != "-512 B") { return 14; }
 
-    // csv_escape / csv_join — RFC 4180
-    if (csv.csv_escape("simple") != "simple") { return 15; }
-    if (csv.csv_escape("has,comma") != "\"has,comma\"") { return 16; }
-    if (csv.csv_escape("has\"quote") != "\"has\"\"quote\"") { return 17; }
-    if (csv.csv_join(["a", "b", "c"]) != "a,b,c") { return 18; }
-    if (csv.csv_join(["has,comma", "plain"]) != "\"has,comma\",plain") { return 19; }
+    // csv.escape / csv.join — RFC 4180
+    if (csv.escape("simple") != "simple") { return 15; }
+    if (csv.escape("has,comma") != "\"has,comma\"") { return 16; }
+    if (csv.escape("has\"quote") != "\"has\"\"quote\"") { return 17; }
+    if (csv.join(["a", "b", "c"]) != "a,b,c") { return 18; }
+    if (csv.join(["has,comma", "plain"]) != "\"has,comma\",plain") { return 19; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)

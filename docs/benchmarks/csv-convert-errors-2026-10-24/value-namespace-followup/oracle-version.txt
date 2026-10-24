@@ -1,0 +1,18 @@
+/workspace/scratch/lang-csv-convert-errors-publish/value-namespace-validation/oracle: go1.27.3
+	path	github.com/jakechampion/lang/cmd/fern
+	mod	github.com/jakechampion/lang	v0.0.0-20261024061056-d457d861824a	
+	build	-buildmode=exe
+	build	-compiler=gc
+	build	DefaultGODEBUG=tracebacklabels=0,x509sslcertoverrideplatform=0
+	build	CGO_ENABLED=1
+	build	CGO_CFLAGS=
+	build	CGO_CPPFLAGS=
+	build	CGO_CXXFLAGS=
+	build	CGO_LDFLAGS=
+	build	GOARCH=amd64
+	build	GOOS=linux
+	build	GOAMD64=v1
+	build	vcs=git
+	build	vcs.revision=d457d861824ad9aad5a7a36a61b7de44ec627d13
+	build	vcs.time=2026-10-24T06:10:56Z
+	build	vcs.modified=false

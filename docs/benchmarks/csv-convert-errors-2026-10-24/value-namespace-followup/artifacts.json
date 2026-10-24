@@ -1,0 +1,72 @@
+{
+  "source_commit": "d457d861824ad9aad5a7a36a61b7de44ec627d13",
+  "native_source_commit": "618ad7990f972c4b7f285cd28ad1a6183a49154d",
+  "unchanged_native_source_sha256": "fe501d40b7879e283ed5ff2ba9920d2fe56ac5cc2df451457e3fa1d1b254230d",
+  "oracle_sha256": "274dbcf8abe673fc0150c370ed36b1270b9f1acd3b325c562aec2fb228466784",
+  "go_test_runs": 2945,
+  "intentional_synthetic_skips": 7,
+  "generic_supertrait_test_runs": 26,
+  "go_matrix_commands": 54,
+  "artifacts": [
+    {
+      "path": "oracle-version.txt",
+      "bytes": 618,
+      "sha256": "233d15277cc0c5516330568ff628bda8147251067c2b41b537738b3c7aa42403"
+    },
+    {
+      "path": "go-regressions.jsonl.gz",
+      "bytes": 175136,
+      "sha256": "f7889d012143c44c4050865ee91ccc1be98e5a4bccd93704f3516eb1340d1a56"
+    },
+    {
+      "path": "go-matrix.json.gz",
+      "bytes": 1767,
+      "sha256": "731fca21c238c217c5c612e77ed64176fec8e0f1bee23e8477ff8b294901b103"
+    },
+    {
+      "path": "go-matrix.log.gz",
+      "bytes": 407,
+      "sha256": "20ce92e665ac339575047fd6ff50a03a2ddb79fda8f12cbb9c01ea5d8d08f0fd"
+    },
+    {
+      "path": "go-matrix.py.gz",
+      "bytes": 1229,
+      "sha256": "9cd0b8dd81b1a8ae81cdcb211d8317b2142dbd34a0a08d4e4e4cdc56ae51e753"
+    },
+    {
+      "path": "vet.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "gofmt.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "generic-supertraits.jsonl.gz",
+      "bytes": 1865,
+      "sha256": "2d95d7bda27a55fef1e3d78fefc36a05426d3677a8518a352c0ccd7f08ce223c"
+    },
+    {
+      "path": "go-source-files.json",
+      "bytes": 607,
+      "sha256": "29e7320724ba2eaa83e192283280c2f6529d77726441855ad82d1d1c1b3cc4e2"
+    },
+    {
+      "path": "change.patch.gz",
+      "bytes": 2062,
+      "sha256": "edba1ffb304971ff6c8c370f80291e93cefb22694743a65b6097a1e7eb1af852"
+    },
+    {
+      "path": "go-matrix-logs.tar.gz",
+      "bytes": 2690,
+      "sha256": "6b909503073c9bd28eb967cf0fe91a8438dc826470e2a04122a83b505b8d26e9"
+    },
+    {
+      "path": "published-default-constant-baseline.tar.gz",
+      "bytes": 969,
+      "sha256": "3a4f8eb2b33fd33d2b6a62d29fcdc526ca891cbb87d8d9beb2729cd8648e0ab0"
+    }
+  ]
+}

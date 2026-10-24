@@ -657,7 +657,7 @@ think they're free additions to make.
   sampling to remove it entirely is a follow-up.
 - **`format_bytes(n)`**: human-readable size — "N B" / "N
   KiB" / "N MiB" / "N GiB" / "N TiB", from an i64 count.
-- **`csv_escape(s)` / `csv_join(arr)`**: RFC 4180 CSV
+- **`csv.escape(s)` / `csv.join(arr)`**: RFC 4180 CSV
   field escape + comma-join. Fields with `,` / `"` / `\n`
   / `\r` get wrapped in `"..."` with interior quotes
   doubled.
@@ -683,7 +683,7 @@ think they're free additions to make.
 - **i32 bit rotation**: `(n).rotate_left(bits)` /
   `rotate_right(bits)`. Bit count masked mod 32 so OOB
   values still produce a valid rotation.
-- **`csv_parse_line(s)`**: RFC 4180 single-line parser.
+- **`csv.parse_line(s)`**: RFC 4180 single-line parser.
   Handles quoted fields with embedded commas and doubled-
   quote escapes. Multi-line CSV (newlines inside quoted
   fields) deferred — needs a streaming parser.

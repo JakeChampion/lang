@@ -397,8 +397,8 @@ func TestRunnerFetchProxyExamplePasses(t *testing.T) {
 }
 
 // `tests/stdlib/csv_test.fern` covers std/csv's RFC 4180 single-line
-// surface — csv_escape (quote-wrap on comma / quote / newline, interior
-// quotes doubled), csv_join (escape then comma-join) and csv_parse_line
+// surface — csv.escape (quote-wrap on comma / quote / newline, interior
+// quotes doubled), csv.join (escape then comma-join) and csv.parse_line
 // (split, quoted-field commas, "" → " decode). Passing suite → exit 0.
 func TestRunnerCsvExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
@@ -407,7 +407,7 @@ func TestRunnerCsvExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/csv", "# pass 19", "# fail 0", "1..19"} {
+	for _, w := range []string{"# Suite: std/csv", "# pass 23", "# fail 0", "1..23"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

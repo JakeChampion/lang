@@ -1650,6 +1650,7 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		skipPaths:     skipPaths,
 	}
 	for _, fn := range m.prog.Funcs {
+		restoreTypeParams := r.bindTypeParams(fn.TypeParams)
 		// Receiver methods don't get the module prefix. Dispatch
 		// happens through the checker's receiver-hoist + Methods
 		// map: a method gets hoisted to `__method_<Type>_<Name>`
@@ -1690,8 +1691,10 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		}
 		r.rewriteType(&fn.ReturnType)
 		r.rewriteFuncBody(fn)
+		restoreTypeParams()
 	}
 	for _, sd := range m.prog.Structs {
+		restoreTypeParams := r.bindTypeParams(sd.TypeParams)
 		sd.Name = selfPrefix + sd.Name
 		for i := range sd.Fields {
 			r.rewriteType(&sd.Fields[i].Type)
@@ -1701,8 +1704,10 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		for i, dn := range sd.Derives {
 			sd.Derives[i] = r.rewriteTraitNameAt(dn, sd.P)
 		}
+		restoreTypeParams()
 	}
 	for _, ed := range m.prog.Enums {
+		restoreTypeParams := r.bindTypeParams(ed.TypeParams)
 		ed.Name = selfPrefix + ed.Name
 		for i := range ed.Variants {
 			for j := range ed.Variants[i].Payloads {
@@ -1712,8 +1717,10 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		for i, dn := range ed.Derives {
 			ed.Derives[i] = r.rewriteTraitNameAt(dn, ed.P)
 		}
+		restoreTypeParams()
 	}
 	for _, ud := range m.prog.Unions {
+		restoreTypeParams := r.bindTypeParams(ud.TypeParams)
 		// Mangling lines up with the synthesised EnumDecl the checker
 		// will produce. Members go through rewriteType rather than a
 		// name prefix of their own: a member carries type arguments
@@ -1729,6 +1736,7 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 				ud.Members[i] = st
 			}
 		}
+		restoreTypeParams()
 	}
 	for _, cd := range m.prog.Consts {
 		cd.Name = selfPrefix + cd.Name
@@ -1744,23 +1752,33 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 	// methods in prog.Funcs) are already rewritten above. See
 	// docs/TRAITS.md (Phase 3).
 	for _, td := range m.prog.Traits {
+		restoreTypeParams := r.bindTypeParams(td.TypeParams)
 		td.Name = selfPrefix + td.Name
 		for i := range td.Methods {
+			restoreMethodParams := r.bindTypeParams(td.Methods[i].TypeParams)
 			for j := range td.Methods[i].Params {
 				r.rewriteType(&td.Methods[i].Params[j].Type)
 			}
 			r.rewriteType(&td.Methods[i].Result)
 			r.rewriteBounds(td.Methods[i].Bounds, td.Methods[i].BoundArgs, td.Methods[i].P)
 			r.rewriteTraitDefaultBody(&td.Methods[i])
+			restoreMethodParams()
 		}
 		// Supertrait references mangle the same way a `[T: mod.Trait]`
 		// bound or an `impl mod.Trait for …` does, so they line up with
 		// the mangled TraitDecl.Name they point at.
 		for k, sup := range td.Supertraits {
 			td.Supertraits[k] = r.rewriteTraitNameAt(sup, td.NamePos)
+			if k < len(td.SupertraitArgs) {
+				for j := range td.SupertraitArgs[k] {
+					r.rewriteType(&td.SupertraitArgs[k][j])
+				}
+			}
 		}
+		restoreTypeParams()
 	}
 	for _, impl := range m.prog.Impls {
+		restoreTypeParams := r.bindTypeParams(impl.TypeParams)
 		r.rewriteType(&impl.Type)
 		impl.Trait = r.rewriteTraitNameAt(impl.Trait, impl.TraitPos)
 		// Generic-trait args (`impl From[mod.Foo] for …`) are types too —
@@ -1769,12 +1787,15 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 			r.rewriteType(&impl.TraitArgs[i])
 		}
 		r.rewriteBounds(impl.Bounds, impl.BoundArgs, impl.P)
+		restoreTypeParams()
 	}
 	for _, fn := range m.prog.Funcs {
+		restoreTypeParams := r.bindTypeParams(fn.TypeParams)
 		// The impl method's own record of which trait provided it,
 		// mangled to line up with the ImplDecl.Trait rewritten above.
 		fn.ImplTrait = r.resolveTraitName(fn.ImplTrait)
 		r.rewriteBounds(fn.Bounds, fn.BoundArgs, fn.P)
+		restoreTypeParams()
 	}
 	return r.errs
 }
@@ -1816,7 +1837,8 @@ type rewriter struct {
 	// (`let range: u32` beside `function range(…)`) and an import's
 	// qualifier (`let util = "abc"; util.len()`), so neither is
 	// rewritten under it.
-	localVars map[string]bool
+	localVars  map[string]bool
+	typeParams map[string]bool
 	// flatNamespace, when true, drops the `<mod>__` prefix on
 	// cross-module references — `int.foo()` becomes `foo()`
 	// instead of `int__foo()`. Used by `LoadStdlibFlat` so the
@@ -2283,7 +2305,7 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		// FieldAccess shouldn't be visited as a normal field
 		// access because mod isn't a struct.
 		if fa, ok := x.Callee.(*ast.FieldAccess); ok {
-			if id, ok := fa.Target.(*ast.Ident); ok && !r.localVars[id.Name] {
+			if id, ok := fa.Target.(*ast.Ident); ok && !r.localVars[id.Name] && !r.typeParams[id.Name] {
 				if mod, prefix, ok := r.importedModule(id.Name); ok {
 					if en, handled := r.qualifiedVariant(mod, prefix, fa.Field, fa.P); handled {
 						if en != "" {
@@ -2329,9 +2351,12 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 			r.rewriteExpr(&x.Args[i])
 		}
 	case *ast.FieldAccess:
+		if id, ok := x.Target.(*ast.Ident); ok && r.typeParams[id.Name] && !r.localVars[id.Name] {
+			return
+		}
 		// An imported enum is a type qualifier in module.Enum.Variant.
 		if qual, ok := x.Target.(*ast.FieldAccess); ok {
-			if id, ok := qual.Target.(*ast.Ident); ok && !r.localVars[id.Name] {
+			if id, ok := qual.Target.(*ast.Ident); ok && !r.localVars[id.Name] && !r.typeParams[id.Name] {
 				if mod, _, ok := r.importedModule(id.Name); ok && mod.allEnums[qual.Field] {
 					x.Target = &ast.Ident{P: qual.P, Name: r.rewriteStructNameAt(id.Name+"."+qual.Field, qual.P)}
 					return
@@ -2349,11 +2374,11 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 			// (rewriteStructNameAt). The checker resolves the
 			// qualifier through c.info.Enums, which is keyed by the
 			// mangled name.
-			if r.ownEnums[id.Name] && !r.localVars[id.Name] {
+			if r.ownEnums[id.Name] && !r.localVars[id.Name] && !r.typeParams[id.Name] {
 				id.Name = r.selfPrefix + id.Name
 				return
 			}
-			if mod, prefix, ok := r.importedModule(id.Name); ok && !r.localVars[id.Name] {
+			if mod, prefix, ok := r.importedModule(id.Name); ok && !r.localVars[id.Name] && !r.typeParams[id.Name] {
 				if en, handled := r.qualifiedVariant(mod, prefix, x.Field, x.P); handled {
 					if en != "" {
 						*slot = &ast.Ident{P: id.P, Name: x.Field, EnumName: en}
@@ -2618,6 +2643,9 @@ func (r *rewriter) rewriteStructName(name string) string {
 // rewriteStructNameAt is rewriteStructName plus the source position
 // so visibility errors can point back at the offending reference.
 func (r *rewriter) rewriteStructNameAt(name string, pos ast.Position) string {
+	if r.typeParams[name] {
+		return name
+	}
 	if dot := indexByte(name, '.'); dot >= 0 {
 		modName, structName := name[:dot], name[dot+1:]
 		if mod, prefix, ok := r.importedModule(modName); ok {
@@ -2654,7 +2682,7 @@ func (r *rewriter) rewriteTypeArgIndex(slot *ast.Expr) bool {
 		}
 	case *ast.FieldAccess:
 		id, ok := x.Target.(*ast.Ident)
-		if !ok || r.localVars[id.Name] {
+		if !ok || r.localVars[id.Name] || r.typeParams[id.Name] {
 			return false
 		}
 		if mod, _, ok := r.importedModule(id.Name); ok && (mod.publicStructs[x.Field] || mod.publicEnums[x.Field]) {
@@ -2720,6 +2748,23 @@ func indexByte(s string, c byte) int {
 	return -1
 }
 
+// bindTypeParams restores the outer type namespace after a declaration.
+func (r *rewriter) bindTypeParams(names []string) func() {
+	if len(names) == 0 {
+		return func() {}
+	}
+	previous := r.typeParams
+	bound := make(map[string]bool, len(previous)+len(names))
+	for name := range previous {
+		bound[name] = true
+	}
+	for _, name := range names {
+		bound[name] = true
+	}
+	r.typeParams = bound
+	return func() { r.typeParams = previous }
+}
+
 // rewriteType prefixes nominal struct-type references — own-module
 // names get selfPrefix, qualified `mod.Foo` references get the
 // imported module's prefix. Other type shapes recurse where
@@ -2730,6 +2775,10 @@ func (r *rewriter) rewriteType(slot *ast.Type) {
 	}
 	switch t := (*slot).(type) {
 	case ast.StructType:
+		if r.typeParams[t.Name] && len(t.Args) == 0 {
+			*slot = ast.ParamType{Name: t.Name}
+			return
+		}
 		newName := r.rewriteStructName(t.Name)
 		args := r.rewriteTypeArgs(t.Args)
 		if newName != t.Name || args != nil {
@@ -2739,6 +2788,10 @@ func (r *rewriter) rewriteType(slot *ast.Type) {
 			*slot = ast.StructType{Name: newName, Args: args}
 		}
 	case ast.EnumType:
+		if r.typeParams[t.Name] && len(t.Args) == 0 {
+			*slot = ast.ParamType{Name: t.Name}
+			return
+		}
 		newName := r.rewriteStructName(t.Name)
 		args := r.rewriteTypeArgs(t.Args)
 		if newName != t.Name || args != nil {

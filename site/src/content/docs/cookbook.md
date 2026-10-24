@@ -246,9 +246,9 @@ function main(): i32 {
 
 ## Read CSV
 
-`csv_parse` reads a whole RFC 4180 document, including quoted fields
+`csv.parse` reads a whole RFC 4180 document, including quoted fields
 that contain commas or newlines, into one `string[]` per record.
-`csv_join` goes the other way and quotes a field only when it has to.
+`csv.join` goes the other way and quotes a field only when it has to.
 
 ```fern
 import "std/csv";
@@ -257,7 +257,10 @@ import "std/i32";
 
 function main(): i32 {
     let text: string = "name,qty\n\"Smith, J\",3\nLee,4\n";
-    let rows: string[][] = csv.csv_parse(text);
+    let rows: string[][] = match (csv.parse(text)) {
+        Ok(value) => value,
+        Err(error) => { eprint(error.message()); return 1; }
+    };
     let total: i32 = 0;
     let i: i32 = 1;
     while (i < rows.len()) {
@@ -272,7 +275,7 @@ function main(): i32 {
     }
     print(rows[1][0]);                               // Smith, J
     print(total.to_string());                        // 7
-    print(csv.csv_join(["a,b", "say \"hi\""]));      // "a,b","say ""hi"""
+    print(csv.join(["a,b", "say \"hi\""]));      // "a,b","say ""hi"""
     return 0;
 }
 ```
