@@ -1,0 +1,17 @@
+{
+  "f64": {
+    "baseline_median_p50_ns": 185785.5,
+    "candidate_median_p50_ns": 194358.5,
+    "candidate_over_baseline": 1.0461446130080119
+  },
+  "Dual[f64]": {
+    "baseline_median_p50_ns": 2734264.5,
+    "candidate_median_p50_ns": 374483.5,
+    "candidate_over_baseline": 0.13695950044335506
+  },
+  "DoubleDouble[f64]": {
+    "baseline_median_p50_ns": 65366768.5,
+    "candidate_median_p50_ns": 32465648.5,
+    "candidate_over_baseline": 0.4966690146232332
+  }
+}

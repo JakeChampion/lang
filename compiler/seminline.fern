@@ -1,25 +1,24 @@
-// Tiny scalar and scalar-array leaves spliced into their callers, then
-// constructions read apart.
+// Scalar leaves and bounded scalar record builders are spliced into callers.
+// The pass then reads their constructions apart.
 //
-// A leaf here computes only on scalars and tuples of them, reading a record
-// parameter's scalar fields and a variant's position and payload at most,
-// and calls nothing but a scalar primitive such as `__mulhi_u64`. It may also
-// append or update a scalar array: those remain typed value operations for
-// the caller's count planner to choose copying or reuse, including when an
-// owned argument shares storage with an older alias. A field or payload read
-// is planned in the caller like any other. A tuple,
-// record or variant built and only read, which is what a spliced `(ok, value)`
-// return becomes, is never allocated: each read takes the part straight from
-// the construction, through the phi that joins several returns, and a
-// construction nothing reads is dropped. This runs before the count planner, so
-// a part read off the construction is planned like the operand it is. A
-// constructor leaf, which only builds its result from its parameters and
-// literals, is spliced into the calls whose arguments are all literals, so
-// the construction is a constant there (`constructor_leaves`). A function
-// called from a few places that returns a box at every return is spliced
-// into the callers that read it apart (`shared_spliceable`). An updater,
-// which rebuilds a record parameter with array fields updated, is spliced
-// like a leaf (`updater`).
+// A scalar leaf computes on scalars and tuples. It can read a record
+// parameter's scalar fields or a variant's position and payload.
+// It can also append to a scalar array or update one. These operations stay
+// typed, so the caller's count planner can choose a copy or reuse.
+//
+// A scalar record builder can call scalar functions. These calls keep their
+// effects and their bodies. Larger builders use the existing once budget.
+// Their callers must read the result's fields, through copies and phis if
+// necessary, or satisfy the existing shared splice proof.
+//
+// A tuple, record, or variant that only serves field reads needs no box.
+// Each read takes its value from the construction, through any phi that
+// joins returns. The pass removes constructions that nothing reads.
+// The count planner then sees the values that each field held.
+//
+// Constructor leaves with literal arguments produce static boxes.
+// Functions with a few callers can use the shared splice rule.
+// A record updater with scalar array fields uses the scalar leaf rule.
 import "./ssa";
 import "./sourcepos";
 import "./util";
@@ -28,6 +27,7 @@ import "./typeinfo";
 import "./semtypes";
 import "./semrecords";
 import "./sempair";
+import "./semdead";
 import "./ownership";
 
 // Past these a leaf is not tiny, and splicing it grows its callers more than
@@ -134,7 +134,7 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
   let ix: util.NameIndex = util.name_index(names);
   let calls: i32[] = call_counts(funcs0, ix);
   let sp: Spliceable = splice_plan(funcs0, ix, calls, inlinable, unnamed, size);
-  let done: Rounds = splice_rounds(funcs0, rewrite, sp);
+  let done: Rounds = splice_rounds(funcs0, rewrite, modes, sp);
   let rounds: Inlined = done.out;
   sp = grown_leaves(rounds, done.sp);
   let ctors: boolean[] = constructor_leaves(rounds.funcs, sp);
@@ -155,8 +155,8 @@ function splice_plan(funcs0: ssasem.Func[], ix: util.NameIndex, calls: i32[], in
     let f: ssasem.Func = funcs0[i];
     let is_leaf: boolean = leaf_spliceable(f, inlinable[i], size);
     let other: boolean = !is_leaf && inlinable[i] && unnamed[i];
-    let is_shared: boolean = !size && other && shared_spliceable(f, calls[i], cycle[i]);
-    small = small.append(is_shared && count_insts(f.graph) <= max_shared_insts());
+    let is_shared: boolean = !size && !is_leaf && inlinable[i] && shared_body(f, calls[i], cycle[i], unnamed[i]);
+    small = small.append(is_shared && small_shared_body(f));
     leaves = leaves.append(is_leaf);
     shared = shared.append(is_shared);
     once = once.append(is_shared || other && once_spliceable(f, calls[i]));
@@ -220,6 +220,34 @@ function once_spliceable(f: ssasem.Func, calls: i32): boolean {
 function shared_spliceable(f: ssasem.Func, calls: i32, cycle: i32): boolean {
   return calls > 1 && calls <= max_shared_callers() && !lends_view(f) && spliceable(f, max_reuse_shared_insts()) && returns_boxes(f)
     && cycle < 0;
+}
+
+// A scalar record builder can be larger than a scalar leaf: each eligible
+// caller reads the result apart, so the splice removes a box. Keep the once
+// budget and the shared call-site proof, with no restriction on call count.
+function shared_body(f: ssasem.Func, calls: i32, cycle: i32, unnamed: boolean): boolean {
+  return cycle < 0 && record_leaf(f) || unnamed && shared_spliceable(f, calls, cycle);
+}
+
+function small_shared_body(f: ssasem.Func): boolean {
+  return count_insts(f.graph) <= max_shared_insts() || record_leaf(f);
+}
+
+function record_leaf(f: ssasem.Func): boolean {
+  return scalar_record(f, f.result) && leaf_body_limit(f, 0 - 1, max_once_insts());
+}
+
+function scalar_record(f: ssasem.Func, t: typeinfo.Type): boolean {
+  let at: i32 = semrecords.find(f.records, t);
+  if (at < 0 || ssasem.has_finalizer(f, t)) {
+    return false;
+  }
+  for field in f.records.list[at].fields {
+    if (!scalar(field.ty)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // Whether every return of `f` returns a construction, through copies and
@@ -311,7 +339,7 @@ struct Spliceable { ix: util.NameIndex, leaves: boolean[], once: boolean[], shar
 // past max_caller_insts before the function called once from it was ready.
 struct Rounds { out: Inlined, sp: Spliceable }
 
-function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], sp: Spliceable): Rounds {
+function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][], sp: Spliceable): Rounds {
   let out: Inlined = Inlined { funcs: funcs0, rewritten: [], spliced: [] };
   let alone: boolean[] = [];
   let i: i32 = 0;
@@ -340,7 +368,7 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], sp: Spliceable
       ready = ready.append(s.leaves[j] || ctors[j] || once[j] && !awaits(out.funcs[j], s.ix, once, s.shared, s.small, j));
       j = j + 1;
     }
-    let next: Round = splice_round(out, sizes, callees, rewrite, s.ix, ready, ctors, if (folded) { s.shared } else { none_of(s.shared.len()) }, s.small);
+    let next: Round = splice_round(out, sizes, callees, rewrite, modes, s.ix, ready, ctors, if (folded) { s.shared } else { none_of(s.shared.len()) }, s.small);
     more = next.changed;
     sizes = next.sizes;
     callees = next.callees;
@@ -386,10 +414,10 @@ function grown_shared(sofar: Inlined, sp: Spliceable): Spliceable {
   let small: boolean[] = sp.small;
   let i: i32 = 0;
   while (i < sofar.funcs.len()) {
-    if (!shared[i] && !sp.leaves[i] && sofar.rewritten[i] && sp.inlinable[i] && sp.unnamed[i] && shared_spliceable(sofar.funcs[i], sp.calls[i], sp.cycle[i])) {
+    if (!shared[i] && !sp.leaves[i] && sofar.rewritten[i] && sp.inlinable[i] && shared_body(sofar.funcs[i], sp.calls[i], sp.cycle[i], sp.unnamed[i])) {
       shared = shared.with(i, true);
       once = once.with(i, true);
-      small = small.with(i, count_insts(sofar.funcs[i].graph) <= max_shared_insts());
+      small = small.with(i, small_shared_body(sofar.funcs[i]));
     }
     i = i + 1;
   }
@@ -402,7 +430,7 @@ struct Round { out: Inlined, changed: boolean, sizes: i32[], callees: i32[][] }
 
 // splice_round and split_all keep the arrays they rewrite in locals, so each
 // `.with` after the first writes in place rather than copying every body.
-function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rewrite: boolean[], ix: util.NameIndex, ready: boolean[], ctors: boolean[], shared: boolean[], small: boolean[]): Round {
+function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rewrite: boolean[], modes: i32[][], ix: util.NameIndex, ready: boolean[], ctors: boolean[], shared: boolean[], small: boolean[]): Round {
   let funcs: ssasem.Func[] = prev.funcs;
   let rewritten: boolean[] = prev.rewritten;
   let changed: boolean = false;
@@ -410,7 +438,10 @@ function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rew
   while (i < funcs.len()) {
     // A body that calls no ready function has nothing to splice.
     if (rewrite[i] && (sizes[i] <= max_caller_insts() || sizes[i] <= max_box_saving_caller_insts() && any_box_saving(funcs, sizes, callees[i], ready, shared)) && any_ready(callees[i], ready)) {
-      let spliced: Rewrite = splice_calls(funcs[i], sizes[i], funcs, sizes, ix, ready, ctors, shared, small, false);
+      let spliced: Rewrite = splice_calls(funcs[i], sizes[i], i, funcs, sizes, ix, ready, ctors, shared, small, false);
+      if (spliced.changed) {
+        spliced = Rewrite { ...spliced, f: semdead.prune(split_constructions(spliced.f, modes[i]).f).f };
+      }
       if (spliced.changed) {
         sizes = sizes.with(i, count_insts(spliced.f.graph));
         callees = callees.with(i, callees_of(spliced.f, ix));
@@ -576,7 +607,7 @@ pub function inline_closures(funcs: ssasem.Func[], names: string[], modes: i32[]
     let f: ssasem.Func = funcs[i];
     let size: i32 = count_insts(f.graph);
     if (rewrite[i] && size <= max_caller_insts()) {
-      f = drop_unread(splice_calls(f, size, candidates, sizes, ix, leaves, none_of(candidates.len()), none_of(candidates.len()), none_of(candidates.len()), true).f).f;
+      f = drop_unread(splice_calls(f, size, i, candidates, sizes, ix, leaves, none_of(candidates.len()), none_of(candidates.len()), none_of(candidates.len()), true).f).f;
     }
     out = out.append(f);
     i = i + 1;
@@ -641,8 +672,8 @@ function scalar_tuple(t: typeinfo.Type): boolean {
 
 // A value a leaf may hold besides a scalar: a reference a word carries whole
 // (a variant, a record, a string, an array), holding no view, or a tuple of
-// scalars and those. A record among them is a parameter or a payload read,
-// which leaf_body checks.
+// scalars and those. A record is a parameter, a payload read, or a
+// construction of scalar fields. leaf_body checks its origin.
 function leaf_word(f: ssasem.Func, t: typeinfo.Type): boolean {
   if (scalar(t)) {
     return true;
@@ -682,6 +713,33 @@ function leaf_array_op(f: ssasem.Func, ins: ssa.SInst): boolean {
     return !a.view && scalar(a.elem);
   }
   return false;
+}
+
+// Scalar fields carry no ownership units. Keep finalizers out of this rule.
+function leaf_record_build(f: ssasem.Func, ins: ssa.SInst): boolean {
+  if (ins.kind_tag != ssasem.record_new() || ins.result < 0 || !scalar_record(f, f.values[ins.result])) {
+    return false;
+  }
+  for arg in ins.args {
+    if (!scalar(f.values[arg])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// A scalar call can remain in a record builder after the builder is spliced.
+// Its operands carry no ownership units and its result cannot be this builder.
+function leaf_record_call(f: ssasem.Func, ins: ssa.SInst): boolean {
+  if (!record(f.result) || ins.kind_tag != ssasem.call() || ins.result < 0 || !scalar(f.values[ins.result])) {
+    return false;
+  }
+  for arg in ins.args {
+    if (!scalar(f.values[arg])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function record(t: typeinfo.Type): boolean {
@@ -937,6 +995,10 @@ function leaf_value_records(f: ssasem.Func, ignored: i32): i32 {
 }
 
 function leaf_body(f: ssasem.Func, ignored: i32): boolean {
+  return leaf_body_limit(f, ignored, max_leaf_insts());
+}
+
+function leaf_body_limit(f: ssasem.Func, ignored: i32, limit: i32): boolean {
   if (f.graph.takes_env && ignored < 0 || code_blocks(f.graph) > max_leaf_blocks()) {
     return false;
   }
@@ -951,8 +1013,8 @@ function leaf_body(f: ssasem.Func, ignored: i32): boolean {
   if (records < 0) {
     return false;
   }
-  // A parameter and a payload read each define their own value, so equal
-  // counts mean every record is one of the two.
+  // Each parameter, payload read, and scalar construction defines one value.
+  // Equal counts account for every record value.
   let record_sources: i32 = 0;
   let n: i32 = 0;
   // An exhaustive match ends in an unreachable block, which a splice copies
@@ -964,7 +1026,7 @@ function leaf_body(f: ssasem.Func, ignored: i32): boolean {
     }
     returns = returns || b.term.kind_tag == 1;
     for ins in b.insts {
-      if (!leaf_kind(ins.kind_tag) && !leaf_array_op(f, ins) && !(ins.kind_tag == ssasem.call() && ssasem.scalar_primitive(ins.str))) {
+      if (!leaf_kind(ins.kind_tag) && !leaf_array_op(f, ins) && !leaf_record_build(f, ins) && !leaf_record_call(f, ins) && !(ins.kind_tag == ssasem.call() && ssasem.scalar_primitive(ins.str))) {
         return false;
       }
       if ((ins.kind_tag == ssasem.record_get() || ins.kind_tag == ssasem.variant_get() && member_read(f, ins)) && !scalar(f.values[ins.result])) {
@@ -975,14 +1037,14 @@ function leaf_body(f: ssasem.Func, ignored: i32): boolean {
           record_sources = record_sources + 1;
         }
       } else if (!line_mark(ins.kind_tag)) {
-        if (ins.kind_tag == ssasem.variant_get() && record(f.values[ins.result])) {
+        if ((ins.kind_tag == ssasem.variant_get() || ins.kind_tag == ssasem.record_new()) && record(f.values[ins.result])) {
           record_sources = record_sources + 1;
         }
         n = n + 1;
       }
     }
   }
-  return returns && records == record_sources && n <= max_leaf_insts();
+  return returns && records == record_sources && n <= limit;
 }
 
 // The ready function a call instruction names, as an index into `funcs`, or -1.
@@ -1015,7 +1077,7 @@ function closure_callee(f: ssasem.Func, ins: ssa.SInst, ix: util.NameIndex): i32
 // result apart: anywhere else the copy saves no box. A constructor leaf among
 // them still folds its literal calls into static boxes.
 // `size` is f0's count_insts and `sizes[i]` funcs[i]'s.
-function splice_calls(f0: ssasem.Func, size: i32, funcs: ssasem.Func[], sizes: i32[], ix: util.NameIndex, ready: boolean[], ctors: boolean[], shared: boolean[], small: boolean[], closures: boolean): Rewrite {
+function splice_calls(f0: ssasem.Func, size: i32, self: i32, funcs: ssasem.Func[], sizes: i32[], ix: util.NameIndex, ready: boolean[], ctors: boolean[], shared: boolean[], small: boolean[], closures: boolean): Rewrite {
   let f: ssasem.Func = f0;
   let fsize: i32 = size;
   let done: i32 = 0;
@@ -1036,14 +1098,15 @@ function splice_calls(f0: ssasem.Func, size: i32, funcs: ssasem.Func[], sizes: i
         swap = [];
         let r: i32 = f.graph.blocks[bi].insts[k].result;
         let apart: boolean = small[at] && !whole_at(sempair.whole_values(f, ix, shared, false), r);
-        if (!apart && !(returned_only(f, r) && takes_apart(f, r))) {
+        let projected: boolean = record_leaf(funcs[at]) && reads_parts_of(f, r);
+        if (!apart && !projected && !(returned_only(f, r) && takes_apart(f, r))) {
           at = 0 - 1;
         }
       }
       // A module const's body becomes one static box wherever it lands, so
       // it costs the caller nothing the budget measures, and a splice that
       // saves a box (saves_box) is held to the larger box-saving budget.
-      if (at >= 0 && funcs[at].graph.name != f.graph.name
+      if (at >= 0 && at != self
         && (fsize + sizes[at] <= max_caller_insts() || ctors[at] && funcs[at].params.len() == 0
         || fsize + sizes[at] <= max_box_saving_caller_insts() && saves_box(funcs, sizes, at, shared))) {
         done = done + 1;
@@ -1100,13 +1163,17 @@ function returned_only(f: ssasem.Func, v: i32): boolean {
 // `v` and its copies, to a fixpoint: a splice appends the block holding a
 // call's result copy after the blocks that use it.
 function copies_of(f: ssasem.Func, v: i32): i32[] {
+  return aliases_of(f, v, false);
+}
+
+function aliases_of(f: ssasem.Func, v: i32, phis: boolean): i32[] {
   let names: i32[] = [v];
   let grew: boolean = true;
   while (grew) {
     grew = false;
     for b in f.graph.blocks {
       for ins in b.insts {
-        if (ins.kind_tag == 7 && named_arg(ins.args, names) && util.index_of_i32(names, ins.result) < 0) {
+        if ((ins.kind_tag == 7 || phis && ins.kind_tag == 8) && named_arg(ins.args, names) && util.index_of_i32(names, ins.result) < 0) {
           names = names.append(ins.result);
           grew = true;
         }
@@ -1145,6 +1212,21 @@ function takes_apart(f: ssasem.Func, v: i32): boolean {
 
 function whole_at(whole: boolean[], v: i32): boolean {
   return v < 0 || v >= whole.len() || whole[v];
+}
+
+// A loop can carry a builder's result back into its own call before the
+// caller reads its fields. Such a phi is a whole use until the call is
+// spliced, but the field read still makes the bounded splice useful.
+function reads_parts_of(f: ssasem.Func, v: i32): boolean {
+  let names: i32[] = aliases_of(f, v, true);
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.record_get() && named_arg(ins.args, names)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function next_block_id(g: ssa.SFunc): i32 {

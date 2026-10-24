@@ -1,0 +1,309 @@
+{
+  "host": {
+    "system": "Linux",
+    "node": "b343d5fb7b41",
+    "release": "6.18.55",
+    "version": "#1 SMP Wed Oct 14 19:45:18 UTC 2026",
+    "machine": "x86_64",
+    "processor": ""
+  },
+  "method": "Four pairs, alternate order; each executable performs three warmups and twenty timed iterations over 20000 elements. Timings apply to this host only.",
+  "source": "/workspace/lang-record-field-leaves-current/docs/benchmarks/simd-evaluators-2026-10-21/kernel.fern",
+  "source_sha256": "22f406b20ce50a88e92cf612d9c36b76602abb5ea9b6633d1e10237b38011f9e",
+  "candidate_compiler_sha256": "249ac984201e7eba37250232c138e120e5c28b706cc9ef97dbd467c90e150828",
+  "binary_sha256": {
+    "baseline": "90e7bdb222f6fff78e371f7c4629a91e2eb7c34ccddb01cc8acfbbc007835fd9",
+    "candidate": "b2bfcdbe419f56ee88cd815e09d81258a298e5dc7ee85171c2e0a10f8db47ecb"
+  },
+  "runs": [
+    {
+      "pair": 0,
+      "variant": "baseline",
+      "seconds": 1.3051527330026147,
+      "rows": [
+        {
+          "label": "f64",
+          "p50_ns": 242455,
+          "p99_ns": 285107,
+          "p999_ns": 285107,
+          "allocations": 0,
+          "allocations_per_element": 0.0,
+          "fresh_bytes": 0
+        },
+        {
+          "label": "Dual[f64]",
+          "p50_ns": 2921420,
+          "p99_ns": 3543835,
+          "p999_ns": 3543835,
+          "allocations": 8400000,
+          "allocations_per_element": 21.0,
+          "fresh_bytes": 0
+        },
+        {
+          "label": "DoubleDouble[f64]",
+          "p50_ns": 53376048,
+          "p99_ns": 58102069,
+          "p999_ns": 58102069,
+          "allocations": 129200000,
+          "allocations_per_element": 323.0,
+          "fresh_bytes": 0
+        }
+      ]
+    },
+    {
+      "pair": 0,
+      "variant": "candidate",
+      "seconds": 0.630977658998745,
+      "rows": [
+        {
+          "label": "f64",
+          "p50_ns": 262508,
+          "p99_ns": 587184,
+          "p999_ns": 587184,
+          "allocations": 0,
+          "allocations_per_element": 0.0,
+          "fresh_bytes": 0
+        },
+        {
+          "label": "Dual[f64]",
+          "p50_ns": 413336,
+          "p99_ns": 813733,
+          "p999_ns": 813733,
+          "allocations": 0,
+          "allocations_per_element": 0.0,
+          "fresh_bytes": 0
+        },
+        {
+          "label": "DoubleDouble[f64]",
+          "p50_ns": 26409616,
+          "p99_ns": 27795617,
+          "p999_ns": 27795617,
+          "allocations": 0,
+          "allocations_per_element": 0.0,
+          "fresh_bytes": 0
+        }
+      ]
+    },
+    {
+      "pair": 1,
+      "variant": "candidate",
+      "seconds": 0.6289258369979507,
+      "rows": [
+        {
+          "label": "f64",
+          "p50_ns": 246623,
+          "p99_ns": 485448,
+          "p999_ns": 485448,
+          "allocations": 0,
+          "allocations_per_element": 0.0,
+          "fresh_bytes": 0
+        },
+        {
+          "label": "Dual[f64]",
+          "p50_ns": 402566,
+          "p99_ns": 491818,
+          "p999_ns": 491818,
+          "allocations": 0,
+          "allocations_per_element": 0.0,
+          "fresh_bytes": 0
+        },
+        {
+          "label": "DoubleDouble[f64]",
+          "p50_ns": 26523252,
+          "p99_ns": 27976381,
+          "p999_ns": 27976381,
+          "allocations": 0,
+          "allocations_per_element": 0.0,
+          "fresh_bytes": 0
+        }
+      ]
+    },
+    {
+      "pair": 1,
+      "variant": "baseline",
+      "seconds": 1.3313703819985676,
+      "rows": [
+        {
+          "label": "f64",
+          "p50_ns": 242624,
+          "p99_ns": 350870,
+          "p999_ns": 350870,
+          "allocations": 0,
+          "allocations_per_element": 0.0,
+          "fresh_bytes": 0
+        },
+        {
+          "label": "Dual[f64]",
+          "p50_ns": 2829893,
+          "p99_ns": 5901290,
+          "p999_ns": 5901290,
+          "allocations": 8400000,
+          "allocations_per_element": 21.0,
+          "fresh_bytes": 0
+        },
+        {
+          "label": "DoubleDouble[f64]",
+          "p50_ns": 53707775,
+          "p99_ns": 65075133,
+          "p999_ns": 65075133,
+          "allocations": 129200000,
+          "allocations_per_element": 323.0,
+          "fresh_bytes": 0
+        }
+      ]
+    },
+    {
+      "pair": 2,
+      "variant": "baseline",
+      "seconds": 1.363506364999921,
+      "rows": [
+        {
+          "label": "f64",
+          "p50_ns": 242501,
+          "p99_ns": 282815,
+          "p999_ns": 282815,
+          "allocations": 0,
+          "allocations_per_element": 0.0,
+          "fresh_bytes": 0
+        },
+        {
+          "label": "Dual[f64]",
+          "p50_ns": 2777980,
+          "p99_ns": 3213772,
+          "p999_ns": 3213772,
+          "allocations": 8400000,
+          "allocations_per_element": 21.0,
+          "fresh_bytes": 0
+        },
+        {
+          "label": "DoubleDouble[f64]",
+          "p50_ns": 54992603,
+          "p99_ns": 62619230,
+          "p999_ns": 62619230,
+          "allocations": 129200000,
+          "allocations_per_element": 323.0,
+          "fresh_bytes": 0
+        }
+      ]
+    },
+    {
+      "pair": 2,
+      "variant": "candidate",
+      "seconds": 0.6666880150005454,
+      "rows": [
+        {
+          "label": "f64",
+          "p50_ns": 258202,
+          "p99_ns": 967212,
+          "p999_ns": 967212,
+          "allocations": 0,
+          "allocations_per_element": 0.0,
+          "fresh_bytes": 0
+        },
+        {
+          "label": "Dual[f64]",
+          "p50_ns": 416332,
+          "p99_ns": 526412,
+          "p999_ns": 526412,
+          "allocations": 0,
+          "allocations_per_element": 0.0,
+          "fresh_bytes": 0
+        },
+        {
+          "label": "DoubleDouble[f64]",
+          "p50_ns": 26915559,
+          "p99_ns": 33601156,
+          "p999_ns": 33601156,
+          "allocations": 0,
+          "allocations_per_element": 0.0,
+          "fresh_bytes": 0
+        }
+      ]
+    },
+    {
+      "pair": 3,
+      "variant": "candidate",
+      "seconds": 0.6597106869994604,
+      "rows": [
+        {
+          "label": "f64",
+          "p50_ns": 241898,
+          "p99_ns": 290473,
+          "p999_ns": 290473,
+          "allocations": 0,
+          "allocations_per_element": 0.0,
+          "fresh_bytes": 0
+        },
+        {
+          "label": "Dual[f64]",
+          "p50_ns": 411606,
+          "p99_ns": 540007,
+          "p999_ns": 540007,
+          "allocations": 0,
+          "allocations_per_element": 0.0,
+          "fresh_bytes": 0
+        },
+        {
+          "label": "DoubleDouble[f64]",
+          "p50_ns": 27276648,
+          "p99_ns": 33445165,
+          "p999_ns": 33445165,
+          "allocations": 0,
+          "allocations_per_element": 0.0,
+          "fresh_bytes": 0
+        }
+      ]
+    },
+    {
+      "pair": 3,
+      "variant": "baseline",
+      "seconds": 1.326564965002035,
+      "rows": [
+        {
+          "label": "f64",
+          "p50_ns": 242850,
+          "p99_ns": 303169,
+          "p999_ns": 303169,
+          "allocations": 0,
+          "allocations_per_element": 0.0,
+          "fresh_bytes": 0
+        },
+        {
+          "label": "Dual[f64]",
+          "p50_ns": 2811475,
+          "p99_ns": 7472097,
+          "p999_ns": 7472097,
+          "allocations": 8400000,
+          "allocations_per_element": 21.0,
+          "fresh_bytes": 0
+        },
+        {
+          "label": "DoubleDouble[f64]",
+          "p50_ns": 53449929,
+          "p99_ns": 57636749,
+          "p999_ns": 57636749,
+          "allocations": 129200000,
+          "allocations_per_element": 323.0,
+          "fresh_bytes": 0
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "f64": {
+      "baseline_median_p50_ns": 242562.5,
+      "candidate_median_p50_ns": 252412.5,
+      "candidate_over_baseline": 1.0406080906982735
+    },
+    "Dual[f64]": {
+      "baseline_median_p50_ns": 2820684.0,
+      "candidate_median_p50_ns": 412471.0,
+      "candidate_over_baseline": 0.14623084329900124
+    },
+    "DoubleDouble[f64]": {
+      "baseline_median_p50_ns": 53578852.0,
+      "candidate_median_p50_ns": 26719405.5,
+      "candidate_over_baseline": 0.4986931317602699
+    }
+  }
+}

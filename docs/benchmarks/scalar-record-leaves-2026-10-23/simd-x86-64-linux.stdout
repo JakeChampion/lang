@@ -1,0 +1,24 @@
+TAP version 13
+# Suite: simd
+ok 1 - kernel on f64
+ok 2 - kernel on f32
+ok 3 - LANES through a bound
+ok 4 - dual polynomial
+ok 5 - dual select
+ok 6 - dual sigmoid
+ok 7 - dual chain rules
+ok 8 - dual pow
+ok 9 - double-double keeps low bits
+ok 10 - double-double sqrt
+ok 11 - double-double exp and log
+ok 12 - double-double trig
+ok 13 - double-double small arguments
+ok 14 - double-double generic kernel
+ok 15 - dual of double-double
+ok 16 - double-double over f32
+ok 17 - eq is IEEE for NaN
+ok 18 - sweep against std/f64
+1..18
+# tests 18
+# pass 18
+# fail 0

@@ -1,0 +1,129 @@
+{
+  "source_commit": "e0d6b682597eb5628439dd40bbf95ae2de000d85",
+  "dependency_base": "a4f4ab3292da45da53eeb4be67ea612753b24077",
+  "native_sha256": "d294ee4d34be58c3f2cd8335c0ba382d39f4732ed99bef46624554038044fb24",
+  "tests": [
+    {
+      "suite": "targeted-tests",
+      "cases": 244
+    },
+    {
+      "suite": "feature-census",
+      "cases": 1
+    }
+  ],
+  "source_sha256": "d360061df17c0a5618102e7c97787de4a4619c483a3a64231d8b6c9979e16829",
+  "oracle_sha256": "274dbcf8abe673fc0150c370ed36b1270b9f1acd3b325c562aec2fb228466784",
+  "artifacts": [
+    {
+      "path": "source-files.json",
+      "bytes": 78158,
+      "sha256": "9e1770af44d9a0fd4f4c2fd968120cda8805980983466be10102a1fe39358f4f"
+    },
+    {
+      "path": "change.patch.gz",
+      "bytes": 132873,
+      "sha256": "f5d1fcfccc269af3f5203087c90a8a347b55be693ad0999301855afdbeea5726"
+    },
+    {
+      "path": "bootstrap/bootstrap.json.gz",
+      "bytes": 398,
+      "sha256": "7261198a4e114b4d5ccdf08ad901e7348b61681c3d74423e36499d089236e9f8"
+    },
+    {
+      "path": "bootstrap/stage1.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap/stage2.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap/stage3.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "targeted-tests.jsonl.gz",
+      "bytes": 15419,
+      "sha256": "286c8ccc063283cd05a1be4e778d9f9bae3177f0b8a38f257d0bba6cd0a70f87"
+    },
+    {
+      "path": "feature-census.jsonl.gz",
+      "bytes": 850,
+      "sha256": "7470622d736be3205b14ba5d0d10be3470c68c53a5b65a2afc5aa6d9c12b4e9c"
+    },
+    {
+      "path": "driver-builds.json.gz",
+      "bytes": 1047,
+      "sha256": "93321d7e4087c77eba7cb62f26f72d31427fb07d15053517da44142c6b651d30"
+    },
+    {
+      "path": "driver-sizes.txt.gz",
+      "bytes": 170,
+      "sha256": "5cefcda2559f475ca8eafb0663cbc2a465f506ebda06eb4db63619309e5c068a"
+    },
+    {
+      "path": "driver-gate.log.gz",
+      "bytes": 345,
+      "sha256": "a1a8f339840aa108aa4e4ba1eac1f11336840dd1e37945760d20741ae3362dbc"
+    },
+    {
+      "path": "check-sizes.py.gz",
+      "bytes": 897,
+      "sha256": "ff9f2c3e74050c852ed7e799a05c48589b773838c9f854bd69a7a9598494d766"
+    },
+    {
+      "path": "simd-matrix.json.gz",
+      "bytes": 868,
+      "sha256": "dbcd094f424228f1af186e280f8a5e99c8f6197d5efa7041de1843d149a9642e"
+    },
+    {
+      "path": "simd-matrix.py.gz",
+      "bytes": 1410,
+      "sha256": "5214e06a1a90d7ae2900717ceba9b55be00303005bd39c0dba58bf14831118fd"
+    },
+    {
+      "path": "simd-matrix.log.gz",
+      "bytes": 608,
+      "sha256": "b7dadd9c8e4c7331468b0de434a57244dda2ce5183ab2d48970dff3a0c052a5f"
+    },
+    {
+      "path": "measure-kernel.py.gz",
+      "bytes": 1413,
+      "sha256": "86a627d4028ba249d24e9fa853585f1f2099abd6698db34995dc6774b1a7930f"
+    },
+    {
+      "path": "paired-kernel/report.json.gz",
+      "bytes": 1524,
+      "sha256": "e047ee9e529dadf420b39fbad6d214f06c4940f6038a55b7480c714c2025e1ef"
+    },
+    {
+      "path": "paired-kernel.log.gz",
+      "bytes": 198,
+      "sha256": "8a078ba018f4d922c2f0c8271b14878b8af234a7df23ad97234b97816ac658be"
+    },
+    {
+      "path": "format.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "gofmt.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "record-proofs.py.gz",
+      "bytes": 1823,
+      "sha256": "6b4993c13ac5805dfb53ef849c61ca17bcfcc792fb14c2ec67f1f3e1e7b32c6e"
+    },
+    {
+      "path": "execution-logs.tar.gz",
+      "bytes": 1605,
+      "sha256": "fb66c68bd066671543d3aa1a45f4161a499de4089425702a5ae22f8ad10b4763"
+    }
+  ]
+}

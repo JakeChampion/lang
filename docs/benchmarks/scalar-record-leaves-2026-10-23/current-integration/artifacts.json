@@ -1,0 +1,151 @@
+{
+  "source_commit": "45b3a95f91970b05027c48a1d3560ebff5a24bbb",
+  "dependency_base": "fe2a63653e25d38af2c0bc02f6f1b09628d3e45e",
+  "machine_checkpoint": "dd01b2d6cdddb26ee2c8ec7330aefdaf90dbd0d7",
+  "source_sha256": "5b17da60d132442ee3f4b0e985acf9efa17ffe033776578cafca27dfc97a7424",
+  "source_files": 496,
+  "tests": [
+    {
+      "suite": "compiler-regressions",
+      "cases": 121
+    },
+    {
+      "suite": "feature-census",
+      "cases": 1
+    }
+  ],
+  "oracle_source_commit": "d457d861824ad9aad5a7a36a61b7de44ec627d13",
+  "oracle_sha256": "274dbcf8abe673fc0150c370ed36b1270b9f1acd3b325c562aec2fb228466784",
+  "artifacts": [
+    {
+      "path": "source-files.json",
+      "bytes": 78158,
+      "sha256": "b736bf73fbe5505ef170ce129d58c1d950d4fdbbfbcdb89aa06a66e882827a18"
+    },
+    {
+      "path": "change.patch.gz",
+      "bytes": 40286,
+      "sha256": "3a8e4ceca4134484ae62293db7ef95eec6ee47bc1879e2957b1671aaae02076a"
+    },
+    {
+      "path": "bootstrap/bootstrap.json.gz",
+      "bytes": 397,
+      "sha256": "cd249de484b268a72493756408d5a4e378bf0afe5b4d2167575cc401ef659409"
+    },
+    {
+      "path": "bootstrap/stage1.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "bootstrap/stage2.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "bootstrap/stage3.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "driver-builds.json.gz",
+      "bytes": 1046,
+      "sha256": "b54731b11b74bfc22fa7828b8c96bd0d7f6dabe6773d950ca834d5e20cc3581b"
+    },
+    {
+      "path": "driver-build.log",
+      "bytes": 357,
+      "sha256": "ef4cbf1325b3b3b893788c3af128bfe024a053c18e3ab3932f4df8accf288ea1"
+    },
+    {
+      "path": "driver-sizes.txt",
+      "bytes": 358,
+      "sha256": "2b418b1ab05d2085e56a87fb7d1ce1e43d1da7c1cbced7f065762007c5bc7dc7"
+    },
+    {
+      "path": "driver-gate.log",
+      "bytes": 896,
+      "sha256": "51620879fe8d4c3c37e17857b2a9c29759c0c748e3a710db6f899251e3ad38bb"
+    },
+    {
+      "path": "check-sizes.py.gz",
+      "bytes": 897,
+      "sha256": "466a8811a370d760bd6589bd50d7bf5070519fb34b4903ea9087c0cc0d687f1f"
+    },
+    {
+      "path": "compiler-regressions.jsonl.gz",
+      "bytes": 7386,
+      "sha256": "acfd00f8ce02eff33b9bcc68d93e17b1f927ca105d26a73f82b1f51a64838f3c"
+    },
+    {
+      "path": "feature-census.jsonl.gz",
+      "bytes": 841,
+      "sha256": "9a675f741514c8a6877dbf67a1e0d100aa8c9392b02b8806cf75f0ec1a710179"
+    },
+    {
+      "path": "format.json",
+      "bytes": 34,
+      "sha256": "5699f09ab7c54311c0e0d631ac2247f668a85614e798c99caf54728825dfa1ff"
+    },
+    {
+      "path": "format.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "gofmt.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "vet.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "simd-matrix.json.gz",
+      "bytes": 866,
+      "sha256": "89abfe3f5245fc0a32615b341c4a58f091abb3cc3da45ad563e1fddbdf3ea651"
+    },
+    {
+      "path": "simd-matrix.py.gz",
+      "bytes": 1397,
+      "sha256": "8d81e7e105dd3003fdcf0ba407d12ecdce5935e4d1356ad18b5ad5cfaf64e3d5"
+    },
+    {
+      "path": "simd-matrix.log.gz",
+      "bytes": 598,
+      "sha256": "e5af638d8e565f6d7597d919a08617b50d8bbcb7a9279809c8db639f31794e63"
+    },
+    {
+      "path": "measure-kernel.py.gz",
+      "bytes": 1410,
+      "sha256": "21132752fd9ed734a3bd436f0fae77159becf9a6471a688ec66ddcd4bdadbfe3"
+    },
+    {
+      "path": "paired-kernel/report.json.gz",
+      "bytes": 1536,
+      "sha256": "dfc2412511c45a1013dd6c2eac26b964f55a129a765a603db37a83b9cf4c37fd"
+    },
+    {
+      "path": "paired-kernel.log",
+      "bytes": 470,
+      "sha256": "f18f16fa0dee2ad36de3b87c1902d6306c6eb547d005111ce3f06da67eac07a1"
+    },
+    {
+      "path": "paired-kernel/baseline-build.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "paired-kernel/candidate-build.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "execution-logs.tar.gz",
+      "bytes": 1611,
+      "sha256": "b5a4049fb23c5a63111aff53d8fdf99f4053b209e333e5575a773562602673cd"
+    }
+  ]
+}
