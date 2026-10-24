@@ -1,0 +1,106 @@
+{
+  "source_commit": "fce3277515f49791d3f136fd123a3a1253058f49",
+  "compiler_and_library_commit": "9a6cb8d1a5e8b6d10e57147c07909ef8d6bd4324",
+  "base": "0d676540589116b3d446ff411867505ed9b7f14d",
+  "source_sha256": "4685eea8b4c49034d8a4ac5587d9f8d202b416bb345856108909609c5420d7a9",
+  "source_files": 495,
+  "release": "https://github.com/JakeChampion/lang/releases/tag/stage0-20261024-5e63712",
+  "artifacts": [
+    {
+      "path": "source-files.json",
+      "bytes": 78003,
+      "sha256": "0805fae490a0b46ee4073ca48621f0ad99f7db433edf899f8192dd678e94ffa3",
+      "source_commit": "fce3277515f49791d3f136fd123a3a1253058f49"
+    },
+    {
+      "path": "change.patch.gz",
+      "bytes": 12698,
+      "sha256": "8fda7d6924cfecab40916e65d262594e52b80c873cab71f441e96f814c0e5273",
+      "source_commit": "fce3277515f49791d3f136fd123a3a1253058f49"
+    },
+    {
+      "path": "stage0.lock",
+      "bytes": 524,
+      "sha256": "ae49d9abeadd45f76d7f0ca4f347edb97624fa64f5247374d3c6295e8d89a192",
+      "source_commit": "fce3277515f49791d3f136fd123a3a1253058f49"
+    },
+    {
+      "path": "bootstrap/bootstrap.json.gz",
+      "bytes": 350,
+      "sha256": "285dddc49cea7c2da6f27caf786f9a24752c7670a97f60bb2c9c1693fee14f9e",
+      "source_commit": "9a6cb8d1a5e8b6d10e57147c07909ef8d6bd4324"
+    },
+    {
+      "path": "bootstrap/stage1.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_commit": "9a6cb8d1a5e8b6d10e57147c07909ef8d6bd4324"
+    },
+    {
+      "path": "bootstrap/stage2.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_commit": "9a6cb8d1a5e8b6d10e57147c07909ef8d6bd4324"
+    },
+    {
+      "path": "bootstrap/stage3.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_commit": "9a6cb8d1a5e8b6d10e57147c07909ef8d6bd4324"
+    },
+    {
+      "path": "matrix.json.gz",
+      "bytes": 1802,
+      "sha256": "8d03597f835c5ab5bb79ee6d355066afc2f9196731fb151072b27ec2b018b3e6",
+      "source_commit": "fce3277515f49791d3f136fd123a3a1253058f49"
+    },
+    {
+      "path": "matrix.log.gz",
+      "bytes": 869,
+      "sha256": "900b65ecc00069d89c70b5046c2455cedb8e489ccf9fb2cab43c1ebcafe1131f",
+      "source_commit": "fce3277515f49791d3f136fd123a3a1253058f49"
+    },
+    {
+      "path": "matrix.py.gz",
+      "bytes": 1394,
+      "sha256": "614b52a0144b73a90853f0704b7437ea98b7ea365c56e9b958b4b7d815fcfeb2",
+      "source_commit": "fce3277515f49791d3f136fd123a3a1253058f49"
+    },
+    {
+      "path": "updated-vocabulary-matrix.py.gz",
+      "bytes": 1517,
+      "sha256": "bde5383fe4645a7d3b99f9844ecb67bcd808983ce5ebf9e740488bb83fd3cf9d",
+      "source_commit": "fce3277515f49791d3f136fd123a3a1253058f49"
+    },
+    {
+      "path": "pre-vocabulary-constructor-matrix.json.gz",
+      "bytes": 1752,
+      "sha256": "31a5538079177763531a9a754a5c13d44fe2a77357259668c76001d4fc389a82",
+      "source_commit": "9a6cb8d1a5e8b6d10e57147c07909ef8d6bd4324"
+    },
+    {
+      "path": "targeted.jsonl.gz",
+      "bytes": 511,
+      "sha256": "ca089586dc779fff8e34abf2ef1cf172b7c28ff3e6f83b3af42699e275296d58",
+      "source_commit": "9a6cb8d1a5e8b6d10e57147c07909ef8d6bd4324"
+    },
+    {
+      "path": "oracle-version.txt",
+      "bytes": 609,
+      "sha256": "92940cf411364a6d2077232f709df36607bdc4e834384e64086e0326672f10f4",
+      "source_commit": "9a6cb8d1a5e8b6d10e57147c07909ef8d6bd4324"
+    },
+    {
+      "path": "format.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_commit": "fce3277515f49791d3f136fd123a3a1253058f49"
+    },
+    {
+      "path": "matrix-logs.tar.gz",
+      "bytes": 1517,
+      "sha256": "cd1f2c24a1eec7dc29f5837151403f55242a0a2812984b70d6e0fe453a09ed9a",
+      "source_commit": "fce3277515f49791d3f136fd123a3a1253058f49"
+    }
+  ]
+}

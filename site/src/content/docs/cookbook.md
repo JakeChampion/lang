@@ -234,10 +234,11 @@ std/json's `json.JsonValue` is an ordinary enum, so a document is an ordinary va
 import "std/json";
 
 function main(): i32 {
-    let doc: json.JsonValue = JObject(json.object()
-        .insert("name", JString("fern"))
-        .insert("stars", JNumber("42"))
-        .insert("tags", JArray([JString("cli"), JString("wasm")])));
+    let doc: json.JsonValue = JObject(json.from([
+        ("name", JString("fern")),
+        ("stars", JNumber("42")),
+        ("tags", JArray([JString("cli"), JString("wasm")]))
+    ]));
     print(json.json_encode(doc));
     return 0;
 }
