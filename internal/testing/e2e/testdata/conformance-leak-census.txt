@@ -122,6 +122,7 @@ boolean_scalar_dispatch                              0
 both_arms_read_p                                     0
 break_continue                                       0
 byte_slice_after_set_len_regrows                     0
+byte_stream_and_async_channel                       0
 byte_view_of_a_field_after_a_failed_try              0
 byte_views_in_binary_codecs                         0
 byte_views_in_codecs                                0
@@ -173,6 +174,16 @@ const_without_a_type                                 0
 consuming_method                                     0
 consuming_trait_method                               0
 contains_demo                                        0
+control_value_array                                  0
+control_value_basic                                  0
+control_value_diverge                                0
+control_value_enum_once                              0
+control_value_flow                                   0
+control_value_lambda_tails                           0
+control_value_literal_once                           0
+control_value_nested                                 0
+control_value_statement_arms                         0
+control_value_string                                 0
 copied_string_field                                  0
 core_int_parse                                       0
 core_int_radix                                       0
@@ -375,6 +386,7 @@ io_void_results_compose                              0
 io_error_variant_beside_a_struct_of_its_name         0
 io_error_variant_beside_an_enum_of_its_name          0
 iter_build_consume                                   0
+iterator_nested_tuple_adapter                        0
 json_array_field                                     0
 json_error_location                                  0
 json_object                                          0
@@ -403,6 +415,7 @@ let_else_or_pattern                                  0
 let_else_pattern_forms                               0
 let_else_qualified_variant                           0
 let_else_variant_binding_outlives_stmt               0
+literal_local_read_at_two_widths                    0
 literal_local_takes_its_use_width                    0
 literal_payload_pattern                              0
 literal_tree_takes_its_destination_width             0
@@ -412,6 +425,7 @@ loop_form                                            0
 loop_rotation_shapes                                 0
 loop_values_survive_cold_calls                       0
 loop_var_reclaim                                     0
+lossless_equality                                    0
 map_bool_column                                      0
 map_bool_key                                         0
 map_cleared_alias                                    0
@@ -425,6 +439,7 @@ map_i32                                              0
 map_iter_struct_value                                0
 map_iter_unannotated                                 0
 map_iterate                                          0
+map_iterator_protocol                                0
 map_keys                                             0
 map_keys_str                                         0
 map_literal                                          0
@@ -493,6 +508,7 @@ nested_pattern_wildcard_fallthrough                  0
 nested_value_expr_width                              0
 none_branch                                          0
 none_equal_none                                      0
+numeric_lossless_widening 0
 oob_index_negative                                   0
 oob_index_read                                       0
 oob_index_wide_integer                               0

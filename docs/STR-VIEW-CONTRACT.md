@@ -194,7 +194,7 @@ them taking `[u8]` as a **parameter**.
 
 It is almost only parameter position: never a return type, never a struct
 field, never an array element, and one local binding
-(`internal/stdlib/std/io_buffered.fern:47`, `let bs: [u8] = s.as_bytes()`).
+(`internal/stdlib/std/io_buffered.fern.md`, `let bs: [u8] = s.as_bytes()`).
 A local is still non-escaping, so the argument holds — but "only in parameter
 position" overstated it.
 
@@ -209,10 +209,9 @@ flip, not a baseline a slice can inherit: plan that half as new ABI work.
 Two things follow that this section originally missed. A two-word string's
 `data` word is a tagged value, not always a loadable byte address, so "a slice
 is that shape" holds for heap-form strings and needs an answer for inline ones.
-And `as_bytes()` on an inline-packed string today "first copies the bytes into
-a bare `__fern_alloc` block the header points at; that copy has no owner"
-(`internal/oracle/ir/rcresults.go:145`, and the deleted Go backends' helpers) — an ownerless copy whose only
-holder is the header that is being retired. **Open:** does the two-word slice
+The earlier Go implementation materialised an inline string in an unowned
+raw allocation. Its result classifiers and backend helpers are retired.
+**The historical implementation question:** does the two-word slice
 forbid the inline-materialising path, forcing a heap-form promotion inside the
 string, or carry an inline tag of its own? The decision does not turn on the
 answer; the implementation does.
@@ -234,12 +233,10 @@ it points into. Deleting the allocation dominates reclaiming it.
 - **The doing is tracked in #8635** — the representation change and the checker
   rule both. This section is a decision, not an owner, and the decision it
   replaced sat unowned for two weeks.
-- `__slice_make` and its `rcResultRaw` / `rcsigs` entries retire with the box,
-  and so do the other slice-producing classifications an implementer will grep
-  for: `__method_string_as_bytes` (`internal/oracle/ir/rcresults.go:150`),
-  `__slice_range` (`internal/oracle/ir/rcsigs.go:377`), and `__slice_make`'s row in
-  `internal/oracle/ir/verifyprovided.go:248`. A "slice header" allocation surviving
-  anywhere afterwards is a bug, which makes the change self-checking.
+- The original migration removed the boxed slice header and its Go IR
+  result classifications. Current view construction is in
+  `compiler/semsource.fern`. A heap allocation for the view header itself
+  violates the two-word view representation.
 - #8534's crypto half closes as a consequence rather than as a stdlib rewrite:
   `sha256_hex` was never the defect, and rewriting the wrappers to dodge `[u8]`
   would have hidden a general gap behind one call site.

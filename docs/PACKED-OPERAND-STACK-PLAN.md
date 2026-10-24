@@ -4,6 +4,8 @@ Status: [record] x86-64 done, arm64 never done; #4111 (8-byte stack slots +
 real push/pop on the native backends) is closed, and the Go native backends
 this plan targets were deleted (`NATIVE-RETIREMENT.md`).
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 Captures the multi-PR migration strategy for BACKEND-PARITY
 perf item #3 (Pack the operand-stack into 8-byte slots).
 Same shape as the SSO plan — the change is mechanical but

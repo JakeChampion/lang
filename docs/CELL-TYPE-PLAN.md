@@ -13,7 +13,7 @@ Date: 2026-06-07 (scalar-array extension 2026-10-06, composite extension
 and structs and enums whose fields and payloads are built the same way.
 Recursive types are fine. The element is refused (E057) when any part of it
 is a function type, a `Cell`, `dyn Trait`, a type parameter, a borrowed view
-(`str`, `[T]`), a resource handle or a `MapIter` cursor.
+(`str`, `[T]`), a resource handle.
 
 Why that line: a reference cycle under RC needs a back-edge into a mutable
 slot, and a cell is the only mutable slot the language has. Every value other
@@ -41,9 +41,8 @@ and retains its replacement before releasing the value it replaces; the
 cell's last reference releases the element and the box. The self-host's typed
 lowering was already generic over the element type, so composite elements
 needed no lowering change; `FERN_LEAKCHECK` balances on x86-64, arm64 (Linux
-and Darwin) and wasm. The Go oracle IR routes a composite element through the
-deep drop an array of that element takes, since a cell is a one-element array
-box. The bootstrap interpreter (`compiler/interp.fern`) holds a composite
+and Darwin) and wasm. The typed runtime operations in `compiler/semsource.fern` build,
+read and replace the cell's element. The bootstrap interpreter (`compiler/interp.fern`) holds a composite
 element as tagged text in its string cell (`cell_value_text`), because it must
 stay buildable by a pin whose own E057 predates this rule; a read decodes a
 fresh value, so snapshots hold by construction.
@@ -91,7 +90,7 @@ The last mutation *statement* still standing is `arr[i] = v`
 (`docs/PURE-COLLECTION-API-PLAN.md` §3a). Removing it to make subscripts
 read-only ran into a load-bearing idiom: a **1-element array used as a
 mutable cell**. The self-host compiler itself relies on it —
-`internal`/`compiler/wasm.fern`'s `Ctx` has
+the former wasm emitter's `Ctx` had
 
 ```fern
 lam_ctr: i32[],     // lam_ctr[0] is the next lambda's table index
@@ -215,7 +214,7 @@ load/store machinery:
 
 Slot width follows the element-width rules already used for arrays
 (`WidthPtr` on native, 4/8 on wasm by `T`). Backends to touch: the Go
-reference compiler (`internal/check/checker` + `internal/oracle/ir`) and every
+reference checker and retired Go IR, plus every
 self-host emitter (`asm.fern`, `asm_arm64.fern`, `ssa.fern` +
 `ssa_x86`/`ssa_arm64`/`ssa_wasm`, `wasm.fern`) plus the self-host
 `checker.fern` for E057 parity. The self-host heap is leak-everything

@@ -60,6 +60,7 @@ func downcastRoots(dc *ast.DowncastExpr, info *checker.Info, enqueue func(string
 }
 
 var watHelperDeps = map[string][]string{
+	// type-rich `__method_Map_*` and `map_new` names. The stdlib bodies live
 	"map_new":                     {"map_new_impl", "__map_drop_values", "__map_drop_impl"},
 	"__method_Map_len":            {"__map_len_impl"},
 	"__method_Map_contains":       {"__map_has_impl", "__map_lookup", "__map_hash"},
@@ -75,11 +76,6 @@ var watHelperDeps = map[string][]string{
 	"__method_Map_clear":          {"__map_clear_impl", "__map_clone"},
 	"__method_Map_keys":           {"__map_keys_impl", "__map_i32_column", "__map_bool_column", "__map_u8_column"},
 	"__method_Map_values":         {"__map_values_impl", "__map_i32_column", "__map_bool_column", "__map_u8_column"},
-	"__method_Map_iter":           {"__map_iter_impl"},
-	"__method_MapIter_has_next":   {"__mapiter_has_next_impl"},
-	"__method_MapIter_key":        {"__mapiter_key_impl", "__mapiter_entry_addr"},
-	"__method_MapIter_value":      {"__mapiter_value_impl", "__mapiter_entry_addr"},
-	"__method_MapIter_advance":    {"__mapiter_advance_impl"},
 }
 
 func keyedMapMethod(name string) bool {

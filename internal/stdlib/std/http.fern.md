@@ -136,9 +136,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<54 function __query_of(path: string): string>>
 
-<<55 pub function (r: HttpRequest) body_stream(): Stream>>
+<<55 pub function (r: HttpRequest) body_stream(): ByteStream>>
 
-<<56 function __whole_body(s: Stream): (u8[], Stream)>>
+<<56 function __whole_body(s: ByteStream): (u8[], ByteStream)>>
 
 <<57 pub function (r: HttpRequest) body_bytes(): u8[]>>
 
@@ -1708,7 +1708,7 @@ function __repeats(prev: HttpRequest, head: __Head, body: u8[], trailers: Header
   return head.method == prev.method && head.path == prev.path && __same_fields(head.headers, prev.headers);
 }
 
-function __empty_body(s: Stream): boolean {
+function __empty_body(s: ByteStream): boolean {
   match (s.source) {
     Some(_) => {
       return false;
@@ -1781,7 +1781,7 @@ pub function http_parse_request_framed(buf: u8[]): HttpFraming {
 }
 
 pub function http_framed_none(): HttpFramed {
-  return HttpFramed { request: HttpRequest { method: "", path: "", body: Stream { data: [], pos: 0, source: None }, headers: headers.header_map_new(), trailers: headers.header_map_new() }, len: 0, keep_alive: false, version: "" };
+  return HttpFramed { request: HttpRequest { method: "", path: "", body: ByteStream { data: [], pos: 0, source: None }, headers: headers.header_map_new(), trailers: headers.header_map_new() }, len: 0, keep_alive: false, version: "" };
 }
 
 pub function http_framed_kept(f: HttpFramed): HttpFramed {
@@ -2586,11 +2586,11 @@ function __query_of(path: string): string {
 }
 ```
 
-### `55 pub function (r: HttpRequest) body_stream(): Stream`
+### `55 pub function (r: HttpRequest) body_stream(): ByteStream`
 
 ```fern
-<<55 pub function (r: HttpRequest) body_stream(): Stream>>=
-pub function (r: HttpRequest) body_stream(): Stream {
+<<55 pub function (r: HttpRequest) body_stream(): ByteStream>>=
+pub function (r: HttpRequest) body_stream(): ByteStream {
   return r.body;
 }
 
@@ -2611,12 +2611,12 @@ pub function (r: HttpRequest) body_string(): Result[string, BodyError] {
 }
 ```
 
-### `56 function __whole_body(s: Stream): (u8[], Stream)`
+### `56 function __whole_body(s: ByteStream): (u8[], ByteStream)`
 
 ```fern
-<<56 function __whole_body(s: Stream): (u8[], Stream)>>=
-function __whole_body(s: Stream): (u8[], Stream) {
-  let from_start: Stream = Stream { ...s, pos: 0 };
+<<56 function __whole_body(s: ByteStream): (u8[], ByteStream)>>=
+function __whole_body(s: ByteStream): (u8[], ByteStream) {
+  let from_start: ByteStream = ByteStream { ...s, pos: 0 };
   return from_start.read_all();
 }
 ```
@@ -2680,7 +2680,7 @@ pub function (r: HttpResponse) body_string(): string {
       return utf8.from_bytes_lossy(bs);
     },
     BodyStream(st) => {
-      let rest: (u8[], Stream) = st.read_all();
+      let rest: (u8[], ByteStream) = st.read_all();
       return utf8.from_bytes_lossy(rest.0);
     },
     BodyFile(path) => {
@@ -2710,7 +2710,7 @@ pub function (b: Body) bytes(): u8[] {
       return bs;
     },
     BodyStream(st) => {
-      let rest: (u8[], Stream) = st.read_all();
+      let rest: (u8[], ByteStream) = st.read_all();
       return rest.0;
     },
     BodyFile(path) => {
@@ -2923,7 +2923,7 @@ pub function bytes(status: i32, bs: u8[]): HttpResponse {
   return HttpResponse { status: status, body: BodyBytes(bs), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
 }
 
-pub function stream(status: i32, s: Stream): HttpResponse {
+pub function stream(status: i32, s: ByteStream): HttpResponse {
   return HttpResponse { status: status, body: BodyStream(s), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
 }
 

@@ -1809,13 +1809,13 @@ func TestStringIndexReturnsByte(t *testing.T) {
 	}
 }
 
-func TestStringIndexIsNotI32(t *testing.T) {
+func TestStringIndexWidensToI32(t *testing.T) {
 	src := `function f(): i32 {
 		let s: string = "abc";
 		return s[1];
 	}`
-	if err := checkSource(t, src); err == nil {
-		t.Error("expected error: u8 is not assignable to i32 without a cast")
+	if err := checkSource(t, src); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -7721,7 +7721,7 @@ func TestOneErrorPerMistake(t *testing.T) {
 
 func TestMixedIntegerHintSurvives(t *testing.T) {
 	err := checkSource(t, `function main(): i32 {
-    let a: i32 = 1; let b: u32 = 2;
+    let a: i32 = 1; let b: u64 = 2;
     if (a < b) { return 1; }
     return 0;
 }`)
@@ -8406,37 +8406,9 @@ func errorWithCode(err error, code string) *Error {
 	return nil
 }
 
-func TestMapIterEscapeRejected(t *testing.T) {
-	const decls = "struct B { m: Map[i32, i32] }\n"
-	for _, src := range []string{
-		`function f(): MapIter[i32, i32] { let m: Map[i32, i32] = map_new(4); m = m.insert(1, 2); return m.iter(); }`,
-		`function f(): MapIter[i32, i32] { let m: Map[i32, i32] = map_new(4); let it = m.iter(); return it; }`,
-		`function f(): MapIter[i32, i32][] { let m: Map[i32, i32] = map_new(4); return [m.iter()]; }`,
-		`function f(m: Map[i32, i32]): MapIter[i32, i32] {
-	let mm: Map[i32, i32] = map_new(4);
-	let it: MapIter[i32, i32] = mm.iter();
-	if (m.len() > 0) { let it2: MapIter[i32, i32] = m.iter(); let it: MapIter[i32, i32] = it2; }
-	return it;
-}`,
-		`function f(m: Map[i32, i32]): MapIter[i32, i32] {
-	let mm: Map[i32, i32] = map_new(4);
-	let it: MapIter[i32, i32] = m.iter();
-	if (m.len() > 0) { it = mm.iter(); }
-	return it;
-}`,
-	} {
-		err := checkSource(t, decls+src)
-		if !hasCode(err, "E065") {
-			t.Errorf("%q: want E065, got %v", src, err)
-		}
-	}
-	for _, src := range []string{
-		`function f(m: Map[i32, i32]): MapIter[i32, i32] { return m.iter(); }`,
-		`function f(b: B): MapIter[i32, i32] { let it = b.m.iter(); return it; }`,
-	} {
-		if err := checkSource(t, decls+src); err != nil {
-			t.Errorf("%q: want no diagnostic, got %v", src, err)
-		}
+func TestMapIterIsAnOrdinaryUserType(t *testing.T) {
+	if err := checkSource(t, `struct MapIter { n: i32 } function f(): i32 { return MapIter { n: 3 }.n; }`); err != nil {
+		t.Fatal(err)
 	}
 }
 

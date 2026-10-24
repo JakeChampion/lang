@@ -1,0 +1,25 @@
+{
+  "source_commit": "6ef138f82437130bbd75418c629bc7f24f7e1983",
+  "measured_source": "814e894c1bc25c71fa22255560fbffa8c1cc1952",
+  "only_new_proof_documents": true,
+  "final_path_test_cases": 1,
+  "final_path_test_failures": 0,
+  "final_path_test_skips": 0,
+  "artifacts": [
+    {
+      "path": "final-final-path-checks.jsonl.gz",
+      "bytes": 333,
+      "sha256": "887f5a3c44672ecdddf301d725e34bcaa762dc1145accf80f5745a38cf44c398"
+    },
+    {
+      "path": "final-audit-after-proof-merge.log.gz",
+      "bytes": 126,
+      "sha256": "d4f16c0c60ec18b0c2c80069e95e7e2ad6e2656b3958c34b48809b803d23897f"
+    },
+    {
+      "path": "final-audit.json.gz",
+      "bytes": 22734,
+      "sha256": "fcae5dda04b48dacd4f756f84586d7a9b8f07f55640b7850b78a228b0d070d1b"
+    }
+  ]
+}

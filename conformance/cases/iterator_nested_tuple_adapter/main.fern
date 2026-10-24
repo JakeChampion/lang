@@ -1,0 +1,22 @@
+import "core/iter";
+
+struct Pair[A, B] { first: A, second: B }
+
+function main(): i32 {
+  let xs: (string, i32)[] = [("a", 1), ("b", 2)];
+  let it = iter.of(xs).filter((p: (string, i32)): boolean => p.1 > 0);
+  if (it.len() != 2) {
+    return 1;
+  }
+  let arrays: (i32, i32[])[] = [(1, [2, 3]), (4, [5])];
+  let nested = iter.of(arrays).filter((p: (i32, i32[])): boolean => p.1.len() > 0);
+  if (nested.len() != 2) {
+    return 2;
+  }
+  let a: Pair[i32, string[]] = Pair { first: 1, second: ["long retained value in an array"] };
+  let b: Pair[i32, string][] = [Pair { first: 2, second: "a different specialization" }];
+  if (a.second[0].len() < 20 || b[0].second.len() < 20) {
+    return 3;
+  }
+  return 0;
+}

@@ -14,6 +14,8 @@ reuse of the common cases) is substantially met. The native-mechanism decode
 (§1, §6) remains accurate and useful; treat §3 as the (short) remaining-work
 list, not a from-scratch port plan.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 The RC/ownership slices (inc/dec insertion, borrow inference, per-type deep
 `__struct_drop_<T>` / `__field_reclaim_<T>`, snapshot-param reclaim) landed
 earlier on the self-host IR path. This document describes the native mechanism,

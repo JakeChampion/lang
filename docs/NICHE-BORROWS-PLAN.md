@@ -2,6 +2,8 @@
 
 Status: [record] each shortlist item shipped, was evaluated, or joined goal 2, which is done; the per-item status markers below record which.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 Execution plan for the ranked top-10 shortlist from
 `docs/NICHE-LANGUAGE-RESEARCH.md` (2026-07-12). Living document:
 each item records its **current state on main** (code-grounded,

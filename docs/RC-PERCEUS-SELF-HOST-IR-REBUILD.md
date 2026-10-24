@@ -8,6 +8,8 @@ convergence path: the self-host gains native's lowering layer, so *all*
 codegen (Perceus RC included) shares one IR and one set of analyses, and
 the two compilers can be diffed.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 This supersedes the recommendation in `RC-PERCEUS-SELF-HOST-IR.md` §4
 (which favoured the narrower Option C). The feasibility analysis there
 still stands and is worth reading first; this doc is the plan for the

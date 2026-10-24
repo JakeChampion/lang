@@ -61,7 +61,7 @@ Go-vs-self-host **differential** on emitted diagnostic codes.
 ## Slice plan
 
 Each slice is one PR, gated by the differential test
-`internal/testing/e2e/self_host_checker_codes_test.go`: a corpus of small
+`internal/testing/e2ecompiler/self_host_checker_codes_test.go`: a corpus of small
 programs run through both checkers, asserting the self-host emits the
 same code(s) the Go checker does — restricted to
 `selfHostImplementedCodes`, which grows per slice.

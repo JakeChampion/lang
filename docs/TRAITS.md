@@ -39,7 +39,7 @@ fall out, and the codebase already complains about all three:
 - **The stdlib hand-monomorphises.** `std/test` carries
   `assert_eq_i32`, `assert_eq_i64`, `assert_eq_u32`, `assert_eq_u64`,
   `assert_eq_string`, `assert_eq_f32_near`, … one per type. A comment at
-  `internal/stdlib/std/test.fern:749` says verbatim: *"As soon as a
+  `internal/stdlib/std/test.fern.md` says verbatim: *"As soon as a
   `Display`/`ToString` trait lands, these collapse into one generic
   helper per family."* `time.fern:149` echoed the same wish, as did
   `std/format` until its `Display`-accepting entry points landed (#2684).
@@ -876,7 +876,7 @@ regressing the self-host gates. It needs traits in two slices:
   promotion clauses pull one into the monomorphised set (clause (d): a
   body that binds or reassigns a bare-var-typed value, so the ownership
   lowering has a type to work with). Tested on x86-64 + arm64
-  (`internal/testing/e2e/self_host_traits_test.go`): primitive, struct,
+  (`internal/testing/e2ecompiler/self_host_traits_test.go`): primitive, struct,
   multi-type, and mixed-primitive-and-struct instantiations.
 
 - **Self-host slice 3 (shipped): MULTI-parameter monomorphisation.**
@@ -983,11 +983,12 @@ regressing the self-host gates. It needs traits in two slices:
   so `@derive(Eq, Display, Ord)` reaches full parity for structs AND
   non-generic enums on the native (x86-64 + arm64) self-host backends.
 
-- **Self-host slice 7 (in progress): the wasm backend.** The wasm
-  self-host backend (`compiler/wasm.fern`) dispatches methods
-  STATICALLY by the receiver's known type (`struct_type_of` →
+- **Self-host slice 7 (historical): the wasm backend.** The former wasm
+  AST emitter dispatched methods
+  statically by the receiver's known type (`struct_type_of` →
   `$Type__method`), unlike the native backends' runtime shape-compare,
-  so the trait fixes there don't port directly. First fix landed: the
+  so the trait fixes needed a separate port. That emitter is retired.
+  Current dispatch uses `compiler/semsource.fern`. The first fix was: the
   `to_string` intrinsic deferred to a user method only when the receiver
   is int/i64/string — a struct/enum receiver with its own `to_string`
   (hand-written or `@derive(Display)`) was wrongly formatted as an

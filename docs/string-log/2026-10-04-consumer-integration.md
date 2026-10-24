@@ -1,5 +1,10 @@
 # Byte-consumer integration
 
+Status: [record] historical source record.
+
+This record cites historical source paths. Some files no longer exist in the current tree.
+
+
 This integration brings the prepared byte-consumer chain at `b0b5245c8`
 onto main `a1f0f5192`. It preserves binary records, comparisons, checksums,
 transformations and output without using text as their storage type.

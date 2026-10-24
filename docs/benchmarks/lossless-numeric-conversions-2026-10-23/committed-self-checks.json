@@ -1,0 +1,346 @@
+[
+  {
+    "name": "assignment",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "argument",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "return",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "some",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "ok",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "err",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "nested_some",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "field",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "array",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "tuple",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "method",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "lambda",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "branch",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "float_assignment",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "float_argument",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "float_return",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "float_operator",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "mixed_operator",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "literal_retains_byte_width",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "mixed_compare",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "i32-to-i64",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "u8-to-u32",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "u8-to-u64",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "u8-to-i32",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "u8-to-i64",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "u32-to-u64",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "u32-to-i64",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "f32-to-f64",
+    "expected_accept": true,
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "pass_": true
+  },
+  {
+    "name": "0",
+    "expected_accept": false,
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-lossless-widening/probe-bad-0.fern:1:27: error[E002]: return value: expected i32, got i64\n    function f(n: i64): i32 { return n; }\n                              ^\n",
+    "pass_": true
+  },
+  {
+    "name": "1",
+    "expected_accept": false,
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-lossless-widening/probe-bad-1.fern:1:27: error[E002]: return value: expected u32, got i32\n    function f(n: i32): u32 { return n; }\n                              ^\n",
+    "pass_": true
+  },
+  {
+    "name": "2",
+    "expected_accept": false,
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-lossless-widening/probe-bad-2.fern:1:27: error[E002]: return value: expected i32, got u32\n    function f(n: u32): i32 { return n; }\n                              ^\n",
+    "pass_": true
+  },
+  {
+    "name": "3",
+    "expected_accept": false,
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-lossless-widening/probe-bad-3.fern:1:27: error[E002]: return value: expected i64, got u64\n    function f(n: u64): i64 { return n; }\n                              ^\n",
+    "pass_": true
+  },
+  {
+    "name": "4",
+    "expected_accept": false,
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-lossless-widening/probe-bad-4.fern:1:27: error[E002]: return value: expected f32, got f64\n    function f(n: f64): f32 { return n; }\n                              ^\n",
+    "pass_": true
+  },
+  {
+    "name": "5",
+    "expected_accept": false,
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-lossless-widening/probe-bad-5.fern:1:32: error[E002]: return value: expected i64[], got i32[]\n    function f(xs: i32[]): i64[] { return xs; }\n                                   ^\n",
+    "pass_": true
+  },
+  {
+    "name": "6",
+    "expected_accept": false,
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-lossless-widening/probe-bad-6.fern:1:68: error[E002]: return value: expected (i64) => i64, got (i32) => i32\n    function g(n: i32): i32 { return n; } function f(): (i64) => i64 { return g; }\n                                                                       ^\n",
+    "pass_": true
+  },
+  {
+    "name": "7",
+    "expected_accept": false,
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-lossless-widening/probe-bad-7.fern:1:75: error[E002]: return value: expected (i64) => i64, got (i64) => i32\n    function g(n: i64): i32 { return n as i32; } function f(): (i64) => i64 { return g; }\n                                                                              ^\n",
+    "pass_": true
+  },
+  {
+    "name": "8",
+    "expected_accept": false,
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-lossless-widening/probe-bad-8.fern:1:32: error[E002]: return value: expected [i64], got [i32]\n    function f(xs: [i32]): [i64] { return xs; }\n                                   ^\n",
+    "pass_": true
+  },
+  {
+    "name": "9",
+    "expected_accept": false,
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-lossless-widening/probe-bad-9.fern:1:44: error[E002]: return value: expected Option[i64], got Option[i32]\n    function f(xs: Option[i32]): Option[i64] { return xs; }\n                                               ^\n",
+    "pass_": true
+  },
+  {
+    "name": "10",
+    "expected_accept": false,
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-lossless-widening/probe-bad-10.fern:1:34: error[E002]: return value: expected i64[][], got i32[][]\n    function f(xs: i32[]): i64[][] { return [xs]; }\n                                     ^\n",
+    "pass_": true
+  },
+  {
+    "name": "11",
+    "expected_accept": false,
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-lossless-widening/probe-bad-11.fern:1:42: error[E002]: return value: expected (i64, i64), got (i32, i32)\n    function f(xs: (i32, i32)): (i64, i64) { return xs; }\n                                             ^\n",
+    "pass_": true
+  },
+  {
+    "name": "12",
+    "expected_accept": false,
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-lossless-widening/probe-bad-12.fern:1:64: error[E002]: return value: expected Box[i64], got Box[i32]\n    struct Box[T] { value: T } function f(x: Box[i32]): Box[i64] { return x; }\n                                                                   ^\n",
+    "pass_": true
+  },
+  {
+    "name": "13",
+    "expected_accept": false,
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-lossless-widening/probe-bad-13.fern:1:64: error[E031]: if-expression branches differ: i32[] vs i64[]\n    function f(b: boolean, a: i32[], c: i64[]): void { let x = if (b) { a } else { c }; }\n                                                                   ^\n",
+    "pass_": true
+  },
+  {
+    "name": "14",
+    "expected_accept": false,
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-lossless-widening/probe-bad-14.fern:1:74: error[E031]: if-expression branches differ: (i32, i32) vs (i64, i64)\n    function f(b: boolean, a: (i32, i32), c: (i64, i64)): void { let x = if (b) { a } else { c }; }\n                                                                             ^\n",
+    "pass_": true
+  }
+]

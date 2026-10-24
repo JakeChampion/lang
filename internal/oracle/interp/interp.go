@@ -278,13 +278,6 @@ func sliceAbort(cause, what string, lo, hi, n int64) error {
 	return &Abort{cause, fmt.Sprintf("%s [%d:%d], length %d", what, lo, hi, n)}
 }
 
-type MapIter struct {
-	m   *Map
-	pos int
-}
-
-func (it *MapIter) String() string { return "<MapIter>" }
-
 type Builtin struct {
 	Fn func(*Interp, []Value) (Value, error)
 }
@@ -601,11 +594,6 @@ func New() *Interp {
 	i.Builtins["__method_Map_get_or"] = &Builtin{Fn: builtinMapGetOr}
 	i.Builtins["__method_Map_keys"] = &Builtin{Fn: builtinMapKeys}
 	i.Builtins["__method_Map_values"] = &Builtin{Fn: builtinMapValues}
-	i.Builtins["__method_Map_iter"] = &Builtin{Fn: builtinMapIter}
-	i.Builtins["__method_MapIter_has_next"] = &Builtin{Fn: builtinMapIterHasNext}
-	i.Builtins["__method_MapIter_key"] = &Builtin{Fn: builtinMapIterKey}
-	i.Builtins["__method_MapIter_value"] = &Builtin{Fn: builtinMapIterValue}
-	i.Builtins["__method_MapIter_advance"] = &Builtin{Fn: builtinMapIterAdvance}
 	i.Builtins["__alloc_u8"] = &Builtin{Fn: builtinAllocFilled("__alloc_u8", Number(0))}
 	i.Builtins["__alloc_i32"] = &Builtin{Fn: builtinAllocFilled("__alloc_i32", Number(0))}
 	i.Builtins["__alloc_i64"] = &Builtin{Fn: builtinAllocFilled("__alloc_i64", Number(0))}
@@ -2490,79 +2478,6 @@ func builtinMapValues(_ *Interp, args []Value) (Value, error) {
 	out := newArray(len(m.vals))
 	copy(out.E, m.vals)
 	return out, nil
-}
-
-func builtinMapIter(_ *Interp, args []Value) (Value, error) {
-	m, err := mapReceiver("__method_Map_iter", args)
-	if err != nil {
-		return nil, err
-	}
-	if len(args) != 1 {
-		return nil, fmt.Errorf("__method_Map_iter: expected 1 arg (receiver), got %d", len(args))
-	}
-	return &MapIter{m: m, pos: 0}, nil
-}
-
-func mapIterReceiver(name string, args []Value) (*MapIter, error) {
-	if len(args) < 1 {
-		return nil, fmt.Errorf("%s: expected at least 1 arg (receiver)", name)
-	}
-	it, ok := args[0].(*MapIter)
-	if !ok {
-		return nil, fmt.Errorf("%s: receiver must be MapIter, got %T", name, args[0])
-	}
-	return it, nil
-}
-
-func builtinMapIterHasNext(_ *Interp, args []Value) (Value, error) {
-	it, err := mapIterReceiver("__method_MapIter_has_next", args)
-	if err != nil {
-		return nil, err
-	}
-	if len(args) != 1 {
-		return nil, fmt.Errorf("__method_MapIter_has_next: expected 1 arg (receiver), got %d", len(args))
-	}
-	return Bool(it.pos < len(it.m.keys)), nil
-}
-
-func builtinMapIterKey(_ *Interp, args []Value) (Value, error) {
-	it, err := mapIterReceiver("__method_MapIter_key", args)
-	if err != nil {
-		return nil, err
-	}
-	if len(args) != 1 {
-		return nil, fmt.Errorf("__method_MapIter_key: expected 1 arg (receiver), got %d", len(args))
-	}
-	if it.pos >= len(it.m.keys) {
-		return nil, indexAbort(CauseArrOOB, strconv.Itoa(it.pos), len(it.m.keys))
-	}
-	return it.m.keys[it.pos], nil
-}
-
-func builtinMapIterValue(_ *Interp, args []Value) (Value, error) {
-	it, err := mapIterReceiver("__method_MapIter_value", args)
-	if err != nil {
-		return nil, err
-	}
-	if len(args) != 1 {
-		return nil, fmt.Errorf("__method_MapIter_value: expected 1 arg (receiver), got %d", len(args))
-	}
-	if it.pos >= len(it.m.vals) {
-		return nil, indexAbort(CauseArrOOB, strconv.Itoa(it.pos), len(it.m.vals))
-	}
-	return it.m.vals[it.pos], nil
-}
-
-func builtinMapIterAdvance(_ *Interp, args []Value) (Value, error) {
-	it, err := mapIterReceiver("__method_MapIter_advance", args)
-	if err != nil {
-		return nil, err
-	}
-	if len(args) != 1 {
-		return nil, fmt.Errorf("__method_MapIter_advance: expected 1 arg (receiver), got %d", len(args))
-	}
-	it.pos++
-	return Void{}, nil
 }
 
 func builtinAllocFilled(name string, zero Value) func(*Interp, []Value) (Value, error) {

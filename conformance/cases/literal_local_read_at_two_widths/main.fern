@@ -1,11 +1,13 @@
-
-
 function main(): i32 {
-    let x = 2147483647;
-    x = x + 1;
-    let a: i32 = x;
-    let b: i64 = x;
-    if (b > 0i64) { return 1; }
-    if (a < 0) { return 2; }
-    return 3;
+  let x = 2147483647;
+  x = x + 1;
+  let a: i32 = x;
+  let b: i64 = x;
+  if (b > 0i64) {
+    return 1;
+  }
+  if (a < 0) {
+    return 2;
+  }
+  return 3;
 }

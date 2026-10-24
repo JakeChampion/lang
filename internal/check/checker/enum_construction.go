@@ -2,12 +2,6 @@ package checker
 
 import "github.com/jakechampion/lang/internal/syntax/ast"
 
-func resultPayloadWidens(enumName string, from, to ast.Type) bool {
-	src, srcOK := from.(ast.NumberType)
-	dst, dstOK := to.(ast.NumberType)
-	return enumName == "Result" && srcOK && dstOK && src.IsSigned() == dst.IsSigned() && src.NormalWidth() > 0 && src.NormalWidth() < dst.NormalWidth()
-}
-
 type EnumConstruction struct {
 	Type         ast.EnumType
 	VariantIndex int

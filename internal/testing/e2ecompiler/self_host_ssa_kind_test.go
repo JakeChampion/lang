@@ -73,11 +73,11 @@ func TestSelfHostSSAKindRegistry(t *testing.T) {
 		"semantic36=str_bytes\n" +
 		"semantic37=arr_join\n" +
 		"semantic38=arr_slice\n" +
-		"semantic39=map_iter\n" +
-		"semantic40=mapiter_has_next\n" +
-		"semantic41=mapiter_key\n" +
-		"semantic42=mapiter_value\n" +
-		"semantic43=mapiter_advance\n" +
+		"semantic39=invalid\n" +
+		"semantic40=invalid\n" +
+		"semantic41=invalid\n" +
+		"semantic42=invalid\n" +
+		"semantic43=invalid\n" +
 		"semantic44=dyn_up\n" +
 		"semantic45=dyn_box\n" +
 		"semantic46=dyn_is\n" +

@@ -65,9 +65,7 @@ function ts_routed_map_roots(): string[] {
   return [
     "map_new_impl", "__map_put_impl", "__map_len_impl", "__map_has_impl", "__map_get_impl",
     "__map_get_or_impl", "__map_delete_impl", "__map_cow_inplace", "__map_i32_column",
-    "__map_bool_column", "__map_drop_impl", "__map_iter_impl", "__mapiter_has_next_impl",
-    "__mapiter_key_impl", "__mapiter_value_lent", "__mapiter_advance_impl", "__mapiter_drop_impl",
-    "__mapiter_map_impl", "__map_string_column", "__map_box_column", "__map_key_of", "__map_lookup_val",
+    "__map_bool_column", "__map_drop_impl", "__map_string_column", "__map_box_column", "__map_key_of", "__map_lookup_val",
     "__map_drop_strcols_impl", "__map_drop_boxes_impl", "__map_u8_column", "__map_cell", "__map_cell_load",
     "__map_cell_free", "__map_get_cell_impl", "__map_get_cell_f64_impl", "__map_cell_column", "__map_cell_f64_column",
     "__map_put_keyed", "__map_has_keyed_impl", "__map_get_keyed_impl", "__map_get_or_keyed_impl",
@@ -415,9 +413,32 @@ function ts_impl_tag(tr: string): string {
   return "impl " + parser.trait_simple_name(tr);
 }
 
+function body_recv_tag(e: ast.Expr, lt: LocalTypes): string {
+  if let ast.ExprString(_) = e {
+    return "string";
+  }
+  if let ast.ExprArray(_) = e {
+    return "[]";
+  }
+  if let ast.ExprIdent(id) = e {
+    let k: i32 = util.index_of_str(lt.names, id.name);
+    if (k >= 0 && lt.types[k].len() > 0) {
+      return lt.types[k];
+    }
+  }
+  return ts_recv_tag(e);
+}
+
+function builtin_len(tag: string, field: string): boolean {
+  return field == "len" && (tag == "string" || tag == "str" || util.str_has_suffix(tag, "[]") || util.str_has_prefix(tag, "["));
+}
+
 function method_name_of(e: ast.Expr, lt: LocalTypes, own acc: string[]): string[] {
   if let ast.ExprCall(c) = e {
     if let ast.ExprFieldAccess(fa) = c.callee {
+      if (builtin_len(body_recv_tag(fa.obj, lt), fa.field)) {
+        return acc;
+      }
       acc = typed_method_name_of(fa, lt, acc);
     }
     return acc;

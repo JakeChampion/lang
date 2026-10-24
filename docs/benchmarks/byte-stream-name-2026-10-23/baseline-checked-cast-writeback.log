@@ -1,0 +1,1 @@
+fern: /workspace/scratch/lang-stream-name/checked-cast.fern: refusing to write back — the formatted output does not re-parse to the same content; this is a formatter bug, please report it

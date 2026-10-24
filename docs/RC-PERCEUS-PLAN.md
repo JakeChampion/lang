@@ -7,6 +7,8 @@ classes), [#2705](https://github.com/JakeChampion/lang/issues/2705)
 (`Drop` trait) and [#4113](https://github.com/JakeChampion/lang/issues/4113)
 (wide-struct in-place reuse); the old coarse tracker #2857 is closed.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 Implementation plan for refcounted heap values with compile-time
 Perceus optimisation.
 

@@ -19,7 +19,7 @@ syscalls. Fern's async surface has exactly one seam:
   resume)`) — anything can construct one; nothing about it is
   fd-specific except how the combinators wait.
 - All waiting funnels through the combinator loops in
-  `internal/stdlib/std/async.fern`, which touch precisely four
+  `internal/stdlib/std/async.fern.md`, which touch precisely four
   builtins: `poll(fds, timeout_ms)`, `monotonic_ns()`,
   `wasm_timer_pollable(ns)`, `wasm_pollable_drop(tok)`.
 - `std/mock_platform` already establishes the test-double convention.

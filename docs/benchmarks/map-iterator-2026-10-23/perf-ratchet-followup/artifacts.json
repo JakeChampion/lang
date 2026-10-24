@@ -1,0 +1,143 @@
+{
+  "code_source": "7ed3addb40a2a2814621bc60fe2011e2dc9e166b",
+  "compiler_source": "b15d4e7e10ddaec58bba62c4d3d8d8c41c06e632",
+  "public_source": "ec1d8b869f55ea93802f868cca4ed33e993051df",
+  "ci_run": 40120850761,
+  "arm64_job": 120952820922,
+  "artifact_id": 12570944585,
+  "artifact_sha256": "7bcc1ddcebbe5cd47077a50b783832dd5f78058fef0eba4b7812524db11d488b",
+  "arm64_metrics": 78,
+  "local_static_commands": 6,
+  "changes": [
+    {
+      "metric": "x86_64/map_int.text",
+      "before": 5738,
+      "after": 5589,
+      "percent": -2.596723597072148
+    },
+    {
+      "metric": "x86_64/map_probe_chain.text",
+      "before": 5745,
+      "after": 5596,
+      "percent": -2.5935596170583164
+    },
+    {
+      "metric": "x86_64/map_string.text",
+      "before": 6669,
+      "after": 6520,
+      "percent": -2.234218023691703
+    },
+    {
+      "metric": "aarch64/map_int.text",
+      "before": 6106,
+      "after": 5921,
+      "percent": -3.0298067474615165
+    },
+    {
+      "metric": "aarch64/map_probe_chain.text",
+      "before": 6117,
+      "after": 5932,
+      "percent": -3.024358345594247
+    },
+    {
+      "metric": "aarch64/map_string.text",
+      "before": 7198,
+      "after": 7013,
+      "percent": -2.5701583773270364
+    }
+  ],
+  "sources": [
+    {
+      "path": "bench/map_int.fern",
+      "bytes": 394,
+      "sha256": "4541e76a78f507b67a78030c0e94ec68f0f5f8aaacbae4657a81d5e08605face"
+    },
+    {
+      "path": "bench/map_probe_chain.fern",
+      "bytes": 467,
+      "sha256": "835a60896b10a18d5b4a753fc0ada94d2c4771a4f54f63477504386b83cb0962"
+    },
+    {
+      "path": "bench/map_string.fern",
+      "bytes": 529,
+      "sha256": "5ccab6768f163414082cdcfecbd24aa01a0ec502122077df52dc93de150cb1c7"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "ci-arm64.log.gz",
+      "bytes": 15228,
+      "sha256": "58346c9681f9dcf4f0719eea88776a4e499f91035d6d0e46150f50b45dfe773f"
+    },
+    {
+      "path": "ci-arm64-report.txt.gz",
+      "bytes": 852,
+      "sha256": "b41e855c067649b7a3147860d5410e5e56fb91944f705238a2a6371c1694ab05"
+    },
+    {
+      "path": "static-measurements.json.gz",
+      "bytes": 919,
+      "sha256": "706a02a7bbba6230ed7024d37cd7f0023591619f075bb392d23d9c3a1be97a5d"
+    },
+    {
+      "path": "baseline-before.txt.gz",
+      "bytes": 7984,
+      "sha256": "627c41497a1dece65b3a6d2ab1e15037b90e37e8960c0eb30351fef398e5eec9"
+    },
+    {
+      "path": "baseline-after.txt.gz",
+      "bytes": 7979,
+      "sha256": "415c405c42eebec7305cf19fbdd373892c63638c314261e14fa7db6cbae346c1"
+    },
+    {
+      "path": "baseline-changes.json.gz",
+      "bytes": 254,
+      "sha256": "4241508cbfc0b12370330f759e77a5df0f1b38a33f79a9c03a105f76f8edc8de"
+    },
+    {
+      "path": "arm64-gate.log.gz",
+      "bytes": 962,
+      "sha256": "120fca891ef22dec5c7c2692a7251e590dbe1a592c18638ecd702024b4efe9b8"
+    },
+    {
+      "path": "record-proofs.py.gz",
+      "bytes": 1278,
+      "sha256": "04d52b2d257700ac88ffb805fd83971e3123c0ad0b5d17fd5969318b58284001"
+    },
+    {
+      "path": "x86_64-map_int.s.gz",
+      "bytes": 16505,
+      "sha256": "046da1a1f658f91389657cd099cb61a0ebc50061aac1fc93ffbb75389a31d34e"
+    },
+    {
+      "path": "x86_64-map_probe_chain.s.gz",
+      "bytes": 16562,
+      "sha256": "584908ce1ed2887f4836f9c0291d28acfad159552113c9e4b4f1d7f69c8b0adb"
+    },
+    {
+      "path": "x86_64-map_string.s.gz",
+      "bytes": 20366,
+      "sha256": "934ae98a516d2dea32ce78d782be48eaa46480ee967d3e7fd8534786b201bcf8"
+    },
+    {
+      "path": "aarch64-map_int.s.gz",
+      "bytes": 18639,
+      "sha256": "5247f15af010dabaf3545025fa30c3f432c2a03bf9a0044c7fa26960abfd3ba5"
+    },
+    {
+      "path": "aarch64-map_probe_chain.s.gz",
+      "bytes": 18695,
+      "sha256": "4d10dd85872d442eaa158e4dcf53d65fc6e4858b5d74cebd934e3746a4180166"
+    },
+    {
+      "path": "aarch64-map_string.s.gz",
+      "bytes": 22745,
+      "sha256": "44741a085e30a19bd40ae0764d7dcb663b0e05109774d2c9c4d6c0145d446b48"
+    },
+    {
+      "path": "baseline.patch.gz",
+      "bytes": 401,
+      "sha256": "af38efbe2571c34cbd410147f251a2d89334e441d56537bf14261107a12bf8df"
+    }
+  ]
+}

@@ -1,0 +1,80 @@
+import "core/map";
+import "core/iter";
+import "core/cmp";
+
+struct Item { n: i32, text: string }
+
+struct MapIter { n: i32 }
+
+function escaped(): iter.ArrayIter[(string, Item)] {
+  let m: Map[string, Item] = map_new(4);
+  m = m.insert("long key retained by the snapshot", Item { n: 7, text: "long value retained by the snapshot" });
+  return m.iter();
+}
+
+function count[I: iter.Iterator[(string, i32)]](it: I): i32 {
+  return it.len();
+}
+
+function main(): i32 {
+  let m: Map[string, i32] = map_new(4);
+  m = m.insert("a", 1);
+  m = m.insert("bb", 2);
+  let it = m.iter();
+  let alias = it;
+  m = m.insert("a", 99);
+  m = m.insert("ccc", 3);
+  if (count(it) != 2 || count(alias) != 2 || count(m.iter()) != 3) {
+    return 1;
+  }
+  let total: i32 = 0;
+  for (k, v) in alias {
+    total = total + k.len() + v;
+  }
+  if (total != 6) {
+    return 2;
+  }
+  match (it.next()) {
+    Some(step) => {
+      if (step.0.0 != "a" || step.0.1 != 1 || step.1.len() != 1) {
+        return 3;
+      }
+    },
+    None => {
+      return 4;
+    }
+  }
+  let xs = m.iter().filter((p: (string, i32)): boolean => p.1 < 10).map((p: (string, i32)): i32 => p.1).collect();
+  if (xs.len() != 2 || xs[0] + xs[1] != 5) {
+    return 5;
+  }
+  let empty: Map[i32, string] = map_new(4);
+  if (empty.iter().len() != 0) {
+    return 7;
+  }
+  let got = escaped().collect();
+  if (got.len() != 1 || got[0].1.n != 7 || got[0].0.len() < 20 || got[0].1.text.len() < 20) {
+    return 8;
+  }
+  let user = MapIter { n: 9 };
+  if (user.n != 9) {
+    return 9;
+  }
+  let direct: i32 = 0;
+  for (k, v) in m {
+    if (v == 99) {
+      continue;
+    }
+    direct = direct + v;
+  }
+  if (direct != 5) {
+    return 10;
+  }
+  let wide: Map[i64, f64] = map_new(4);
+  wide = wide.insert(10000000000i64, 1.5);
+  let wide_entries = wide.iter().collect();
+  if (wide_entries.len() != 1 || wide_entries[0].0 != 10000000000i64 || wide_entries[0].1 != 1.5) {
+    return 11;
+  }
+  return 0;
+}

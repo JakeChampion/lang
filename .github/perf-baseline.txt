@@ -88,11 +88,11 @@ x86_64/http_hello.text	16613
 x86_64/http_hello.ir	23788438
 x86_64/int_loop.text	178
 x86_64/int_loop.ir	12000070
-x86_64/map_int.text	5738
+x86_64/map_int.text	5589
 x86_64/map_int.ir	37644881
-x86_64/map_probe_chain.text	5745
+x86_64/map_probe_chain.text	5596
 x86_64/map_probe_chain.ir	353681006
-x86_64/map_string.text	6669
+x86_64/map_string.text	6520
 x86_64/map_string.ir	61448856	2
 x86_64/ordmap_insert.text	2815
 x86_64/ordmap_insert.ir	105979348
@@ -364,11 +364,11 @@ aarch64/http_hello.text	17302
 aarch64/http_hello.ir	25860660
 aarch64/int_loop.text	246
 aarch64/int_loop.ir	18000078
-aarch64/map_int.text	6106
+aarch64/map_int.text	5921
 aarch64/map_int.ir	37209199
-aarch64/map_probe_chain.text	6117
+aarch64/map_probe_chain.text	5932
 aarch64/map_probe_chain.ir	352799209
-aarch64/map_string.text	7198
+aarch64/map_string.text	7013
 aarch64/map_string.ir	63040321	2
 aarch64/ordmap_insert.text	3184
 aarch64/ordmap_insert.ir	114034987

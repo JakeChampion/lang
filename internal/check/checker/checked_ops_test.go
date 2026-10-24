@@ -33,7 +33,7 @@ func TestCheckedOperatorTyping(t *testing.T) {
 	mustOK(`function main(): i32 { let a: i32 = 84; let b: i32 = 2; match (a /? b) { Some(v) => { return v; }, None => { return 0; } } }`)
 	mustOK(`function main(): i32 { let a: u32 = 85; let b: u32 = 43; match (a %? b) { Some(v) => { return v as i32; }, None => { return 0; } } }`)
 	mustOK(`function main(): i32 { let a: i32 = 1; let b: i32 = 4; match (a <<? b) { Some(v) => { return v; }, None => { return 0; } } }`)
-	mustOK(`function main(): i32 { let a: u32 = 256; let b: u32 = 2; match (a >>? b) { Some(v) => { return v as i32; }, None => { return 0; } } }`)
+	mustOK(`function main(): i32 { let a: u32 = 256; let b: u64 = 2; match (a >>? b) { Some(v) => { return v as i32; }, None => { return 0; } } }`)
 
 	mustOK(`function main(): i32 { let a: i32 = 1; let b: i32 = 2; let c: Option[i32] = a +? b; return match (c) { Some(v) => v, None => 0 }; }`)
 	mustOK(`function f(): Option[i32] { let a: i32 = 1; let b: i32 = 2; return a +? b; }
@@ -51,7 +51,8 @@ function main(): i32 { return match (f()) { Some(v) => v as i32, None => 0 }; }`
 		`requires an integer type`)
 	mustErr(`function main(): i32 { let a: f64 = 1.0; let b: f64 = 2.0; let c: Option[f64] = a *? b; return 0; }`,
 		`requires an integer type`)
-	mustErr(`function main(): i32 { let a: i32 = 1; let b: u32 = 2; let c: Option[i32] = a +? b; return 0; }`,
+	// These ranges have no lossless common integer type.
+	mustErr(`function main(): i32 { let a: i32 = 1; let b: u64 = 2; let c: Option[i32] = a +? b; return 0; }`,
 		`share an integer type`)
 	mustErr(`function main(): i32 { let a: usize = 1; let b: usize = 2; match (a +? b) { Some(v) => { return v as i32; }, None => { return 0; } } }`,
 		"not supported on `usize`")

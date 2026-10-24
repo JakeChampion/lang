@@ -6,6 +6,8 @@ every retain and release (`RC-DESIGN.md`). Companion to #7253 (keying/de-multipl
 treats the table's encoding, this treats its existence), #4399 (escape-taint
 retirement), `docs/TYPED-IR-REWRITE.md` (the same argument on the type axis).
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 ## The diagnosis: goal 2's bug rate is structural, not incidental
 
 The self-host decides every retain/release through a **shape-enumerated

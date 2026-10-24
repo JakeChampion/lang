@@ -984,9 +984,6 @@ func isRuntimeHelperName(name string) bool {
 	if strings.HasPrefix(name, "__map_") {
 		return true
 	}
-	if strings.HasPrefix(name, "__mapiter_") {
-		return true
-	}
 	if name == "map_new_impl" {
 		return true
 	}

@@ -2088,6 +2088,10 @@ func (p *parser) parseBlock() (*ast.Block, error) {
 }
 
 func (p *parser) parseBlockStmts(block *ast.Block, tailValue bool) {
+	p.parseBlockStmtsMode(block, tailValue, false)
+}
+
+func (p *parser) parseBlockStmtsMode(block *ast.Block, tailValue, discardTail bool) {
 	if err := p.enterUnits(blockNestUnits); err != nil {
 		p.errors = append(p.errors, err)
 		return
@@ -2095,6 +2099,16 @@ func (p *parser) parseBlockStmts(block *ast.Block, tailValue bool) {
 	defer p.leaveUnits(blockNestUnits)
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
 		before := p.i
+		if discardTail && (p.match(lexer.Keyword, "if") || p.match(lexer.Keyword, "match")) {
+			nRefs, nTodo, nErr := len(p.typeRefs), len(p.todoSites), len(p.errors)
+			stmt, err := p.parseStmt()
+			if err == nil && len(p.errors) == nErr {
+				block.Stmts = append(block.Stmts, stmt)
+				continue
+			}
+			p.i = before
+			p.typeRefs, p.todoSites, p.errors = p.typeRefs[:nRefs], p.todoSites[:nTodo], p.errors[:nErr]
+		}
 		if p.match(lexer.Keyword, "use") {
 			if err := p.parseUse(block); err != nil {
 				p.errors = append(p.errors, err)
@@ -2133,8 +2147,19 @@ func (p *parser) parseBlockStmts(block *ast.Block, tailValue bool) {
 		if tailValue && (!p.branchStmtStart() || p.nestedBlockTail()) {
 			mark, nRefs, nTodo, nErr := p.i, len(p.typeRefs), len(p.todoSites), len(p.errors)
 			e, err := p.parseExpr()
-			if err == nil && p.match(lexer.Punct, "}") {
-				block.Stmts = append(block.Stmts, &ast.Return{P: e.Pos(), Value: e})
+			terminated := false
+			if err == nil && discardTail && len(p.errors) == nErr && p.tokens[mark].Kind == lexer.Keyword && (p.tokens[mark].Text == "if" || p.tokens[mark].Text == "match") {
+				_, terminated = p.accept(lexer.Punct, ";")
+			}
+			if err == nil && (p.match(lexer.Punct, "}") || terminated) && (!discardTail || len(p.errors) == nErr) {
+				if discardTail {
+					block.Stmts = append(block.Stmts, &ast.ExprStmt{P: e.Pos(), Expr: e})
+				} else {
+					block.Stmts = append(block.Stmts, &ast.Return{P: e.Pos(), Value: e})
+				}
+				if terminated {
+					continue
+				}
 				return
 			}
 			p.i = mark
@@ -2281,7 +2306,7 @@ func (p *parser) parseWhile(label string) (ast.Stmt, error) {
 	if _, err := p.expect(lexer.Punct, ")"); err != nil {
 		return nil, err
 	}
-	body, err := p.parseStmt()
+	body, err := p.parseBlock()
 	if err != nil {
 		return nil, err
 	}
@@ -2290,7 +2315,7 @@ func (p *parser) parseWhile(label string) (ast.Stmt, error) {
 
 func (p *parser) parseLoop(label string) (ast.Stmt, error) {
 	kw := p.advance()
-	body, err := p.parseStmt()
+	body, err := p.parseBlock()
 	if err != nil {
 		return nil, err
 	}
@@ -2474,6 +2499,9 @@ func (p *parser) parseIfExpr() (ast.Expr, error) {
 	}
 	defer p.leave()
 	kw := p.advance()
+	if p.match(lexer.Keyword, "let") {
+		return p.parseIfLetExpr(kw.Pos)
+	}
 	if _, err := p.expect(lexer.Punct, "("); err != nil {
 		return nil, err
 	}
@@ -2505,7 +2533,57 @@ func (p *parser) parseIfExpr() (ast.Expr, error) {
 	return &ast.IfExpr{P: kw.Pos, Cond: cond, Then: thenE, Else: elseE}, nil
 }
 
+// parseIfLetExpr uses the shared pattern arms and requires a value on each path.
+func (p *parser) parseIfLetExpr(pos ast.Position) (ast.Expr, error) {
+	p.advance()
+	pats, err := p.parseOrPatterns()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, "="); err != nil {
+		return nil, err
+	}
+	prev := p.noStructLit
+	p.noStructLit = true
+	src, err := p.parseExpr()
+	p.noStructLit = prev
+	if err != nil {
+		return nil, err
+	}
+	then, err := p.parseBranchBody()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Keyword, "else"); err != nil {
+		return nil, err
+	}
+	var els ast.Expr
+	if p.match(lexer.Keyword, "if") {
+		els, err = p.parseIfExpr()
+	} else {
+		els, err = p.parseBranchBody()
+	}
+	if err != nil {
+		return nil, err
+	}
+	raw := make([]exprRawArm, len(pats))
+	for i, pat := range pats {
+		body := then
+		if i > 0 {
+			body = ast.CloneExpr(then)
+		}
+		raw[i] = exprRawArm{pat: pat, body: body, altCont: i > 0}
+	}
+	arms := flatExprArms(raw)
+	arms = append(arms, &ast.MatchExprArm{P: pos, IsWildcard: true, Body: els})
+	return &ast.MatchExpr{P: pos, Tag: src, Arms: arms, Origin: ast.OriginIfLet}, nil
+}
+
 func (p *parser) parseBranchBody() (ast.Expr, error) {
+	if err := p.enter(); err != nil {
+		return nil, err
+	}
+	defer p.leave()
 	open, err := p.expect(lexer.Punct, "{")
 	if err != nil {
 		return nil, err
@@ -2513,6 +2591,12 @@ func (p *parser) parseBranchBody() (ast.Expr, error) {
 	var stmts []ast.Stmt
 	var tail ast.Expr
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
+		if p.match(lexer.Keyword, "match") {
+			if stmt, ok := p.valuelessBranchTail(); ok {
+				stmts = append(stmts, stmt)
+				continue
+			}
+		}
 		if p.branchStmtStart() && !p.nestedBlockTail() {
 			s, err := p.parseStmt()
 			if err != nil {
@@ -2614,6 +2698,20 @@ func (p *parser) matchArmsBraced() bool {
 			if next.Kind != lexer.Punct || next.Text != "{" {
 				return false
 			}
+			mark, nRefs, nTodo, nErr := p.i, len(p.typeRefs), len(p.todoSites), len(p.errors)
+			p.i = j + 1
+			body, err := p.parseBranchBody()
+			after := p.i
+			block, noTail := body.(*ast.BlockExpr)
+			noTail = noTail && block.Tail == nil
+			valid := err == nil && len(p.errors) == nErr
+			p.i = mark
+			p.typeRefs, p.todoSites, p.errors = p.typeRefs[:nRefs], p.todoSites[:nTodo], p.errors[:nErr]
+			if !valid || !noTail {
+				return false
+			}
+			j = after - 1
+			continue
 		}
 		switch t.Text {
 		case "(", "[", "{":
@@ -2656,6 +2754,29 @@ func (p *parser) branchStmtStart() bool {
 
 func (p *parser) ifStmtHasElse() bool {
 	i := p.i + 1
+	if i < len(p.tokens) && p.tokens[i].Kind == lexer.Keyword && p.tokens[i].Text == "let" {
+		i++
+		depth, source := 0, false
+		for ; i < len(p.tokens); i++ {
+			t := p.tokens[i]
+			if t.Kind != lexer.Punct {
+				continue
+			}
+			if source && depth == 0 && t.Text == "{" {
+				break
+			}
+			if !source && depth == 0 && t.Text == "=" {
+				source = true
+				continue
+			}
+			switch t.Text {
+			case "(", "[", "{":
+				depth++
+			case ")", "]", "}":
+				depth--
+			}
+		}
+	}
 	if i < len(p.tokens) && p.tokens[i].Kind == lexer.Punct && p.tokens[i].Text == "(" {
 		depth := 0
 		for ; i < len(p.tokens); i++ {
@@ -2747,7 +2868,7 @@ func (p *parser) parseFor(label string) (ast.Stmt, error) {
 		return nil, err
 	}
 
-	body, err := p.parseStmt()
+	body, err := p.parseBlock()
 	if err != nil {
 		return nil, err
 	}
@@ -2780,7 +2901,7 @@ func (p *parser) parseForEach(kw lexer.Token, label string) (ast.Stmt, error) {
 		if err != nil {
 			return nil, err
 		}
-		body, err := p.parseStmt()
+		body, err := p.parseBlock()
 		if err != nil {
 			return nil, err
 		}
@@ -2809,7 +2930,7 @@ func (p *parser) parseForEach(kw lexer.Token, label string) (ast.Stmt, error) {
 			Iter: expr, RangeHigh: high, RangeIncl: inclusive, Body: body, Label: label}
 		return &ast.Block{P: kw.Pos, Stmts: stmts, Sugar: sugar}, nil
 	}
-	body, err := p.parseStmt()
+	body, err := p.parseBlock()
 	if err != nil {
 		return nil, err
 	}
@@ -2869,7 +2990,7 @@ func (p *parser) parseForEachPattern(kw lexer.Token, label string) (ast.Stmt, er
 	if err != nil {
 		return nil, err
 	}
-	body, err := p.parseStmt()
+	body, err := p.parseBlock()
 	if err != nil {
 		return nil, err
 	}
@@ -3080,6 +3201,7 @@ func (p *parser) parseMatch() (ast.Stmt, error) {
 		return nil, err
 	}
 	m.Arms = flatStmtArms(raw)
+	p.accept(lexer.Punct, ";")
 	return m, nil
 }
 
@@ -3108,12 +3230,34 @@ type stmtRawArm struct {
 	altCont bool
 }
 
+// parseMatchStmtBody reads a value block or a bare expression and discards
+// its value. The statement block keeps the arm's local scope.
+func (p *parser) parseMatchStmtBody() (*ast.Block, error) {
+	if !p.match(lexer.Punct, "{") {
+		e, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		return &ast.Block{P: e.Pos(), Stmts: []ast.Stmt{&ast.ExprStmt{P: e.Pos(), Expr: e}}}, nil
+	}
+	open := p.advance()
+	body := &ast.Block{P: open.Pos}
+	p.parseBlockStmtsMode(body, true, true)
+	closeTok, err := p.expect(lexer.Punct, "}")
+	if err != nil {
+		return body, err
+	}
+	body.End = closeTok.Pos
+	return body, nil
+}
+
+// parseStmtRawArms reads one arm and returns each or-pattern alternative.
 func (p *parser) parseStmtRawArms() ([]stmtRawArm, error) {
 	pats, guard, err := p.parseArmPatterns()
 	if err != nil {
 		return nil, err
 	}
-	body, err := p.parseBlock()
+	body, err := p.parseMatchStmtBody()
 	if err != nil {
 		return nil, err
 	}

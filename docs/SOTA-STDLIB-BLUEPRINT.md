@@ -2,6 +2,8 @@
 
 Status: [research] per-primitive audit against the best known algorithms; not a plan of record.
 
+This study names historical or proposed source paths. The reference documentation identifies current files.
+
 A survey of where Fern's stdlib sits against the best known algorithm for each
 primitive, and what it would take to close each gap. This is a **research and
 prioritisation document**, not a plan of record: every row records what the

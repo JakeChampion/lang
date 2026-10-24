@@ -1,0 +1,20 @@
+{
+  "source_commit": "880eabfa3f2eae75970c4e72851cc137b5d067bc",
+  "base": "cab65e79d769877aacf2a6598e3f9816469dbd23",
+  "corpus_source": "05d1428d03ff959c91f356d188d8f938652fcfb3",
+  "unchanged_paths": [
+    "compiler",
+    "internal/stdlib",
+    "internal/syntax/printer",
+    "internal/check/checker",
+    "internal/pkg/modload",
+    "internal/syntax/parser",
+    "internal/syntax/fmtsource",
+    "cmd",
+    "bootstrap/stage0.lock",
+    ".github/selfhost-driver-sizes.txt"
+  ],
+  "source_lint_cases": 199,
+  "packages": 1,
+  "skips": 0
+}

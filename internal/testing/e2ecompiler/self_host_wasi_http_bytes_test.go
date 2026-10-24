@@ -95,7 +95,7 @@ import "std/platform";
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     let data: u8[] = req.body_bytes();
     if (req.path == "/stream") {
-        return http.stream(200, Stream { data: data, pos: 1, source: None });
+        return http.stream(200, ByteStream { data: data, pos: 1, source: None });
     }
     if (req.path == "/chunks") {
         return http.chunks(200, (i: i32): Option[u8[]] => {

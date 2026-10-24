@@ -13,6 +13,28 @@ backend of the same pointer width, and its rules are below.
 This is the deliberate counterpart to `docs/FLOAT-SEMANTICS.md`: where
 the float edges are under-specified, the integer edges are pinned.
 
+## Lossless numeric conversions
+
+An implicit numeric conversion must preserve every source value.
+The fixed integer conversions are `i32` to `i64`, `u8` to
+`u32`/`u64`/`i32`/`i64`, and `u32` to `u64`/`i64`.
+The float conversion is `f32` to `f64`.
+Other conversions require an explicit `as` cast.
+
+These rules apply to assignments, arguments, returns, constructor payloads,
+struct fields, array literal elements, and operators.
+A conversion from a signed integer extends the sign.
+A conversion from an unsigned integer fills the added bits with zero.
+A mixed integer operation uses the smallest type that holds both operand ranges.
+For example, `u8 + i32` uses `i32`, and `u32 + i32` uses `i64`.
+There is no lossless common integer type for `u64` and `i32`.
+
+An expression first computes at its own type.
+A wider destination then converts that result.
+For example, an `i32` addition still wraps at 32 bits before its result converts to `i64`.
+Stored arrays and other containers retain their element types.
+A new array literal can convert each element before storage.
+
 ## Wrapping arithmetic
 
 `+`, `-`, `*`, and `<<` **wrap** (two's-complement modular arithmetic)

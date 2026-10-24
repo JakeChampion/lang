@@ -2,6 +2,8 @@
 
 Status: [record] shipped; the mid-flip journal of the two-word string ABI change.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 > The wasm two-word flip completed (see
 > `SSO-TWOWORD-EXEC.md`) and the native mirror shipped too
 > (`SSO-NATIVE-FLIP-STATUS.md`). This journal recorded the in-progress

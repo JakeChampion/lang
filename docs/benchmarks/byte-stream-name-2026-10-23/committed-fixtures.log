@@ -1,0 +1,83 @@
+=== RUN   TestFernFixturesSelfHostWasm
+=== RUN   TestFernFixturesSelfHostWasm/byte_stream_and_async_channel
+=== RUN   TestFernFixturesSelfHostWasm/checked_int_conversion
+=== RUN   TestFernFixturesSelfHostWasm/dyn_downcast_of_a_scalar_is_none
+=== RUN   TestFernFixturesSelfHostWasm/stream_reader
+=== NAME  TestFernFixturesSelfHostWasm
+    fixture_selfhost_test.go:59: self-host wasm leg: 1028 fixtures run (0 of them known divergences), 161 skipped (compile-error / wasm-excluded / stdin)
+--- PASS: TestFernFixturesSelfHostWasm (4.56s)
+    --- PASS: TestFernFixturesSelfHostWasm/byte_stream_and_async_channel (0.27s)
+    --- PASS: TestFernFixturesSelfHostWasm/checked_int_conversion (0.25s)
+    --- PASS: TestFernFixturesSelfHostWasm/dyn_downcast_of_a_scalar_is_none (0.03s)
+    --- PASS: TestFernFixturesSelfHostWasm/stream_reader (0.26s)
+=== RUN   TestFernFixturesSelfHostX86_64
+=== RUN   TestFernFixturesSelfHostX86_64/byte_stream_and_async_channel
+=== RUN   TestFernFixturesSelfHostX86_64/checked_int_conversion
+=== RUN   TestFernFixturesSelfHostX86_64/dyn_downcast_of_a_scalar_is_none
+=== RUN   TestFernFixturesSelfHostX86_64/stream_reader
+=== NAME  TestFernFixturesSelfHostX86_64
+    fixture_selfhost_test.go:135: self-host x86_64 leg: 1046 fixtures run (0 of them known divergences), 143 skipped (compile-error / x86_64-excluded)
+--- PASS: TestFernFixturesSelfHostX86_64 (3.58s)
+    --- PASS: TestFernFixturesSelfHostX86_64/byte_stream_and_async_channel (0.27s)
+    --- PASS: TestFernFixturesSelfHostX86_64/checked_int_conversion (0.26s)
+    --- PASS: TestFernFixturesSelfHostX86_64/dyn_downcast_of_a_scalar_is_none (0.02s)
+    --- PASS: TestFernFixturesSelfHostX86_64/stream_reader (0.26s)
+=== RUN   TestFernFixturesSelfHostX86_64Quarantine
+=== RUN   TestFernFixturesSelfHostX86_64Quarantine/byte_stream_and_async_channel
+=== RUN   TestFernFixturesSelfHostX86_64Quarantine/checked_int_conversion
+=== RUN   TestFernFixturesSelfHostX86_64Quarantine/dyn_downcast_of_a_scalar_is_none
+=== RUN   TestFernFixturesSelfHostX86_64Quarantine/stream_reader
+=== NAME  TestFernFixturesSelfHostX86_64Quarantine
+    fixture_selfhost_test.go:135: self-host x86_64 leg: 1046 fixtures run (0 of them known divergences), 143 skipped (compile-error / x86_64-excluded)
+--- PASS: TestFernFixturesSelfHostX86_64Quarantine (3.28s)
+    --- PASS: TestFernFixturesSelfHostX86_64Quarantine/byte_stream_and_async_channel (0.26s)
+    --- PASS: TestFernFixturesSelfHostX86_64Quarantine/checked_int_conversion (0.27s)
+    --- PASS: TestFernFixturesSelfHostX86_64Quarantine/dyn_downcast_of_a_scalar_is_none (0.01s)
+    --- PASS: TestFernFixturesSelfHostX86_64Quarantine/stream_reader (0.22s)
+=== RUN   TestFernFixturesSelfHostArm64
+=== RUN   TestFernFixturesSelfHostArm64/byte_stream_and_async_channel
+=== RUN   TestFernFixturesSelfHostArm64/checked_int_conversion
+=== RUN   TestFernFixturesSelfHostArm64/dyn_downcast_of_a_scalar_is_none
+=== RUN   TestFernFixturesSelfHostArm64/stream_reader
+=== NAME  TestFernFixturesSelfHostArm64
+    fixture_selfhost_test.go:189: self-host arm64 leg: 1046 fixtures run (0 of them known divergences), 143 skipped (compile-error / arm64-excluded)
+--- PASS: TestFernFixturesSelfHostArm64 (3.09s)
+    --- PASS: TestFernFixturesSelfHostArm64/byte_stream_and_async_channel (0.21s)
+    --- PASS: TestFernFixturesSelfHostArm64/checked_int_conversion (0.19s)
+    --- PASS: TestFernFixturesSelfHostArm64/dyn_downcast_of_a_scalar_is_none (0.02s)
+    --- PASS: TestFernFixturesSelfHostArm64/stream_reader (0.21s)
+=== RUN   TestFernFixturesSelfHostInterp
+=== RUN   TestFernFixturesSelfHostInterp/byte_stream_and_async_channel
+=== RUN   TestFernFixturesSelfHostInterp/checked_int_conversion
+=== RUN   TestFernFixturesSelfHostInterp/dyn_downcast_of_a_scalar_is_none
+=== RUN   TestFernFixturesSelfHostInterp/stream_reader
+=== NAME  TestFernFixturesSelfHostInterp
+    fixture_selfhost_test.go:223: self-host interp leg: 1025 fixtures run (0 of them known divergences), 164 skipped (compile-error / interp-excluded)
+--- PASS: TestFernFixturesSelfHostInterp (53.48s)
+    --- PASS: TestFernFixturesSelfHostInterp/byte_stream_and_async_channel (0.18s)
+    --- PASS: TestFernFixturesSelfHostInterp/checked_int_conversion (0.27s)
+    --- PASS: TestFernFixturesSelfHostInterp/dyn_downcast_of_a_scalar_is_none (0.02s)
+    --- PASS: TestFernFixturesSelfHostInterp/stream_reader (0.17s)
+=== RUN   TestFernFixturesSelfHostCheck
+    fixture_selfhost_test.go:243: self-host check leg: 138 fixtures run (0 of them known divergences), 1051 skipped (compile-error / check-excluded)
+--- PASS: TestFernFixturesSelfHostCheck (1.96s)
+=== RUN   TestFernFixtures
+=== RUN   TestFernFixtures/byte_stream_and_async_channel
+=== RUN   TestFernFixtures/byte_stream_and_async_channel/interp
+=== RUN   TestFernFixtures/checked_int_conversion
+=== RUN   TestFernFixtures/checked_int_conversion/interp
+=== RUN   TestFernFixtures/dyn_downcast_of_a_scalar_is_none
+=== RUN   TestFernFixtures/dyn_downcast_of_a_scalar_is_none/interp
+=== RUN   TestFernFixtures/stream_reader
+=== RUN   TestFernFixtures/stream_reader/interp
+--- PASS: TestFernFixtures (1.97s)
+    --- PASS: TestFernFixtures/byte_stream_and_async_channel (1.29s)
+        --- PASS: TestFernFixtures/byte_stream_and_async_channel/interp (1.29s)
+    --- PASS: TestFernFixtures/checked_int_conversion (0.30s)
+        --- PASS: TestFernFixtures/checked_int_conversion/interp (0.30s)
+    --- PASS: TestFernFixtures/dyn_downcast_of_a_scalar_is_none (0.01s)
+        --- PASS: TestFernFixtures/dyn_downcast_of_a_scalar_is_none/interp (0.01s)
+    --- PASS: TestFernFixtures/stream_reader (0.26s)
+        --- PASS: TestFernFixtures/stream_reader/interp (0.26s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2e	71.946s

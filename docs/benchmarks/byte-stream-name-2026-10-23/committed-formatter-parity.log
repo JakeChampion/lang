@@ -1,0 +1,208 @@
+=== RUN   TestSelfHostFmtNativeParityX86_64
+=== RUN   TestSelfHostFmtNativeParityX86_64/tuple-binding-trailing-comment
+=== RUN   TestSelfHostFmtNativeParityX86_64/checked-trait-cast
+=== RUN   TestSelfHostFmtNativeParityX86_64/checked-numeric-casts
+=== RUN   TestSelfHostFmtNativeParityX86_64/lambda-return-as-written
+=== RUN   TestSelfHostFmtNativeParityX86_64/opaque-struct-kept
+=== RUN   TestSelfHostFmtNativeParityX86_64/omitted-return-type-as-written
+=== RUN   TestSelfHostFmtNativeParityX86_64/assoc-const-as-written
+=== RUN   TestSelfHostFmtNativeParityX86_64/value-block-statements-span-lines
+=== RUN   TestSelfHostFmtNativeParityX86_64/if-expression-written-branches
+=== RUN   TestSelfHostFmtNativeParityX86_64/if-expression-precedence
+=== RUN   TestSelfHostFmtNativeParityX86_64/nested-payloadless-variants
+=== RUN   TestSelfHostFmtNativeParityX86_64/owned-receiver
+=== RUN   TestSelfHostFmtNativeParityX86_64/assert-statements
+=== RUN   TestSelfHostFmtNativeParityX86_64/assert-comments
+=== RUN   TestSelfHostFmtNativeParityX86_64/assert-nested
+=== RUN   TestSelfHostFmtNativeParityX86_64/assert-with-and-without-message
+=== RUN   TestSelfHostFmtNativeParityX86_64/at-binding-scalar-heads
+=== RUN   TestSelfHostFmtNativeParityX86_64/if-let-braceless-then
+=== RUN   TestSelfHostFmtNativeParityX86_64/else-if-let-variant
+=== RUN   TestSelfHostFmtNativeParityX86_64/else-if-let-patterns
+=== RUN   TestSelfHostFmtNativeParityX86_64/else-block-if-let-stays-braced
+=== RUN   TestSelfHostFmtNativeParityX86_64/pub-package
+=== RUN   TestSelfHostFmtNativeParityX86_64/inline-hints
+=== RUN   TestSelfHostFmtNativeParityX86_64/inline-hints-methods
+=== RUN   TestSelfHostFmtNativeParityX86_64/inline-hints-modifiers
+=== RUN   TestSelfHostFmtNativeParityX86_64/nested-fn-recursive
+=== RUN   TestSelfHostFmtNativeParityX86_64/precedence-arith
+=== RUN   TestSelfHostFmtNativeParityX86_64/slice-bounds
+=== RUN   TestSelfHostFmtNativeParityX86_64/pattern-struct-scrutinee
+=== RUN   TestSelfHostFmtNativeParityX86_64/param-pattern-struct
+=== RUN   TestSelfHostFmtNativeParityX86_64/pattern-tuple-scrutinee
+=== RUN   TestSelfHostFmtNativeParityX86_64/pattern-if-let
+=== RUN   TestSelfHostFmtNativeParityX86_64/pattern-nested-expression-match
+=== RUN   TestSelfHostFmtNativeParityX86_64/pattern-nested-payload
+=== RUN   TestSelfHostFmtNativeParityX86_64/pattern-literal-payload
+=== RUN   TestSelfHostFmtNativeParityX86_64/pattern-if-let-tuple
+=== RUN   TestSelfHostFmtNativeParityX86_64/pattern-if-let-literal
+=== RUN   TestSelfHostFmtNativeParityX86_64/pattern-if-let-struct
+=== RUN   TestSelfHostFmtNativeParityX86_64/pattern-let-else-literal
+=== RUN   TestSelfHostFmtNativeParityX86_64/pattern-let-else-nested
+=== RUN   TestSelfHostFmtNativeParityX86_64/pattern-let-else-or
+=== RUN   TestSelfHostFmtNativeParityX86_64/param-destructure-vs-body-let
+=== RUN   TestSelfHostFmtNativeParityX86_64/precedence-bitwise-vs-compare
+=== RUN   TestSelfHostFmtNativeParityX86_64/precedence-logical-and-unary
+=== RUN   TestSelfHostFmtNativeParityX86_64/precedence-postfix-receivers
+=== RUN   TestSelfHostFmtNativeParityX86_64/indent-nesting
+=== RUN   TestSelfHostFmtNativeParityX86_64/comments-and-blanks
+=== RUN   TestSelfHostFmtNativeParityX86_64/comments-at-block-end
+=== RUN   TestSelfHostFmtNativeParityX86_64/decl-source-order
+=== RUN   TestSelfHostFmtNativeParityX86_64/late-import
+=== RUN   TestSelfHostFmtNativeParityX86_64/section-comment-apart
+=== RUN   TestSelfHostFmtNativeParityX86_64/comment-gaps-below-top-level
+=== RUN   TestSelfHostFmtNativeParityX86_64/modifiers-and-shapes
+=== RUN   TestSelfHostFmtNativeParityX86_64/written-str-spelling
+=== RUN   TestSelfHostFmtNativeParityX86_64/written-fn-type-spelling
+=== RUN   TestSelfHostFmtNativeParityX86_64/visibility-on-types
+=== RUN   TestSelfHostFmtNativeParityX86_64/destructuring-forms
+=== RUN   TestSelfHostFmtNativeParityX86_64/pattern-binding-sites
+=== RUN   TestSelfHostFmtNativeParityX86_64/struct-pattern-rest
+=== RUN   TestSelfHostFmtNativeParityX86_64/type-parameter-lists
+=== RUN   TestSelfHostFmtNativeParityX86_64/for-range
+=== RUN   TestSelfHostFmtNativeParityX86_64/for-array-and-map
+=== RUN   TestSelfHostFmtNativeParityX86_64/loop-labels
+=== RUN   TestSelfHostFmtNativeParityX86_64/trait-and-impl-member-comments
+=== RUN   TestSelfHostFmtNativeParityX86_64/trait-declarations
+=== RUN   TestSelfHostFmtNativeParityX86_64/impl-blocks
+=== RUN   TestSelfHostFmtNativeParityX86_64/comments-inside-impl-bodies
+=== RUN   TestSelfHostFmtNativeParityX86_64/decls-and-literals
+=== RUN   TestSelfHostFmtNativeParityX86_64/else-block-vs-else-if
+=== RUN   TestSelfHostFmtNativeParityX86_64/c-style-for
+=== RUN   TestSelfHostFmtNativeParityX86_64/c-style-for-optional-clauses
+=== RUN   TestSelfHostFmtNativeParityX86_64/if-true-while-is-not-a-for
+=== RUN   TestSelfHostFmtNativeParityX86_64/guard-try-slice-own-fnarray-hex-discard-ifexpr
+=== RUN   TestSelfHostFmtNativeParityX86_64/match-expression-in-value-position
+=== RUN   TestSelfHostFmtNativeParityX86_64/parametrised-trait-bound
+=== RUN   TestSelfHostFmtNativeParityX86_64/qualified-type-in-generic-args
+=== RUN   TestSelfHostFmtNativeParityX86_64/struct-lit-type-args
+=== RUN   TestSelfHostFmtNativeParityX86_64/call-type-args
+=== RUN   TestSelfHostFmtNativeParityX86_64/map-literal-and-inner-comments
+=== RUN   TestSelfHostFmtNativeParityX86_64/lowering-bare-block
+=== RUN   TestSelfHostFmtNativeParityX86_64/impl-keeps-self
+=== RUN   TestSelfHostFmtNativeParityX86_64/lowering-chained-assign
+=== RUN   TestSelfHostFmtNativeParityX86_64/lowering-place-assign
+=== RUN   TestSelfHostFmtNativeParityX86_64/lowering-literal-match
+=== RUN   TestSelfHostFmtNativeParityX86_64/lowering-block-expression
+=== RUN   TestSelfHostFmtNativeParityX86_64/pattern-or-alternatives
+=== RUN   TestSelfHostFmtNativeParityX86_64/lowering-value-local-match
+=== RUN   TestSelfHostFmtNativeParityX86_64/block-end-comments
+=== RUN   TestSelfHostFmtNativeParityX86_64/list-written-across-lines
+=== RUN   TestSelfHostFmtNativeParityX86_64/binary-written-across-lines
+=== RUN   TestSelfHostFmtNativeParityX86_64/union-written-across-lines
+=== RUN   TestSelfHostFmtNativeParityX86_64/list-interior-comments
+=== RUN   TestSelfHostFmtNativeParityX86_64/string-control-bytes
+=== RUN   TestSelfHostFmtNativeParityX86_64/nested-fstring-placeholder
+=== RUN   TestSelfHostFmtNativeParityX86_64/string-unicode-escapes
+=== RUN   TestSelfHostFmtNativeParityX86_64/use-sugar
+=== RUN   TestSelfHostFmtNativeParityX86_64/lambda-arrow-depth
+=== RUN   TestSelfHostFmtNativeParityX86_64/discard-bindings
+=== RUN   TestSelfHostFmtNativeParityX86_64/lambda-return-annotation
+=== RUN   TestSelfHostFmtNativeParityX86_64/unit-value-and-type
+=== RUN   TestSelfHostFmtNativeParityX86_64/generic-arg-grouping-parens
+=== RUN   TestSelfHostFmtNativeParityX86_64/resource-declaration
+--- PASS: TestSelfHostFmtNativeParityX86_64 (8.89s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/tuple-binding-trailing-comment (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/checked-trait-cast (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/checked-numeric-casts (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/lambda-return-as-written (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/opaque-struct-kept (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/omitted-return-type-as-written (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/assoc-const-as-written (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/value-block-statements-span-lines (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/if-expression-written-branches (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/if-expression-precedence (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/nested-payloadless-variants (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/owned-receiver (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/assert-statements (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/assert-comments (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/assert-nested (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/assert-with-and-without-message (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/at-binding-scalar-heads (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/if-let-braceless-then (0.01s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/else-if-let-variant (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/else-if-let-patterns (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/else-block-if-let-stays-braced (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/pub-package (0.01s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/inline-hints (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/inline-hints-methods (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/inline-hints-modifiers (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/nested-fn-recursive (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/precedence-arith (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/slice-bounds (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/pattern-struct-scrutinee (0.01s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/param-pattern-struct (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/pattern-tuple-scrutinee (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/pattern-if-let (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/pattern-nested-expression-match (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/pattern-nested-payload (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/pattern-literal-payload (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/pattern-if-let-tuple (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/pattern-if-let-literal (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/pattern-if-let-struct (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/pattern-let-else-literal (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/pattern-let-else-nested (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/pattern-let-else-or (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/param-destructure-vs-body-let (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/precedence-bitwise-vs-compare (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/precedence-logical-and-unary (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/precedence-postfix-receivers (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/indent-nesting (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/comments-and-blanks (0.58s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/comments-at-block-end (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/decl-source-order (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/late-import (0.02s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/section-comment-apart (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/comment-gaps-below-top-level (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/modifiers-and-shapes (0.55s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/written-str-spelling (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/written-fn-type-spelling (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/visibility-on-types (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/destructuring-forms (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/pattern-binding-sites (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/struct-pattern-rest (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/type-parameter-lists (0.26s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/for-range (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/for-array-and-map (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/loop-labels (0.01s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/trait-and-impl-member-comments (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/trait-declarations (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/impl-blocks (0.55s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/comments-inside-impl-bodies (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/decls-and-literals (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/else-block-vs-else-if (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/c-style-for (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/c-style-for-optional-clauses (0.01s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/if-true-while-is-not-a-for (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/guard-try-slice-own-fnarray-hex-discard-ifexpr (0.01s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/match-expression-in-value-position (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/parametrised-trait-bound (0.60s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/qualified-type-in-generic-args (3.56s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/struct-lit-type-args (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/call-type-args (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/map-literal-and-inner-comments (0.05s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/lowering-bare-block (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/impl-keeps-self (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/lowering-chained-assign (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/lowering-place-assign (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/lowering-literal-match (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/lowering-block-expression (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/pattern-or-alternatives (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/lowering-value-local-match (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/block-end-comments (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/list-written-across-lines (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/binary-written-across-lines (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/union-written-across-lines (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/list-interior-comments (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/string-control-bytes (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/nested-fstring-placeholder (0.48s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/string-unicode-escapes (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/use-sugar (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/lambda-arrow-depth (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/discard-bindings (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/lambda-return-annotation (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/unit-value-and-type (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/generic-arg-grouping-parens (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/resource-declaration (0.00s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	8.903s

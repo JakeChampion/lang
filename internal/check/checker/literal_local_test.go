@@ -41,10 +41,10 @@ func TestLiteralLocalTakesOneType(t *testing.T) {
 		{"compared before either settles", "let hi = 255; let i = 250; if (i != hi) {} let b: u8 = i; let c: u8 = hi;", ""},
 		{"arithmetic with a settled local", "let hi = 255; let i = 250; let b: u8 = i; let d = hi - i; let e: u8 = d; let c: u8 = hi;", ""},
 		{"assigned a settled local", "let hi = 255; let i = 250; let b: u8 = i; hi = i; let c: u8 = hi;", ""},
-		{"compared local takes the other's width", "let hi = 255; let i = 250; let b: u8 = i; if (i != hi) {} let c: i32 = hi;", "E003"},
+		{"compared local takes the other's width", "let hi = 255; let i = 250; let b: u8 = i; if (i != hi) {} let c: i32 = hi;", ""},
 		{"compared local out of range", "let hi = 300; let i = 250; let b: u8 = i; if (i != hi) {}", "E047"},
 
-		{"two widths", "let x = 5; let a: i32 = x; let b: i64 = x;", "E003"},
+		{"two widths", "let x = 5; let a: i32 = x; let b: i64 = x;", ""},
 		{"two widths through a second local", "let x = 5; let y = x; let a: i64 = x; let b: i32 = y;", "E003"},
 		{"float is not an integer width", "let x = 5; let f: f64 = x;", "E003"},
 		{"value fixed by the literal", "let x = 300; let b: u8 = x;", "E047"},
@@ -68,7 +68,9 @@ func TestLiteralLocalTakesOneType(t *testing.T) {
 	}
 }
 
-func TestLiteralLocalTwoWidthsIsRejected(t *testing.T) {
+// The local retains its i32 storage and wrapping arithmetic. The later i64
+// use converts the stored result instead of changing its storage width.
+func TestLiteralLocalUseWidensWithoutChangingStorage(t *testing.T) {
 	err := checkSource(t, `function main(): i32 {
     let x = 2147483647;
     x = x + 1;
@@ -79,8 +81,8 @@ func TestLiteralLocalTwoWidthsIsRejected(t *testing.T) {
     return 3;
 }
 `)
-	if got := errCodes(err); got != "E003" {
-		t.Fatalf("got %s (%v), want E003", got, err)
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

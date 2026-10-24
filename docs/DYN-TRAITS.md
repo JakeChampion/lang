@@ -349,7 +349,7 @@ one slot per non-associated trait method in declaration order.
 5. **Gate** — in `LowerWith`, call `rejectDynTrait` only when `ptrW != 4`.
    `collectVtables` already runs after the gate, so `prog.Vtables`
    populates for wasm automatically.
-6. **wasm backend** (`internal/codegen/wasmbin/wasmbin.go`) —
+6. **Retired Go wasm backend** —
    - Generalize `isStringType(slotType(...))` → an `isTwoWordType`
      (string ∨ `DynTraitType`) at: `OpLoadLocal`/`OpStoreLocal`
      (1643–1662), `slotValtypes` (1088), `resultValtypes` (1184), and the
@@ -425,7 +425,7 @@ Lowering (boxed). The builder branches on `b.dynBoxed()` (= `ptrW
   stays uniform across backends — only how `data`/`vtable` are obtained
   (deref cell vs inline) differs.
 
-x86-64 backend (the Go `internal/codegen/x86_64`, deleted in #11557):
+Retired Go x86-64 backend (deleted in #11557):
 
 - `OpConstVtable` interns + materialises a `.rodata` cell
   (`__vtable_<trait>_<concrete>`) holding `len(methods)` 8-byte absolute
@@ -444,7 +444,7 @@ x86-64 backend (the Go `internal/codegen/x86_64`, deleted in #11557):
   `Info.DynCoercions` whole-program instead kept the impl methods of a
   coercion in a function nothing calls (#4114).
 
-arm64 backend (the Go `internal/codegen/arm64`, deleted in #11557; slice 2d): the exact
+Retired Go arm64 backend (deleted in #11557, slice 2d): the exact
 structural mirror of x86-64 — same boxed representation, same IR (zero IR
 changes), same vtable cells, just AArch64 instruction selection (AAPCS64).
 
@@ -694,7 +694,7 @@ variant box as the receiver (its body's `match (self)` re-reads the
 variant). Per-variant keying — unlike the AST fallback — means two enums
 implementing the same trait dispatch to their own impls. Coverage:
 `internal/testing/e2ecompiler/self_host_dyn_enum_ir_test.go` (x86-64 + wasm +
-arm64) and the native leg `internal/testing/e2e/dyn_enum_dispatch_native_test.go`.
+arm64) and `internal/testing/e2ecompiler/self_host_dyn_enum_ir_test.go`.
 
 ### 4.4 RC of trait objects (Perceus follow-up — design)
 
@@ -817,8 +817,9 @@ reference (#10073).
 The vtable-referenced drop fns are reached only by indirect call, so the
 wasm build roots them (`ip.Vtables[*].Drop` + `__drop_dyn_*`) past IR
 dead-function elimination, and the drop worklist is seeded from the
-vtable drop slots. Tests: `internal/oracle/ir/vtable_test.go`
-(`TestCollectVtablesDropSlot`) + `internal/testing/e2e/rc_heap_bump_dyn_trait_test.go`
+vtable drop slots. The retired Go implementation had unit coverage for
+`TestCollectVtablesDropSlot`. Current tests include
+`internal/testing/e2e/rc_dyn_vtable_param_test.go` and `internal/testing/e2e/rc_heap_bump_dyn_trait_test.go`
 (bounded loop, no-underflow, multi-trait merged drop slot, borrowed-param
 no-drop).
 
@@ -1074,7 +1075,7 @@ Emit a clean unsupported-feature error on encountering `DynTraitType`
      per (trait, concrete-type) where the trait is used in a `dyn` type
      and the type implements it, slots in trait declaration order. Wired
      into `LowerWith` (nil today: the reject gate still returns first for
-     `dyn` programs). Unit-tested in `internal/oracle/ir/vtable_test.go`. No
+     `dyn` programs). The retired Go implementation had vtable unit tests. No
      behaviour change; it's the static data every backend will emit.
    - **2b (landed): wasm codegen** — full implementation spec in §4.2.1.
      wasm leads (its `ptrW==4` gate lifts in isolation; it already has the

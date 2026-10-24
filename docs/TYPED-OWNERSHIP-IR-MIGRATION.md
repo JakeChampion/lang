@@ -9,6 +9,8 @@ Status: [record] the Go pilot (`internal/semir`) was deleted 2026-10-04 and the 
 priority by user direction. Related to #8920, #8278, #7989 and the existing
 SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 ## Current implementation checkpoint
 
 The self-hosted pipeline now has a checked-source producer of its pre-RC

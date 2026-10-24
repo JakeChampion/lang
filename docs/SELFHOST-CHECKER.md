@@ -8,6 +8,8 @@ log); its residue issues
 [#4346](https://github.com/JakeChampion/lang/issues/4346) are closed. Kept as the
 historical origin of that arc.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 ## Why
 
 The self-hosted compiler (`compiler/asm_arm64.fern` and its x86

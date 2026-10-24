@@ -8,6 +8,8 @@ production lowering path for the self-hosted compiler. The SSA
 **Owner:** compiler / self-host.
 **Resolves:** #4391.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 **The emit half changed on 2026-09-16.** The stack IR is still the single
 production lowering, and the retirement of `build_func` below still stands.
 What no longer holds is that the SSA layer is analysis only: `-backend ssa`

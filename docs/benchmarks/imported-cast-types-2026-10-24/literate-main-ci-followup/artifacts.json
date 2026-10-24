@@ -1,0 +1,452 @@
+{
+  "source_commit": "b15d4e7e10ddaec58bba62c4d3d8d8c41c06e632",
+  "dependency_base": "4f6f5d5b0578378f2026a12ab638b5aa84e5b840",
+  "source_sha256": "97a4cac3dbe44f1c1e4cf777be0280d59997c8566c2dcd75eecfe223d56cb329",
+  "native_sha256": "1d702e27210018739e3d146db95c4a573c4e81479722ae308617f71d14f34e00",
+  "tests": {
+    "runs": 44,
+    "skips": 0,
+    "packages": 1,
+    "parents": [
+      "TestSelfHostEmbedCarriesTheStdlib",
+      "TestSelfHostRepoComplexityRatchet",
+      "TestSelfHostLiterateStandardLibrary",
+      "TestSelfHostPlaygroundLiterateStandardLibrary",
+      "TestSelfHostLSPReferencesX86_64"
+    ]
+  },
+  "commands": 33,
+  "balanced_censuses": 9,
+  "artifacts": [
+    {
+      "path": "source-files.json",
+      "bytes": 78865,
+      "sha256": "4a1b5a07c87b41a38764f0c01a20f39a1d757118ffed135faa7748886c934c38"
+    },
+    {
+      "path": "change.patch.gz",
+      "bytes": 904,
+      "sha256": "bff50263bae546e31247fe4e53019fad97b6b7f1b4027deb8f28cd1327a2e9f8"
+    },
+    {
+      "path": "bootstrap/bootstrap.json.gz",
+      "bytes": 392,
+      "sha256": "a7366f0613f78108536a6266279e730c38e5a679951916fb47b9cdd00ac6c71a"
+    },
+    {
+      "path": "bootstrap/stage1.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap/stage2.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap/stage3.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "main-failure-excerpts.json.gz",
+      "bytes": 925,
+      "sha256": "6b985b133c9f844a8e783ff2ca8ddf50076e9392a13cdb68073b581a2f08fe24"
+    },
+    {
+      "path": "regressions.jsonl.gz",
+      "bytes": 2850,
+      "sha256": "5e68d2bc64723d3c885d67af10bffd25703453bab82ebb8f01edf953811b31ec"
+    },
+    {
+      "path": "driver-builds.json.gz",
+      "bytes": 1052,
+      "sha256": "c4583b2b41f57e0fa254641ac12bcb1ba0b8d1014864e13e2a642db2f6a93938"
+    },
+    {
+      "path": "driver-sizes.txt.gz",
+      "bytes": 163,
+      "sha256": "515852a6ccf32522cda0a110adca4227774084d74fb0d62f7040402fedd5b77c"
+    },
+    {
+      "path": "driver-gate.log.gz",
+      "bytes": 347,
+      "sha256": "6953df8809052718b0846442c05fb2db28b1bdf39d4ffd7d1eae06252650be7a"
+    },
+    {
+      "path": "check-sizes.py.gz",
+      "bytes": 898,
+      "sha256": "ab6eab386bfa83f8d31b91411a8227871555e50bc769320ae1c77f9b05cc660e"
+    },
+    {
+      "path": "sizes.log.gz",
+      "bytes": 180,
+      "sha256": "60fe43dbe19e2ed546bcfe0965292afa4c0c52f8b56a4886ca8ef54e4af99cb6"
+    },
+    {
+      "path": "oracle-version.txt.gz",
+      "bytes": 382,
+      "sha256": "bf81ba8c0f04984952b30dc914400f81d638b65fa9e3f1407b13c0ab0c338850"
+    },
+    {
+      "path": "format.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "gofmt.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "vet.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "cast-matrix.py.gz",
+      "bytes": 1185,
+      "sha256": "eadf14b0ba4bf0347ec44246c367cee3aaa1a934901960d812de2a07e40994ea"
+    },
+    {
+      "path": "matrix.json.gz",
+      "bytes": 1595,
+      "sha256": "965c0206f616f9e39df4e48f0015f7908dbf21cae69f218ef7cc4c583adc226f"
+    },
+    {
+      "path": "record-proofs.py.gz",
+      "bytes": 1515,
+      "sha256": "02e64ada1c1e8c505ca3d156c0e1649c0f676223cbf70f1d7f0688f44e3bf463"
+    },
+    {
+      "path": "matrix/array-cell-build-arm64-darwin.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/array-cell-build-arm64-darwin.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/array-cell-build-arm64-linux.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/array-cell-build-arm64-linux.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/array-cell-build-wasm32-wasi.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/array-cell-build-wasm32-wasi.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/array-cell-build-x86-64-linux.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/array-cell-build-x86-64-linux.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/array-cell-go-check.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/array-cell-go-check.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/array-cell-go-interp.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/array-cell-go-interp.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/array-cell-native-check.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/array-cell-native-check.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/array-cell-native-interp.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/array-cell-native-interp.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/array-cell-run-arm64-linux.stderr.gz",
+      "bytes": 57,
+      "sha256": "b80079b2fe5f60b4b26e095ac585eca2a5ebef705df793adae8a3bed1ac0ed70"
+    },
+    {
+      "path": "matrix/array-cell-run-arm64-linux.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/array-cell-run-wasm32-wasi.stderr.gz",
+      "bytes": 57,
+      "sha256": "b80079b2fe5f60b4b26e095ac585eca2a5ebef705df793adae8a3bed1ac0ed70"
+    },
+    {
+      "path": "matrix/array-cell-run-wasm32-wasi.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/array-cell-run-x86-64-linux.stderr.gz",
+      "bytes": 57,
+      "sha256": "b80079b2fe5f60b4b26e095ac585eca2a5ebef705df793adae8a3bed1ac0ed70"
+    },
+    {
+      "path": "matrix/array-cell-run-x86-64-linux.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/checked-downcast-build-arm64-darwin.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/checked-downcast-build-arm64-darwin.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/checked-downcast-build-arm64-linux.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/checked-downcast-build-arm64-linux.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/checked-downcast-build-wasm32-wasi.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/checked-downcast-build-wasm32-wasi.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/checked-downcast-build-x86-64-linux.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/checked-downcast-build-x86-64-linux.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/checked-downcast-go-check.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/checked-downcast-go-check.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/checked-downcast-go-interp.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/checked-downcast-go-interp.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/checked-downcast-native-check.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/checked-downcast-native-check.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/checked-downcast-native-interp.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/checked-downcast-native-interp.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/checked-downcast-run-arm64-linux.stderr.gz",
+      "bytes": 56,
+      "sha256": "4c294041e25a5eb436b7ca73f511553677693f158e1a8e2f3dd05b95a874b2ba"
+    },
+    {
+      "path": "matrix/checked-downcast-run-arm64-linux.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/checked-downcast-run-wasm32-wasi.stderr.gz",
+      "bytes": 56,
+      "sha256": "4c294041e25a5eb436b7ca73f511553677693f158e1a8e2f3dd05b95a874b2ba"
+    },
+    {
+      "path": "matrix/checked-downcast-run-wasm32-wasi.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/checked-downcast-run-x86-64-linux.stderr.gz",
+      "bytes": 56,
+      "sha256": "4c294041e25a5eb436b7ca73f511553677693f158e1a8e2f3dd05b95a874b2ba"
+    },
+    {
+      "path": "matrix/checked-downcast-run-x86-64-linux.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/option-cell-build-arm64-darwin.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/option-cell-build-arm64-darwin.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/option-cell-build-arm64-linux.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/option-cell-build-arm64-linux.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/option-cell-build-wasm32-wasi.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/option-cell-build-wasm32-wasi.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/option-cell-build-x86-64-linux.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/option-cell-build-x86-64-linux.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/option-cell-go-check.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/option-cell-go-check.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/option-cell-go-interp.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/option-cell-go-interp.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/option-cell-native-check.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/option-cell-native-check.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/option-cell-native-interp.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/option-cell-native-interp.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/option-cell-run-arm64-linux.stderr.gz",
+      "bytes": 57,
+      "sha256": "ade6f8932125b789b3fc3fd1c4c8a8afa234f8f499bc3813ae93910cf52fb3a9"
+    },
+    {
+      "path": "matrix/option-cell-run-arm64-linux.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/option-cell-run-wasm32-wasi.stderr.gz",
+      "bytes": 57,
+      "sha256": "ade6f8932125b789b3fc3fd1c4c8a8afa234f8f499bc3813ae93910cf52fb3a9"
+    },
+    {
+      "path": "matrix/option-cell-run-wasm32-wasi.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "matrix/option-cell-run-x86-64-linux.stderr.gz",
+      "bytes": 57,
+      "sha256": "ade6f8932125b789b3fc3fd1c4c8a8afa234f8f499bc3813ae93910cf52fb3a9"
+    },
+    {
+      "path": "matrix/option-cell-run-x86-64-linux.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    }
+  ]
+}

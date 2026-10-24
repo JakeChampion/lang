@@ -1,0 +1,221 @@
+{
+  "source_commit": "e195d3b14115941fd89583206eb72e50a6f5c4b2",
+  "dependency_base": "72a2bf57b778cddd5d60e499dfbbbc1156b5aef9",
+  "native_sha256": "489e47e90393b87a746fd6d685f778cd258d65a3fa85e974eaa139e3e59841b4",
+  "tests": [
+    {
+      "suite": "compiler-followup",
+      "run": 563,
+      "pass": 563,
+      "intentional_skips": 0
+    },
+    {
+      "suite": "go-regressions",
+      "run": 3234,
+      "pass": 3223,
+      "intentional_skips": 11
+    },
+    {
+      "suite": "missing-block-value-tests",
+      "run": 7,
+      "pass": 7,
+      "intentional_skips": 0
+    }
+  ],
+  "source_sha256": "1e79a28bb5a65a5ebce1a0448cd2444e21f2b7fca14c5b2b5723ed4161dc6fbc",
+  "oracle_sha256": "ba7e42e72f2c19037376784ddd5568306ff04a22d753c9a57be2863ca41b8caa",
+  "artifacts": [
+    {
+      "path": "source-files.json",
+      "bytes": 78308,
+      "sha256": "ed2da9b53c7d084930fff3534180de950c2e6ed58b42d06b43ee6fa676450d07"
+    },
+    {
+      "path": "go-source-files.json.gz",
+      "bytes": 227640,
+      "sha256": "b7bb5e625ccf20e3287402362e11a8403e378d09359ddc90fb42bf23d60b47ff"
+    },
+    {
+      "path": "change.patch.gz",
+      "bytes": 139773,
+      "sha256": "36e7c617629036f2a1fa77d2670f43559149b816dc944fb46a4ba99c11a11170"
+    },
+    {
+      "path": "bootstrap/bootstrap.json.gz",
+      "bytes": 395,
+      "sha256": "584694e7ab1472fe7d4f71959520c8291c04c0fb8c6ada3c86ff76bfe27c0c1e"
+    },
+    {
+      "path": "bootstrap/stage1.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap/stage2.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap/stage3.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "compiler-followup.jsonl.gz",
+      "bytes": 33880,
+      "sha256": "1aa2fd307b752ec5fad88ea744999a4264845b36e7dc23a7d069dfe690c4397b"
+    },
+    {
+      "path": "go-regressions.jsonl.gz",
+      "bytes": 189223,
+      "sha256": "c41cc14db92bdc70d72de9f571ba114e363ea5d54abc43c95213282cbb5b458e"
+    },
+    {
+      "path": "missing-block-value-tests.jsonl.gz",
+      "bytes": 681,
+      "sha256": "18fce905eec9c1bb7c578265b17d9cfa38cb7ce8a735f6f753c0e32be2e06ae5"
+    },
+    {
+      "path": "driver-builds.json.gz",
+      "bytes": 1033,
+      "sha256": "3ae0802f33325899e99fe9abb4e5d7e1aef5f5b4826a6ea747a79c20f4de107c"
+    },
+    {
+      "path": "driver-sizes.txt.gz",
+      "bytes": 169,
+      "sha256": "e3a1438a9961db8bac45caa128887b7c720d2d4cbdda7df8b01b945610af622f"
+    },
+    {
+      "path": "driver-gate.log.gz",
+      "bytes": 347,
+      "sha256": "e6386664dd86e851e58452a2c12e827228d4ef5eeae6f0af0b7726a9bb3ca782"
+    },
+    {
+      "path": "check-sizes.py.gz",
+      "bytes": 889,
+      "sha256": "f9d6182cc423f9c1cd4a3ca1940d91f5eb077fcb8ba94bffdeb4f199f03655eb"
+    },
+    {
+      "path": "matrix.json.gz",
+      "bytes": 5102,
+      "sha256": "511e33179e121e1217fd72b0b9bc5f6dc1d61ce6159857cc9db93f9f456a1959"
+    },
+    {
+      "path": "matrix.py.gz",
+      "bytes": 1437,
+      "sha256": "1abd16f5751f75f3ddc790af04c92af348690fe9c1bbb1467cfc1cbd1b568cb6"
+    },
+    {
+      "path": "matrix.log.gz",
+      "bytes": 4209,
+      "sha256": "67dde96ca973b41cbbd454e0ebc2e500e113ce73523d2148d93bcb532d6fac5e"
+    },
+    {
+      "path": "diagnostics.json.gz",
+      "bytes": 2764,
+      "sha256": "4ea17014d7613d35be0bf35e834b8ff3e069563750c7a713d9d5815336bbbf1c"
+    },
+    {
+      "path": "diagnostics.py.gz",
+      "bytes": 1182,
+      "sha256": "48c02d64ed91d6dffa6929c0a72a0d6e743eb66026bcb1224c8d7115084c1ece"
+    },
+    {
+      "path": "diagnostics.log.gz",
+      "bytes": 35,
+      "sha256": "0b612bd4e5df32372f106c8e0a71a0dfe53b4b103c3a87f0e8d52913c46fa94e"
+    },
+    {
+      "path": "format.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "gofmt.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "vet.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "oracle-version.txt.gz",
+      "bytes": 103,
+      "sha256": "9913a6925e00aa6d04922552dc3a3508aa039f3e899d62b8de5836fbe35b4cfb"
+    },
+    {
+      "path": "record-proofs.py.gz",
+      "bytes": 1915,
+      "sha256": "1e0f70c84016ad0f2284c94cd7103244cddaac933324b179f43e6f013135e87d"
+    },
+    {
+      "path": "execution-inputs-logs.tar.gz",
+      "bytes": 9034,
+      "sha256": "a271837e2aec931d60474401b773e8ac61618354be4a8088ca05b11f0f1dc7e1"
+    },
+    {
+      "path": "earlier-broad/compiler-regressions.jsonl.gz",
+      "bytes": 123162,
+      "sha256": "9fdbd212d80739ed56ee289870035b1c15e1c37f6c68d173d18e03280bce9d32"
+    },
+    {
+      "path": "earlier-broad/go-regressions.jsonl.gz",
+      "bytes": 186997,
+      "sha256": "5522d480de1906320b21124cbd8cfed9ea7567c8b32aa8d93a92811fef2c79c7"
+    },
+    {
+      "path": "earlier-broad/bootstrap-bootstrap.json.gz",
+      "bytes": 395,
+      "sha256": "84eb41399088f75f5ac898f437bcdc1a84ee04570ebc2f133ef108d70d49d444"
+    },
+    {
+      "path": "earlier-broad/matrix.json.gz",
+      "bytes": 5117,
+      "sha256": "f3a88c144996e8ea2fce21475da38b9687f7c8abbec20b06d9ed3334feac4c12"
+    },
+    {
+      "path": "earlier-broad/driver-gate.log.gz",
+      "bytes": 347,
+      "sha256": "3b826c4d90e6b52f0da07520c338228abb3b2268ed668275f299b0bc4775016d"
+    },
+    {
+      "path": "earlier-broad/driver-sizes.txt.gz",
+      "bytes": 169,
+      "sha256": "dfe2b8381d6ed222c437809e32ca7ed00e47ed2fe877db42da8ae5fdd1269c44"
+    },
+    {
+      "path": "earlier-broad/format.json.gz",
+      "bytes": 52,
+      "sha256": "744d752f3fff50850f07b237c373b462f5017771c84ab81d534de119b84d62c1"
+    },
+    {
+      "path": "earlier-broad/format.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "earlier-broad/missing-tail-public.json.gz",
+      "bytes": 622,
+      "sha256": "0924ec1de752d4bab9e5a503625a17366974fc77fd51ed2e3a4bd9ed0534a018"
+    },
+    {
+      "path": "earlier-broad/missing-tail-public.fern.gz",
+      "bytes": 94,
+      "sha256": "bc0d6dfee577b7c2d32673d4628ece69a9518c50f736bab4e842c36071fa700a"
+    },
+    {
+      "path": "earlier-broad/source-files.json.gz",
+      "bytes": 25653,
+      "sha256": "5a0f5e6889f4236c487b66daf18c69d03b6799fe0ee249b8c5a07a794328cf91"
+    }
+  ],
+  "archived_inputs_and_logs": 535,
+  "earlier_broad": {
+    "source_commit": "0d7144532d5380092bb684320cee29ffe3f2f50a",
+    "native_source_commit": "fc81047d4dba44567e6b97d8bc164ffea42e8b90",
+    "source_sha256": "68cc66555d32d8ffe6279de0ab7c5ea66dec82a5ef075705e7fa5ece5f28dae7",
+    "note": "Historical source scope. The new parser path fix and Go missing-value fix are absent from this scope."
+  }
+}

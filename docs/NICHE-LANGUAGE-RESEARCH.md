@@ -2,6 +2,8 @@
 
 Status: [research] survey run 2026-07-12; its shortlist was carried out through `NICHE-BORROWS-PLAN.md`.
 
+This study names historical or proposed source paths. The reference documentation identifies current files.
+
 Survey of niche, research, and unusual programming languages for
 concrete design mechanisms Fern could borrow, run 2026-07-12.
 Companion to the mainstream-language survey in

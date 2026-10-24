@@ -13,6 +13,8 @@ state machine. Writing the lattice down now means the goal-2
 Perceus/checker consolidation maintains ONE analysis with four
 reporting surfaces instead of four parallel analyses that drift.
 
+This study names historical or proposed source paths. The reference documentation identifies current files.
+
 Reference design: Jane Street's OCaml mode extensions
 ("Oxidizing OCaml" — modes on bindings, orthogonal to types;
 see §6 for what was actually verified).

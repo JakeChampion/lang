@@ -54,7 +54,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<19 pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize)>>
 
-<<20 pub function __mapiter_drop_impl(it: usize): usize>>
+<<20 Map entry snapshots>>
 ```
 
 ### `module introduction`
@@ -62,6 +62,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module implements generic maps.
+
+import "core/iter";
 ```
 
 ### `2 pub function __map_pow2_ceil(n: i32): i32`
@@ -1277,70 +1279,16 @@ pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32
   __store_i32(buf + 4, last);
   return true;
 }
-
-pub function __map_iter_impl(m: usize): usize {
-  let base: usize = __alloc(32);
-  __store_i32(base, 1);
-  let it: usize = base + 8;
-  __store_ptr(it, __load_ptr(m));
-  __store_i32(it + 8, 0);
-  __store_ptr(it + 16, m);
-  return it;
-}
-
-pub function __mapiter_map_impl(it: usize): usize {
-  return __load_ptr(it + 16);
-}
-
-pub function __mapiter_has_next_impl(it: usize): boolean {
-  let buf: usize = __load_ptr(it);
-  let i: i32 = __load_i32(it + 8);
-  return i < __load_i32(buf + 4);
-}
-
-pub function __mapiter_entry_addr(it: usize): usize {
-  let buf: usize = __load_ptr(it);
-  let cap: i32 = __load_i32(buf);
-  let i: i32 = __load_i32(it + 8);
-  let entryStride: i32 = 2 * __ptr_width();
-  return buf + __map_hdr(buf) + cap * 4 + i * entryStride;
-}
-
-pub function __mapiter_key_impl(it: usize): usize {
-  return __load_ptr(__mapiter_entry_addr(it));
-}
-
-pub function __mapiter_value_impl(it: usize): usize {
-  return __map_retain_val(__load_ptr(it), __load_ptr(__mapiter_entry_addr(it) + __ptr_width()));
-}
-
-pub function __mapiter_value_lent(it: usize): usize {
-  return __load_ptr(__mapiter_entry_addr(it) + __ptr_width());
-}
-
-pub function __mapiter_advance_impl(it: usize): void {
-  __store_i32(it + 8, __load_i32(it + 8) + 1);
-}
 ```
 
-### `20 pub function __mapiter_drop_impl(it: usize): usize`
+### `20 Map entry snapshots`
 
 ```fern
-<<20 pub function __mapiter_drop_impl(it: usize): usize>>=
-pub function __mapiter_drop_impl(it: usize): usize {
-  if (it == 0) {
-    return it;
-  }
-  if (__load_i32(it - 8) != 1) {
-    __fern_rc_dec(it);
-    return it;
-  }
-  __fern_box_free(it, 24);
-  return it;
-}
-
+<<20 Map entry snapshots>>=
+// Return an owned snapshot of all key-value pairs.
 pub function (m: Map[K, V]) entries(): (K, V)[] {
   let out: (K, V)[] = [];
+  // Read both columns in storage order without a hash lookup per entry.
   for (k, v) in m {
     out = out.append((k, v));
   }
@@ -1423,5 +1371,10 @@ pub function (m: Map[K, V]) contains_value(target: V): boolean {
     }
   }
   return false;
+}
+
+// The pin reserves Map.iter, so its source provider has a different name.
+pub function (m: Map[K, V]) __iterator(): iter.ArrayIter[(K, V)] {
+  return iter.of(m.entries());
 }
 ```

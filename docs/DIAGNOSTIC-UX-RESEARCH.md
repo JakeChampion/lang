@@ -3,6 +3,8 @@
 Status: [research] survey of best-in-class compiler diagnostics (Elm, Rust,
 ReasonML, TypeScript); tracked in #4413.
 
+This study names historical or proposed source paths. The reference documentation identifies current files.
+
 `internal/syntax/diag/diag.go` already does the right things: composable
 error interfaces (`Positioned`, `Spanned`, `Hinted`, `Filed`),
 a single rendering point (`Format`), Levenshtein-based did-you-

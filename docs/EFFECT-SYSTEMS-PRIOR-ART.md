@@ -3,6 +3,8 @@
 Status: [research] survey dated 2026-09-01. Input to #5320; the findings and the
 prototype it fed are `EFFECT-ROWS-BRIEF.md`. Nothing here is a build item.
 
+This study names historical or proposed source paths. The reference documentation identifies current files.
+
 Target question: **should Fern put a type-level effect row on function
 signatures, so that platform/OS capabilities (`io`, `net`, `clock`, `fs`,
 `rand`, …) are checkable rather than ambient — and if so, in which of the

@@ -5,6 +5,8 @@ Status: [record] native froze on 2026-09-28 as planned, and its backends were de
 freeze day. (Policy adopted 2026-07-03 with the freeze deferred behind the preconditions.)
 **Owner:** compiler / self-host.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 ## The question
 
 A single language feature lands in a lot of places today:

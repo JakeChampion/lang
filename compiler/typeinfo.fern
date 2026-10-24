@@ -431,3 +431,58 @@ function nominal_spelling(name: string, args: Type[]): string {
   }
   return name + "[" + params + "]";
 }
+
+// A scalar conversion is implicit only when it preserves every source value.
+// Pointer widths retain their separate address arithmetic rules.
+pub function lossless_widen(from: Type, to: Type): boolean {
+  if let TypeI32(a) = from {
+    if let TypeI32(b) = to {
+      return integer_widens(a, b);
+    }
+  }
+  if let TypeFloat(a) = from {
+    if let TypeFloat(b) = to {
+      return !a.polymorphic && !b.polymorphic && a.width < b.width;
+    }
+  }
+  return false;
+}
+
+// The common signed type for fixed integers with different signedness.
+// A u64 has no signed integer destination that preserves every value.
+pub function mixed_integer_join(left: Type, right: Type): Type {
+  if let TypeI32(a) = left {
+    if let TypeI32(b) = right {
+      if (fixed_integer(a) && fixed_integer(b) && a.unsigned != b.unsigned) {
+        let width: i32 = signed_join_width(a, b);
+        let target: Type = TypeI32 { is_char: false, width: width, unsigned: false, polymorphic: false };
+        if (fits_signed_join(a, left, width, target) && fits_signed_join(b, right, width, target)) {
+          return target;
+        }
+      }
+    }
+  }
+  return TypeUnknown { reason: "integer operands have no lossless common type" };
+}
+
+function fixed_integer(t: TypeI32): boolean {
+  return !t.is_char && !t.polymorphic && t.width > 0;
+}
+
+function signed_join_width(a: TypeI32, b: TypeI32): i32 {
+  if (a.width > 32 || b.width > 32 || a.unsigned && a.width == 32 || b.unsigned && b.width == 32) {
+    return 64;
+  }
+  return 32;
+}
+
+function fits_signed_join(t: TypeI32, from: Type, width: i32, target: Type): boolean {
+  return !t.unsigned && t.width == width || lossless_widen(from, target);
+}
+
+function integer_widens(a: TypeI32, b: TypeI32): boolean {
+  if (!fixed_integer(a) || !fixed_integer(b)) {
+    return false;
+  }
+  return a.width < b.width && (a.unsigned == b.unsigned || a.unsigned && !b.unsigned);
+}

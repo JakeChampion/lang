@@ -1,0 +1,28 @@
+{
+  "source_git": "e3bd61f9e4acb0a88d11df490738b404da3283fc",
+  "source_sha256": "40316214d3762ea853c5a803b7af57e9abe265babce9c7bb7b99ae33c691607e",
+  "stages": [
+    {
+      "stage": "stage1",
+      "producer_sha256": "6c5cdeed770e5db0aadbdb663efe2d29e3304acacb76229b951ca549e951f6e2",
+      "seconds": 20.25033676699968,
+      "bytes": 14269312,
+      "sha256": "c82ddb8e98b950454de611f63060d49f8b46112666ac22f77fe0940c89d35c85"
+    },
+    {
+      "stage": "stage2",
+      "producer_sha256": "c82ddb8e98b950454de611f63060d49f8b46112666ac22f77fe0940c89d35c85",
+      "seconds": 20.7923280899995,
+      "bytes": 14269312,
+      "sha256": "30986923323a80d003f2cd94fc75da39347a920913ace7473f9ad18452f6b20c"
+    },
+    {
+      "stage": "stage3",
+      "producer_sha256": "30986923323a80d003f2cd94fc75da39347a920913ace7473f9ad18452f6b20c",
+      "seconds": 34.82705230200372,
+      "bytes": 14269312,
+      "sha256": "30986923323a80d003f2cd94fc75da39347a920913ace7473f9ad18452f6b20c"
+    }
+  ],
+  "fixedpoint": true
+}

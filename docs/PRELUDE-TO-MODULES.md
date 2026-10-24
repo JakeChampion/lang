@@ -1,14 +1,14 @@
 # Prelude → modules migration
 
 Status: [reference] the migration is complete (#1561); "`pub use` re-exports" and "How loading works now" describe module loading today.
-All six phases have landed — the auto-injected prelude and the
-`internal/prelude` package were removed in #1561. Programs now declare
+All six phases landed. Issue #1561 removed the auto-injected prelude
+and its package. Programs now declare
 their `std/` + `core/` imports explicitly. The phased plan below is kept
 as the historical migration record.
 
 ## Problem
 
-`internal/prelude/prelude.fern` was auto-injected into every program at
+The former prelude source file was auto-injected into every program at
 checker time (`injectPrelude` in `internal/check/checker/checker.go`). It was
 a ~6000-line grab-bag covering string / array / i32 methods, HTTP
 parsers, JSON, sort, format, URL, log, TCP, allocators, and more.
@@ -51,7 +51,7 @@ function main(): i32 {
 ```
 
 Built-in **types** (`Option`, `Result`, `IoError`, `Body`,
-`Reader`, `Writer`, `Map`, `MapIter`, `HttpRequest`, `HttpResponse`,
+`Reader`, `Writer`, `Map`, `HttpRequest`, `HttpResponse`,
 `Url`) stay auto-available — they're language primitives, not
 stdlib helpers. The user shouldn't need `import "core/option";`
 to write `Option[i32]`. The synthetic-decl block in
@@ -122,7 +122,7 @@ re-exports.
 
 Tasks:
 
-1. Create `internal/stdlib/std/i32.fern`. Move every
+1. Create `internal/stdlib/std/i32.fern.md`. Move every
    `function (n: i32) X(): Y { ... }` from `prelude.fern` into
    this file. Roughly 40-50 helpers (abs, clamp, gcd, lcm,
    is_prime, factorial, etc.).
@@ -132,7 +132,7 @@ Tasks:
 3. Run the full e2e suite. Any failures mean cross-module
    method resolution is broken — fix in this PR before
    moving on.
-4. Add `internal/testing/e2e/std_i32_test.go` covering a program that
+4. Add an end-to-end test for a program that
    `import "std/i32";` directly and calls `.abs()` etc. (Skips
    the auto-prelude path; proves the module works standalone.)
 
@@ -182,7 +182,7 @@ Tasks:
    ```
 2. Update every example program in `examples/` similarly.
 3. Delete `injectPrelude` from `checker.go`. Delete
-   `internal/prelude/`. Keep the synthetic-type injection
+   the former prelude package. Keep the synthetic-type injection
    block (Option / Result / etc.) — those stay built-in.
 4. Add a checker test confirming a program that doesn't
    import `std/string` gets a clean type error on
@@ -228,11 +228,11 @@ Tasks:
         `log`, `sort`, `csv`, `format`, `http`, `io`, `path`,
         `base64`, `hex`, `url`, `json`, `math`, `float`, `tcp`.
       - `core/` (3): `int`, `map`, `no_prelude`.
-      - `internal/prelude/prelude.fern` is now a bare import
+      - The former prelude source file became a bare import
         block — every helper / receiver method / runtime
         function lives in a module.
 - [x] Phase 5 — drop auto-injection. **Done** — `injectPrelude`
-      and the `internal/prelude` package are gone (#1561);
+      and the prelude package are gone (#1561).
       programs declare their `std/` + `core/` imports
       explicitly. Foundation that landed first:
       `import "core/no_prelude";` was the opt-out sentinel (#498, later retired). `modload.LoadStdlibFlat` /

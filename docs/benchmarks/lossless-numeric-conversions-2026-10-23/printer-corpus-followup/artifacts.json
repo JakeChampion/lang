@@ -1,0 +1,305 @@
+{
+  "source_commit": "05d1428d03ff959c91f356d188d8f938652fcfb3",
+  "base": "1a85a71b03e5d800e155d4b43ac4fd54084678cf",
+  "native_source": {
+    "recorded_source": "a691c59ff977b4ede71147fded6f75e29c892b6f",
+    "current_source": "05d1428d03ff959c91f356d188d8f938652fcfb3",
+    "paths": [
+      "compiler",
+      "internal/stdlib",
+      "bootstrap/stage0.lock",
+      ".github/selfhost-driver-sizes.txt"
+    ],
+    "changed": [],
+    "compiler": "/workspace/scratch/lang-lossless-widening/void-lambda-followup/bootstrap-final/stage3",
+    "compiler_sha256": "c8f5020c3cd5894516a0b165b99c25393a4a11afdaa621c33f39425c31e1360d"
+  },
+  "tests": [
+    {
+      "file": "go-regressions-final.jsonl",
+      "cases": 2641,
+      "packages": 5,
+      "skips": 0,
+      "source_scope": "e3cff7a18658fcce0c9e12b307d962d2c5c1354b"
+    },
+    {
+      "file": "field-read-tests.jsonl",
+      "cases": 8,
+      "packages": 1,
+      "skips": 0,
+      "source_scope": "e3cff7a18658fcce0c9e12b307d962d2c5c1354b"
+    },
+    {
+      "file": "shard-unit-tests-final.jsonl",
+      "cases": 2,
+      "packages": 1,
+      "skips": 0,
+      "source_scope": "05d1428d03ff959c91f356d188d8f938652fcfb3"
+    },
+    {
+      "file": "shard-source-lint-final.jsonl",
+      "cases": 199,
+      "packages": 1,
+      "skips": 0,
+      "source_scope": "05d1428d03ff959c91f356d188d8f938652fcfb3"
+    }
+  ],
+  "shards": [
+    {
+      "index": 0,
+      "count": 4,
+      "file": "printer-shard-0.jsonl",
+      "cases": 269,
+      "skips": 0,
+      "packages": 1,
+      "files": 258,
+      "total_files": 1032,
+      "checked": 245,
+      "elapsed": 493.226
+    },
+    {
+      "index": 1,
+      "count": 4,
+      "file": "printer-shard-1.jsonl",
+      "cases": 269,
+      "skips": 0,
+      "packages": 1,
+      "files": 258,
+      "total_files": 1032,
+      "checked": 246,
+      "elapsed": 442.414
+    },
+    {
+      "index": 2,
+      "count": 4,
+      "file": "printer-shard-2.jsonl",
+      "cases": 269,
+      "skips": 0,
+      "packages": 1,
+      "files": 258,
+      "total_files": 1032,
+      "checked": 245,
+      "elapsed": 572.395
+    },
+    {
+      "index": 3,
+      "count": 4,
+      "file": "printer-shard-3.jsonl",
+      "cases": 269,
+      "skips": 0,
+      "packages": 1,
+      "files": 258,
+      "total_files": 1032,
+      "checked": 244,
+      "elapsed": 485.76
+    }
+  ],
+  "matrix_commands": 51,
+  "balanced_censuses": 3,
+  "field_benchmark_before": [
+    [
+      32,
+      303427,
+      32
+    ],
+    [
+      128,
+      2990895,
+      128
+    ],
+    [
+      512,
+      43802349,
+      512
+    ]
+  ],
+  "field_benchmark_after": [
+    [
+      32,
+      215471,
+      32
+    ],
+    [
+      128,
+      1957772,
+      128
+    ],
+    [
+      512,
+      24156885,
+      512
+    ]
+  ],
+  "artifacts": [
+    {
+      "path": "README.md",
+      "bytes": 1564,
+      "sha256": "5a8479adad9f0c8076b5e57a2db9a90c93bb556538f9c247febf22cc495a9be9"
+    },
+    {
+      "path": "change.patch.gz",
+      "bytes": 4285,
+      "sha256": "acfc86e338a988df7b1c448479be8c9a6f211f842b04617f881cbe0c8178e47d"
+    },
+    {
+      "path": "shard-results.json",
+      "bytes": 870,
+      "sha256": "707cab2f5bcfe21cbe7e25435247ba66662bfb6c10860facf416909736109a66"
+    },
+    {
+      "path": "validation-inventory.json.gz",
+      "bytes": 233,
+      "sha256": "7415491055fcc4062e44f142dd173ec51fdab806929941f08f264be4af4d3d5e"
+    },
+    {
+      "path": "native-source-certificate.json.gz",
+      "bytes": 323,
+      "sha256": "b9bbb1b750ae0188830c11692871d414e65456f4be247189df6d83802cf718d6"
+    },
+    {
+      "path": "go-regressions-final.jsonl.gz",
+      "bytes": 157656,
+      "sha256": "8e863d73e6d36bdad7012e406a07010a678c2d5724d6901a5e7aa206ff7fdd7c"
+    },
+    {
+      "path": "field-read-tests.jsonl.gz",
+      "bytes": 721,
+      "sha256": "67a3be1093fbdf5d3da64f03b9af9a1be4b5ddef8b6d15fe62857acfba01d3a7"
+    },
+    {
+      "path": "shard-unit-tests-final.jsonl.gz",
+      "bytes": 391,
+      "sha256": "4eaa9186b92d3b504376d5528714a0e21e995400e23c23e1bfcafada94c5c0cc"
+    },
+    {
+      "path": "shard-source-lint-final.jsonl.gz",
+      "bytes": 13681,
+      "sha256": "f5a1519de2e3fb2620f889942ab022c7613226d739d458d996af17d924cc2dad"
+    },
+    {
+      "path": "printer-shard-0.jsonl.gz",
+      "bytes": 15572,
+      "sha256": "2b57a9d8f56d97d7d0b664e0537edc5e51f4d8080be8f7af8bdd9478d8aec7d0"
+    },
+    {
+      "path": "printer-shard-1.jsonl.gz",
+      "bytes": 15586,
+      "sha256": "9149557744bd2175229582f021a0d93c644a6c55e14691089efa329b4665e741"
+    },
+    {
+      "path": "printer-shard-2.jsonl.gz",
+      "bytes": 15628,
+      "sha256": "14e2c01bc8efc9403ef8e32f54fc13863f8352da5fa68edd08611d4971d34706"
+    },
+    {
+      "path": "printer-shard-3.jsonl.gz",
+      "bytes": 15586,
+      "sha256": "24dfae57ec35cfc7eff19754bce0bd0046beb1571c8e69600d152b8359f48b3b"
+    },
+    {
+      "path": "oracle-current-version.txt.gz",
+      "bytes": 386,
+      "sha256": "24448c9dcb8a0d1acaaeebfd19880fd634175008bd3d9b157141df5d69e3d2e0"
+    },
+    {
+      "path": "context-runtime-final-matrix.py.gz",
+      "bytes": 1804,
+      "sha256": "ace7704d689a4c116992b7c143dc43d8031e2b7fc00970cf6c38e1e255763a43"
+    },
+    {
+      "path": "context-runtime-final-results.json.gz",
+      "bytes": 2208,
+      "sha256": "a80609926b62ecc544109be60489e42860572512767891acf71493334e2f7f63"
+    },
+    {
+      "path": "context-runtime-final-matrix.log.gz",
+      "bytes": 304,
+      "sha256": "189a6713a2fb45eeb063e904592e9a1ca2c69465667925e5c4f32623c918ec86"
+    },
+    {
+      "path": "field-benchmark--main.go.gz",
+      "bytes": 483,
+      "sha256": "5b52146830764ec638e8ce9a7d343cc5a3787e69d429b108402be801d52913cb"
+    },
+    {
+      "path": "field-benchmark--go.mod.gz",
+      "bytes": 128,
+      "sha256": "cd4bb4ac1cf1f34b5e6d15a7af26aab43e5709fb0447f6c718b2dd4402453e5f"
+    },
+    {
+      "path": "field-benchmark--before-overlay.json.gz",
+      "bytes": 161,
+      "sha256": "7b6f02e88147732d3cecc285c62912ec4ffe197731138202b4610de30f69c8c1"
+    },
+    {
+      "path": "field-benchmark--call_arg_deaths-before.go.txt.gz",
+      "bytes": 3671,
+      "sha256": "a18c7bd15d5c5ed9e16ceb5373b1320e2a0435ec6d60b531f74bd3c2630b6c08"
+    },
+    {
+      "path": "field-benchmark--before.txt.gz",
+      "bytes": 58,
+      "sha256": "2eea73e4316749249f17d32847fd39e7a1ef6ff1e72629906db9708718f72b18"
+    },
+    {
+      "path": "field-benchmark--after.txt.gz",
+      "bytes": 59,
+      "sha256": "c5d8e273c6b03b51c89f9b63b0deecaf3681f45d8ee346141a67430b42f85e34"
+    },
+    {
+      "path": "profile-probe--main.go.gz",
+      "bytes": 573,
+      "sha256": "f31c97262763944456ecda8d87c94aa49297ee97e7189b6920eb05b42f980757"
+    },
+    {
+      "path": "profile-probe--go.mod.gz",
+      "bytes": 127,
+      "sha256": "b77f15343ef6149b00bc8520ea21b7f30ac3fb74933eaf962a1dcc068519369e"
+    },
+    {
+      "path": "profile-probe--sample-before.cpu.gz",
+      "bytes": 71557,
+      "sha256": "1dc6af200dbd1f991c7781dafaa8a35f855b5c6eb1897d4c4610c9b01d31102e"
+    },
+    {
+      "path": "profile-probe--sample-before.log.gz",
+      "bytes": 2191,
+      "sha256": "0a63d1724820e2af0ac0bd42d20004252754b595a5eb49c0908af26d964dc475"
+    },
+    {
+      "path": "profile-probe--sample-before-top.txt.gz",
+      "bytes": 4336,
+      "sha256": "5f0b87fc332bdb3173c82e2e82e6b2bbbe82eac4bcac9bea9f6e1e973d0df03b"
+    },
+    {
+      "path": "profile-probe--sample-before-cumulative.txt.gz",
+      "bytes": 4397,
+      "sha256": "05a5a2db5a7f5fd489b2be345c71555b2fc484a7c7696896cee34df6b7369d08"
+    },
+    {
+      "path": "profile-probe--arg-deaths-list.txt.gz",
+      "bytes": 3396,
+      "sha256": "519ea002bf84469d8d286f58fb09dcf65e01fba975a4756ca0aea53140cb00ba"
+    },
+    {
+      "path": "actionlint.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "readme-ste.log.gz",
+      "bytes": 141,
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0"
+    },
+    {
+      "path": "record-proofs.py.gz",
+      "bytes": 2077,
+      "sha256": "27df7adc9968139ee44e90e11a2bb9f70bfa2acffa93f59ef666c14e62af9a43"
+    },
+    {
+      "path": "ci-unit-heavy-failure.log.gz",
+      "bytes": 15542,
+      "sha256": "b8dd366c95a36d07fc9a9e8571acc8254fa09c05b97bc5f0bd35039a7d4d9d32"
+    }
+  ]
+}

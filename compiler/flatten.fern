@@ -84,9 +84,6 @@ pub function is_runtime_helper_name(name: string): boolean {
   if (name.len() >= 6 && slice_unchecked(name, 0, 6) == "__map_") {
     return true;
   }
-  if (name.len() >= 10 && slice_unchecked(name, 0, 10) == "__mapiter_") {
-    return true;
-  }
   return false;
 }
 
@@ -798,6 +795,16 @@ function resolve_bare(name: string, ctx: RewriteCtx, as_value: boolean): string 
   return name;
 }
 
+function rewrite_unary_op(op: string, ctx: RewriteCtx): string {
+  if (util.str_has_prefix(op, "as?_")) {
+    return "as?_" + rewrite_type_name(slice_unchecked(op, 4, op.len()), ctx);
+  }
+  if (util.str_has_prefix(op, "as_")) {
+    return "as_" + rewrite_type_name(slice_unchecked(op, 3, op.len()), ctx);
+  }
+  return op;
+}
+
 function rewrite_written(w: string, ctx: RewriteCtx): string {
   if (w.len() == 0) {
     return w;
@@ -1000,15 +1007,7 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
       };
     },
     ast.ExprUnary(u) => {
-      // Cast targets carry type spellings inside the operator, not a TypeRef.
-      // Qualify those names with the same module context as field annotations.
-      let op: string = u.op;
-      if (parser.is_cast_op(op)) {
-        op = "as_" + rewrite_type_name(slice_unchecked(op, 3, op.len()) + "", ctx);
-      } else if (util.str_has_prefix(op, "as?_")) {
-        op = "as?_" + rewrite_type_name(slice_unchecked(op, 4, op.len()) + "", ctx);
-      }
-      return ast.ExprUnary { ...u, op: op, operand: rewrite_expr(u.operand, ctx) };
+      return ast.ExprUnary { op: rewrite_unary_op(u.op, ctx), operand: rewrite_expr(u.operand, ctx), line: u.line, col: u.col, ty: u.ty };
     },
     ast.ExprIndex(x) => {
       return ast.ExprIndex {

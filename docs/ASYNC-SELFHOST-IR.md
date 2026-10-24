@@ -8,6 +8,8 @@ shipped on the native and wasm backends via the Go compiler (`std/async`:
 the self-host half as goal-1 work. The IR-vs-AST routing it describes below
 was deleted with the AST emitters (`docs/SELFHOST-AST-RETIREMENT.md`).
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 ## How the self-host routes IR vs AST
 
 Per module: `asm.fern` (~line 8128) takes the IR path only when
