@@ -20,6 +20,24 @@ func TestSelfHostIndirectOwnContracts(t *testing.T) {
 		name, source string
 		codes        []string
 	}{
+		{"fresh_method_same_name", `struct A { text: string }
+struct B { text: string }
+function fresh(): A { return A { text: "a" }; }
+function (own value: A) update(text: string): A { return value; }
+function (value: B) update(text: string): string { return text; }
+function (own value: A) done(): i32 { return value.text.len(); }
+function probe(text: string): i32 { return fresh().update(text).done(); }
+function main(): i32 { return probe("b") - 1; }`, nil},
+		{"borrowed_method_result", `struct B { text: string }
+function (value: B) update(text: string): string { return text; }
+function sink(own text: string): i32 { return text.len(); }
+function probe(value: B, text: string): i32 { return sink(value.update(text)); }
+function main(): i32 { return 0; }`, []string{"E051"}},
+		{"fresh_scalar_method_same_name", `struct B { text: string }
+function (value: i32) update(): string { return "a" + "b"; }
+function (value: B) update(): string { return value.text; }
+function sink(own text: string): i32 { return text.len(); }
+function main(): i32 { return sink((1).update()) - 2; }`, nil},
 		{"parameter_without_caller", `function apply(f: (own string) => i32): i32 { return f("ab"); }
 function main(): i32 { return 0; }`, []string{"E051"}},
 		{"parameter_with_caller", `function length(own s: string): i32 { return s.len(); }
