@@ -1490,8 +1490,20 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
 
 function has_record_arms(arms: ast.MatchArm[]): boolean {
   for arm in arms {
-    if let ast.PatVariant(pv) = arm.pattern {
-      if (parser.is_record_pattern(pv)) {
+    if (pattern_has_record(arm.pattern)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function pattern_has_record(p: ast.Pattern): boolean {
+  if let ast.PatVariant(pv) = p {
+    if (parser.is_record_pattern(pv)) {
+      return true;
+    }
+    for nested in pv.nested {
+      if (pattern_has_record(nested)) {
         return true;
       }
     }

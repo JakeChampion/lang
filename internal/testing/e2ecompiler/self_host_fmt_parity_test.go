@@ -72,6 +72,11 @@ function main(): i32 {
   return match (shapes.make()) { shapes.Open { n: k, .. } => k };
 }
 `},
+	{"nested-whole-struct-pattern", `struct P { x: i32 }
+enum H { S(P) }
+function f(h: H): i32 { return match (h) { S(w @ P { x }) => w.x + x }; }
+function main(): i32 { return 0; }
+`},
 	// A binding's annotation types a lambda that writes no return type; the
 	// compile parse stamps the return type onto the lambda, and -fmt must print
 	// the lambda as written (#12359).

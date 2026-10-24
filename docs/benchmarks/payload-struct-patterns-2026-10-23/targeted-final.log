@@ -1,0 +1,66 @@
+=== RUN   TestSelfHostRepoComplexityRatchet
+=== RUN   TestSelfHostRepoComplexityRatchet/self-host_compiler
+=== RUN   TestSelfHostRepoComplexityRatchet/stdlib
+--- PASS: TestSelfHostRepoComplexityRatchet (3.47s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/self-host_compiler (0.00s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/stdlib (0.00s)
+=== RUN   TestSelfHostPayloadStructPatterns
+=== RUN   TestSelfHostPayloadStructPatterns/self-host-check
+=== RUN   TestSelfHostPayloadStructPatterns/Go-interp
+=== RUN   TestSelfHostPayloadStructPatterns/self-host-interp
+=== RUN   TestSelfHostPayloadStructPatterns/Go-check
+=== RUN   TestSelfHostPayloadStructPatterns/x86-64-linux
+=== RUN   TestSelfHostPayloadStructPatterns/arm64-linux
+=== RUN   TestSelfHostPayloadStructPatterns/wasm32-wasi
+=== RUN   TestSelfHostPayloadStructPatterns/refusal/incomplete-bool
+=== RUN   TestSelfHostPayloadStructPatterns/refusal/incomplete-bool/Go
+=== RUN   TestSelfHostPayloadStructPatterns/refusal/incomplete-bool/self-host
+=== RUN   TestSelfHostPayloadStructPatterns/refusal/wrong-struct
+=== RUN   TestSelfHostPayloadStructPatterns/refusal/wrong-struct/Go
+=== RUN   TestSelfHostPayloadStructPatterns/refusal/wrong-struct/self-host
+=== RUN   TestSelfHostPayloadStructPatterns/refusal/unknown-field
+=== RUN   TestSelfHostPayloadStructPatterns/refusal/unknown-field/self-host
+=== RUN   TestSelfHostPayloadStructPatterns/refusal/unknown-field/Go
+=== RUN   TestSelfHostPayloadStructPatterns/refusal/wrong-generic-struct
+=== RUN   TestSelfHostPayloadStructPatterns/refusal/wrong-generic-struct/self-host
+=== RUN   TestSelfHostPayloadStructPatterns/refusal/wrong-generic-struct/Go
+=== RUN   TestSelfHostPayloadStructPatterns/refusal/primitive-slot
+=== RUN   TestSelfHostPayloadStructPatterns/refusal/primitive-slot/Go
+=== RUN   TestSelfHostPayloadStructPatterns/refusal/primitive-slot/self-host
+=== RUN   TestSelfHostPayloadStructPatterns/refusal/source-unreachable
+=== RUN   TestSelfHostPayloadStructPatterns/refusal/source-unreachable/Go
+=== RUN   TestSelfHostPayloadStructPatterns/refusal/source-unreachable/self-host
+=== RUN   TestSelfHostPayloadStructPatterns/refusal/opaque-field
+=== RUN   TestSelfHostPayloadStructPatterns/refusal/opaque-field/Go
+=== RUN   TestSelfHostPayloadStructPatterns/refusal/opaque-field/self-host
+--- PASS: TestSelfHostPayloadStructPatterns (22.27s)
+    --- PASS: TestSelfHostPayloadStructPatterns/self-host-check (0.01s)
+    --- PASS: TestSelfHostPayloadStructPatterns/Go-interp (0.01s)
+    --- PASS: TestSelfHostPayloadStructPatterns/self-host-interp (0.00s)
+    --- PASS: TestSelfHostPayloadStructPatterns/Go-check (0.01s)
+    --- PASS: TestSelfHostPayloadStructPatterns/x86-64-linux (0.04s)
+    --- PASS: TestSelfHostPayloadStructPatterns/arm64-linux (0.04s)
+    --- PASS: TestSelfHostPayloadStructPatterns/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostPayloadStructPatterns/refusal/incomplete-bool (0.01s)
+        --- PASS: TestSelfHostPayloadStructPatterns/refusal/incomplete-bool/Go (0.00s)
+        --- PASS: TestSelfHostPayloadStructPatterns/refusal/incomplete-bool/self-host (0.00s)
+    --- PASS: TestSelfHostPayloadStructPatterns/refusal/wrong-struct (0.01s)
+        --- PASS: TestSelfHostPayloadStructPatterns/refusal/wrong-struct/Go (0.00s)
+        --- PASS: TestSelfHostPayloadStructPatterns/refusal/wrong-struct/self-host (0.00s)
+    --- PASS: TestSelfHostPayloadStructPatterns/refusal/unknown-field (0.01s)
+        --- PASS: TestSelfHostPayloadStructPatterns/refusal/unknown-field/self-host (0.00s)
+        --- PASS: TestSelfHostPayloadStructPatterns/refusal/unknown-field/Go (0.00s)
+    --- PASS: TestSelfHostPayloadStructPatterns/refusal/wrong-generic-struct (0.01s)
+        --- PASS: TestSelfHostPayloadStructPatterns/refusal/wrong-generic-struct/self-host (0.00s)
+        --- PASS: TestSelfHostPayloadStructPatterns/refusal/wrong-generic-struct/Go (0.00s)
+    --- PASS: TestSelfHostPayloadStructPatterns/refusal/primitive-slot (0.01s)
+        --- PASS: TestSelfHostPayloadStructPatterns/refusal/primitive-slot/Go (0.01s)
+        --- PASS: TestSelfHostPayloadStructPatterns/refusal/primitive-slot/self-host (0.00s)
+    --- PASS: TestSelfHostPayloadStructPatterns/refusal/source-unreachable (0.01s)
+        --- PASS: TestSelfHostPayloadStructPatterns/refusal/source-unreachable/Go (0.00s)
+        --- PASS: TestSelfHostPayloadStructPatterns/refusal/source-unreachable/self-host (0.00s)
+    --- PASS: TestSelfHostPayloadStructPatterns/refusal/opaque-field (0.01s)
+        --- PASS: TestSelfHostPayloadStructPatterns/refusal/opaque-field/Go (0.00s)
+        --- PASS: TestSelfHostPayloadStructPatterns/refusal/opaque-field/self-host (0.00s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	25.756s

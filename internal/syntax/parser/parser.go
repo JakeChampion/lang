@@ -4490,7 +4490,7 @@ func (p *parser) isNestedPatternStart() bool {
 	}
 	if t.Kind == lexer.Ident && t.Text != "_" {
 		n := p.peekAt(1)
-		if n.Kind == lexer.Punct && (n.Text == "(" || n.Text == "{" || n.Text == ".") {
+		if n.Kind == lexer.Punct && (n.Text == "(" || n.Text == "{" || n.Text == "." || n.Text == "@") {
 			return true
 		}
 	}
@@ -5231,12 +5231,9 @@ func (p *parser) parseLet(captureRest bool) (ast.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Suppress trailing struct-literal parsing while reading
-	// the source, so `obj { … }` doesn't eat the `else`-side
-	// trailer. The Var-init form doesn't need this because it
-	// uses `;`, but `let else` follows the source with `else`.
+	// The else keyword delimits a complete initializer expression.
 	prevNS := p.noStructLit
-	p.noStructLit = !qualifiedRecord || prevNS
+	p.noStructLit = false
 	src, err := p.parseExpr()
 	p.noStructLit = prevNS
 	if err != nil {

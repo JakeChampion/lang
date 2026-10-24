@@ -887,6 +887,8 @@ pub const ORIGIN_BLOCK: string = "block";
 
 pub const ORIGIN_MATCH_EXPR: string = "match_expr";
 
+pub const ORIGIN_PATTERN_PROBE: string = "pattern_probe";
+
 pub const ORIGIN_IF_EXPR: string = "if_expr";
 
 // Source provenance for an if-expression's branch tails. Divergent branches
@@ -4947,7 +4949,7 @@ function wrap_struct_fields(path: ast.Stmt[], a: ast.StructArm, tmp: string): as
       let fv: string = tmp + "_f" + util.i32_to_string(wi);
       let mk_wrap: ast.Stmt[] = [];
       mk_wrap = mk_wrap.append(s_var_at(fv, "", e_field_access_at(e_ident(tmp), a.fields[wi], a.line, a.col), a.line, a.col));
-      mk_wrap = mk_wrap.append(s_match_at(e_ident_at(fv, a.line, a.col), mk_arms, a.line, a.col));
+      mk_wrap = mk_wrap.append(s_match_origin(e_ident_at(fv, a.line, a.col), mk_arms, a.line, a.col, ORIGIN_PATTERN_PROBE));
       cur = mk_wrap;
     }
     wi = wi - 1;
@@ -5199,8 +5201,8 @@ function exiting_if_tail(e: ast.Expr): Option[ast.Stmt] {
 
 // branch_exits_early reports whether a value branch's statements before its
 // terminal `return` already exit, a `loop` counted as one that may break.
-function branch_exits_early(body: ast.Stmt[]): boolean {
-  return body.len() >= 2 && stmts_exit(without_last(body), false);
+pub function branch_exits_early(body: ast.Stmt[]): boolean {
+  return body.len() >= 2 && stmt_exits(body[body.len() - 2], false);
 }
 
 function without_last(body: ast.Stmt[]): ast.Stmt[] {
@@ -6347,7 +6349,7 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
     let bn: i32 = 0;
     while (p.peek_punct() != ")" && !p.at_end()) {
       if (p.peek_ident().len() > 0
-        && (p.peek2_punct() == "(" || p.peek2_punct() == "{" || p.peek2_punct() == ".")) {
+        && (p.peek2_punct() == "(" || p.peek2_punct() == "{" || p.peek2_punct() == "." || p.peek2_punct() == "@")) {
         // The slot binds a synthetic temp and `nested` records the
         // pattern the temp is matched against — the same shape the
         // literal slot below uses, so a sub-pattern works at ANY
@@ -6645,7 +6647,7 @@ function clear_nested_pat(pv: ast.PatVariant): ast.Pattern {
 // payload_binder is the name a variant pattern binds at payload slot i —
 // `binding` for slot 0, `extra_bindings` after it. A slot carrying a
 // sub-pattern binds the synthetic temp parse_pattern minted for it.
-function payload_binder(pv: ast.PatVariant, i: i32): string {
+pub function payload_binder(pv: ast.PatVariant, i: i32): string {
   if (i == 0) {
     return pv.binding;
   }
@@ -6808,7 +6810,7 @@ function match_sub_pattern(path: ast.Stmt[], scrut: string, pat: ast.Pattern, li
     // scrutinee name is what keeps the desugar's own temps apart.
     mk_arms = desugar_nested_arms(mk_arms, 0, scrut);
   }
-  return [s_match_at(e_ident_at(scrut, line, col), mk_arms, line, col)];
+  return [s_match_origin(e_ident_at(scrut, line, col), mk_arms, line, col, ORIGIN_PATTERN_PROBE)];
 }
 
 // wrap_payload_pats wraps an arm's matched path in one match_sub_pattern per
@@ -6871,7 +6873,7 @@ function build_nested_arm_match(scrut: ast.Expr, arms: ast.MatchArm[], written: 
         marms = marms.append(ast.MatchArm { pattern: fp, body: path, line: a.line, col: a.col, guard: fg, has_guard: fhg, alt_cont: false });
         let skip: ast.Stmt[] = [];
         marms = marms.append(ast.MatchArm { pattern: p_wildcard(), body: skip, line: a.line, col: a.col, guard: e_bool(true), has_guard: false, alt_cont: false });
-        inner = [s_match_at(e_ident_at(sname, a.line, a.col), marms, a.line, a.col)];
+        inner = [s_match_origin(e_ident_at(sname, a.line, a.col), marms, a.line, a.col, ORIGIN_PATTERN_PROBE)];
       }
     }
     outer = outer.append(s_if(cond, inner, []));
@@ -7698,7 +7700,7 @@ function parse_let_pattern(p: Par, start: Par, qualified_record: boolean, vline:
     lsp_p = lsp_ap;
     lsp_pats = lsp_pats.append(lsp_alt);
   }
-  let (lsp_init, lsp_ip) = parse_expr(lsp_p.expect("=").with_no_struct(!qualified_record));
+  let (lsp_init, lsp_ip) = parse_expr(lsp_p.expect("=").with_no_struct(false));
   lsp_ip = lsp_ip.with_no_struct(p.no_struct);
   if (qualified_record && lsp_pats.len() == 1 && lsp_ip.peek_keyword() != "else") {
     let binding: ast.Stmt = qualified_struct_binding(lsp_pat, lsp_init, vline, vcol);
@@ -7832,7 +7834,7 @@ function parse_let_stmt(p: Par): (ast.Stmt, Par) {
   if (p.peek_is_pat_literal() || p.peek_at_literal()) {
     let (lel_at, lel_atp) = take_at_binding(p);
     let (lel_lits, lel_his, lel_hrs, lel_incs, lel_p) = parse_lit_alts(lel_atp);
-    let (lel_init, lel_ip) = parse_expr(lel_p.expect("=").with_no_struct(true));
+    let (lel_init, lel_ip) = parse_expr(lel_p.expect("=").with_no_struct(false));
     lel_ip = lel_ip.with_no_struct(p.no_struct);
     let (lel_else, lel_rest, lel_restp) = parse_let_else_tail(lel_ip);
     p = lel_restp;
@@ -18299,12 +18301,32 @@ function ms_elem_ty(t: string, gstructs: StructDecl[], funcs: MFns): string {
   return "";
 }
 
-// ms_stmt rewrites one statement: generic-struct annotations on a `let`
-// go through mg_ty, struct literals through ms_expr, threading env+ins.
+// A destructure marker retains its field list and names the concrete struct clone.
+function mg_var_type(v: ast.StmtVar, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts): TyIns {
+  if (!is_struct_destr_marker(v.type_name)) {
+    return mg_ty(v.type_name, gstructs, ins);
+  }
+  let start: i32 = util.index_of_sub(v.type_name, "@sd:") + 4;
+  let tail: string = slice_unchecked(v.type_name, start, v.type_name.len()) + "";
+  let colon: i32 = util.index_of_sub(tail, ":");
+  if (colon < 0) {
+    return TyIns { ty: v.type_name, mins: ins };
+  }
+  let head: string = slice_unchecked(tail, 0, colon) + "";
+  let init: string = mono_infer(v.init, env, funcs);
+  if (gstruct_index(gstructs, head) < 0 || parse_type_ref(init).base != head) {
+    return TyIns { ty: v.type_name, mins: ins };
+  }
+  let named: TyIns = mg_ty(init, gstructs, ins);
+  return TyIns { ty: slice_unchecked(v.type_name, 0, start) + named.ty + slice_unchecked(tail, colon, tail.len()), mins: named.mins };
+}
+
+// ms_stmt rewrites one statement: generic-struct annotations on a let pass
+// through mg_ty, and struct literals pass through ms_expr.
 function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts, ret_ty: string): RStmtOne {
   match (st) {
     ast.StmtVar(v) => {
-      let ta: TyIns = mg_ty(v.type_name, gstructs, ins);
+      let ta: TyIns = mg_var_type(v, env, gstructs, funcs, ins);
       let iv: RExpr = ms_expr_to(v.init, ta.ty, env, gstructs, funcs, ta.mins);
       // A receiver-less associated constructor `Box.default()` bound to a
       // generic-struct annotation takes its instantiation from that

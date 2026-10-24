@@ -1,0 +1,7 @@
+pub struct Open { text: string, n: i32 }
+
+pub opaque struct Secret { n: i32 }
+
+pub function secret(): Secret {
+  return Secret { n: 7 };
+}

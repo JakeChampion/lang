@@ -1,0 +1,11 @@
+{
+  "source_commit": "c9cdc789c4f73669cb56cfe8ca699f721d7a1aba",
+  "tested_main": "8c5e70490",
+  "source_sha256": "4a025670e296d642abc117c9e21171c974d1155bf9797f5869fdc5a099b1526d",
+  "tests": {
+    "run": 58,
+    "pass": 59,
+    "fail": 0,
+    "skip": 0
+  }
+}

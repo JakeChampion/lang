@@ -1,0 +1,5 @@
+=== RUN   TestLocalPayloadCensus
+    zz_local_payload_census_test.go:11: payload_struct_patterns 0; sites=""
+--- PASS: TestLocalPayloadCensus (21.34s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2e	21.345s

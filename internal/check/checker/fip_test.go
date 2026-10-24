@@ -8,6 +8,29 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
+func TestFipConstantArraysAfterFolding(t *testing.T) {
+	for _, kw := range []string{"fip", "fbip"} {
+		t.Run(kw, func(t *testing.T) {
+			source := `const TABLE: i32[][] = [[3, 5], [7, 11]];
+` + kw + ` function lookup(i: i32): i32 { return TABLE[1][i]; }
+function main(): i32 { return lookup(1) - 11; }`
+			prog, err := parser.Parse(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Check(prog); err != nil {
+				t.Fatalf("before constant fold: %v", err)
+			}
+			if err := constfold.Fold(prog, nil); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Check(prog); err != nil {
+				t.Fatalf("after constant fold: %v", err)
+			}
+		})
+	}
+}
+
 // `fip function` is a Koka-style fully-in-place CHECKED guarantee: the checker
 // (E053) verifies the body performs no heap allocation, as a sound conservative
 // subset. In-place index writes to an `own` array parameter are allowed (the

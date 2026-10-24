@@ -1,0 +1,81 @@
+import "./shapes";
+
+struct Pt { x: i32, y: i32 }
+
+struct Flag { bit: boolean }
+
+struct Box[T] { value: T }
+
+enum Generic { Pack(Box[boolean]) }
+
+enum H { S(Pt), N(i32) }
+
+enum B { Bit(Flag) }
+
+enum Imported { Text(shapes.Open), Hidden(shapes.Secret) }
+
+function local(h: H): i32 {
+  match (h) {
+    S(Pt { x: 0, .. }) => {
+      return 9;
+    },
+    S(w @ Pt { x: n, .. }) when n < 0 => {
+      return w.y;
+    },
+    S(Pt { y, x }) => {
+      return x + y;
+    },
+    N(n) => {
+      return n;
+    }
+  }
+}
+
+function rest(h: H): i32 {
+  return match (h) { S(Pt { .. }) => 1, N(_) => 0 };
+}
+
+function flag(b: B): i32 {
+  return match (b) { Bit(Flag { bit: true }) => 1, Bit(Flag { bit: false }) => 0 };
+}
+
+function generic(value: Generic): i32 {
+  return match (value) { Pack(Box { value: true }) => 1, Pack(Box { value: false }) => 0 };
+}
+
+function imported(value: Imported): i32 {
+  return match (value) { Text(shapes.Open { n: 0, .. }) => 0, Text(shapes.Open { text, .. }) => text.len(), Hidden(shapes.Secret { .. }) => 7 };
+}
+
+function grow(n: i32): string {
+  let text: string = "";
+  for _ in 0..n {
+    text = text + "0123456789";
+  }
+  return text;
+}
+
+function main(): i32 {
+  if (local(S(Pt { x: 1, y: 2 })) != 3 || local(N(4)) != 4) {
+    return 1;
+  }
+  if (local(S(Pt { x: 0, y: 2 })) != 9 || local(S(Pt { x: -1, y: 6 })) != 6) {
+    return 2;
+  }
+  if (rest(S(Pt { x: 1, y: 2 })) != 1 || rest(N(4)) != 0) {
+    return 3;
+  }
+  if (flag(Bit(Flag { bit: true })) != 1 || flag(Bit(Flag { bit: false })) != 0) {
+    return 4;
+  }
+  if (imported(Text(shapes.Open { text: grow(2), n: 1 })) != 20) {
+    return 5;
+  }
+  if (imported(Hidden(shapes.secret())) != 7) {
+    return 6;
+  }
+  if (generic(Pack(Box[boolean] { value: true })) != 1 || generic(Pack(Box[boolean] { value: false })) != 0) {
+    return 7;
+  }
+  return 0;
+}
