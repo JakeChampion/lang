@@ -29,10 +29,15 @@ func buildPlaygroundDriver(t *testing.T) string {
 
 func buildPlaygroundDriverWith(t *testing.T, stdlib string) string {
 	t.Helper()
+	return buildPlaygroundDriverForTarget(t, stdlib, "x86-64-linux")
+}
+
+func buildPlaygroundDriverForTarget(t *testing.T, stdlib, target string) string {
+	t.Helper()
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "playground_run.fern")
 	bin := filepath.Join(dir, "playground_run")
-	cmd := exec.Command(buildFernCLIBin(t), "-target", "x86-64-linux",
+	cmd := exec.Command(buildFernCLIBin(t), "-target", target,
 		"-embed", stdlib, "-o", bin, filepath.Join(dir, "playground_run.fern"))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("building the playground driver failed: %v\n%s", err, out)
@@ -48,7 +53,14 @@ func runPlayground(t *testing.T, bin, cwd, src string, args ...string) (string, 
 	var out, errb strings.Builder
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
-	_ = cmd.Run()
+	if err := cmd.Run(); err != nil {
+		if cmd.ProcessState == nil {
+			t.Fatalf("start playground driver: %v", err)
+		}
+		if cmd.ProcessState.ExitCode() < 0 {
+			errb.WriteString(err.Error() + "\n")
+		}
+	}
 	return out.String(), errb.String(), cmd.ProcessState.ExitCode()
 }
 

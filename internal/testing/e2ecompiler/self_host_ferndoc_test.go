@@ -9,7 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	stdlibsrc "github.com/jakechampion/lang/internal/stdlib"
 	"github.com/jakechampion/lang/internal/syntax/parser"
+	"github.com/jakechampion/lang/internal/tools/literate"
 )
 
 func TestSelfHostFerndocSelfChecks(t *testing.T) {
@@ -119,7 +121,7 @@ func stdlibPageNames(t *testing.T, stdlib string) map[string]bool {
 	for _, ns := range []string{"std", "core"} {
 		root := filepath.Join(stdlib, ns)
 		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".fern") || strings.HasPrefix(d.Name(), "_test_") {
+			if err != nil || d.IsDir() || stdlibsrc.ModuleName(path) == "" || strings.HasPrefix(d.Name(), "_test_") {
 				return err
 			}
 			src, rerr := os.ReadFile(path)
@@ -133,7 +135,7 @@ func stdlibPageNames(t *testing.T, stdlib string) map[string]bool {
 			if rerr != nil {
 				return rerr
 			}
-			name := strings.ReplaceAll(strings.TrimSuffix(rel, ".fern"), string(filepath.Separator), "_") + ".md"
+			name := strings.ReplaceAll(stdlibsrc.ModuleName(rel), string(filepath.Separator), "_") + ".md"
 			mod := ns + "/" + filepath.ToSlash(rel)
 			if prev, ok := from[name]; ok {
 				t.Errorf("%s and %s both want the page %s", prev, mod, name)
@@ -151,6 +153,13 @@ func stdlibPageNames(t *testing.T, stdlib string) map[string]bool {
 
 func documentsAnything(t *testing.T, path, src string) bool {
 	t.Helper()
+	if strings.HasSuffix(path, ".fern.md") {
+		code, _, err := literate.Parse(src).Tangle()
+		if err != nil {
+			t.Fatalf("tangling %s: %v", path, err)
+		}
+		src = code
+	}
 	prog, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parsing %s: %v", path, err)

@@ -1,0 +1,72 @@
+[
+  {
+    "directory": "valid",
+    "api": "names",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "directory": "valid",
+    "api": "all",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "directory": "valid",
+    "api": "ino",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "directory": "valid",
+    "api": "ino_all",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "directory": "valid",
+    "api": "entries",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "directory": "invalid",
+    "api": "names",
+    "exit": 1,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "directory": "invalid",
+    "api": "all",
+    "exit": 1,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "directory": "invalid",
+    "api": "ino",
+    "exit": 1,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "directory": "invalid",
+    "api": "ino_all",
+    "exit": 1,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "directory": "invalid",
+    "api": "entries",
+    "exit": 1,
+    "stdout": "",
+    "stderr": ""
+  }
+]

@@ -1,0 +1,5 @@
+WARNING /workspace/scratch/lang-validate-os-text/new-comments.txt:par3 [rule 3.5] "listing": an "-ing" form is permitted only in a technical name.
+
+Result: 0 errors, 1 warnings.
+The text obeys the STE structural rules that this tool can check.
+This tool cannot make sure that each word has its approved meaning.

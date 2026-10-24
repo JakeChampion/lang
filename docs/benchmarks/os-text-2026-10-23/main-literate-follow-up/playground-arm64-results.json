@@ -1,0 +1,41 @@
+{
+  "binary_sha256": "3ecbd0832a4eb50713eb9b27c1b3cc1685c8e8340cf99ed0e99ed331d56127dd",
+  "source_sha256": "d15d6041305dd55183b6b7d9b0e511b149c70e489a980b0c51012f0b3a000e6e",
+  "runs": [
+    {
+      "args": [
+        "qemu-aarch64",
+        "-cpu",
+        "max",
+        "/workspace/scratch/lang-validate-os-text/byte-api-sorted-final/playground-arm64",
+        "-check"
+      ],
+      "code": 0,
+      "seconds": 1.4155626450083219
+    },
+    {
+      "args": [
+        "qemu-aarch64",
+        "-cpu",
+        "max",
+        "/workspace/scratch/lang-validate-os-text/byte-api-sorted-final/playground-arm64",
+        "-interp"
+      ],
+      "code": 42,
+      "seconds": 1.6001821589889005
+    },
+    {
+      "args": [
+        "qemu-aarch64",
+        "-cpu",
+        "max",
+        "/workspace/scratch/lang-validate-os-text/byte-api-sorted-final/playground-arm64",
+        "-emit",
+        "asm"
+      ],
+      "code": 0,
+      "seconds": 2.130920456998865
+    }
+  ],
+  "generated_wasm_exit": 42
+}

@@ -1,0 +1,21 @@
+{
+  "source": "9eddfb57064f3eb65943ff596da8e819110ebdff",
+  "tag": "stage0-20261024-9eddfb5",
+  "assets": [
+    {
+      "host": "x86-64-linux",
+      "bytes": 14449856,
+      "sha256": "a4d655b3ce09712582951702c8fce5d0cba0dbe58736c7da95ef2a60a9b3674f"
+    },
+    {
+      "host": "arm64-linux",
+      "bytes": 15843728,
+      "sha256": "e3bfd003bc00c1c86f41c4597859130870736701a8e9ae54f27e4d2f5dca4e30"
+    },
+    {
+      "host": "arm64-darwin",
+      "bytes": 16025137,
+      "sha256": "6ea2cc732eff35d64610855646ac5639684cd195a15d67b2a5cf11fdc48bc1f4"
+    }
+  ]
+}

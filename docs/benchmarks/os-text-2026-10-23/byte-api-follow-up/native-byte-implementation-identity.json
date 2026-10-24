@@ -1,0 +1,46 @@
+[
+  {
+    "path": "compiler/asmcore.fern",
+    "sha256": "eb0ceb4177c40f11b07fbc183141aadd5b125b1712135d953d626d0aee7d0bcc"
+  },
+  {
+    "path": "compiler/asm_ir.fern",
+    "sha256": "7ed69904b1b2e7cfe06740f0fe06ea8b97b1702895d4dc8b3a34cd629c0d9da9"
+  },
+  {
+    "path": "compiler/asm_arm64_ir.fern",
+    "sha256": "51bdc5c0c360e5c0a7134a8d44be0bcc1a090196803199da627f5e5b7b770d18"
+  },
+  {
+    "path": "compiler/semsource.fern",
+    "sha256": "cf39dc26b45d559d4d7c880c5bd6c714fa35739847c30a2f92c473ba7190de09"
+  },
+  {
+    "path": "compiler/ir.fern",
+    "sha256": "a81fa573e039b9764dd2725ff2717b764906ee174becdc08052280f4f29fa382"
+  },
+  {
+    "path": "compiler/ssarc.fern",
+    "sha256": "e91b69a0cf0050d7be8f574b25a4f7bb627d77c5d4de8ae25e85a2c0aa21cff5"
+  },
+  {
+    "path": "coreutils/du.fern",
+    "sha256": "09f2da75db5e634adb9d89cc33dfd0043f0eebf2592d0e7660da20f0795eaafe"
+  },
+  {
+    "path": "coreutils/readlink.fern",
+    "sha256": "4072fb66d86bdc0679ef5c96d9b9cc3fcc5378879ff5303d9ad122a453047584"
+  },
+  {
+    "path": "coreutils/realpath.fern",
+    "sha256": "c0995b63ed14bc3ca827539498e0f5cb8fdd5b5a6b3760e659429781ae7fd79e"
+  },
+  {
+    "path": "coreutils/stat.fern",
+    "sha256": "99a018deee93d18495f2495db6db7453e807c039ff0558632248d916ae52406b"
+  },
+  {
+    "path": "coreutils/lib/canon.fern",
+    "sha256": "a9e74d402b8cf80681c68ddc3b9efb52d4d62de75ceab4f3683c9bd26fe27727"
+  }
+]
