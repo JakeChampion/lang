@@ -2927,7 +2927,11 @@ func builtinTempDir(_ *Interp, args []Value) (Value, error) {
 	if strings.ContainsRune(string(prefix), '/') {
 		return resultErr(ioErrorOther(string(prefix), syscall.EINVAL)), nil
 	}
-	dir, err := os.MkdirTemp("", string(prefix)+"-*")
+	tempRoot := os.TempDir()
+	if !utf8.ValidString(tempRoot) {
+		return resultErr(ioErrorOfErrno(string(prefix), syscall.EILSEQ)), nil
+	}
+	dir, err := os.MkdirTemp(tempRoot, string(prefix)+"-*")
 	if err != nil {
 		return resultErr(classifyIoError(string(prefix), err)), nil
 	}
@@ -2997,6 +3001,9 @@ func readDirEntries(name string, skipDots bool, args []Value) ([]dirent, Value, 
 	}
 	kept := []dirent{}
 	for _, e := range entries {
+		if !utf8.ValidString(e.name) {
+			return nil, resultErr(ioErrorOfErrno(string(path), syscall.EILSEQ)), nil
+		}
 		if !skipDots || e.name != "." && e.name != ".." {
 			kept = append(kept, e)
 		}
@@ -3399,6 +3406,9 @@ func builtinHostname(_ *Interp, args []Value) (Value, error) {
 	if err != nil {
 		return String(""), nil
 	}
+	if !utf8.ValidString(h) {
+		return String(""), nil
+	}
 	return String(h), nil
 }
 
@@ -3415,6 +3425,9 @@ func builtinUnameField(_ *Interp, args []Value) (Value, error) {
 	if i < 0 || i >= len(fields) {
 		return String(""), nil
 	}
+	if !utf8.ValidString(fields[i]) {
+		return String(""), nil
+	}
 	return String(fields[i]), nil
 }
 
@@ -3425,6 +3438,9 @@ func builtinGetcwd(_ *Interp, args []Value) (Value, error) {
 	wd, err := syscall.Getwd()
 	if err != nil {
 		return resultErr(classifyIoError("", err)), nil
+	}
+	if !utf8.ValidString(wd) {
+		return resultErr(ioErrorOfErrno("", syscall.EILSEQ)), nil
 	}
 	return resultOk(String(wd)), nil
 }
@@ -3565,6 +3581,9 @@ func builtinMounts(_ *Interp, args []Value) (Value, error) {
 	}
 	out := newArray(len(rows))
 	for i, m := range rows {
+		if !utf8.ValidString(m.source) || !utf8.ValidString(m.target) || !utf8.ValidString(m.fstype) {
+			return resultErr(ioErrorOfErrno("", syscall.EILSEQ)), nil
+		}
 		out.E[i] = &Struct{
 			TypeName: "MountEntry",
 			Fields: map[string]Value{
@@ -3807,6 +3826,9 @@ func builtinReadLink(_ *Interp, args []Value) (Value, error) {
 			return resultErr(classifyIoError(p[0], err)), nil
 		}
 		if n < size {
+			if !utf8.Valid(buf[:n]) {
+				return resultErr(ioErrorOfErrno(p[0], syscall.EILSEQ)), nil
+			}
 			return resultOk(String(buf[:n])), nil
 		}
 	}

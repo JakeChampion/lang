@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 )
 
 func builtinOpenDir(i *Interp, args []Value) (Value, error) {
@@ -104,6 +105,9 @@ func builtinDirEntries(i *Interp, args []Value) (Value, error) {
 	}
 	out := newArray(len(entries))
 	for k, e := range entries {
+		if !utf8.ValidString(e.Name()) {
+			return resultErr(ioErrorOfErrno("", syscall.EILSEQ)), nil
+		}
 		out.E[k] = String(e.Name())
 	}
 	return resultOk(out), nil

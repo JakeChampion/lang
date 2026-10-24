@@ -1,0 +1,60 @@
+{
+  "before": {
+    "source_git": "6371154cebf59a6767664f6a552a04f3fd806234",
+    "source_sha256": "97d2eaacf20cac016196a05211df9d78db352f8e52efcd35b8b999c520629fad",
+    "stages": [
+      {
+        "stage": "stage1",
+        "producer_sha256": "9caea1e43f0942ed9ba6fa432fcc29d9a57fce1fe35ff97716def7c2443c4faa",
+        "seconds": 17.171807594997517,
+        "bytes": 14421008,
+        "sha256": "d0707a01960e9e10de802ae9b01777224d0207ce399ad95f29ee9722fbc2dbbf"
+      },
+      {
+        "stage": "stage2",
+        "producer_sha256": "d0707a01960e9e10de802ae9b01777224d0207ce399ad95f29ee9722fbc2dbbf",
+        "seconds": 17.285214741001255,
+        "bytes": 14428560,
+        "sha256": "e7df2c474bf520ee0eb96e4a15cd7c335812ee42fc2568f569d01bb961614d19"
+      },
+      {
+        "stage": "stage3",
+        "producer_sha256": "e7df2c474bf520ee0eb96e4a15cd7c335812ee42fc2568f569d01bb961614d19",
+        "seconds": 16.960227807998308,
+        "bytes": 14428560,
+        "sha256": "e7df2c474bf520ee0eb96e4a15cd7c335812ee42fc2568f569d01bb961614d19"
+      }
+    ],
+    "fixedpoint": true
+  },
+  "after": {
+    "source_git": "0e6cb8864dfbf7a63ae1b42ffc5c29bcd1c59b1d",
+    "source_sha256": "443a378e7fe11b005a416d72b097d5f52f6b406235cccb9a9d81257ba219b585",
+    "stages": [
+      {
+        "stage": "stage1",
+        "producer_sha256": "9caea1e43f0942ed9ba6fa432fcc29d9a57fce1fe35ff97716def7c2443c4faa",
+        "seconds": 26.55700011900626,
+        "bytes": 14421008,
+        "sha256": "d0707a01960e9e10de802ae9b01777224d0207ce399ad95f29ee9722fbc2dbbf"
+      },
+      {
+        "stage": "stage2",
+        "producer_sha256": "d0707a01960e9e10de802ae9b01777224d0207ce399ad95f29ee9722fbc2dbbf",
+        "seconds": 20.371574543998577,
+        "bytes": 14428560,
+        "sha256": "e7df2c474bf520ee0eb96e4a15cd7c335812ee42fc2568f569d01bb961614d19"
+      },
+      {
+        "stage": "stage3",
+        "producer_sha256": "e7df2c474bf520ee0eb96e4a15cd7c335812ee42fc2568f569d01bb961614d19",
+        "seconds": 17.536379019999004,
+        "bytes": 14428560,
+        "sha256": "e7df2c474bf520ee0eb96e4a15cd7c335812ee42fc2568f569d01bb961614d19"
+      }
+    ],
+    "fixedpoint": true
+  },
+  "all_three_stages_byte_identical": true,
+  "go_production_source_matches": "81fbf50964f8763695b04b8ceeff80dbf56517bc"
+}

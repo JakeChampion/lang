@@ -9176,6 +9176,12 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   }
   if (needs_fs_runtime(s)) {
     let fs_src: string = asmcore.rt_src_io_error(tgt);
+    if (s.has_need("uname_field")) {
+      fs_src = fs_src + " " + asmcore.rt_src_uname_field(tgt);
+    }
+    if (s.has_need("hostname")) {
+      fs_src = fs_src + " " + asmcore.rt_src_hostname(tgt);
+    }
     if (s.has_need("stat")) {
       fs_src = fs_src + " " + asmcore.rt_src_stat(tgt);
     }
@@ -9194,7 +9200,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("lstat")) {
       fs_src = fs_src + " " + asmcore.rt_src_lstat(tgt);
     }
-    if (s.has_need("read_file") || s.has_need("getxattr") || s.has_need("lgetxattr") || s.has_need("reader")) {
+    if (s.has_need("read_file") || s.has_need("getxattr") || s.has_need("lgetxattr") || s.has_need("reader") || s.has_need("read_dir") || s.has_need("read_dir_all") || s.has_need("read_dir_ino") || s.has_need("read_dir_ino_all") || s.has_need("dir_entries") || s.has_need("read_link") || s.has_need("getcwd") || s.has_need("hostname") || s.has_need("uname_field") || s.has_need("mounts")) {
       fs_src = fs_src + " " + asmcore.rt_src_utf8_valid();
     }
     if (s.has_need("read_file")) {
@@ -9489,12 +9495,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("getgroups")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_getgroups(tgt), s);
   }
-  if (s.has_need("hostname")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_hostname(tgt), s);
-  }
-  if (s.has_need("uname_field")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_uname_field(tgt), s);
-  }
+
   if (s.has_need("cpu_count")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_cpu_count(tgt), s);
   }
@@ -10370,6 +10371,7 @@ function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
 
 function needs_fs_runtime(s: asmcore.EmitState): boolean {
   return s.any_need([
+    "hostname", "uname_field",
     "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec",
     "remove_file", "create_dir_all", "create_dir", "remove_dir",
     "create_link", "clone_file", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at", "truncate",
