@@ -416,3 +416,4 @@ vload=475
 vstore=476
 vget=477
 vset=478
+vbitmask=479
