@@ -1,0 +1,15 @@
+TAP version 13
+# Suite: std/json object
+ok 1 - from pairs
+ok 2 - lookup, linear
+ok 3 - lookup, indexed
+ok 4 - insert replaces in place
+ok 5 - insert across the index threshold
+ok 6 - get_or
+ok 7 - parse repeated keys
+ok 8 - object_of
+ok 9 - document order
+1..9
+# tests 9
+# pass 9
+# fail 0
