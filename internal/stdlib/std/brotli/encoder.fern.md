@@ -6,6 +6,8 @@ The match table has bounded size. Incompressible input uses stored meta-blocks.
 
 ```fern
 <<*>>=
+// This module encodes Brotli streams with bounded LZ77 history and fixed prefix trees.
+
 <<Types and length codes>>
 <<Write bits>>
 <<Describe prefix trees>>

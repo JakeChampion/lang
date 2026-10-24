@@ -1023,7 +1023,7 @@ func TestRunnerZstdExamplePasses(t *testing.T) {
 }
 
 func TestRunnerHTTPCompressExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_compress", "std/http/compress", 11)
+	runnerSuitePasses(t, "http_compress", "std/http/compress", 12)
 }
 
 func TestRunnerHTTPStaticExamplePasses(t *testing.T) {

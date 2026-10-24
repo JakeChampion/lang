@@ -2,6 +2,7 @@ import "std/test";
 import "std/http";
 import "std/http/compress";
 import "std/deflate";
+import "std/brotli";
 import "std/zstd";
 import "std/headers";
 import "std/utf8";
@@ -58,6 +59,16 @@ function summary(r: HttpResponse): string {
       }
     }
   }
+  if (field(r, "Content-Encoding") == "br") {
+    match (brotli.decompress(body, 1048576)) {
+      Ok(out) => {
+        body = out;
+      },
+      Err(e) => {
+        return "bad br: " + e.message();
+      }
+    }
+  }
   let text: string = utf8.from_bytes_lossy(body);
   let read: string = body.len().to_string();
   if (text == page()) {
@@ -67,15 +78,23 @@ function summary(r: HttpResponse): string {
 }
 
 function test_gzip_chosen(): test.TestOutcome {
-  let r: HttpResponse = compress.response(req(["Accept-Encoding", "br, gzip"]), html(), compress.options());
+  let r: HttpResponse = compress.response(req(["Accept-Encoding", "gzip"]), html(), compress.options());
   return test.assert_eq(summary(r) + " " + (r.body_len() < page().len()).to_string(), "gzip Accept-Encoding same true");
 }
 
 function test_zstd(): test.TestOutcome {
   let o: compress.Options = compress.options();
-  let both: string = summary(compress.response(req(["Accept-Encoding", "gzip, deflate, br, zstd"]), html(), o));
+  let both: string = summary(compress.response(req(["Accept-Encoding", "gzip, deflate, zstd"]), html(), o));
   let ranked: string = summary(compress.response(req(["Accept-Encoding", "zstd;q=0.5, gzip"]), html(), o));
   return test.assert_eq(both + " | " + ranked, "zstd Accept-Encoding same | gzip Accept-Encoding same");
+}
+
+function test_brotli(): test.TestOutcome {
+  let o: compress.Options = compress.options();
+  let tie = summary(compress.response(req(["Accept-Encoding", "gzip, zstd, br"]), html(), o));
+  let ranked = summary(compress.response(req(["Accept-Encoding", "br;q=0.2, gzip"]), html(), o));
+  let refused = summary(compress.response(req(["Accept-Encoding", "br;q=0, gzip"]), html(), o));
+  return test.assert_eq(tie + " | " + ranked + " | " + refused, "br Accept-Encoding same | gzip Accept-Encoding same | gzip Accept-Encoding same");
 }
 
 function test_identity(): test.TestOutcome {
@@ -88,8 +107,8 @@ function test_identity(): test.TestOutcome {
 }
 
 function test_unwritten_coding(): test.TestOutcome {
-  let o: compress.Options = compress.Options { ...compress.options(), codings: ["br", "gzip"] };
-  return test.assert_eq(summary(compress.response(req(["Accept-Encoding", "br, gzip"]), html(), o)), "gzip Accept-Encoding same");
+  let o: compress.Options = compress.Options { ...compress.options(), codings: ["deflate", "gzip"] };
+  return test.assert_eq(summary(compress.response(req(["Accept-Encoding", "deflate, gzip"]), html(), o)), "gzip Accept-Encoding same");
 }
 
 function test_vary_kept(): test.TestOutcome {
@@ -166,6 +185,7 @@ function main(): i32 {
   let r: test.TestRunner = test.test_new("std/http/compress");
   r = r.it("gzip when the client accepts it", test_gzip_chosen);
   r = r.it("zstd preferred on a tie", test_zstd);
+  r = r.it("Brotli preference and quality", test_brotli);
   r = r.it("identity when it does not", test_identity);
   r = r.it("a coding it does not write passed over", test_unwritten_coding);
   r = r.it("Vary keeps its other fields", test_vary_kept);
