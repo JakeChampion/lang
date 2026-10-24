@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -12,6 +13,12 @@ func TestPrinterCorpusMatrixCoversEveryShard(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "test-units.yml"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	gate := jobBlocks(string(data))["verify-heavy"]
+	for _, required := range []string{"name: test-units-${{ matrix.host }}-heavy", "needs: test", "if: always()", "${{ needs.test.result }}", `test "$WORKER_RESULT" = success`} {
+		if !strings.Contains(gate, required) {
+			t.Errorf("aggregate unit check omits %q", required)
+		}
 	}
 	row := regexp.MustCompile(`(?m)^\s*-\s*\{[^\n}]*host:\s*([A-Za-z0-9_]+)\s*,\s*group:\s*heavy\s*,\s*shard:\s*(\d+)\s*,\s*nshard:\s*(\d+)\s*\}`)
 	seen := map[string]map[int]bool{}

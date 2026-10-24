@@ -203,3 +203,17 @@ jobs:
         with:
           path: ~/.cache/go-build
           key: gobuild-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.lock') }}-${{ steps.day.outputs.stamp }}
+
+  verify-heavy:
+    name: test-units-${{ matrix.host }}-heavy
+    if: always()
+    needs: test
+    strategy:
+      matrix:
+        host: [x86_64, aarch64]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every unit worker
+        env:
+          WORKER_RESULT: ${{ needs.test.result }}
+        run: test "$WORKER_RESULT" = success
