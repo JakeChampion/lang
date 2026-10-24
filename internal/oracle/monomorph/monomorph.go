@@ -227,6 +227,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		}
 		c.ReturnType = substituteType(c.ReturnType, sub)
 		substituteBlock(c.Body, sub)
+		substituteConstParams(c, sub)
 		// The body's type parameters are now concrete, so any
 		// generic call it makes (`id(x)` → `id[i32]`) can be
 		// instantiated. collectCalls records the instantiation and
@@ -1341,6 +1342,26 @@ func substituteNode(n ast.Node, sub map[string]ast.Type) {
 			x.ReturnType = substituteType(x.ReturnType, sub)
 		}
 		return true
+	})
+}
+
+// substituteConstParams replaces each read of a const parameter in the body
+// of instance fn with the integer its instance is made for. The checker marks
+// the reads, so a binder that shadows the parameter keeps its own.
+func substituteConstParams(fn *ast.FuncDecl, sub map[string]ast.Type) {
+	if len(fn.ConstParams) == 0 {
+		return
+	}
+	fn.ConstParams = nil
+	ast.RewriteBlockExprs(fn.Body, func(e ast.Expr) ast.Expr {
+		id, ok := e.(*ast.Ident)
+		if !ok || !id.ConstParam {
+			return e
+		}
+		if v, ok := sub[id.Name].(ast.ConstArg); ok {
+			return &ast.NumberLit{P: id.P, Value: v.Value}
+		}
+		return e
 	})
 }
 

@@ -2,6 +2,7 @@ import "std/test";
 import "std/hex";
 import "std/string";
 import "std/crypto/rsa";
+import "std/crypto/sha2";
 
 // tests/stdlib/rsa_test.fern — std/crypto/rsa against signatures Python's
 // cryptography package made: PKCS#1 v1.5 and PSS over SHA-256, SHA-384 and
@@ -62,7 +63,7 @@ function message(): u8[] {
   return "fern rsa verification".bytes();
 }
 
-function pkcs1(n: string, h: rsa.Hash, msg: u8[], sig: string): boolean {
+function pkcs1(n: string, h: sha2.Hash, msg: u8[], sig: string): boolean {
   match (rsa.public_key(hex.hex_decode(n), hex.hex_decode("010001"))) {
     Ok(k) => {
       return rsa.verify_pkcs1v15(k, h, msg, hex.hex_decode(sig));
@@ -74,7 +75,7 @@ function pkcs1(n: string, h: rsa.Hash, msg: u8[], sig: string): boolean {
   return false;
 }
 
-function pss(n: string, h: rsa.Hash, msg: u8[], sig: string): boolean {
+function pss(n: string, h: sha2.Hash, msg: u8[], sig: string): boolean {
   match (rsa.public_key(hex.hex_decode(n), hex.hex_decode("010001"))) {
     Ok(k) => {
       return rsa.verify_pss(k, h, msg, hex.hex_decode(sig));
@@ -87,64 +88,64 @@ function pss(n: string, h: rsa.Hash, msg: u8[], sig: string): boolean {
 }
 
 function test_pkcs1_2048_sha256(): test.TestOutcome {
-  return test.assert_true(pkcs1(k2048_n(), rsa.Sha256, message(), k2048_pkcs1_sha256()));
+  return test.assert_true(pkcs1(k2048_n(), sha2.Sha256, message(), k2048_pkcs1_sha256()));
 }
 
 function test_pkcs1_2048_sha384(): test.TestOutcome {
-  return test.assert_true(pkcs1(k2048_n(), rsa.Sha384, message(), k2048_pkcs1_sha384()));
+  return test.assert_true(pkcs1(k2048_n(), sha2.Sha384, message(), k2048_pkcs1_sha384()));
 }
 
 function test_pkcs1_2048_sha512(): test.TestOutcome {
-  return test.assert_true(pkcs1(k2048_n(), rsa.Sha512, message(), k2048_pkcs1_sha512()));
+  return test.assert_true(pkcs1(k2048_n(), sha2.Sha512, message(), k2048_pkcs1_sha512()));
 }
 
 function test_pss_2048_sha256(): test.TestOutcome {
-  return test.assert_true(pss(k2048_n(), rsa.Sha256, message(), k2048_pss_sha256()));
+  return test.assert_true(pss(k2048_n(), sha2.Sha256, message(), k2048_pss_sha256()));
 }
 
 function test_pss_2048_sha384(): test.TestOutcome {
-  return test.assert_true(pss(k2048_n(), rsa.Sha384, message(), k2048_pss_sha384()));
+  return test.assert_true(pss(k2048_n(), sha2.Sha384, message(), k2048_pss_sha384()));
 }
 
 function test_pss_2048_sha512(): test.TestOutcome {
-  return test.assert_true(pss(k2048_n(), rsa.Sha512, message(), k2048_pss_sha512()));
+  return test.assert_true(pss(k2048_n(), sha2.Sha512, message(), k2048_pss_sha512()));
 }
 
 function test_pkcs1_2049_sha256(): test.TestOutcome {
-  return test.assert_true(pkcs1(k2049_n(), rsa.Sha256, message(), k2049_pkcs1_sha256()));
+  return test.assert_true(pkcs1(k2049_n(), sha2.Sha256, message(), k2049_pkcs1_sha256()));
 }
 
 function test_pkcs1_2049_sha512(): test.TestOutcome {
-  return test.assert_true(pkcs1(k2049_n(), rsa.Sha512, message(), k2049_pkcs1_sha512()));
+  return test.assert_true(pkcs1(k2049_n(), sha2.Sha512, message(), k2049_pkcs1_sha512()));
 }
 
 function test_pss_2049_sha256(): test.TestOutcome {
-  return test.assert_true(pss(k2049_n(), rsa.Sha256, message(), k2049_pss_sha256()));
+  return test.assert_true(pss(k2049_n(), sha2.Sha256, message(), k2049_pss_sha256()));
 }
 
 function test_pss_2049_sha512(): test.TestOutcome {
-  return test.assert_true(pss(k2049_n(), rsa.Sha512, message(), k2049_pss_sha512()));
+  return test.assert_true(pss(k2049_n(), sha2.Sha512, message(), k2049_pss_sha512()));
 }
 
 // A signature over another message, a flipped bit, the other scheme, the
 // other digest, or the wrong length does not verify.
 function test_refusals(): test.TestOutcome {
   let other: u8[] = "fern rsa verification!".bytes();
-  if (pkcs1(k2048_n(), rsa.Sha256, other, k2048_pkcs1_sha256()) || pss(k2048_n(), rsa.Sha256, other, k2048_pss_sha256())) {
+  if (pkcs1(k2048_n(), sha2.Sha256, other, k2048_pkcs1_sha256()) || pss(k2048_n(), sha2.Sha256, other, k2048_pss_sha256())) {
     return test.fail("a signature over another message verified");
   }
   let flipped: u8[] = hex.hex_decode(k2048_pss_sha256());
   flipped = flipped.with(100, flipped[100] ^ 1 as u8);
-  if (pss(k2048_n(), rsa.Sha256, message(), hex.hex_encode(flipped))) {
+  if (pss(k2048_n(), sha2.Sha256, message(), hex.hex_encode(flipped))) {
     return test.fail("a flipped bit verified");
   }
-  if (pss(k2048_n(), rsa.Sha256, message(), k2048_pkcs1_sha256()) || pkcs1(k2048_n(), rsa.Sha256, message(), k2048_pss_sha256())) {
+  if (pss(k2048_n(), sha2.Sha256, message(), k2048_pkcs1_sha256()) || pkcs1(k2048_n(), sha2.Sha256, message(), k2048_pss_sha256())) {
     return test.fail("a signature verified under the other scheme");
   }
-  if (pkcs1(k2048_n(), rsa.Sha384, message(), k2048_pkcs1_sha256()) || pss(k2048_n(), rsa.Sha512, message(), k2048_pss_sha256())) {
+  if (pkcs1(k2048_n(), sha2.Sha384, message(), k2048_pkcs1_sha256()) || pss(k2048_n(), sha2.Sha512, message(), k2048_pss_sha256())) {
     return test.fail("a signature verified under the other digest");
   }
-  if (pkcs1(k2048_n(), rsa.Sha256, message(), "00" + k2048_pkcs1_sha256()) || pkcs1(k2049_n(), rsa.Sha256, message(), k2048_pkcs1_sha256())) {
+  if (pkcs1(k2048_n(), sha2.Sha256, message(), "00" + k2048_pkcs1_sha256()) || pkcs1(k2049_n(), sha2.Sha256, message(), k2048_pkcs1_sha256())) {
     return test.fail("a signature of the wrong length verified");
   }
   return test.pass();

@@ -1,0 +1,133 @@
+// std/tls — why a TLS connection failed, one type for the client
+// (std/tls/client), the server (std/tls/server) and what is built on them,
+// so a caller handles a TLS failure the same way whichever end it is.
+//
+//   match (client.connect("example.com", 443, cfg, timeout)) {
+//     Err(tls.Untrusted(v)) => { … },
+//     Err(e) => { print(e.message()); },
+//     Ok(c) => { … },
+//   }
+
+import "std/dns";
+import "std/net";
+import "std/tls/handshake";
+import "std/tls/verify";
+import "std/error";
+import "core/cmp";
+
+// TlsError — the handshake's own refusal; the peer's chain not vouched for
+// by the roots, no certificate where one is required, or a CertificateVerify
+// that does not verify or names a scheme its key cannot make; this end's key
+// failing to sign; no roots to judge a chain by; the name not resolving; the
+// socket's error; the handshake outlasting its bound; the peer closing before
+// the handshake ended, or inside a record; or the kernel's record layer
+// refusing keys or failing a read, with the errno.
+pub enum TlsError {
+  HandshakeFailed(handshake.HandshakeError),
+  Untrusted(verify.VerifyError),
+  CertificateMissing,
+  SignatureInvalid,
+  SchemeMismatch,
+  SigningFailed,
+  NoRoots,
+  Unresolved(dns.DnsError),
+  NetFailed(net.NetError),
+  HandshakeTimeout,
+  ClosedEarly,
+  RecordCut,
+  // The kernel took the receive direction's keys and refused the transmit
+  // direction's, leaving the socket unusable.
+  OffloadRefused(i32),
+  // Linux before 6.14 takes one key per direction, so a KeyUpdate's keys
+  // are refused.
+  KeysRefused(i32),
+  KernelReadFailed(i32),
+}
+
+pub function (e: TlsError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for TlsError {}
+
+impl cmp.Display for TlsError {}
+
+pub function (e: TlsError) message(): string {
+  match (e) {
+    HandshakeFailed(h) => {
+      return h.message();
+    },
+    Untrusted(v) => {
+      return "the peer's certificate is not trusted: " + v.message();
+    },
+    CertificateMissing => {
+      return "the peer sent no certificate";
+    },
+    SignatureInvalid => {
+      return "the peer's CertificateVerify does not verify";
+    },
+    SchemeMismatch => {
+      return "the peer's CertificateVerify names a scheme its key cannot make";
+    },
+    SigningFailed => {
+      return "the key could not sign the CertificateVerify";
+    },
+    _ => {
+      return __later_message(e);
+    }
+  }
+  return "";
+}
+
+function __later_message(e: TlsError): string {
+  match (e) {
+    NoRoots => {
+      return "no root certificates: none at SSL_CERT_FILE or the system's bundle paths";
+    },
+    Unresolved(d) => {
+      return d.message();
+    },
+    NetFailed(n) => {
+      return n.message();
+    },
+    HandshakeTimeout => {
+      return "the handshake did not finish in time";
+    },
+    ClosedEarly => {
+      return "the peer closed the connection during the handshake";
+    },
+    RecordCut => {
+      return "the peer closed the connection inside a record";
+    },
+    _ => {
+      return __kernel_message(e);
+    }
+  }
+  return "";
+}
+
+function __kernel_message(e: TlsError): string {
+  match (e) {
+    OffloadRefused(n) => {
+      return "the kernel's TLS record layer refused the transmit keys (errno " + n.to_string() + ")";
+    },
+    KeysRefused(n) => {
+      return "the kernel's TLS record layer refused new keys (errno " + n.to_string() + "); Linux before 6.14 takes one key per direction";
+    },
+    KernelReadFailed(n) => {
+      return "the kernel's TLS record layer failed a read (errno " + n.to_string() + ")";
+    },
+    _ => {
+      return "";
+    }
+  }
+  return "";
+}
+
+// Failure — why a session's `read` failed, and the alert record to send the
+// peer before closing, sealed under the keys in force when it failed.
+pub struct Failure { error: TlsError, alert: u8[] }
+
+pub function (f: Failure) message(): string {
+  return f.error.message();
+}

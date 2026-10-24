@@ -1,0 +1,13 @@
+import "std/wasi_http";
+
+// Every case of the wasi:http `error-code`, by its position in the WIT's
+// declaration order, then the positions past them.
+function main(): i32 {
+  let i: i32 = -1;
+  while (i < 41) {
+    print(wasi_http.error_code(i).name());
+    i = i + 1;
+  }
+  print(wasi_http.Code(wasi_http.TlsCertificateError).message());
+  return 0;
+}

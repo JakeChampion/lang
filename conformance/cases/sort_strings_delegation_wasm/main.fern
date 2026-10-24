@@ -1,34 +1,28 @@
-// Regression for #4829: std/sort's case-insensitive string sort delegates to
-// the generic `sort_by(arr, string_cmp_ci)`. On the wasm backend this makes
-// `string_cmp_ci` BOTH a direct-call target (here) AND a closure value passed
-// to `sort_by`. The closure-target ABI appends an env_ptr param to such a
-// function's wasm signature, but the direct-call sites supplied only the
-// natural args — a stack underflow that failed `-target wasm32-wasi` validation
-// ("expected i32 but nothing on stack") while interp / x86-64 / arm64 all
-// passed. The fix pushes a dummy env_ptr at direct calls to env-appended
-// closure targets (see calleeEnvAppended in wasmbin).
-//
-// This is the minimal driver that reproduces via the REAL std/sort module
-// (the synthetic single-module cases don't — the mangled std/sort function set
-// is what leaves the comparator env-appended without the closureconv __env
-// param). The case/desc string sorts now route through core/cmp's generic
-// `sort` / `sort_desc` over `impl Ord for string` (which direct-calls
-// `string_cmp`), while `sort_strings_asc_ci` still passes `string_cmp_ci` as a
-// closure — keeping the #4829 both-direct-and-closure shape alive.
+// Regression for #4829: a comparator that is BOTH a direct-call target AND a
+// closure value passed to `cmp.sort_by`. The closure-target ABI appends an
+// env_ptr param to such a function's wasm signature, but the direct-call sites
+// supplied only the natural args — a stack underflow that failed
+// `-target wasm32-wasi` validation ("expected i32 but nothing on stack") while
+// interp / x86-64 / arm64 all passed. The fix pushes a dummy env_ptr at direct
+// calls to env-appended closure targets (see calleeEnvAppended in wasmbin).
 // prop_sort_strings is the exhaustive property companion; this one pins the
 // exact direct-call + delegation shape on every backend.
-import "std/sort";
 import "core/cmp";
+import "std/string";
+
+function fold_order(a: string, b: string): i32 {
+    return a.cmp_ignore_ascii_case(b);
+}
 
 function main(): i32 {
-    // Direct call to the mangled `string_cmp` — the env-appended
-    // closure target must still accept a bare (no-env) direct call.
-    if (sort.string_cmp("ab", "abc") >= 0) {
-        print("direct string_cmp FAILED");
+    if ("ab".cmp("abc") >= 0) {
+        print("direct cmp FAILED");
         return 1;
     }
-    if (sort.string_cmp_ci("ABC", "abc") != 0) {
-        print("direct string_cmp_ci FAILED");
+    // Direct call to `fold_order` — the env-appended closure target must
+    // still accept a bare (no-env) direct call.
+    if (fold_order("ABC", "abc") != 0) {
+        print("direct fold_order FAILED");
         return 1;
     }
 
@@ -46,7 +40,7 @@ function main(): i32 {
         return 1;
     }
 
-    let ci: string[] = sort.sort_strings_asc_ci(arr);
+    let ci: string[] = cmp.sort_by(arr, fold_order);
     // ci-stable: "Apple" and "apple" compare equal, keep input order.
     if (ci[0] != "") {
         print("ci FAILED");

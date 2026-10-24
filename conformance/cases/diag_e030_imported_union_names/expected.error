@@ -1,0 +1,7 @@
+match does not cover variant Ring of enum shapes.Shape — add an arm for it, or a `_` arm
+variant "Dot" already covered earlier in this match
+variant "Dott" is not part of enum shapes.Shape (did you mean "Dot"?)
+variant "Dot" already covered earlier in this match
+variant Dot carries 1 value, but the pattern binds 2
+match does not cover variant In of enum shapes.Outer — add an arm for it, or a `_` arm
+match does not cover variant Out of enum shapes.Outer — add an arm for it, or a `_` arm

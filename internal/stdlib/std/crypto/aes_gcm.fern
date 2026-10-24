@@ -24,59 +24,25 @@
 // compared with no early exit and only the verdict is declassified. The
 // valgrind gate (`__ct_secret`, docs/TEST-GATES.md) checks this.
 
-import "core/int";
-import "std/error";
-import "core/cmp";
-
-// AeadError — why a seal or an open was refused: a key or a nonce of the
-// wrong length (the length it had), or a sealed message that does not
-// verify.
-pub enum AeadError {
-  KeyLength(i32),
-  NonceLength(i32),
-  Forged,
-}
-
-pub function (e: AeadError) to_string(): string {
-  return e.message();
-}
-
-impl error.Error for AeadError {}
-
-impl cmp.Display for AeadError {}
-
-pub function (e: AeadError) message(): string {
-  match (e) {
-    KeyLength(n) => {
-      return "aes_gcm: the key is " + int.int_to_string(n) + " bytes, want 16 or 32";
-    },
-    NonceLength(n) => {
-      return "aes_gcm: the nonce is " + int.int_to_string(n) + " bytes, want 12";
-    },
-    Forged => {
-      return "aes_gcm: the message does not verify";
-    }
-  }
-  return "";
-}
+import "std/crypto/aead";
 
 // Key — a key prepared once for many messages: its round keys and the
 // GHASH key H = E(K, 0). `key` makes one; a session seals and opens
 // under it without expanding the key again.
 pub struct Key { rk: u8[], h: u8[] }
 
-pub function key(bytes: [u8]): Result[Key, AeadError] {
+pub function key(bytes: [u8]): Result[Key, aead.AeadError] {
   if (bytes.len() != 16 && bytes.len() != 32) {
-    return Err(KeyLength(bytes.len()));
+    return Err(aead.KeyLength(bytes.len()));
   }
   let rk: u8[] = __aes_expand_key(bytes);
   return Ok(Key { rk: rk, h: __aes_ctr32(rk, ZERO_BLOCK, ZERO_BLOCK) });
 }
 
 // __prepared is `key` for one message, after the nonce is checked.
-function __prepared(bytes: [u8], nonce: [u8]): Result[Key, AeadError] {
+function __prepared(bytes: [u8], nonce: [u8]): Result[Key, aead.AeadError] {
   if (nonce.len() != 12) {
-    return Err(NonceLength(nonce.len()));
+    return Err(aead.NonceLength(nonce.len()));
   }
   return key(bytes);
 }
@@ -85,14 +51,14 @@ const ZERO_BLOCK: u8[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
 // seal(key, nonce, plaintext, aad) — the plaintext encrypted, with the
 // 16-byte tag over it and the additional data `aad` after it.
-pub function seal(key: [u8], nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], AeadError] {
+pub function seal(key: [u8], nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
   return __prepared(key, nonce)?.seal(nonce, plaintext, aad);
 }
 
 // (k).seal(nonce, plaintext, aad) — `seal` under a prepared key.
-pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], AeadError] {
+pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
   if (nonce.len() != 12) {
-    return Err(NonceLength(nonce.len()));
+    return Err(aead.NonceLength(nonce.len()));
   }
   return Ok(__aes_gcm_seal(k.rk, k.h, nonce, aad, plaintext));
 }
@@ -100,17 +66,17 @@ pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[]
 // open(key, nonce, sealed, aad) — the plaintext of a message `seal` made
 // with the same key, nonce and aad, or `Forged`. The tag is checked in
 // constant time, and the plaintext is released only when it verifies.
-pub function open(key: [u8], nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], AeadError] {
+pub function open(key: [u8], nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
   return __prepared(key, nonce)?.open(nonce, sealed, aad);
 }
 
 // (k).open(nonce, sealed, aad) — `open` under a prepared key.
-pub function (k: Key) open(nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], AeadError] {
+pub function (k: Key) open(nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
   if (nonce.len() != 12) {
-    return Err(NonceLength(nonce.len()));
+    return Err(aead.NonceLength(nonce.len()));
   }
   if (sealed.len() < 16) {
-    return Err(Forged);
+    return Err(aead.Forged);
   }
   let n: i32 = sealed.len() - 16;
   // The plaintext, then the tag the ciphertext should carry.
@@ -126,7 +92,7 @@ pub function (k: Key) open(nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], A
   verdict = verdict.with(0, diff);
   __ct_public(verdict);
   if (verdict[0] != 0) {
-    return Err(Forged);
+    return Err(aead.Forged);
   }
   __arr_set_len(out, n);
   return Ok(out);

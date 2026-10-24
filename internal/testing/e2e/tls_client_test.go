@@ -158,6 +158,7 @@ const tlsClientSource = `import "std/fetch";
 import "std/http";
 import "std/string";
 import "std/time";
+import "std/tls";
 import "std/tls/client";
 import "std/tls/identity";
 import "std/tls/verify";
@@ -214,7 +215,7 @@ function socket(roots: verify.Roots): string {
 }
 
 // connected is a handshake with the echo server.
-function connected(cfg: client.Config): Result[client.Connection, client.TlsError] {
+function connected(cfg: client.Config): Result[client.Connection, tls.TlsError] {
   return client.connect("localhost", @ECHO@, cfg, time.duration_seconds(10 as i64));
 }
 
@@ -359,13 +360,13 @@ func (w *tlsWorld) check(t *testing.T, got string, mainConns int64) {
 		"retry: " + ok("/d", "X25519"),
 		"rsa: " + ok("/e", "X25519MLKEM768"),
 		"ed25519: " + ok("/f", "X25519MLKEM768"),
-		"untrusted: error TLS: the server's certificate is not trusted: tls verify: no path from the certificate reaches a trusted root",
-		"wrongname: error TLS: the server's certificate is not trusted: tls verify: the certificate is not valid for 127.0.0.1",
+		"untrusted: error TLS: the peer's certificate is not trusted: tls verify: no path from the certificate reaches a trusted root",
+		"wrongname: error TLS: the peer's certificate is not trusted: tls verify: the certificate is not valid for 127.0.0.1",
 		"tunnel: " + ok("/g", "X25519MLKEM768"),
 		"h2: 200 /k HTTP/2.0 h2 body=0 x-fern=yes",
 		"h2 again: 200 /l HTTP/2.0 h2 body=10 x-fern=-",
 		"given: " + ok("/h", "X25519MLKEM768"),
-		"none: error TLS: the server's certificate is not trusted: tls verify: no path from the certificate reaches a trusted root",
+		"none: error TLS: the peer's certificate is not trusted: tls verify: no path from the certificate reaches a trusted root",
 		"given again: " + ok("/j", "X25519MLKEM768"),
 		"socket: fern-echo echo ping / resumed resumed-echo again",
 		"mtls: echo fern-client hello / recv tls handshake: the peer sent alert 116",

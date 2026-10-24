@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// E043's "if it comes from …, add `import …`" hint answers the likeliest cause
-// of an unrecognised method on a scalar or string receiver: the module holding
-// it was never imported. It fired unconditionally, so a plain TYPO in a file
+// E043's "add `import …`" hint answers the likeliest cause of an unrecognised
+// method on a scalar or string receiver: the module holding it was never
+// imported. It fired unconditionally, so a plain TYPO in a file
 // that already has the import was told to add it again — unfollowable in the
 // same way the u8 hint's wrong module name was (TestScalarModuleHintIsFollowable),
 // since doing what it says changes nothing and the identical error repeats.
@@ -59,7 +59,7 @@ func TestImportHintStillFiresWithoutTheImport(t *testing.T) {
 	for _, tc := range []struct {
 		name, src, wantMod string
 	}{
-		{"string", `function f(t: string): i32 { return t.bogusmethod(); }
+		{"string", `function f(t: string): i32 { return t.trim().len(); }
 function main(): i32 { return f("abc"); }`, "std/string"},
 		// `to_string`, not an invented name: with no import at all a scalar
 		// carries no method namespace, so a nonsense spelling is refused
@@ -67,13 +67,13 @@ function main(): i32 { return f("abc"); }`, "std/string"},
 		// message. A real stdlib method is what gets there.
 		{"i32", `function f(x: i32): string { return x.to_string(); }
 function main(): i32 { return f(3).len(); }`, "std/i32"},
-		// Reaching a module TRANSITIVELY does not put its methods in scope, so
-		// the closure must not be what suppresses the hint: std/array imports
-		// std/string, and a program importing only std/array still needs to be
-		// told about std/string. This is why the lookup reads DirectImports.
+		// The import list the hint reads must not be the transitive closure:
+		// std/array imports std/string, and a program importing only
+		// std/array still needs to be told about std/json. This is why the
+		// lookup reads DirectImports.
 		{"transitive only", `import "std/array";
-function f(t: string): i32 { return t.bogusmethod(); }
-function main(): i32 { return f("abc"); }`, "std/string"},
+function f(t: string): i32 { return t.to_json().len(); }
+function main(): i32 { return f("abc"); }`, "std/json"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := checkModuleSource(t, tc.src)
@@ -98,9 +98,9 @@ func TestBuiltinUnionMethodNamesItsModule(t *testing.T) {
 		want string
 	}{
 		{"option", `function g(): Option[i32] { return None; }
-function main(): i32 { return g().unwrap_or(0); }`, "no method \"unwrap_or\" on Option[i32] — if it comes from std/option, add `import \"std/option\"`"},
+function main(): i32 { return g().unwrap_or(0); }`, "no method \"unwrap_or\" on Option[i32] — add `import \"std/option\"`"},
 		{"result", `function g(): Result[i32, string] { return Ok(1); }
-function main(): i32 { return g().unwrap_or(0); }`, "no method \"unwrap_or\" on Result[i32, string] — if it comes from std/result, add `import \"std/result\"`"},
+function main(): i32 { return g().unwrap_or(0); }`, "no method \"unwrap_or\" on Result[i32, string] — add `import \"std/result\"`"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := checkModuleSource(t, tc.src)

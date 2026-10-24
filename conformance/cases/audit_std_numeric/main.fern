@@ -2,6 +2,7 @@ import "core/int";
 import "std/i32";
 import "std/math";
 import "std/array";
+import "core/cmp";
 
 // Audit fixture: std/i32 scalar methods, std/math helpers, and std/array
 // reductions across every native backend.
@@ -31,7 +32,7 @@ function main(): i32 {
     let mn: i32 = match (a.min()) { Some(v) => v, None => 0 };
     if (mx != 3 || mn != 1) { print("FAIL arr-minmax"); return 22; }
     if (a.product() != 6) { print("FAIL arr-product"); return 23; }
-    let s: i32[] = a.sorted_asc();
+    let s: i32[] = cmp.sort(a);
     if (s[0] != 1 || s[1] != 2 || s[2] != 3) { print("FAIL arr-sorted"); return 24; }
 
     print("OK");

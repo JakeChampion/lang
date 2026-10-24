@@ -53,7 +53,7 @@ source plus expected output and any implementation can be run against it
 `fern -check`). So a diagnostic rule with only Go-side coverage is a rule
 the compiler is never checked against.
 
-**74 of 92** codes are pinned by a conformance case. The table
+**78 of 95** codes are pinned by a conformance case. The table
 below is verified against reality by `TestDiagnosticsIndexIsAccurate`:
 a code with no explanation, an explanation with no row, a claimed case
 that does not exist or does not actually emit the code, and a `—` on a
@@ -101,7 +101,7 @@ language does not have. It is deleted.
 | `E024` | Tuple or struct destructure error | `param_destructure_err_arity` |
 | `E026` | Wildcard `_` arm must be last | — |
 | `E027` | Match guard must be boolean | — |
-| `E028` | Match arm variant already covered | — |
+| `E028` | Match arm variant already covered | `diag_e014_imported_enum_names` |
 | `E029` | Variant pattern qualifier mismatch | `diag_e029` |
 | `E030` | `match` is not exhaustive | `err_nonexhaustive_match` |
 | `E031` | Match arms have incompatible types | `diag_e031` |
@@ -161,6 +161,9 @@ language does not have. It is deleted.
 | `E086` | an import does not resolve to a module | `diag_e086` |
 | `E087` | a module-qualified name the importing module cannot use | `diag_e087` |
 | `E088` | a `fern.toml` the loader refuses | — |
+| `E089` | a const argument is not an integer literal or a const parameter | `diag_e089` |
+| `E090` | an argument has the wrong kind for its parameter | `diag_e090` |
+| `E091` | an assignment to a const parameter | `diag_e091` |
 | `P001` | Unexpected token (parse error) | `diag_p001` |
 | `P002` | Numeric literal error | `diag_p002` |
 | `P003` | Left-hand side of assignment is not assignable | `diag_p003` |
@@ -174,7 +177,7 @@ names each stage and a closed reason tag, including guarded reuse and why R7
 declined a map. See [`ARRAY-ALGEBRA.md`](../docs/ARRAY-ALGEBRA.md) for the
 interface.
 
-## The 19 unpinned codes
+## The 18 unpinned codes
 
 These have Go-side coverage but no conformance case. Most resisted the
 mechanical derivation used for the rest — their catalogue examples are

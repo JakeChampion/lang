@@ -93,6 +93,17 @@ type hintTextCase struct {
 }
 
 var hintTextCases = []hintTextCase{
+	{name: "E043 matching IoError receiver", src: `function probe(x: Option[IoError]): void { x.failure(); } function main(): i32 { return 0; }`, code: "E043", spelling: `import "std/io_outcome"`},
+	{name: "E043 matching nested Option receiver", src: `function probe(x: Option[Option[i32]]): void { x.flatten(); } function main(): i32 { return 0; }`, code: "E043", spelling: `import "std/option"`},
+	{name: "E043 matching Option Result receiver", src: `function probe(x: Option[Result[i32, string]]): void { x.transpose(); } function main(): i32 { return 0; }`, code: "E043", spelling: `import "std/option"`},
+	{name: "E043 matching nested Result receiver", src: `function probe(x: Result[Result[i32, string], string]): void { x.flatten(); } function main(): i32 { return 0; }`, code: "E043", spelling: `import "std/result"`},
+	{name: "E043 matching Result failure receiver", src: `function probe(x: Result[void, IoError]): void { x.failure(); } function main(): i32 { return 0; }`, code: "E043", spelling: `import "std/io_outcome"`},
+	{name: "E043 matching generic tuple receiver", src: `function probe[A, B](x: Option[(A, B)]): void { x.unzip(); } function main(): i32 { return 0; }`, code: "E043", spelling: `import "std/option"`},
+	{name: "E043 matching restricted receiver near miss", src: `function probe(x: Option[IoError]): void { x.failur(); } function main(): i32 { return 0; }`, code: "E043", spelling: `did you mean "failure", which needs`},
+	{name: "E043 mismatching repeated Result parameter", src: `function probe(x: Result[Result[i32, string], i32]): void { x.flatten(); } function main(): i32 { return 0; }`, code: "E043", spelling: `is declared for Result[Result[T, E], E] in "std/result"`},
+	{name: "E043 generic receiver is not IoError", src: `function probe[A](x: Option[A]): void { x.failure(); } function main(): i32 { return 0; }`, code: "E043", spelling: `is declared for Option[IoError] in "std/io_outcome"`},
+	{name: "E043 narrow Option receiver", src: `function main(): i32 { let x: Option[i32] = Some(1); x.failure(); return 0; }`, code: "E043", spelling: `"failure" is declared for Option[IoError]`},
+	{name: "E043 nested Option receiver", src: `function main(): i32 { let x: Option[i32] = Some(1); x.unzip(); return 0; }`, code: "E043", spelling: `"unzip" is declared for Option[(T, U)]`},
 	{name: "E021 unsafe object reason", src: `trait Bad { function copy(self: Self): Self; } function f(x: dyn Bad): i32 { return 0; } function main(): i32 { return 0; }`, code: "E021", spelling: `method "copy" returns Self, so it cannot be used as`},
 	{name: "E032 empty use callback", src: `function take(f: () => i32): i32 { return f(); } function main(): i32 { use x <- take(); return 0; }`, code: "E032", spelling: `callback takes no arguments`},
 
@@ -334,10 +345,18 @@ function main(): i32 { let m = Map { K { a: 1 }: 1 }; return 0; }`,
 		// reader's own import list: with std/string present the message
 		// lists the surface instead, so a checker that cannot see its
 		// imports cannot say either thing correctly.
-		name:     "E043 unknown string method names the import",
+		name:     "E043 a string method from std/string names the import",
+		src:      `function main(): i32 { let s: string = "ab"; return s.trim().len(); }`,
+		code:     "E043",
+		spelling: "— add `import \"std/string\"`",
+	},
+	{
+		// A method no stdlib module declares gets no import advice: adding
+		// one would change nothing (#13064).
+		name:     "E043 a method no module declares names no import",
 		src:      `function main(): i32 { let s: string = "ab"; return s.frobnicate(); }`,
 		code:     "E043",
-		spelling: "if it comes from std/string, add `import \"std/string\"`",
+		spelling: `no method "frobnicate" on string, and no stdlib module declares one`,
 	},
 	{
 		// A field READ rather than a method call. Native says the same
@@ -346,7 +365,7 @@ function main(): i32 { let m = Map { K { a: 1 }: 1 }; return 0; }`,
 		name:     "E043 field read on a non-struct gets the method advice",
 		src:      `function main(): i32 { let s = "a"; return s.foo; }`,
 		code:     "E043",
-		spelling: "if it comes from std/string, add `import \"std/string\"`",
+		spelling: `no method "foo" on string, and no stdlib module declares one`,
 	},
 	{
 		// The type NAME a message renders is advice to write as much as a

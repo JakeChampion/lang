@@ -1,11 +1,10 @@
-import "std/sort";
+import "core/cmp";
 
-// sort_inplace — `sort_i32_inplace_asc`, the `fip` `own`-consuming sort. It is
-// an insertion sort, so it is only ever correct to call on a SMALL array; this
-// sorts many short ones, which is its intended shape. The property being
-// watched is that it stays allocation-free: if `.with` ever stops writing
-// through the unique owner and starts copying, the count jumps by an order of
-// magnitude here while `sort_ints` (which allocates by design) barely moves.
+// sort_inplace — `cmp.sort_in_place`, the `own`-consuming heapsort, over many
+// short arrays. The property being watched is that it stays allocation-free:
+// if `.with` ever stops writing through the unique owner and starts copying,
+// the count jumps by an order of magnitude here while `sort_ints` (which
+// allocates by design) barely moves.
 function main(): i32 {
   let total: i64 = 0i64;
   let r: i32 = 0;
@@ -21,7 +20,7 @@ function main(): i32 {
       xs = xs.append(seed);
       i = i + 1;
     }
-    xs = sort.sort_i32_inplace_asc(xs);
+    xs = cmp.sort_in_place(xs);
     total = total + xs[0] as i64 + xs[xs.len() - 1] as i64;
     r = r + 1;
   }

@@ -1,0 +1,72 @@
+// A const parameter (`const N: i32`) on a generic function. N is an i32 in
+// the body, and each call writes the integer its instance is made for: as
+// the only argument (`filled[4]`), before a type argument (`count[3,
+// string]`), or as a const parameter in scope (`filled[M]`). A lambda in
+// the body reads N as it reads any local. A binder of the same name shadows
+// N: a `let`, a lambda parameter, a loop variable and a match binding each
+// read their own value, and a `let N` initializer still reads the parameter.
+// A const argument can be written in any base and with `_` separators.
+import "std/i32";
+
+function filled[const N: i32](x: f64): f64[] {
+  let out: f64[] = [];
+  while (out.len() < N) {
+    out = out.append(x);
+  }
+  return out;
+}
+
+function count[const N: i32, T](x: T): i32 {
+  return N * 10;
+}
+
+function capped[const N: i32](xs: i32[]): i32[] {
+  let keep = (i: i32): boolean => i < N;
+  let out: i32[] = [];
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    if (keep(i)) {
+      out = out.append(xs[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function both[const M: i32](): i32 {
+  return filled[M](1.0).len() + count[M, i32](1);
+}
+
+function shadowed[const N: i32](xs: i32[], o: Option[i32]): i32 {
+  let g = (N: i32): i32 => N + 1;
+  let t: i32 = g(10);
+  for N in xs {
+    t = t + N;
+  }
+  let m: i32 = match (o) { Some(N) => N, None => 0 };
+  if (t > 0) {
+    let N: i32 = 1000;
+    t = t + N;
+  }
+  return t + m + N;
+}
+
+function doubled[const N: i32](): i32 {
+  let N: i32 = N * 2;
+  N = N + 1;
+  return N;
+}
+
+function main(): i32 {
+  print(filled[4](1.5).len().to_string());
+  print(filled[0](1.5).len().to_string());
+  print(count[3, string]("a").to_string());
+  print(capped[2]([7, 8, 9]).len().to_string());
+  print(both[3]().to_string());
+  print(both[5]().to_string());
+  print(shadowed[100]([1, 2], Some(7)).to_string());
+  print(doubled[5]().to_string());
+  print(count[0x10, string]("a").to_string());
+  print(filled[1_0](1.5).len().to_string());
+  return 0;
+}

@@ -91,6 +91,13 @@ func RewriteProgramExprs(p *Program, fn func(Expr) Expr) {
 	}
 }
 
+// RewriteBlockExprs is RewriteProgramExprs over one block.
+func RewriteBlockExprs(b *Block, fn func(Expr) Expr) {
+	if b != nil {
+		rewriteStmtChildren(b, fn)
+	}
+}
+
 // rewriteExpr rewrites e's children, then applies fn to e itself.
 func rewriteExpr(e Expr, fn func(Expr) Expr) Expr {
 	if e == nil {

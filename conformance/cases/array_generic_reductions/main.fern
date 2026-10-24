@@ -1,4 +1,5 @@
 import "std/array";
+import "core/cmp";
 
 // One method name per verb, working at several element types in the same
 // program (#2663). Before the collapse each of these existed twice — once
@@ -22,9 +23,9 @@ function main(): i32 {
     if (xs.count(1) != 1) { return 4; }
     if (ss.count("b") != 2) { return 5; }
 
-    if (xs.sorted_asc()[0] != 1) { return 6; }
-    if (ss.sorted_asc()[0] != "a") { return 7; }
-    if (xs.sorted_desc()[0] != 3) { return 8; }
+    if (cmp.sort(xs)[0] != 1) { return 6; }
+    if (cmp.sort(ss)[0] != "a") { return 7; }
+    if (cmp.sort_desc(xs)[0] != 3) { return 8; }
 
     if (xs.reverse()[0] != 2) { return 9; }
     if (ss.reverse()[0] != "b") { return 10; }

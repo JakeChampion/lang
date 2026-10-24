@@ -1,0 +1,45 @@
+// std/crypto/sha2 — the SHA-2 digest a signature is made over, named once for
+// every scheme that takes one (`std/crypto/ecdsa`, `std/crypto/rsa`).
+//
+//   if (rsa.verify_pss(key, sha2.Sha256, message, signature)) { … }
+//   let d: u8[] = sha2.Sha384.digest(message);
+
+import "std/crypto";
+
+pub enum Hash {
+  Sha256,
+  Sha384,
+  Sha512,
+}
+
+// `size()` — the bytes of a digest.
+pub function (h: Hash) size(): i32 {
+  match (h) {
+    Sha256 => {
+      return 32;
+    },
+    Sha384 => {
+      return 48;
+    },
+    Sha512 => {
+      return 64;
+    }
+  }
+  return 0;
+}
+
+// `digest(msg)` — the hash of msg.
+pub function (h: Hash) digest(msg: [u8]): u8[] {
+  match (h) {
+    Sha256 => {
+      return crypto.sha256_new().update_bytes(msg).final_bytes();
+    },
+    Sha384 => {
+      return crypto.sha384_new().update_bytes(msg).final_bytes();
+    },
+    Sha512 => {
+      return crypto.sha512_new().update_bytes(msg).final_bytes();
+    }
+  }
+  return [];
+}
