@@ -8866,15 +8866,13 @@ function eval_value_body(body: ast.Stmt[], env: Env, expect: string): StepResult
   }
   let cur = env;
   let assigned = body_assign_names(body, []);
-  let i: i32 = 0;
-  while (i + 1 < body.len()) {
+  for i in 0..body.len() - 1 {
     cur = cellify_captures(cur, body[i], assigned);
     let step = eval_out_stmt(body[i], cur);
     if (step.sig != 0) {
       return step;
     }
     cur = step.env;
-    i = i + 1;
   }
   match (body[body.len() - 1]) {
     ast.StmtReturn(r) => {
