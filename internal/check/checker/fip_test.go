@@ -3,6 +3,9 @@ package checker
 import (
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/check/constfold"
+	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
 // `fip function` is a Koka-style fully-in-place CHECKED guarantee: the checker
@@ -302,4 +305,26 @@ fip function run(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => g(x)); }
 		`fip function run(xs: i64[]): i64[] { return xs.map((x: i64): i64 => x); }`)
 	wantE053(t, "chained map on an own array", decl+
 		`fip function run(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => x).map((x: i64): i64 => x); }`)
+}
+
+// Constant substitution must preserve FIP admission for static table reads.
+func TestFipAdmitsSubstitutedConstArrays(t *testing.T) {
+	for _, claim := range []string{"fip", "fbip"} {
+		t.Run(claim, func(t *testing.T) {
+			prog, err := parser.Parse(`const STOPS: f64[] = [0.0, 0.16, 0.42, 1.0];
+const FLOATS: f32[] = [0.1f32, 0.1f32 + 0.2f32];
+const BYTES: u8[] = [1u8, 2u8];
+` + claim + ` function pick(i: i32): f64 { return STOPS[i] + FLOATS[i % 2] as f64 + BYTES[i % 2] as f64; }
+function main(): i32 { return 0; }`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := constfold.Fold(prog, nil); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Check(prog); err != nil {
+				t.Fatalf("static table read after substitution: %v", err)
+			}
+		})
+	}
 }
