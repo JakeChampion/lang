@@ -83,6 +83,24 @@ Reads return `Result` and reject offsets outside the input view.
 `std/png.encode_rgb8(width, height, pixels)` encodes consecutive RGB triples as a PNG image.
 It checks dimensions and buffer length before allocation and returns a typed encoding error.
 
+`encode_rgb8_with_options` accepts `png.Options` for filters and compression.
+`png.options()` selects `Filter.Unfiltered` and `Compression.Balanced`, which preserve the original output.
+Available filters are `Unfiltered`, `Sub`, `Up`, `Average`, `Paeth`, and `Adaptive`.
+`Adaptive` selects a filter for each row by the sum of absolute signed residuals.
+`Compression.Fast` uses a greedy compressor with one candidate per match.
+All modes preserve the input pixels.
+
+Filter and compression choices affect both execution time and file size.
+
+```fern
+let opts: png.Options = png.Options { ...png.options(), compression: png.Compression.Fast };
+let image: Result[u8[], png.EncodeError] = png.encode_rgb8_with_options(width, height, pixels, opts);
+```
+
+`std/deflate.deflate_fast(bytes)` exposes the same compressor for raw RFC 1951 streams.
+It retains the 32 KiB match window and omits the predecessor chain and lazy match search.
+The existing `deflate` function retains its balanced compression policy.
+
 ## Host capabilities
 
 Some modules need capabilities that a target does not provide.

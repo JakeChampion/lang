@@ -12794,7 +12794,11 @@ func (c *checker) checkFipFunctions(prog *ast.Program) {
 		ast.Walk(fn.Body, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.ArrayLit:
-				c.errfCode(x.Pos(), "E053", "`%s` function %q may not allocate (array literal)", kw, fn.Name)
+				// A substituted constant reads static storage. The IR verifies
+				// the allocation contract after lowering.
+				if !x.Const {
+					c.errfCode(x.Pos(), "E053", "`%s` function %q may not allocate (array literal)", kw, fn.Name)
+				}
 			case *ast.FString:
 				c.errfCode(x.Pos(), "E053", "`%s` function %q may not allocate (string interpolation)", kw, fn.Name)
 			case *ast.Binary:

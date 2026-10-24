@@ -27,8 +27,24 @@ impl error.Error for EncodeError {}
 
 impl cmp.Display for EncodeError {}
 
+pub enum Filter { Unfiltered, Sub, Up, Average, Paeth, Adaptive }
+
+pub enum Compression { Balanced, Fast }
+
+pub struct Options { filter: Filter, compression: Compression }
+
+// The default preserves the original filter-zero output and compression ratio.
+pub function options(): Options {
+  return Options { filter: Filter.Unfiltered, compression: Compression.Balanced };
+}
+
 // Pixels are consecutive RGB triples, from left to right and top to bottom.
 pub function encode_rgb8(width: i32, height: i32, pixels: [u8]): Result[u8[], EncodeError] {
+  return encode_rgb8_with_options(width, height, pixels, options());
+}
+
+// Filters are lossless. Adaptive selects a filter separately for each row.
+pub function encode_rgb8_with_options(width: i32, height: i32, pixels: [u8], opts: Options): Result[u8[], EncodeError] {
   if (width <= 0 || height <= 0 || width as i64 * 3 + 1 > 2147483647) {
     return Err(InvalidDimensions);
   }
@@ -43,12 +59,12 @@ pub function encode_rgb8(width: i32, height: i32, pixels: [u8]): Result[u8[], En
   let rows: u8[] = __alloc_u8(bytes as i32);
   let row: i32 = 0;
   while (row < height) {
-    // Filter 0 preserves each RGB byte.
-    let column: i32 = 0;
-    while (column < stride as i32) {
-      rows = rows.with(row * (stride as i32 + 1) + 1 + column, pixels[row * (stride as i32) + column]);
-      column = column + 1;
+    let filter: i32 = filter_id(opts.filter);
+    if (filter == 5) {
+      filter = best_filter(pixels, row * (stride as i32), stride as i32);
     }
+    rows = rows.with(row * (stride as i32 + 1), filter as u8);
+    rows = write_row(rows, row * (stride as i32 + 1) + 1, pixels, row * (stride as i32), stride as i32, filter);
     row = row + 1;
   }
   let output: u8[] = [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8];
@@ -56,10 +72,139 @@ pub function encode_rgb8(width: i32, height: i32, pixels: [u8]): Result[u8[], En
   header = binary.append_u32_be(header, height as u32);
   header = header.append(8 as u8).append(2 as u8).append(0 as u8).append(0 as u8).append(0 as u8);
   output = chunk(output, "IHDR", header);
-  let compressed: u8[] = binary.append_bytes([120 as u8, 1 as u8], deflate.deflate(rows));
+  let payload: u8[] = [];
+  match (opts.compression) {
+    Compression.Balanced => {
+      payload = deflate.deflate(rows);
+    },
+    Compression.Fast => {
+      payload = deflate.deflate_fast(rows);
+    }
+  }
+  let compressed: u8[] = binary.append_bytes([120 as u8, 1 as u8], payload);
   compressed = binary.append_u32_be(compressed, deflate.adler32(rows));
   output = chunk(output, "IDAT", compressed);
   return Ok(chunk(output, "IEND", []));
+}
+
+function filter_id(filter: Filter): i32 {
+  match (filter) {
+    Filter.Unfiltered => {
+      return 0;
+    },
+    Filter.Sub => {
+      return 1;
+    },
+    Filter.Up => {
+      return 2;
+    },
+    Filter.Average => {
+      return 3;
+    },
+    Filter.Paeth => {
+      return 4;
+    },
+    Filter.Adaptive => {
+      return 5;
+    }
+  }
+}
+
+function absolute(value: i32): i32 {
+  if (value < 0) {
+    return -value;
+  }
+  return value;
+}
+
+function predictor(pixels: [u8], start: i32, at: i32, stride: i32, filter: i32): i32 {
+  let left: i32 = 0;
+  let up: i32 = 0;
+  let corner: i32 = 0;
+  if (at >= 3) {
+    left = pixels[start + at - 3] as i32;
+  }
+  if (start >= stride) {
+    up = pixels[start + at - stride] as i32;
+    if (at >= 3) {
+      corner = pixels[start + at - stride - 3] as i32;
+    }
+  }
+  if (filter == 0) {
+    return 0;
+  }
+  if (filter == 1) {
+    return left;
+  }
+  if (filter == 2) {
+    return up;
+  }
+  if (filter == 3) {
+    return (left + up) / 2;
+  }
+  let estimate: i32 = left + up - corner;
+  let a: i32 = absolute(estimate - left);
+  let b: i32 = absolute(estimate - up);
+  let c: i32 = absolute(estimate - corner);
+  if (a <= b && a <= c) {
+    return left;
+  }
+  if (b <= c) {
+    return up;
+  }
+  return corner;
+}
+
+function write_row(own output: u8[], dest: i32, pixels: [u8], start: i32, stride: i32, filter: i32): u8[] {
+  if (filter == 0 || filter == 2 && start == 0) {
+    return __bytes_into(output, dest, pixels, start, stride);
+  }
+  let at: i32 = 0;
+  if (filter == 1) {
+    output = __bytes_into(output, dest, pixels, start, 3);
+    at = 3;
+    while (at < stride) {
+      output = output.with(dest + at, (pixels[start + at] as i32 - pixels[start + at - 3] as i32) as u8);
+      at = at + 1;
+    }
+    return output;
+  }
+  if (filter == 2) {
+    while (at < stride) {
+      output = output.with(dest + at, (pixels[start + at] as i32 - pixels[start + at - stride] as i32) as u8);
+      at = at + 1;
+    }
+    return output;
+  }
+  while (at < stride) {
+    output = output.with(dest + at, (pixels[start + at] as i32 - predictor(pixels, start, at, stride, filter)) as u8);
+    at = at + 1;
+  }
+  return output;
+}
+
+function best_filter(pixels: [u8], start: i32, stride: i32): i32 {
+  let best: i32 = 0;
+  let score: i64 = 9223372036854775807;
+  let filter: i32 = 0;
+  while (filter <= 4 && score > 0) {
+    let sum: i64 = 0;
+    let at: i32 = 0;
+    while (at < stride && sum < score) {
+      let difference: i32 = pixels[start + at] as i32 - predictor(pixels, start, at, stride, filter) & 255;
+      if (difference >= 128) {
+        difference = difference - 256;
+      }
+      sum = sum + absolute(difference) as i64;
+      at = at + 1;
+    }
+    if (sum < score) {
+      score = sum;
+      best = filter;
+    }
+    filter = filter + 1;
+  }
+  return best;
 }
 
 function chunk(own output: u8[], kind: string, data: u8[]): u8[] {

@@ -114,3 +114,8 @@ html, body {
   #where { left: 12px; bottom: 12px; }
   .leaflet-control-zoom { display: none; }
 }
+
+.timings { margin-top: 10px; color: var(--dim); font-size: 11px; }
+.timings summary { cursor: pointer; }
+.timings b { color: var(--text); font-family: var(--mono); }
+.timings p { margin: 5px 0 0; }

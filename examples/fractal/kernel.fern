@@ -1,5 +1,8 @@
 // Refill completed SIMD lanes while the other pixels continue.
 import "./linear";
+import "std/result";
+
+pub enum RenderError { Interrupted }
 
 pub struct View { size: i32, x: i64, y: i64, step: f64, limit: i32 }
 
@@ -66,11 +69,32 @@ function seed(own lane: Lane, view: View, imaginary: f64, column: i32, round: i3
 // another pixel immediately; the other lanes continue from their current orbit.
 // fern-lint: allow cyclomatic-complexity
 pub function render(view: View, ref: Option[linear.Reference]): Pixels {
+  match (render_cancellable(view, ref, (): boolean => false)) {
+    Ok(pixels) => {
+      return pixels;
+    },
+    Err(_) => {
+      // The callback cannot cancel. Stop if this internal contract fails.
+      exit(1);
+      return Pixels { counts: [], magnitudes: [], iterations: 0 };
+    }
+  }
+}
+
+// Cancellation is checked between rows, outside the SIMD loop.
+// fern-lint: allow cyclomatic-complexity
+pub function render_cancellable(view: View, ref: Option[linear.Reference], stop: () => boolean): Result[Pixels, RenderError] {
+  if (stop()) {
+    return Err(RenderError.Interrupted);
+  }
   let counts: i32[] = __alloc_i32(view.size * view.size);
   let magnitudes: i64[] = __alloc_i64(view.size * view.size);
   let iterations: i64 = 0;
   let row: i32 = 0;
   while (row < view.size) {
+    if (stop()) {
+      return Err(RenderError.Interrupted);
+    }
     let imaginary: f64 = 2.0 - ((view.y + row as i64) as f64 + 0.5) * view.step;
     let round: i32 = 0;
     let lane0: Lane = seed(empty_lane(), view, imaginary, 0, 0, ref);
@@ -639,5 +663,5 @@ pub function render(view: View, ref: Option[linear.Reference]): Pixels {
     }
     row = row + 1;
   }
-  return Pixels { counts: counts, magnitudes: magnitudes, iterations: iterations };
+  return Ok(Pixels { counts: counts, magnitudes: magnitudes, iterations: iterations });
 }
