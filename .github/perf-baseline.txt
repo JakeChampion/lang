@@ -1,3 +1,5 @@
+# Updated 2026-10-24 from PR #13125, CI run 40066011748.
+# Checked codec errors and byte views change emitted code and deflate instruction counts.
 # 2026-10-23: integrated PR sources 0b03aff204, Perf run 40015080180. Deterministic rows use these measurements.
 # Retired- and static-instruction baselines for the bench corpus,
 # checked against every run by scripts/ci-check-perf.
@@ -76,13 +78,13 @@ x86_64/call_overhead.text	233
 x86_64/call_overhead.ir	8250807
 x86_64/closure_call.text	877
 x86_64/closure_call.ir	63018154
-x86_64/deflate_decode.ir	93261573
-x86_64/deflate_decode.text	9897
-x86_64/deflate_encode.ir	95861038
-x86_64/deflate_encode.text	6015
+x86_64/deflate_decode.ir	97563621
+x86_64/deflate_decode.text	11574
+x86_64/deflate_encode.ir	118205841
+x86_64/deflate_encode.text	7164
 x86_64/enum_match.text	994
 x86_64/enum_match.ir	50850085
-x86_64/http_hello.text	16100
+x86_64/http_hello.text	16613
 x86_64/http_hello.ir	23788438
 x86_64/int_loop.text	178
 x86_64/int_loop.ir	12000070
@@ -122,9 +124,9 @@ x86_64/struct_drop.text	2207
 x86_64/struct_drop.ir	191340574
 x86_64/tokenize.text	1037
 x86_64/tokenize.ir	36960087
-x86_64/utf8_ingest_unchecked.text	7062
+x86_64/utf8_ingest_unchecked.text	7182
 x86_64/utf8_ingest_unchecked.ir	2805309
-x86_64/utf8_ingest_validated.text	7310
+x86_64/utf8_ingest_validated.text	7931
 x86_64/utf8_ingest_validated.ir	5887911
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
@@ -352,13 +354,13 @@ aarch64/call_overhead.text	304
 aarch64/call_overhead.ir	11250819
 aarch64/closure_call.text	1086
 aarch64/closure_call.ir	72624168
-aarch64/deflate_decode.ir	92625615
-aarch64/deflate_decode.text	10723
-aarch64/deflate_encode.ir	102172111
-aarch64/deflate_encode.text	6704
+aarch64/deflate_decode.ir	95375215
+aarch64/deflate_decode.text	12387
+aarch64/deflate_encode.ir	107927374
+aarch64/deflate_encode.text	7866
 aarch64/enum_match.text	1206
 aarch64/enum_match.ir	41175097
-aarch64/http_hello.text	16729
+aarch64/http_hello.text	17302
 aarch64/http_hello.ir	25860660
 aarch64/int_loop.text	246
 aarch64/int_loop.ir	18000078
@@ -398,9 +400,9 @@ aarch64/struct_drop.text	2540
 aarch64/struct_drop.ir	221660842
 aarch64/tokenize.text	1278
 aarch64/tokenize.ir	38350102
-aarch64/utf8_ingest_unchecked.text	7506
+aarch64/utf8_ingest_unchecked.text	7675
 aarch64/utf8_ingest_unchecked.ir	2683450
-aarch64/utf8_ingest_validated.text	7757
+aarch64/utf8_ingest_validated.text	8462
 aarch64/utf8_ingest_validated.ir	6269853
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.

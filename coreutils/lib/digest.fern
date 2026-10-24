@@ -728,13 +728,13 @@ function read_digest(s: Settings, bytes: u8[], n: i32): Digest {
 function read_digest_text(s: Settings, field: string, n: i32): Digest {
   if (s.cksum && field.len() == base64_len(n)) {
     match (base64.decode(field)) {
-      Some(bs) => {
+      Ok(bs) => {
         if (bs.len() != n) {
           return bad_digest();
         }
         return Digest { ok: true, hex: hex.encode(bs) };
       },
-      None => {
+      Err(_) => {
         return bad_digest();
       }
     }
