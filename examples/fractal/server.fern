@@ -82,7 +82,7 @@ struct Rendered {
   elapsed_ns: i64,
 }
 
-function (state: Stats) render(z: i32, x: i64, y: i64, key: string): Result[Rendered, fractal.RenderError] {
+function (state: Stats) render(z: i32, x: i64, y: i64, key: Option[string]): Result[Rendered, fractal.RenderError] {
   let started_ns: i64 = now_ns();
   state.active.set(state.active.get() + 1);
   let next_yield: Cell[i64] = cell_new(0 as i64);
@@ -104,10 +104,7 @@ pub function routes[P: platform.Platform](state: Stats, web: string, sources: so
   app = app.post("/cancel/{session}/{id}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
     let session_id: string = params.param("session")?;
     let id: string = params.param("id")?;
-    let key: string = request_key(session_id, id);
-    if (key.len() == 0) {
-      return Ok(http.bad_request("invalid cancellation token"));
-    }
+    let key: string = request_key(session_id, id).map_err((error: TokenError): http.HttpError => http.fail(400, "invalid cancellation token"))?;
     let cancelled: string[] = state.cancelled.get();
     if (!cancelled.contains(key)) {
       if (cancelled.len() >= 256) {
@@ -120,7 +117,7 @@ pub function routes[P: platform.Platform](state: Stats, web: string, sources: so
   app = app.get("/ws/{version}/{session}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
     let version: string = params.param("version")?;
     let session_id: string = params.param("session")?;
-    if (version != state.render_version || request_key(session_id, "1").len() == 0) {
+    if (version != state.render_version || request_key(session_id, "1").is_err()) {
       return Ok(http.not_found());
     }
     return Ok(http.respond(websocket.accept(req, websocket.options(), session(state, session_id))));
@@ -146,7 +143,12 @@ function tile(state: Stats, req: HttpRequest, params: router.Params): Result[Htt
   if (!fractal.valid(z, x, y)) {
     return Ok(http.bad_request("no such tile"));
   }
-  let key: string = request_key(req.headers.get("X-Fern-Session").unwrap_or(""), req.headers.get("X-Fern-Request").unwrap_or(""));
+  let session_id: string = req.headers.get("X-Fern-Session").unwrap_or("");
+  let request_id: string = req.headers.get("X-Fern-Request").unwrap_or("");
+  let key: Option[string] = None;
+  if (session_id.len() > 0 || request_id.len() > 0) {
+    key = Some(request_key(session_id, request_id).map_err((error: TokenError): http.HttpError => http.fail(400, "invalid cancellation token"))?);
+  }
   let rendered: Rendered = state.render(z, x, y, key).map_err((error: fractal.RenderError): http.HttpError => render_http_error(error))?;
   let response: HttpResponse = http.bytes(200, rendered.tile.png).with_content_type("image/png");
   if (state.binary_bytes > 0) {
@@ -209,6 +211,7 @@ pub struct TileRequest { id: u32, z: i32, x: i64, y: i64 }
 
 pub enum RequestError {
   InvalidFields,
+  InvalidToken(TokenError),
   InvalidNumber(string, parse.IntError),
   OutOfRange,
   Rendering(fractal.RenderError),
@@ -231,12 +234,13 @@ pub function parse_request(request: string): Result[TileRequest, RequestError] {
 
 // Check the wider integers before narrowing the protocol fields.
 fip function request_range(id: i64, z: i64): boolean {
-  return id >= 0 && id <= 4294967295 && z >= 0 && z <= fractal.MAX_ZOOM as i64;
+  return id >= 1 && id <= 4294967295 && z >= 0 && z <= fractal.MAX_ZOOM as i64;
 }
 
 function answer(state: Stats, session_id: string, request: string): Result[u8[], RequestError] {
   let tile: TileRequest = parse_request(request)?;
-  let rendered: Rendered = state.render(tile.z, tile.x, tile.y, request_key(session_id, tile.id.to_string())).map_err((error: fractal.RenderError): RequestError => Rendering(error))?;
+  let key: string = request_key(session_id, tile.id.to_string()).map_err((error: TokenError): RequestError => InvalidToken(error))?;
+  let rendered: Rendered = state.render(tile.z, tile.x, tile.y, Some(key)).map_err((error: fractal.RenderError): RequestError => Rendering(error))?;
   let response: u8[] = binary.append_u32_be([], tile.id);
   // Versioned sessions use a 32-byte header. Stage times are microseconds.
   response = binary.append_u32_be(response, (rendered.elapsed_ns / 1000) as u32);
@@ -271,40 +275,50 @@ function coordinate(params: router.Params, name: string): Result[i64, http.HttpE
   }
 }
 
+pub enum TokenError { InvalidSession, InvalidID(parse.IntError), InvalidIDRange }
+
 // Tokens are bounded and contain only URL-safe session characters and a u32 id.
-pub function request_key(session_id: string, id: string): string {
+pub function request_key(session_id: string, id: string): Result[string, TokenError] {
   if (session_id.len() < 16 || session_id.len() > 64) {
-    return "";
+    return Err(InvalidSession);
   }
   for c in session_id.as_bytes() {
     if (!(c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'-' || c == b'_')) {
-      return "";
+      return Err(InvalidSession);
     }
   }
-  match (parse.int64(id)) {
-    Ok(value) => {
-      if (value >= 1 && value <= 4294967295) {
-        return session_id + ":" + value.to_string();
-      }
+  let value: i64 = parse.int64(id).map_err((error: parse.IntError): TokenError => InvalidID(error))?;
+  if (value < 1 || value > 4294967295) {
+    return Err(InvalidIDRange);
+  }
+  return Ok(session_id + ":" + value.to_string());
+}
+
+function forget_cancel(state: Stats, key: Option[string]): void {
+  match (key) {
+    Some(token) => {
+      state.cancelled.set(state.cancelled.get().filter((value: string): boolean => value != token));
     },
-    Err(_) => {}
+    None => {}
   }
-  return "";
 }
 
-function forget_cancel(state: Stats, key: string): void {
-  if (key.len() == 0) {
-    return;
-  }
-  state.cancelled.set(state.cancelled.get().filter((value: string): boolean => value != key));
-}
-
-function request_stopped(state: Stats, key: string, next_yield: Cell[i64]): boolean {
+function request_stopped(state: Stats, key: Option[string], next_yield: Cell[i64]): boolean {
   if (async.in_task() && now_ns() >= next_yield.get()) {
     next_yield.set(now_ns() + 4000000);
     let ready: i32 = async.wait_any([], 1);
   }
-  return async.task_cancelled() || key.len() > 0 && state.cancelled.get().contains(key);
+  if (async.task_cancelled()) {
+    return true;
+  }
+  match (key) {
+    Some(token) => {
+      return state.cancelled.get().contains(token);
+    },
+    None => {
+      return false;
+    }
+  }
 }
 
 function render_http_error(error: fractal.RenderError): http.HttpError {

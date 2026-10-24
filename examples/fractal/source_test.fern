@@ -134,10 +134,19 @@ function test_version_and_cancel(): test.TestOutcome {
     || rendered.headers.get("Cache-Control").unwrap_or("") != "public, max-age=31536000, immutable") {
     return test.fail("versioned PNG response metadata differs");
   }
-  if (server.request_key(session_id, "4294967295") != session_id + ":4294967295"
-    || server.request_key(session_id, "4294967296").len() != 0 || server.request_key("short", "1").len() != 0
-    || server.request_key("0123456789abcdef/", "1").len() != 0 || server.request_key(session_id, "0").len() != 0) {
+  if (server.request_key(session_id, "4294967295").unwrap_or("") != session_id + ":4294967295"
+    || server.request_key(session_id, "4294967296").is_ok() || server.request_key("short", "1").is_ok()
+    || server.request_key("0123456789abcdef/", "1").is_ok() || server.request_key(session_id, "0").is_ok()) {
     return test.fail("cancellation token bounds differ");
+  }
+  let no_binary = server.routes[platform.Host](server.stats("test", 0, 0, "source-version"), "web", []);
+  let uncacheable: HttpResponse = no_binary.handle(http.request("GET", "/tile/source-version/42/0/0"), platform.host());
+  if (uncacheable.headers.get("Cache-Control").unwrap_or("") != "no-store") {
+    return test.fail("fallback identity received an immutable cache policy");
+  }
+  let invalid_token: HttpRequest = http.request("GET", "/tile/test-version/42/0/0").with_header("X-Fern-Session", "short");
+  if (routes.handle(invalid_token, platform.host()).status != 400) {
+    return test.fail("malformed cancellation headers were ignored");
   }
   return test.pass();
 }
