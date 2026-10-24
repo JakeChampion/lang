@@ -220,7 +220,7 @@ function now(): i64 {
 }
 
 function request(path: string): HttpRequest {
-  return HttpRequest { method: "GET", path: path, body: Stream { data: [], pos: 0, source: None }, headers: headers.header_map_new().append("host", "tls.example"), trailers: headers.header_map_new() };
+  return HttpRequest { method: "GET", path: path, body: ByteStream { data: [], pos: 0, source: None }, headers: headers.header_map_new().append("host", "tls.example"), trailers: headers.header_map_new() };
 }
 
 struct Cli { c: h3q.Conn, sock: i32, peer: net.SocketAddr, buf: u8[] }

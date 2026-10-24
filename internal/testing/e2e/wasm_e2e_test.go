@@ -3243,27 +3243,32 @@ function main(): i32 { return f() as i32; }`
 	}
 }
 
-func TestMixedSignednessRejected(t *testing.T) {
+func TestMixedSignednessWidening(t *testing.T) {
 	for _, src := range []string{
-		`function bad(): i32 { let x: i32 = 1; let y: u32 = 2 as u32; return x + y; }`,
-		`function bad(): i64 { let x: u32 = 1 as u32; let y: i64 = 2i64; return (x as i64) + y; }`,
+		`function good(): i64 { let x: i32 = 1; let y: u32 = 2 as u32; return x + y; }`,
+		`function good(): i64 { let x: u32 = 1 as u32; let y: i64 = 2i64; return x + y; }`,
 	} {
 		prog, err := parser.Parse(src)
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
-		_, err = checker.Check(prog)
-		_ = err
+		if _, err := checker.Check(prog); err != nil {
+			t.Fatalf("lossless mixed operands: %v", err)
+		}
 	}
+
 	src := `function bad(): i32 { let x: i32 = 1; let y: u32 = 2 as u32; return x + y; }`
 	prog, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	if _, err := checker.Check(prog); err == nil {
-		t.Fatalf("expected checker error for mixed i32/u32 add, got none")
-	} else if !strings.Contains(err.Error(), "use `as`") {
-		t.Errorf("expected error mentioning `as`, got: %v", err)
+		t.Fatal("expected a refusal to narrow the i64 sum to i32")
+	} else if !strings.Contains(err.Error(), "expected i32, got i64") {
+		t.Errorf("expected return type mismatch, got: %v", err)
+	}
+	if got := runWasm(t, `function main(): i32 { let x: i32 = 1; let y: u32 = 2 as u32; return (x + y) as i32; }`); got != 3 {
+		t.Errorf("mixed sum = %d, want 3", got)
 	}
 }
 

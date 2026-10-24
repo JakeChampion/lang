@@ -26395,7 +26395,7 @@ function binary_numeric_join(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.
 }
 
 function widen_binary_operand(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type, line: i32, col: i32): ast.Expr {
-  if (!is_unknown(to) && typeinfo.lossless_widen(from, to)) {
+  if (!int_literal_tree(e) && !is_unknown(to) && typeinfo.lossless_widen(from, to)) {
     return ast.ExprUnary { op: "as_" + typeinfo.spelling(to), operand: e, line: line, col: col, ty: type_to_irtag(to) };
   }
   return e;

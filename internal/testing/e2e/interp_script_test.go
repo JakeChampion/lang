@@ -1513,7 +1513,7 @@ func TestInterpScriptStreamPrimitive(t *testing.T) {
 			name: "stream_from_string + read_all_string round-trips",
 			source: `import "std/stream";
 function main(): i32 {
-    let s: Stream = stream.stream_from_string("hello world");
+    let s: ByteStream = stream.stream_from_string("hello world");
     print(s.len().to_string());
     let (text, s2) = s.read_all_string();
     match (text) { Some(value) => { print(value); }, None => { return 1; }, }
@@ -1527,7 +1527,7 @@ function main(): i32 {
 			source: `import "std/stream";
 function main(): i32 {
     let bs: u8[] = "abc".bytes();
-    let s: Stream = stream.stream_from_bytes(bs);
+    let s: ByteStream = stream.stream_from_bytes(bs);
     let (got, s2) = s.read_all();
     print(got.len().to_string());
     print((got[0] as i32).to_string());
@@ -1540,10 +1540,10 @@ function main(): i32 {
 			name: "remaining decrements as bytes are consumed",
 			source: `import "std/stream";
 function main(): i32 {
-    let s: Stream = stream.stream_from_string("abc");
+    let s: ByteStream = stream.stream_from_string("abc");
     print(s.remaining().to_string());
     let (_, s2) = s.read_all();
-    // cursor idiom: the advanced Stream is s2; original s is unchanged.
+    // cursor idiom: the advanced ByteStream is s2; original s is unchanged.
     print(s2.remaining().to_string());
     print(s2.len().to_string());
     return 0;
@@ -1554,7 +1554,7 @@ function main(): i32 {
 			name: "stream_empty is consistent",
 			source: `import "std/stream";
 function main(): i32 {
-    let s: Stream = stream.stream_empty();
+    let s: ByteStream = stream.stream_empty();
     if (s.len() != 0) { return 1; }
     if (s.remaining() != 0) { return 2; }
     if (!s.is_empty()) { return 3; }
@@ -1900,7 +1900,7 @@ func TestInterpScriptStreamReader(t *testing.T) {
 			name: "read_byte returns Some until exhausted",
 			source: `import "std/stream";
 function main(): i32 {
-    let s: Stream = stream.stream_from_string("ab");
+    let s: ByteStream = stream.stream_from_string("ab");
     let (b1, s2) = s.read_byte();
     match (b1) { Some(b) => { print(b.to_string()); }, None => { print("none"); } }
     let (b2, s3) = s2.read_byte();
@@ -1915,7 +1915,7 @@ function main(): i32 {
 			name: "read_n caps at available bytes",
 			source: `import "std/stream";
 function main(): i32 {
-    let s: Stream = stream.stream_from_string("hello");
+    let s: ByteStream = stream.stream_from_string("hello");
     let (first, s2) = s.read_n(3);
     print(first.len().to_string());
     let (rest, s3) = s2.read_n(99);
@@ -1930,7 +1930,7 @@ function main(): i32 {
 			name: "read_line strips both LF and CRLF",
 			source: `import "std/stream";
 function main(): i32 {
-    let s: Stream = stream.stream_from_string("unix\nwindows\r\nfinal");
+    let s: ByteStream = stream.stream_from_string("unix\nwindows\r\nfinal");
     let (l1, s2) = s.read_line();
     match (l1) { Some(l) => { print(l); }, None => { print("none"); } }
     let (l2, s3) = s2.read_line();

@@ -18,7 +18,7 @@ import "std/serve";
 import "std/platform";
 import "std/time";
 function sum_body(req: HttpRequest): HttpResponse {
-    let s: Stream = req.body_stream();
+    let s: ByteStream = req.body_stream();
     let count: i32 = 0;
     let sum: i32 = 0;
     let going: boolean = true;
