@@ -2386,9 +2386,9 @@ func words_capture {
     v0 = param 0
     v1 = const_str
     v2 = array_new v1
-    v3 = call __lam_24 v0 v2
+    v3 = call __lam_34 v0 v2
     v4 = const_int 1
-    v5 = call __lam_24 v4 v2
+    v5 = call __lam_34 v4 v2
     v6 = binary + v3 v5
     ret v6
 }
@@ -3605,7 +3605,7 @@ func text_capture$clo0 {
 
 modes 1 2 result i32
 v0:i32 v1:string[] v2:i32 v3:i32
-func __lam_24 {
+func __lam_34 {
   b0:
     v0 = param 0
     v1 = param 1

@@ -6042,7 +6042,7 @@ function bitwise_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.
       return t_bool();
     }
     if (is_integer(lt) && is_integer(rt)
-      && (int_literal_tree(b.left) || int_literal_tree(b.right))) {
+      && (int_literal_tree(b.left) || int_literal_tree(b.right) || !is_unknown(scalar_numeric_join(lt, rt)))) {
       return t_bool();
     }
     return t_unknown("equality op `" + b.op + "` requires same-typed operands");
@@ -12984,7 +12984,7 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
     }
   }
   if (b.op == "==" || b.op == "!=") {
-    let eq_widths: boolean = type_eq(blt, brt)
+    let eq_widths: boolean = type_eq(blt, brt) || !is_unknown(scalar_numeric_join(blt, brt))
       || settles_to(b.left, brt, s) || settles_to(b.right, blt, s);
     if (!is_unknown(blt) && !is_unknown(brt) && !eq_widths) {
       out = out.append(dg_at("E041", "cannot compare " + type_label(blt) + " with " + type_label(brt) + ": both sides of \"" + b.op + "\" must have the same type", b.line, b.col));
@@ -21796,7 +21796,7 @@ function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
   }
   if let ast.StmtUnknown(u) = body[body.len() - 1] {
     if (u.kind == "value branch has no trailing expression") {
-      return t_void();
+      return t_unknown("missing block value");
     }
   }
   if (parser.branch_exits_early(body)) {

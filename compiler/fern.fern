@@ -1528,7 +1528,17 @@ pub function capability_diags(merged: parser.Module, target: string): util.Diag[
 
 pub function ambient_diags(merged: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
-  for v in ambient.enforce(merged) {
+  let has_bag: boolean = false;
+  for fd in merged.funcs {
+    if (fd.body.len() > 0 && ambient.bag_param(fd).len() > 0) {
+      has_bag = true;
+      break;
+    }
+  }
+  if (!has_bag) {
+    return out;
+  }
+  for v in ambient.enforce(checker.annotate_module(merged)) {
     out = out.append(util.violation_diag("E080", ambient.violation_message(v), v.fn_module, v.line, v.col));
   }
   return out;

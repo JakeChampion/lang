@@ -413,9 +413,32 @@ function ts_impl_tag(tr: string): string {
   return "impl " + parser.trait_simple_name(tr);
 }
 
+function body_recv_tag(e: ast.Expr, lt: LocalTypes): string {
+  if let ast.ExprString(_) = e {
+    return "string";
+  }
+  if let ast.ExprArray(_) = e {
+    return "[]";
+  }
+  if let ast.ExprIdent(id) = e {
+    let k: i32 = util.index_of_str(lt.names, id.name);
+    if (k >= 0 && lt.types[k].len() > 0) {
+      return lt.types[k];
+    }
+  }
+  return ts_recv_tag(e);
+}
+
+function builtin_len(tag: string, field: string): boolean {
+  return field == "len" && (tag == "string" || tag == "str" || util.str_has_suffix(tag, "[]") || util.str_has_prefix(tag, "["));
+}
+
 function method_name_of(e: ast.Expr, lt: LocalTypes, own acc: string[]): string[] {
   if let ast.ExprCall(c) = e {
     if let ast.ExprFieldAccess(fa) = c.callee {
+      if (builtin_len(body_recv_tag(fa.obj, lt), fa.field)) {
+        return acc;
+      }
       acc = typed_method_name_of(fa, lt, acc);
     }
     return acc;

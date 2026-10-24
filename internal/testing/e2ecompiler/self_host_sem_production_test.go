@@ -1030,7 +1030,7 @@ function main(): i32 {
     print(s.twice() + " " + "xy".twice() + "\n");
     return s.twice().len();
 }`},
-	{name: "a-map-iterator-reads-its-snapshot", atLeast: 6, want: "181|", wasm: "181|", src: `
+	{name: "a-map-iterator-reads-its-snapshot", atLeast: 6, want: "0|", wasm: "0|", src: `
 import "core/map"; import "core/iter";
 
 function sum_values(m: Map[string, i32]): i32 {
@@ -1094,8 +1094,10 @@ function main(): i32 {
     let b: Map[i32, string] = map_new(4);
     b = b.insert(10, "xyz");
     b = b.insert(20, "pq");
-    return sum_values(m) + longest(t) + rounds(m, 50) + sum_values(empty)
+    let total: i32 = sum_values(m) + longest(t) + rounds(m, 50) + sum_values(empty)
         + narrow_keys(a) + narrow_key_str_value(b);
+    if (total == 437) { return 0; }
+    return 1;
 }`},
 	{name: "a-type-variable-only-a-constraint-mentions", atLeast: 13, want: "50|", src: `
 import "core/iter" as iter;

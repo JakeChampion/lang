@@ -58,3 +58,10 @@ func (c *checker) settleArrayLiteral(al *ast.ArrayLit, want ast.Type) {
 	}
 	al.ElemType = want
 }
+
+func settledBranchJoin(a, b ast.Type) ast.Type {
+	if joined := unifyIfArms(a, b); joined != nil {
+		return joined
+	}
+	return scalarNumericJoin(a, b)
+}

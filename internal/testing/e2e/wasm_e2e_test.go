@@ -2516,14 +2516,10 @@ func TestWASMFloatCasts(t *testing.T) {
 	}
 }
 
-func TestF32F64MixRejected(t *testing.T) {
-	src := `function bad(): f64 { let x: f32 = 1.0; let y: f64 = 2.0; return x + y; }`
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if _, err := checker.Check(prog); err == nil {
-		t.Fatalf("expected checker error for mixed f32/f64 add, got none")
+func TestF32F64MixWidening(t *testing.T) {
+	src := `function main(): i32 { let x: f32 = 1.25; let y: f64 = 2.5; if (x + y == 3.75f64) { return 0; } return 1; }`
+	if got := runWasm(t, src); got != 0 {
+		t.Fatalf("mixed f32/f64 sum returned %d, want 0", got)
 	}
 }
 

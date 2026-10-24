@@ -12626,6 +12626,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			return ast.ArrayType{Elem: elemExpected}
 		}
 		elemT := checkElem(n.Elems[0])
+		invalid := false
 		for _, el := range n.Elems[1:] {
 			t := checkElem(el)
 			if t == nil || elemT == nil {
@@ -12643,8 +12644,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				continue
 			}
 			c.errfCode(el.Pos(), "E034", "array element: expected %s, got %s", elemT, t)
+			invalid = true
 		}
-		if elemT == nil {
+		if elemT == nil || invalid && elemExpected != nil && c.elemSettleable(elemT, elemExpected) {
 			return nil
 		}
 		n.ElemType = elemT
@@ -14495,7 +14497,11 @@ func betterRefinement(existing, candidate ast.Type) bool {
 }
 
 func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
-	if from := c.numericTypes[e]; losslessNumericWiden(from, hint) {
+	from := c.numericTypes[e]
+	if isPolymorphicNumeric(from) {
+		from = c.postSettleType(e, from)
+	}
+	if losslessNumericWiden(from, hint) {
 		if c.numericCasts == nil {
 			c.numericCasts = make(map[ast.Expr]*ast.CastExpr)
 		}
@@ -15070,24 +15076,27 @@ func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 			return ast.TupleType{Elems: out}
 		}
 	case *ast.IfExpr:
-		if x.Then != nil {
-			if t := c.postSettleType(x.Then, prior); t != nil {
-				return t
-			}
+		left := c.postSettleType(x.Then, prior)
+		right := c.postSettleType(x.Else, prior)
+		if joined := settledBranchJoin(left, right); joined != nil {
+			return joined
 		}
-		if x.Else != nil {
-			if t := c.postSettleType(x.Else, prior); t != nil {
-				return t
-			}
-		}
+		return prior
 	case *ast.MatchExpr:
+		var result ast.Type
 		for _, arm := range x.Arms {
 			if arm == nil {
 				continue
 			}
-			if t := c.postSettleType(arm.Body, prior); t != nil {
-				return t
+			t := c.postSettleType(arm.Body, prior)
+			joined := settledBranchJoin(result, t)
+			if joined == nil && result != nil && t != nil {
+				return prior
 			}
+			result = joined
+		}
+		if result != nil {
+			return result
 		}
 	case *ast.BlockExpr:
 		if x.Tail != nil {

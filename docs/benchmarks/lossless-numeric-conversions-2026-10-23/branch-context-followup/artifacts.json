@@ -1,0 +1,391 @@
+{
+  "source": "7f1614931b0da0849f93fd55046d82c31db77ed8",
+  "base": "6b6b1f1fac1141c24adcb9239d6cc409df9cfb6b",
+  "source_sha256": "7ebe3e226cfaa32cf3074d31841f10f8519a6a5bc1e1da813592a4f090ec8bf9",
+  "native_sha256": "c7c5b910f31a3b89cabd5d8947102506df4d5c3d17e25442a10bafcbc1fbaf6a",
+  "oracle_sha256": "8c1cd3e80483f37f818c178de32f0d53e29e9bd95c2ddccf23a22568377c7a70",
+  "tests": [
+    {
+      "file": "/workspace/scratch/lang-lossless-widening/equality-followup/native-final-regressions.jsonl",
+      "source_commit": "7f1614931b0da0849f93fd55046d82c31db77ed8",
+      "runs": 4858,
+      "passes": 4858,
+      "skips": 0,
+      "packages": 1,
+      "skip_cases": []
+    },
+    {
+      "file": "/workspace/scratch/lang-lossless-widening/equality-followup/fixture-and-diagnostics-final.jsonl",
+      "source_commit": "7f1614931b0da0849f93fd55046d82c31db77ed8",
+      "runs": 51,
+      "passes": 51,
+      "skips": 0,
+      "packages": 1,
+      "skip_cases": []
+    },
+    {
+      "file": "/workspace/scratch/lang-lossless-widening/container-branch-followup/native-production-corpus-fast.jsonl",
+      "source_commit": "19f0d5ce780724f0805eb20baa9a8cf4113ba6dd",
+      "runs": 3021,
+      "passes": 3002,
+      "skips": 19,
+      "packages": 1,
+      "skip_cases": [
+        "TestSelfHostSemanticProduction/os-floor-queries/wasm32-wasi",
+        "TestSelfHostSemanticProduction/os-floor-files/wasm32-wasi",
+        "TestSelfHostSemanticProduction/os-floor-subprocess/wasm32-wasi",
+        "TestSelfHostSemanticProduction/os-floor-signals-and-process/wasm32-wasi",
+        "TestSelfHostSemanticProduction/os-floor-sockets-and-ids/wasm32-wasi",
+        "TestSelfHostSemanticProduction/os-floor-times-nodes-terminal/wasm32-wasi",
+        "TestSelfHostSemanticProduction/os-floor-fresh-results-are-freed/wasm32-wasi",
+        "TestSelfHostSemanticProduction/raw-floor-intrinsics/wasm32-wasi",
+        "TestSelfHostSemanticProduction/process-helpers-take-the-typed-path/wasm32-wasi",
+        "TestSelfHostSemanticProduction/fs-bundle-takes-the-typed-path/wasm32-wasi",
+        "TestSelfHostSemanticProduction/fs-leaves-take-the-typed-path/wasm32-wasi",
+        "TestSelfHostSemanticProduction/fs-bundle-reads-and-writes/wasm32-wasi",
+        "TestSelfHostSemanticProduction/sys-helpers-take-the-typed-path/wasm32-wasi",
+        "TestSelfHostSemanticProduction/proc-leaves-take-the-typed-path/wasm32-wasi",
+        "TestSelfHostSemanticProduction/arr-slice-takes-the-typed-path/wasm32-wasi",
+        "TestSelfHostSemanticProduction/usize-widens-to-i64-whole/wasm32-wasi",
+        "TestSelfHostSemanticProduction/usize-operators-at-register-width/wasm32-wasi",
+        "TestSelfHostSemanticProduction/c-call-trampolines/wasm32-wasi",
+        "TestSelfHostSemanticProduction/raw-floor-symbols-link-without-a-helper/wasm32-wasi"
+      ]
+    },
+    {
+      "file": "/workspace/scratch/lang-lossless-widening/container-branch-followup/mutants-and-fixtures-fast.jsonl",
+      "source_commit": "19f0d5ce780724f0805eb20baa9a8cf4113ba6dd",
+      "runs": 405,
+      "passes": 405,
+      "skips": 0,
+      "packages": 1,
+      "skip_cases": []
+    },
+    {
+      "file": "/workspace/scratch/lang-lossless-widening/container-branch-followup/go-regressions-length-fixed.jsonl",
+      "source_commit": "09220774fd6e903bb15d0c3a9774dabf62b53707",
+      "runs": 2290,
+      "passes": 2290,
+      "skips": 0,
+      "packages": 3,
+      "skip_cases": []
+    },
+    {
+      "file": "/workspace/scratch/lang-lossless-widening/container-branch-followup/diagnostic-goldens-final.jsonl",
+      "source_commit": "19f0d5ce780724f0805eb20baa9a8cf4113ba6dd",
+      "runs": 33,
+      "passes": 33,
+      "skips": 0,
+      "packages": 1,
+      "skip_cases": []
+    }
+  ],
+  "cli_commands": 51,
+  "balanced_censuses": 3,
+  "driver_count": 11,
+  "format_files": 1205,
+  "inputs": [
+    {
+      "path": "context-runtime/array-destination.fern",
+      "sha256": "9673d314068ea26b83ac16cf976723062651953c1314e2df0c93e2cd8c93d330"
+    },
+    {
+      "path": "context-runtime/array-primary.fern",
+      "sha256": "88d9a23ca425acce3ce2bbeae48f04fc81b8d4e5690882613cf2764aa8b047a4"
+    },
+    {
+      "path": "context-runtime/fresh-branches.fern",
+      "sha256": "79256addb71987f78bddcccb626aaa553a848c8a4c3ab95972672d2eca6bdde0"
+    },
+    {
+      "path": "context-runtime/if-literal-first.fern",
+      "sha256": "5cf780f2d102dd069af12e444e35cbde996907e6ceaecb17044d35dff9d7ae9c"
+    },
+    {
+      "path": "context-runtime/if-stored-first.fern",
+      "sha256": "658c1922f455eda23d9e571c31820013d979ca27d0f5b9de3e93b6c3cb8857eb"
+    },
+    {
+      "path": "context-runtime/match-literal-first.fern",
+      "sha256": "b03987bdd1f5a2e3f9c0bdd2ba12be5e722ec4044717ab7daa8fca48ff9f294f"
+    },
+    {
+      "path": "context-runtime/match-stored-first.fern",
+      "sha256": "9e215daf13de3dd61c8a1310754e69ade86eaf4c31c1e6247522599bd5e5476d"
+    },
+    {
+      "path": "numeric-comparisons/0ee.fern",
+      "sha256": "0e90dbce6a8908d35a33c04d988631f485bd945a07f12e40f98c7f75ce499e57"
+    },
+    {
+      "path": "numeric-comparisons/0l.fern",
+      "sha256": "b3b1d0d409707e98015c52539dcbb1e358aab806bdee33c9829bbae5c97d7450"
+    },
+    {
+      "path": "numeric-comparisons/0ne.fern",
+      "sha256": "0288b162f487533f69b0113b1c99e75a667317e092e10fc1a6e190e061099359"
+    },
+    {
+      "path": "numeric-comparisons/1ee.fern",
+      "sha256": "86f24f6c5ec9028accdf4d59aa08530d7ec7287bbbe97772153f76541c816a5e"
+    },
+    {
+      "path": "numeric-comparisons/1l.fern",
+      "sha256": "ecef9ef355d821f55c80afec4b3e70be5a1293b4d0d2e28e08808cfc162e996c"
+    },
+    {
+      "path": "numeric-comparisons/1ne.fern",
+      "sha256": "440946d3860d58f3dc68975318e6916c933581015d037eb5e23ff87d7628f845"
+    },
+    {
+      "path": "numeric-comparisons/2ee.fern",
+      "sha256": "0412a9e4678b03c3d6bb021abdc4e54f8f63818ba459708102a255a0829b2e2b"
+    },
+    {
+      "path": "numeric-comparisons/2l.fern",
+      "sha256": "a6e896ccf8d399ca9b4c84622a5699bdca05bccf6db88ebeeb0f29c413c0d2d1"
+    },
+    {
+      "path": "numeric-comparisons/2ne.fern",
+      "sha256": "d7e780d16f22646b86c4e6df748a5999bfb0603a9fd9bebbe1729a211efc48c4"
+    },
+    {
+      "path": "numeric-comparisons/3ee.fern",
+      "sha256": "afea110c9f2f1d8b6fba5ffa8d98f038d24d9cb9dd1263d7a8b8cdaee8b08b3c"
+    },
+    {
+      "path": "numeric-comparisons/3l.fern",
+      "sha256": "e53ddcb708edf4f0e4a4028d9e8c934668e806553303f2b0e045a02ed58afb84"
+    },
+    {
+      "path": "numeric-comparisons/3ne.fern",
+      "sha256": "11dc47a9963807c7e10e5561534b4895be31b8628069824670ba4983bd82e582"
+    },
+    {
+      "path": "numeric-comparisons/4ee.fern",
+      "sha256": "10e8e11b43c741949c53bf0f36317be46ab0c129bd56e0f765c07492cbc931bd"
+    },
+    {
+      "path": "numeric-comparisons/4l.fern",
+      "sha256": "cca823672d965811cae7652fca2e9810f8c098e0dae92fada93fe11331b111d5"
+    },
+    {
+      "path": "numeric-comparisons/4ne.fern",
+      "sha256": "a89abcde186ca8dd6ad8519d78273ca601cd0a7cc42dbc6e4c47af29a83e2055"
+    },
+    {
+      "path": "numeric-comparisons/5ee.fern",
+      "sha256": "9e27f1cb932d98a9a4fa89696b669e576f4dc12139ba5141611d11523688bd95"
+    },
+    {
+      "path": "numeric-comparisons/5l.fern",
+      "sha256": "fb727d4aad19c4dacdd6ee43ab8c2b0a3b571c8500259a2ef020af6ee22546e9"
+    },
+    {
+      "path": "numeric-comparisons/5ne.fern",
+      "sha256": "9026ec4a62082f3c119118c57adda3a9dbec4aed1b9789fe25fb3994711f7627"
+    },
+    {
+      "path": "numeric-comparisons/6ee.fern",
+      "sha256": "ade82da5834ba5f1024aad1ce285b803aaf65800bc9ceac68842556e518f4e93"
+    },
+    {
+      "path": "numeric-comparisons/6l.fern",
+      "sha256": "d42fa161ca9cbdd8fbc9695deed906d2521ad9b8fde0d2f70c6868886dd6057a"
+    },
+    {
+      "path": "numeric-comparisons/6ne.fern",
+      "sha256": "75db3c8159856bdd0bc56b254f5a9d326c67fb4ad2428a83f45bff621e68ab4f"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "source-files.json",
+      "bytes": 78865,
+      "sha256": "a8279dd4467d424701f5aeb2d416b77c3a6085d67a906bb546461288cae81585"
+    },
+    {
+      "path": "change.patch.gz",
+      "bytes": 11200,
+      "sha256": "59b6acbd48eaece95a5919aab6d788ce2b06f50a20e1ca64647336fb65c69a14"
+    },
+    {
+      "path": "README.md",
+      "bytes": 2576,
+      "sha256": "9a87af0a1bb8e048fc03ffd6907b1e847286fbe2fa903bbdb0a8483cce30feda"
+    },
+    {
+      "path": "bootstrap-final--bootstrap.json.gz",
+      "bytes": 390,
+      "sha256": "16c83dc653a658a534879cb3c4c4e05c07039d8f464d934299a4a523498dc294"
+    },
+    {
+      "path": "bootstrap-final--stage1.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap-final--stage2.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap-final--stage3.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "validation-inventory.json.gz",
+      "bytes": 692,
+      "sha256": "5756b4a546b6b7a3e4574bbee3a26f572c814ed1bb5e01df5a96e493eccbf873"
+    },
+    {
+      "path": "go-source-certificate.json.gz",
+      "bytes": 257,
+      "sha256": "ac9322738491974904cf5c802843a6315e53829d170b1e046f14906ad9cc3ece"
+    },
+    {
+      "path": "native-final-regressions.jsonl.gz",
+      "bytes": 281860,
+      "sha256": "c90bf24eeaa83e4f69f5cab378b758cff30fc17605e918fd5f5e9806dc45ede1"
+    },
+    {
+      "path": "fixture-and-diagnostics-final.jsonl.gz",
+      "bytes": 3627,
+      "sha256": "98bf83de71626352d2b4171197da03c5d275782877e88bb59743676010b9af0e"
+    },
+    {
+      "path": "oracle-final-version.txt.gz",
+      "bytes": 382,
+      "sha256": "cfee1030bf6cd1cc8c2195b3db95c1e1c0669839f93b51fa90a4e71cb9e44280"
+    },
+    {
+      "path": "format-final.json.gz",
+      "bytes": 45,
+      "sha256": "1fdf5d047a6b54bb908d1e4a659a92f4d2e2454507869b5fc560c1534bc49c7c"
+    },
+    {
+      "path": "format-final.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "final-sizes--check-sizes.py.gz",
+      "bytes": 906,
+      "sha256": "12466a7dc9019a4a92eb6bd16655cadb1b12b667cc16d3a9028ab3a8115240a3"
+    },
+    {
+      "path": "final-sizes--driver-builds.json.gz",
+      "bytes": 1051,
+      "sha256": "33a965e4f0c44ca06e6ee5c7710d09102a54753a28664079710b6cc119d81cf0"
+    },
+    {
+      "path": "final-sizes--driver-sizes.txt.gz",
+      "bytes": 162,
+      "sha256": "eb9e3937d979dcc15572fea70ec96bd8820fab8a0e9593fa8df6257bed4d114b"
+    },
+    {
+      "path": "final-sizes--driver-gate.log.gz",
+      "bytes": 347,
+      "sha256": "6953df8809052718b0846442c05fb2db28b1bdf39d4ffd7d1eae06252650be7a"
+    },
+    {
+      "path": "final-sizes--sizes.log.gz",
+      "bytes": 179,
+      "sha256": "96ce5c78e14edb34b592b83abb3b6f1e574a3d724ae0852deaf9a5f31f447437"
+    },
+    {
+      "path": "context-runtime-final-matrix.py.gz",
+      "bytes": 1795,
+      "sha256": "3331555116a49abd41281089accb5ddee1e7b33728f67202aa38d673588e2fff"
+    },
+    {
+      "path": "context-runtime-final-matrix.log.gz",
+      "bytes": 304,
+      "sha256": "189a6713a2fb45eeb063e904592e9a1ca2c69465667925e5c4f32623c918ec86"
+    },
+    {
+      "path": "fixture-runtime-results.json.gz",
+      "bytes": 203,
+      "sha256": "71d8e983aef71421c25ea67fa0c8572754aba71e40e2751a229b8282053e8ae1"
+    },
+    {
+      "path": "numeric-comparison-matrix.json.gz",
+      "bytes": 925,
+      "sha256": "b03802282fb64e5a2c5b39951b41ce4cf6b61006225ab767a0a10ecc48944a04"
+    },
+    {
+      "path": "readme-ste.log.gz",
+      "bytes": 141,
+      "sha256": "a7ece5eb2a6c1a3683076a9a2552dccf10d5f03f2c63fbd3a0035fa82a6827a0"
+    },
+    {
+      "path": "record-proofs.py.gz",
+      "bytes": 2773,
+      "sha256": "dc830ee8bfb7efec8f65a985455bfe487cad8bbf067233e8db7b84dd6817db27"
+    },
+    {
+      "path": "scoped--native-production-corpus-fast.jsonl.gz",
+      "bytes": 262298,
+      "sha256": "538234b11929f4cf397406d7bf5d3b6d4831e79341e2bf664015350778386140"
+    },
+    {
+      "path": "scoped--mutants-and-fixtures-fast.jsonl.gz",
+      "bytes": 36625,
+      "sha256": "e09b355850e48bbe7683d9a3c7479756cc85f1de8d4af0f0590b13afb9465ab3"
+    },
+    {
+      "path": "scoped--go-regressions-length-fixed.jsonl.gz",
+      "bytes": 134853,
+      "sha256": "e562034d804447664f56c223216131734ebc64a4bfa03af4f9ab506e9bfda321"
+    },
+    {
+      "path": "scoped--diagnostic-goldens-final.jsonl.gz",
+      "bytes": 2272,
+      "sha256": "c0114fb36a261b8b4b238002a77f675356f8f1ad8378b63d659db17943e6674e"
+    },
+    {
+      "path": "scoped--context-runtime-final-results.json.gz",
+      "bytes": 2186,
+      "sha256": "03d70db0dba2da4f4e2a1530babe4df12585213195e62a0e08876632a0f944dd"
+    },
+    {
+      "path": "scoped--gofmt-final.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "scoped--vet-final.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "scoped--comparison-probes.json.gz",
+      "bytes": 503,
+      "sha256": "c56f6f3c3d72c17c72646af97ecb442b0a71a449eaf7a689cc434dd8c83b034b"
+    },
+    {
+      "path": "scoped--native-production-corpus.jsonl.gz",
+      "bytes": 168536,
+      "sha256": "8f68879bb93eeacef8110a1f54e8c19b90275431ebeef451ce0ebe77e5fdc3c2"
+    },
+    {
+      "path": "scoped--mutants-and-fixtures.jsonl.gz",
+      "bytes": 49432,
+      "sha256": "f399c29fb1b50c800fe713fb06904f7c2b4a84ae219a95aa29440176c127f3f4"
+    },
+    {
+      "path": "ci-failure-excerpts.json",
+      "bytes": 23345,
+      "sha256": "8c72cd3c97775c8f2aea142bef63ccd43086cfd6b9ca657076e661d255ae41a9"
+    },
+    {
+      "path": "inputs.tar.gz",
+      "bytes": 1134,
+      "sha256": "b09c4b835f9243a67b5c70d4a4d248541e0541865e8b4b976e5b1b3e4a6db9b1"
+    }
+  ],
+  "scope_note": "The broad corpus and mutation runs retain source 19f0. Final focused tests and fixtures use source 7f161. The Go source certificate verifies unchanged inputs.",
+  "darwin": "Built but not executed locally.",
+  "wasi_skips": "Nineteen corpus cases require capabilities outside the WASI profile."
+}

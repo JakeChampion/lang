@@ -3593,6 +3593,9 @@ function complete_variant(v: Value, expected: typeinfo.Type, index: i32): Value 
 
 function widen(v: Value, expected: typeinfo.Type): Value {
   let s: State = v.s;
+  if (!s.ok) {
+    return v;
+  }
   if (semtypes.equal(s.values[v.id], expected)) {
     return v;
   }

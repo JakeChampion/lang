@@ -1,0 +1,311 @@
+[
+  {
+    "job": 120961852361,
+    "run": 40123841414,
+    "source": "6b6b1f1fac1141c24adcb9239d6cc409df9cfb6b",
+    "url": "https://github.com/JakeChampion/lang/actions/runs/40123841414/job/120961852361",
+    "failure_lines": [
+      "    fixture_selfhost_test.go:147: set FERN_SELFHOST_FIXTURES=1 to run the fixture corpus through the self-host compiler",
+      "    wasm_e2e_test.go:2526: expected checker error for mixed f32/f64 add, got none",
+      "--- FAIL: TestF32F64MixRejected (0.00s)",
+      "    fixture_selfhost_test.go:69: set FERN_SELFHOST_FIXTURES=1 to run the fixture corpus through the self-host compiler",
+      "##[error]    wasm_e2e_test.go:2526: expected checker error for mixed f32/f64 add, got none"
+    ]
+  },
+  {
+    "job": 120961852426,
+    "run": 40123841414,
+    "source": "6b6b1f1fac1141c24adcb9239d6cc409df9cfb6b",
+    "url": "https://github.com/JakeChampion/lang/actions/runs/40123841414/job/120961852426",
+    "failure_lines": [
+      "    wasm_e2e_test.go:2526: expected checker error for mixed f32/f64 add, got none",
+      "--- FAIL: TestF32F64MixRejected (0.00s)",
+      "    fixture_selfhost_test.go:18: set FERN_SELFHOST_FIXTURES=1 to run the fixture corpus through the self-host compiler",
+      "    grammar_selfhost_test.go:16: set FERN_SELFHOST_FIXTURES=1 to run the fixture corpus through the self-host compiler",
+      "    fixture_selfhost_test.go:69: set FERN_SELFHOST_FIXTURES=1 to run the fixture corpus through the self-host compiler",
+      "    fixture_selfhost_test.go:147: set FERN_SELFHOST_FIXTURES=1 to run the fixture corpus through the self-host compiler",
+      "##[error]    wasm_e2e_test.go:2526: expected checker error for mixed f32/f64 add, got none"
+    ]
+  },
+  {
+    "job": 120961855969,
+    "run": 40123841414,
+    "source": "6b6b1f1fac1141c24adcb9239d6cc409df9cfb6b",
+    "url": "https://github.com/JakeChampion/lang/actions/runs/40123841414/job/120961855969",
+    "failure_lines": [
+      "    checker_mutant_test.go:37: the self-host checker rejects the unmutated program:",
+      "--- FAIL: TestDifferential_CheckerMutants (0.90s)",
+      "    --- FAIL: TestDifferential_CheckerMutants/seed=179 (0.45s)",
+      "    --- FAIL: TestDifferential_CheckerMutants/seed=171 (0.42s)",
+      "    --- FAIL: TestDifferential_CheckerMutants/seed=132 (0.33s)",
+      "    --- FAIL: TestDifferential_CheckerMutants/seed=387 (0.32s)"
+    ]
+  },
+  {
+    "job": 120961857229,
+    "run": 40123841414,
+    "source": "6b6b1f1fac1141c24adcb9239d6cc409df9cfb6b",
+    "url": "https://github.com/JakeChampion/lang/actions/runs/40123841414/job/120961857229",
+    "failure_lines": [
+      "--- FAIL: TestSelfHostDiagnosticTextParity/mixed_float_widths (0.00s)",
+      "    self_host_diagnostic_parity_test.go:75: check: messages = [E003 variable \"x\": expected i32, got void E061 block-expression has no trailing value (its last element is a `;`-terminated statement); a value is required here \u2014 drop the trailing `;` to make the final expression the block's value], want [E061 block-expression has no trailing value (its last element is a `;`-terminated statement); a value is required here \u2014 drop the trailing `;` to make the final expression the block's value]",
+      "    self_host_diagnostic_parity_test.go:75: interp: messages = [E003 variable \"x\": expected i32, got void E061 block-expression has no trailing value (its last element is a `;`-terminated statement); a value is required here \u2014 drop the trailing `;` to make the final expression the block's value], want [E061 block-expression has no trailing value (its last element is a `;`-terminated statement); a value is required here \u2014 drop the trailing `;` to make the final expression the block's value]",
+      "    self_host_diagnostic_parity_test.go:75: compile: messages = [E003 variable \"x\": expected i32, got void E061 block-expression has no trailing value (its last element is a `;`-terminated statement); a value is required here \u2014 drop the trailing `;` to make the final expression the block's value], want [E061 block-expression has no trailing value (its last element is a `;`-terminated statement); a value is required here \u2014 drop the trailing `;` to make the final expression the block's value]",
+      "--- FAIL: TestSelfHostDiagnosticTextParity/value_required (0.01s)",
+      "--- FAIL: TestSelfHostDiagnosticTextParity (1.46s)"
+    ]
+  },
+  {
+    "job": 120961857253,
+    "run": 40123841414,
+    "source": "6b6b1f1fac1141c24adcb9239d6cc409df9cfb6b",
+    "url": "https://github.com/JakeChampion/lang/actions/runs/40123841414/job/120961857253",
+    "failure_lines": [
+      "    self_host_abort_report_test.go:58: self-host CLI -target x86-64-linux /tmp/TestSelfHostAbortReportsX86_64map_cursor_key_past_end1287939037/001/main.fern: exit status 1",
+      "--- FAIL: TestSelfHostAbortReportsX86_64/map_cursor_key_past_end (0.21s)",
+      "    self_host_abort_report_test.go:58: self-host CLI -target x86-64-linux /tmp/TestSelfHostAbortReportsX86_64map_cursor_value_past_end1184499169/001/main.fern: exit status 1",
+      "--- FAIL: TestSelfHostAbortReportsX86_64/map_cursor_value_past_end (0.23s)",
+      "--- FAIL: TestSelfHostAbortReportsX86_64 (2.73s)",
+      "    self_host_checker_codes_test.go:2115: literal-local-two-widths: self-host codes = [], want [E003]",
+      "--- FAIL: TestSelfHostCheckerCodesX86_64/literal-local-two-widths (0.00s)",
+      "    self_host_checker_codes_test.go:2115: literal-local-two-widths-wrapped: self-host codes = [], want [E003]",
+      "--- FAIL: TestSelfHostCheckerCodesX86_64/literal-local-two-widths-wrapped (0.00s)",
+      "    self_host_checker_codes_test.go:2115: literal-local-index-is-i32: self-host codes = [], want [E003]",
+      "--- FAIL: TestSelfHostCheckerCodesX86_64/literal-local-index-is-i32 (0.00s)",
+      "    self_host_checker_codes_test.go:2115: value-block-typed-local-tail-mismatch: self-host codes = [], want [E003]",
+      "--- FAIL: TestSelfHostCheckerCodesX86_64/value-block-typed-local-tail-mismatch (0.00s)",
+      "    self_host_checker_codes_test.go:2115: literal-local-compared-takes-width: self-host codes = [], want [E003]",
+      "--- FAIL: TestSelfHostCheckerCodesX86_64/literal-local-compared-takes-width (0.00s)",
+      "    self_host_checker_codes_test.go:2115: call-written-instantiation-not-widened: self-host codes = [E047], want [E038 E047]",
+      "--- FAIL: TestSelfHostCheckerCodesX86_64/call-written-instantiation-not-widened (0.00s)",
+      "    self_host_checker_codes_test.go:2115: call-written-i32-read-at-i64: self-host codes = [], want [E038]",
+      "--- FAIL: TestSelfHostCheckerCodesX86_64/call-written-i32-read-at-i64 (0.00s)",
+      "    self_host_checker_codes_test.go:2115: option-argument-mismatch-return: self-host codes = [], want [E002]",
+      "--- FAIL: TestSelfHostCheckerCodesX86_64/option-argument-mismatch-return (0.00s)",
+      "    self_host_checker_codes_test.go:2115: option-argument-mismatch-var: self-host codes = [], want [E003]",
+      "--- FAIL: TestSelfHostCheckerCodesX86_64/option-argument-mismatch-var (0.00s)",
+      "    self_host_checker_codes_test.go:2115: f32-suffix-beside-f64-value: self-host codes = [], want [E034]",
+      "--- FAIL: TestSelfHostCheckerCodesX86_64/f32-suffix-beside-f64-value (0.00s)",
+      "    self_host_checker_codes_test.go:2115: f32-suffix-into-f64: self-host codes = [], want [E003]",
+      "--- FAIL: TestSelfHostCheckerCodesX86_64/f32-suffix-into-f64 (0.00s)",
+      "    self_host_checker_codes_test.go:2119: settle-array-bad-element: self-host codes [E034] disagree with Go checker [E003 E034] (unfiltered)",
+      "--- FAIL: TestSelfHostCheckerCodesX86_64/settle-array-bad-element (0.00s)",
+      "    self_host_checker_codes_test.go:2115: e031-if-i64-i32-locals: self-host codes = [], want [E031]",
+      "--- FAIL: TestSelfHostCheckerCodesX86_64/e031-if-i64-i32-locals (0.00s)",
+      "    self_host_checker_codes_test.go:2115: e031-literal-match-widths: self-host codes = [], want [E031]",
+      "--- FAIL: TestSelfHostCheckerCodesX86_64/e031-literal-match-widths (0.00s)",
+      "    self_host_checker_codes_test.go:2115: e003-generic-enum-block-i32-local-payload-at-i64: self-host codes = [], want [E003]",
+      "--- FAIL: TestSelfHostCheckerCodesX86_64/e003-generic-enum-block-i32-local-payload-at-i64 (0.00s)",
+      "    self_host_checker_codes_test.go:2115: e002-generic-enum-block-i32-local-payload-at-i64: self-host codes = [], want [E002]",
+      "--- FAIL: TestSelfHostCheckerCodesX86_64/e002-generic-enum-block-i32-local-payload-at-i64 (0.00s)",
+      "    self_host_checker_codes_test.go:2115: e003-generic-enum-block-literal-first-i32-payload-at-i64: self-host codes = [], want [E003]",
+      "    self_host_checker_codes_test.go:2119: e003-generic-enum-block-literal-first-i32-payload-at-i64: self-host codes [] disagree with Go checker [E003] (unfiltered)",
+      "--- FAIL: TestSelfHostCheckerCodesX86_64/e003-generic-enum-block-literal-first-i32-payload-at-i64 (0.00s)",
+      "    self_host_checker_codes_test.go:2115: e038-generic-enum-block-i32-payload-argument: self-host codes = [], want [E038]",
+      "    self_host_checker_codes_test.go:2119: e038-generic-enum-block-i32-payload-argument: self-host codes [] disagree with Go checker [E038] (unfiltered)",
+      "--- FAIL: TestSelfHostCheckerCodesX86_64/e038-generic-enum-block-i32-payload-argument (0.00s)",
+      "    self_host_checker_codes_test.go:2115: e038-option-block-i32-payload-argument: self-host codes = [], want [E038]",
+      "    self_host_checker_codes_test.go:2119: e038-option-block-i32-payload-argument: self-host codes [] disagree with Go checker [E038] (unfiltered)"
+    ]
+  },
+  {
+    "job": 120961857289,
+    "run": 40123841414,
+    "source": "6b6b1f1fac1141c24adcb9239d6cc409df9cfb6b",
+    "url": "https://github.com/JakeChampion/lang/actions/runs/40123841414/job/120961857289",
+    "failure_lines": [
+      "    self_host_checker_followup_test.go:86: expected coded diagnostics: <nil>",
+      "--- FAIL: TestSelfHostCheckerFollowupPositions/mixed-float (0.01s)",
+      "    self_host_checker_followup_test.go:89: self-host:",
+      "--- FAIL: TestSelfHostCheckerFollowupPositions/block-value (0.01s)",
+      "--- FAIL: TestSelfHostCheckerFollowupPositions (1.54s)",
+      "    self_host_check_corpus_test.go:44: the Go checker accepts it and the self-host refuses it",
+      "--- FAIL: TestSelfHostCheckAgreesWithGoOnStdlibTests/tests/stdlib/coreutils_timefmt_test.fern (3.93s)",
+      "--- FAIL: TestSelfHostCheckAgreesWithGoOnStdlibTests/tests/stdlib/coreutils_selinux_test.fern (3.77s)",
+      "    self_host_interp_driver_test.go:305: interp(\"braceless-while\") exited 254, want 42",
+      "--- FAIL: TestSelfHostInterpDriverX86_64/braceless-while (0.00s)",
+      "    self_host_interp_driver_test.go:305: interp(\"braceless-for\") exited 254, want 10",
+      "--- FAIL: TestSelfHostInterpDriverX86_64/braceless-for (0.00s)",
+      "--- FAIL: TestSelfHostInterpDriverX86_64 (20.32s)",
+      "    self_host_stage2_test.go:27: stage 1: self-hosted compiler asm = 97382179 bytes",
+      "--- FAIL: TestSelfHostCheckAgreesWithGoOnStdlibTests (0.90s)",
+      "##[error]    self_host_checker_followup_test.go:86: expected coded diagnostics: \\u003cnil\\u003e",
+      "##[error]    self_host_checker_followup_test.go:89: self-host:",
+      "##[error]    self_host_interp_driver_test.go:305: interp(\"braceless-while\") exited 254, want 42",
+      "##[error]    self_host_interp_driver_test.go:305: interp(\"braceless-for\") exited 254, want 10"
+    ]
+  },
+  {
+    "job": 120961857369,
+    "run": 40123841414,
+    "source": "6b6b1f1fac1141c24adcb9239d6cc409df9cfb6b",
+    "url": "https://github.com/JakeChampion/lang/actions/runs/40123841414/job/120961857369",
+    "failure_lines": [
+      "    self_host_abort_report_test.go:58: self-host CLI -target arm64-linux /tmp/TestSelfHostAbortReportsArm64map_cursor_key_past_end1314338883/001/main.fern: exit status 1",
+      "--- FAIL: TestSelfHostAbortReportsArm64/map_cursor_key_past_end (0.25s)",
+      "    self_host_abort_report_test.go:58: self-host CLI -target arm64-linux /tmp/TestSelfHostAbortReportsArm64map_cursor_value_past_end1985448696/001/main.fern: exit status 1",
+      "--- FAIL: TestSelfHostAbortReportsArm64/map_cursor_value_past_end (0.24s)",
+      "--- FAIL: TestSelfHostAbortReportsArm64 (2.45s)",
+      "##[error]    self_host_abort_report_test.go:58: self-host CLI -target arm64-linux /tmp/TestSelfHostAbortReportsArm64map_cursor_key_past_end1314338883/001/main.fern: exit status 1",
+      "##[error]    self_host_abort_report_test.go:58: self-host CLI -target arm64-linux /tmp/TestSelfHostAbortReportsArm64map_cursor_value_past_end1985448696/001/main.fern: exit status 1"
+    ]
+  },
+  {
+    "job": 120961857399,
+    "run": 40123841414,
+    "source": "6b6b1f1fac1141c24adcb9239d6cc409df9cfb6b",
+    "url": "https://github.com/JakeChampion/lang/actions/runs/40123841414/job/120961857399",
+    "failure_lines": [
+      "    self_host_semsource_test.go:974: produced graphs differ from testdata/semsource_print.golden:",
+      "--- FAIL: TestSelfHostSemanticSourcePrint (12.58s)"
+    ]
+  },
+  {
+    "job": 120961857481,
+    "run": 40123841414,
+    "source": "6b6b1f1fac1141c24adcb9239d6cc409df9cfb6b",
+    "url": "https://github.com/JakeChampion/lang/actions/runs/40123841414/job/120961857481",
+    "failure_lines": [
+      "    self_host_stage2_compiler_test.go:36: stage 1: self-hosted compiler built (97385232 bytes asm)",
+      "    self_host_wide_literal_settle_test.go:34: self-host checker exited 0, want an E003 rejection",
+      "--- FAIL: TestSelfHostWideLiteralSettle/reject/some-i32-var-into-option-i64 (0.00s)",
+      "--- FAIL: TestSelfHostWideLiteralSettle/reject/if-expr-i32-var-into-i64 (0.00s)",
+      "--- FAIL: TestSelfHostWideLiteralSettle (10.27s)",
+      "##[error]    self_host_wide_literal_settle_test.go:34: self-host checker exited 0, want an E003 rejection"
+    ]
+  },
+  {
+    "job": 120961857828,
+    "run": 40123841414,
+    "source": "6b6b1f1fac1141c24adcb9239d6cc409df9cfb6b",
+    "url": "https://github.com/JakeChampion/lang/actions/runs/40123841414/job/120961857828",
+    "failure_lines": [
+      "    self_host_feature_census_test.go:282: self-host feature census over 332 modules, literals stripped:",
+      "    self_host_interp_driver_test.go:324: interp(\"braceless-while\") exited 254, want 42",
+      "--- FAIL: TestSelfHostInterpDriverArm64/braceless-while (0.10s)",
+      "    self_host_interp_driver_test.go:324: interp(\"braceless-for\") exited 254, want 10",
+      "--- FAIL: TestSelfHostInterpDriverArm64/braceless-for (0.13s)",
+      "--- FAIL: TestSelfHostInterpDriverArm64 (39.43s)",
+      "    self_host_sem_production_test.go:43: answered \"out-of-range|\", want \"181|\"",
+      "--- FAIL: TestSelfHostSemanticProduction/a-map-iterator-reads-its-snapshot/wasm32-wasi (0.33s)",
+      "--- FAIL: TestSelfHostSemanticProduction/a-map-iterator-reads-its-snapshot (1.19s)",
+      "--- FAIL: TestSelfHostSemanticProduction (119.31s)",
+      "##[error]    self_host_interp_driver_test.go:324: interp(\"braceless-while\") exited 254, want 42",
+      "##[error]    self_host_interp_driver_test.go:324: interp(\"braceless-for\") exited 254, want 10",
+      "##[error]    self_host_sem_production_test.go:43: answered \"out-of-range|\", want \"181|\""
+    ]
+  },
+  {
+    "job": 120961857868,
+    "run": 40123841414,
+    "source": "6b6b1f1fac1141c24adcb9239d6cc409df9cfb6b",
+    "url": "https://github.com/JakeChampion/lang/actions/runs/40123841414/job/120961857868",
+    "failure_lines": [
+      "    self_host_abort_report_test.go:383: self-host: exit 1, want 134",
+      "    self_host_abort_report_test.go:386: self-host: stderr does not open with the cause line and a detail line:",
+      "    self_host_abort_report_test.go:383: oracle: exit 1, want 134",
+      "--- FAIL: TestAbortCauseLineInterpreters/map_cursor_key_past_end (0.50s)",
+      "--- FAIL: TestAbortCauseLineInterpreters/map_cursor_value_past_end (0.45s)",
+      "--- FAIL: TestAbortCauseLineInterpreters (3.46s)"
+    ]
+  },
+  {
+    "job": 120961858629,
+    "run": 40123841414,
+    "source": "6b6b1f1fac1141c24adcb9239d6cc409df9cfb6b",
+    "url": "https://github.com/JakeChampion/lang/actions/runs/40123841414/job/120961858629",
+    "failure_lines": [
+      "    self_host_check_value_block_position_test.go:36: the Go checker drew no positioned E038",
+      "--- FAIL: TestSelfHostCheckValueBlockPosition/match (0.01s)",
+      "--- FAIL: TestSelfHostCheckValueBlockPosition/if (0.01s)",
+      "--- FAIL: TestSelfHostCheckValueBlockPosition/block (0.01s)",
+      "    self_host_check_value_block_position_test.go:40: self-host E038 not at the Go checker's 3:50",
+      "--- FAIL: TestSelfHostCheckValueBlockPosition/if-literal-first (0.01s)",
+      "--- FAIL: TestSelfHostCheckValueBlockPosition (0.00s)",
+      "##[error]    self_host_check_value_block_position_test.go:36: the Go checker drew no positioned E038",
+      "##[error]    self_host_check_value_block_position_test.go:40: self-host E038 not at the Go checker's 3:50"
+    ]
+  },
+  {
+    "job": 120961858817,
+    "run": 40123841414,
+    "source": "6b6b1f1fac1141c24adcb9239d6cc409df9cfb6b",
+    "url": "https://github.com/JakeChampion/lang/actions/runs/40123841414/job/120961858817",
+    "failure_lines": [
+      "    self_host_checker_followup_test.go:86: expected coded diagnostics: <nil>",
+      "--- FAIL: TestSelfHostCheckerFollowupPositions/mixed-float (0.00s)",
+      "    self_host_checker_followup_test.go:89: self-host:",
+      "--- FAIL: TestSelfHostCheckerFollowupPositions/block-value (0.01s)",
+      "--- FAIL: TestSelfHostCheckerFollowupPositions (0.13s)",
+      "    self_host_check_corpus_test.go:44: the Go checker accepts it and the self-host refuses it",
+      "--- FAIL: TestSelfHostCheckAgreesWithGoOnStdlibTests/tests/stdlib/coreutils_timefmt_test.fern (3.26s)",
+      "--- FAIL: TestSelfHostCheckAgreesWithGoOnStdlibTests/tests/stdlib/coreutils_selinux_test.fern (3.08s)",
+      "--- FAIL: TestSelfHostCheckAgreesWithGoOnStdlibTests (0.01s)",
+      "    self_host_check_value_block_position_test.go:36: the Go checker drew no positioned E038",
+      "--- FAIL: TestSelfHostCheckValueBlockPosition/if (0.01s)",
+      "--- FAIL: TestSelfHostCheckValueBlockPosition/match (0.01s)",
+      "    self_host_check_value_block_position_test.go:40: self-host E038 not at the Go checker's 3:50",
+      "--- FAIL: TestSelfHostCheckValueBlockPosition/if-literal-first (0.01s)",
+      "--- FAIL: TestSelfHostCheckValueBlockPosition/block (0.00s)",
+      "--- FAIL: TestSelfHostCheckValueBlockPosition (0.00s)",
+      "##[error]    self_host_check_value_block_position_test.go:36: the Go checker drew no positioned E038",
+      "##[error]    self_host_check_value_block_position_test.go:40: self-host E038 not at the Go checker's 3:50",
+      "##[error]    self_host_checker_followup_test.go:86: expected coded diagnostics: \\u003cnil\\u003e",
+      "##[error]    self_host_checker_followup_test.go:89: self-host:"
+    ]
+  },
+  {
+    "job": 120961858823,
+    "run": 40123841414,
+    "source": "6b6b1f1fac1141c24adcb9239d6cc409df9cfb6b",
+    "url": "https://github.com/JakeChampion/lang/actions/runs/40123841414/job/120961858823",
+    "failure_lines": [
+      "    self_host_abort_report_test.go:92: self-host CLI -target wasm32-wasi /tmp/TestSelfHostAbortsTrapWasmmap_cursor_key_past_end2425817329/001/main.fern: exit status 1",
+      "--- FAIL: TestSelfHostAbortsTrapWasm/map_cursor_key_past_end (0.15s)",
+      "    self_host_abort_report_test.go:92: self-host CLI -target wasm32-wasi /tmp/TestSelfHostAbortsTrapWasmmap_cursor_value_past_end3824814657/001/main.fern: exit status 1",
+      "--- FAIL: TestSelfHostAbortsTrapWasm/map_cursor_value_past_end (0.12s)",
+      "--- FAIL: TestSelfHostAbortsTrapWasm (1.84s)",
+      "##[error]    self_host_abort_report_test.go:92: self-host CLI -target wasm32-wasi /tmp/TestSelfHostAbortsTrapWasmmap_cursor_key_past_end2425817329/001/main.fern: exit status 1",
+      "##[error]    self_host_abort_report_test.go:92: self-host CLI -target wasm32-wasi /tmp/TestSelfHostAbortsTrapWasmmap_cursor_value_past_end3824814657/001/main.fern: exit status 1"
+    ]
+  },
+  {
+    "job": 120961859019,
+    "run": 40123841414,
+    "source": "6b6b1f1fac1141c24adcb9239d6cc409df9cfb6b",
+    "url": "https://github.com/JakeChampion/lang/actions/runs/40123841414/job/120961859019",
+    "failure_lines": [
+      "    self_host_float_width_checker_test.go:92: native: want code \"E002\", got <nil>",
+      "--- FAIL: TestSelfHostFloatWidthCheckerX86_64/option_payload_width (0.00s)",
+      "    self_host_float_width_checker_test.go:92: native: want code \"E031\", got <nil>",
+      "--- FAIL: TestSelfHostFloatWidthCheckerX86_64/branch_local_conflict (0.00s)",
+      "--- FAIL: TestSelfHostFloatWidthCheckerX86_64/match_local_conflict (0.00s)",
+      "--- FAIL: TestSelfHostFloatWidthCheckerX86_64/return_width (0.00s)",
+      "    self_host_float_width_checker_test.go:92: native: want code \"E003\", got <nil>",
+      "--- FAIL: TestSelfHostFloatWidthCheckerX86_64/local_width (0.00s)",
+      "    self_host_float_width_checker_test.go:92: native: want code \"E009\", got <nil>",
+      "--- FAIL: TestSelfHostFloatWidthCheckerX86_64/arithmetic_width (0.00s)",
+      "--- FAIL: TestSelfHostFloatWidthCheckerX86_64/comparison_width (0.00s)",
+      "    self_host_float_width_checker_test.go:92: native: want code \"E041\", got <nil>",
+      "--- FAIL: TestSelfHostFloatWidthCheckerX86_64/equality_width (0.00s)",
+      "    self_host_float_width_checker_test.go:92: native: want code \"E038\", got <nil>",
+      "--- FAIL: TestSelfHostFloatWidthCheckerX86_64/call_width (0.00s)",
+      "--- FAIL: TestSelfHostFloatWidthCheckerX86_64/if_concrete_join (0.00s)",
+      "--- FAIL: TestSelfHostFloatWidthCheckerX86_64/match_concrete_join (0.00s)",
+      "--- FAIL: TestSelfHostFloatWidthCheckerX86_64/match_literal_first (0.00s)",
+      "--- FAIL: TestSelfHostFloatWidthCheckerX86_64/commitment-order-0-nested-false (0.00s)",
+      "--- FAIL: TestSelfHostFloatWidthCheckerX86_64/commitment-order-1-nested-false (0.00s)",
+      "--- FAIL: TestSelfHostFloatWidthCheckerX86_64/commitment-order-2-nested-false (0.00s)",
+      "--- FAIL: TestSelfHostFloatWidthCheckerX86_64/commitment-order-3-nested-false (0.00s)",
+      "--- FAIL: TestSelfHostFloatWidthCheckerX86_64/commitment-order-4-nested-false (0.00s)",
+      "--- FAIL: TestSelfHostFloatWidthCheckerX86_64/commitment-order-5-nested-false (0.00s)",
+      "--- FAIL: TestSelfHostFloatWidthCheckerX86_64 (5.84s)",
+      "##[error]    self_host_float_width_checker_test.go:92: native: want code \"E002\", got \\u003cnil\\u003e",
+      "##[error]    self_host_float_width_checker_test.go:92: native: want code \"E031\", got \\u003cnil\\u003e",
+      "##[error]    self_host_float_width_checker_test.go:92: native: want code \"E003\", got \\u003cnil\\u003e",
+      "##[error]    self_host_float_width_checker_test.go:92: native: want code \"E009\", got \\u003cnil\\u003e",
+      "##[error]    self_host_float_width_checker_test.go:92: native: want code \"E041\", got \\u003cnil\\u003e",
+      "##[error]    self_host_float_width_checker_test.go:92: native: want code \"E038\", got \\u003cnil\\u003e"
+    ]
+  }
+]

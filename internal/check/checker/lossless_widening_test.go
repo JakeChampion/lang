@@ -66,3 +66,27 @@ func TestLosslessWideningRejectsRepresentationChanges(t *testing.T) {
 		}
 	}
 }
+
+func TestLosslessWideningEnumBranchOrder(t *testing.T) {
+	for _, body := range []string{
+		`if (c) { Some(1) } else { Some(n) }`,
+		`if (c) { Some(n) } else { Some(1) }`,
+		`if (c) { Some(1 + 2) } else { Some(n) }`,
+		`match (c) { true => Some(1), false => Some(n) }`,
+		`match (c) { true => Some(n), false => Some(1) }`,
+	} {
+		if err := checkSource(t, `function f(c: boolean, n: i32): Option[i64] { return `+body+`; }`); err != nil {
+			t.Fatalf("%s: %v", body, err)
+		}
+	}
+	for _, source := range []string{
+		`function f(c: boolean, n: i32): Option[i64] { let held: Option[i32] = Some(n); return if (c) { held } else { Some(n) }; }`,
+		`function f(c: boolean, n: i32): Option[i64] { let held: Option[i32] = Some(n); return if (c) { Some(1) } else { held }; }`,
+		`function f(c: boolean, n: i32): Option[i64] { let held: Option[i32] = Some(n); return match (c) { true => Some(1), false => held }; }`,
+		`function f(c: boolean, n: i32): Option[i64] { let held: Option[i32] = Some(n); return match (c) { true => held, false => Some(1) }; }`,
+	} {
+		if err := checkSource(t, source); err == nil {
+			t.Fatalf("accepted stored container conversion: %s", source)
+		}
+	}
+}

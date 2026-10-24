@@ -1,0 +1,25 @@
+function widened(n: i32): i64 {
+  return n;
+}
+
+function main(): i32 {
+  let n: i32 = 0 - args().len();
+  let u: u32 = 4294967295;
+  let wide: i64 = 4294967295;
+  if (widened(n) != n || n != widened(n)) {
+    return 1;
+  }
+  if (!(widened(n) == n) || !(n == widened(n))) {
+    return 2;
+  }
+  if (u == n || n == u) {
+    return 3;
+  }
+  if (u != wide || wide != u) {
+    return 4;
+  }
+  if (!(u == wide) || !(wide == u)) {
+    return 5;
+  }
+  return 0;
+}
