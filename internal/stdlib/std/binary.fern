@@ -1,7 +1,7 @@
 // Fixed-width integers in network byte order.
 
-import "std/error";
 import "core/cmp";
+import "std/error";
 
 pub enum DecodeError { OutOfBounds }
 
@@ -9,13 +9,13 @@ pub function (e: DecodeError) message(): string {
   return "integer field is outside the byte view";
 }
 
-impl error.Error for DecodeError {}
-
-impl cmp.Display for DecodeError {}
-
 pub function (e: DecodeError) to_string(): string {
   return e.message();
 }
+
+impl error.Error for DecodeError {}
+
+impl cmp.Display for DecodeError {}
 
 pub function append_bytes(own output: u8[], bytes: [u8]): u8[] {
   let index: i32 = 0;
