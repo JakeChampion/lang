@@ -10,14 +10,14 @@ struct Index { defs: ssa.SInst[], homes: i32[], blocks: i32[] }
 
 // A back loop appends a[a.len() - from] to a itself, or a[from + i] when it
 // is rebased, with -1 for a zero from.
-struct Loop { ok: boolean, head: i32, body: i32, exit: i32, outer: i32, array: ssa.SInst, counter: ssa.SInst, update: ssa.SInst, count: i32, src: i32, from: i32, at: i32, back: boolean, rebased: boolean }
+struct Loop { ok: boolean, head: i32, body: i32, exit: i32, outer: i32, array: ssa.SInst, counter: ssa.SInst, update: ssa.SInst, count: i32, chain: i32[], src: i32, from: i32, at: i32, back: boolean, rebased: boolean }
 
 function none(): ssa.SInst {
   return ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
 }
 
 function no_loop(): Loop {
-  return Loop { ok: false, head: 0, body: 0, exit: 0, outer: 0, array: none(), counter: none(), update: none(), count: 0, src: 0, from: 0, at: 0, back: false, rebased: false };
+  return Loop { ok: false, head: 0, body: 0, exit: 0, outer: 0, array: none(), counter: none(), update: none(), count: 0, chain: [], src: 0, from: 0, at: 0, back: false, rebased: false };
 }
 
 function bytes(t: typeinfo.Type): boolean {
@@ -95,7 +95,7 @@ function loop_edges(h: ssa.SBlock, body: ssa.SBlock, exit: ssa.SBlock): boolean 
     && exit.preds.len() == 1 && exit.preds[0] == h.id;
 }
 
-function header_phis(f: ssasem.Func, h: ssa.SBlock, count: i32): Loop {
+function header_phis(f: ssasem.Func, h: ssa.SBlock, chain: i32[]): Loop {
   let array = none();
   let counter = none();
   for ins in h.insts {
@@ -107,7 +107,7 @@ function header_phis(f: ssasem.Func, h: ssa.SBlock, count: i32): Loop {
       } else {
         return no_loop();
       }
-    } else if (ins.result != h.term.cond && ins.result != count && ins.kind_tag != 35) {
+    } else if (ins.result != h.term.cond && util.index_of_i32(chain, ins.result) < 0 && ins.kind_tag != 35) {
       return no_loop();
     }
   }
@@ -118,18 +118,36 @@ function loop_compare(ins: ssa.SInst): boolean {
   return ins.kind_tag == 9 && ins.str == "<" && ins.args.len() == 2;
 }
 
-function invariant_count(ix: Index, count: i32, h: i32, b: i32): boolean {
-  if (invariant(ix, count, h, b)) {
+struct Chain { ok: boolean, values: i32[] }
+
+// The header values a count is computed from, when they read only invariant
+// values without other effects. The header runs at least once, so computing
+// them once before the copy aborts in the same cases.
+function count_chain(ix: Index, v: i32, h: i32, b: i32, own c: Chain, steps: i32): Chain {
+  if (!c.ok || invariant(ix, v, h, b) || util.index_of_i32(c.values, v) >= 0) {
+    return c;
+  }
+  let d = ix.defs[v];
+  if (ix.homes[v] != h || steps == 0 || !chain_op(d)) {
+    return Chain { ok: false, values: [] };
+  }
+  for a in d.args {
+    c = count_chain(ix, a, h, b, c, steps - 1);
+  }
+  if (!c.ok) {
+    return c;
+  }
+  return Chain { ok: true, values: c.values.append(v) };
+}
+
+function chain_op(d: ssa.SInst): boolean {
+  if (d.kind_tag == 1 || d.kind_tag == ssasem.length() || d.kind_tag == ssasem.record_get()) {
     return true;
   }
-  let d = ix.defs[count];
-  if (ix.homes[count] != h) {
-    return false;
+  if (d.kind_tag == ssasem.array_get()) {
+    return d.imm != ssasem.check_only();
   }
-  if (d.kind_tag == 1) {
-    return true;
-  }
-  return d.kind_tag == ssasem.length() && d.args.len() == 1 && invariant(ix, d.args[0], h, b);
+  return d.kind_tag == 9 && (d.str == "+" || d.str == "-" || d.str == "*" || d.str == "&" || d.str == "|" || d.str == "^");
 }
 
 function header(f: ssasem.Func, ix: Index, h: ssa.SBlock): Loop {
@@ -151,7 +169,11 @@ function header(f: ssasem.Func, ix: Index, h: ssa.SBlock): Loop {
   if (!loop_compare(cmp)) {
     return no;
   }
-  let phis = header_phis(f, h, cmp.args[1]);
+  let chain = count_chain(ix, cmp.args[1], h.id, body.id, Chain { ok: true, values: [] }, 8);
+  if (!chain.ok) {
+    return no;
+  }
+  let phis = header_phis(f, h, chain.values);
   if (!phis.ok || !literal(ix, phis.counter.args[outer], 0)) {
     return no;
   }
@@ -160,10 +182,7 @@ function header(f: ssasem.Func, ix: Index, h: ssa.SBlock): Loop {
   if (cmp.args[0] != counter.result) {
     return no;
   }
-  if (!invariant_count(ix, cmp.args[1], h.id, body.id)) {
-    return no;
-  }
-  return Loop { ...no, ok: true, head: h.id, body: body.id, exit: exit.id, outer: outer, array: array, counter: counter, count: cmp.args[1] };
+  return Loop { ...no, ok: true, head: h.id, body: body.id, exit: exit.id, outer: outer, array: array, counter: counter, count: cmp.args[1], chain: chain.values };
 }
 
 function copy_update(ins: ssa.SInst, receiver: i32): boolean {
@@ -428,13 +447,13 @@ function rebased_distance(l: Loop, receiver: i32, next: i32): ssa.SInst[] {
 function replaced_header(b: ssa.SBlock, l: Loop, call: ssa.SInst, zero: i32, distance: ssa.SInst[]): ssa.SBlock {
   let insts: ssa.SInst[] = [];
   for ins in b.insts {
-    if (ins.result == l.count) {
+    if (util.index_of_i32(l.chain, ins.result) >= 0) {
       insts = insts.append(ins);
     }
   }
   for old in b.insts {
     let ins = old;
-    if (ins.result != l.count) {
+    if (util.index_of_i32(l.chain, ins.result) < 0) {
       if (ins.result == l.array.result) {
         insts = util.append_all(insts, distance);
         ins = call;
