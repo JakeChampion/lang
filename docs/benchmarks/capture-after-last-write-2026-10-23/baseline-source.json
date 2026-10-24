@@ -1,0 +1,11 @@
+{
+  "source_git": "8207edece5bcf7bb94bc5f4192024abc94c367d4",
+  "source_sha256": "bcf0bb3d423a5dab900c90eb15c5bfd67838944bc8b4a02f1a7b897a879c762e",
+  "compiler": {
+    "stage": "stage3",
+    "producer_sha256": "66c80da3991b7e8d7413d16cb3e9016c9afa8b4677740067ee3f12b6cd665d29",
+    "seconds": 20.752756698999292,
+    "bytes": 14244160,
+    "sha256": "66c80da3991b7e8d7413d16cb3e9016c9afa8b4677740067ee3f12b6cd665d29"
+  }
+}

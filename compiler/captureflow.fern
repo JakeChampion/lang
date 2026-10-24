@@ -1,0 +1,85 @@
+// Assignments that can follow a closure's creation in its enclosing frame.
+import "./ast";
+import "./astwalk";
+import "./irtables";
+import "./util";
+
+pub struct Scope { names: util.NameIndex, size: i32, after: boolean[] }
+
+pub struct Writes { scope: Scope, last: i32[] }
+
+pub function root(names: string[], body: ast.Stmt[]): Scope {
+  let scope: Scope = Scope { names: util.name_index(names), size: names.len(), after: __alloc_bool(names.len()) };
+  for st in body {
+    scope = astwalk.fold_stmt_spine(st, scope, deferred);
+  }
+  return scope;
+}
+
+// A defer can write after a closure even when its statement comes first.
+function deferred(st: ast.Stmt, own scope: Scope): Scope {
+  if let ast.StmtDefer(d) = st {
+    let after: boolean[] = scope.after;
+    for name in irtables.body_assign_targets([d.action]) {
+      let at: i32 = scope.names.find(name);
+      if (at >= 0) {
+        after = after.with(at, true);
+      }
+    }
+    return Scope { ...scope, after: after };
+  }
+  return scope;
+}
+
+// One last-write index per name avoids a separate suffix scan per statement.
+pub function block(stmts: ast.Stmt[], scope: Scope): Writes {
+  let last: i32[] = [];
+  for at in 0..scope.size {
+    last = last.append(0 - 1);
+  }
+  for i in 0..stmts.len() {
+    for name in irtables.body_assign_targets([stmts[i]]) {
+      let slot: i32 = scope.names.find(name);
+      if (slot >= 0) {
+        last = last.with(slot, i);
+      }
+    }
+  }
+  return Writes { scope: scope, last: last };
+}
+
+// A loop can repeat its writes on a backedge. Include the current statement
+// for its body and for a closure in an assignment's value.
+pub function following(w: Writes, at: i32, current: boolean): Scope {
+  let after: boolean[] = w.scope.after;
+  for i in 0..w.last.len() {
+    if (w.last[i] > at || current && w.last[i] == at) {
+      after = after.with(i, true);
+    }
+  }
+  return Scope { ...w.scope, after: after };
+}
+
+// A declaration inside the loop creates a fresh binding on each iteration.
+// Its writes in the next iteration cannot change this iteration's capture.
+pub function loop_following(w: Writes, at: i32, locals: string[]): Scope {
+  let after: boolean[] = following(w, at, false).after;
+  let fresh: boolean[] = __alloc_bool(w.scope.size);
+  for name in locals {
+    let slot: i32 = w.scope.names.find(name);
+    if (slot >= 0) {
+      fresh = fresh.with(slot, true);
+    }
+  }
+  for i in 0..w.last.len() {
+    if (w.last[i] == at && !fresh[i]) {
+      after = after.with(i, true);
+    }
+  }
+  return Scope { ...w.scope, after: after };
+}
+
+pub function written(scope: Scope, name: string): boolean {
+  let at: i32 = scope.names.find(name);
+  return at >= 0 && scope.after[at];
+}
