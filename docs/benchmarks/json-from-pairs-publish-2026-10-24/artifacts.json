@@ -1,0 +1,100 @@
+{
+  "source_commit": "68032dccf9796927460c1476087cf0206e5aadde",
+  "base": "76623a46dcb027602363addcadbbfbc340f66929",
+  "oracle_source_commit": "3ea1ca853da016c0014e439d4cae81a9749d2f47",
+  "compiler_and_library_equal_to_oracle_source": true,
+  "release_workflow_run": 40054078777,
+  "release_source": "5e637120ba6cb648144d69de817c358dc0706de9",
+  "artifacts": [
+    {
+      "path": "matrix.json.gz",
+      "bytes": 822,
+      "sha256": "2732bd3b9dbb95b3972a0f47f53066e86e33f9e7ec6d58e3cf24707b46dc4048"
+    },
+    {
+      "path": "matrix.log.gz",
+      "bytes": 554,
+      "sha256": "1e000dbb6109bbc5f7ccbb24a0920fd5778cefe429b2fa56e4c91c550e95b1ba"
+    },
+    {
+      "path": "released-pin-matrix.json.gz",
+      "bytes": 808,
+      "sha256": "ddd42e8a6c21407bb58d6424418c69b8efa85759fee6db421e052b3a10d8b312"
+    },
+    {
+      "path": "released-pin-matrix.log.gz",
+      "bytes": 540,
+      "sha256": "9a4b3fa14a993644ac08f8907a34323332b73dd3a0426effd7375973fe6106a3"
+    },
+    {
+      "path": "format.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "refreshed-stage0-build.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "refreshed-stage0-run.stdout",
+      "bytes": 289,
+      "sha256": "f710ddfc130db477385dd1e49691e47d1f89d05489919ddf61e6cc3a240dd675"
+    },
+    {
+      "path": "refreshed-stage0-run.stderr",
+      "bytes": 45,
+      "sha256": "618d3903e6852d151609ee4f9cf4b6b4d6cf32abf504040bde0fe07019884eb1"
+    },
+    {
+      "path": "refreshed-stage0-proof.json",
+      "bytes": 287,
+      "sha256": "602a9424d810cf1cc8578852c0be6ec2c39806e252537d9121169c43f4631638"
+    },
+    {
+      "path": "refreshed-pin-validation/bootstrap/bootstrap.json.gz",
+      "bytes": 350,
+      "sha256": "4d956ff21205a93f351beb755c02719348f5d9a3b69dd2f4c9180ef6e10f2054"
+    },
+    {
+      "path": "refreshed-pin-validation/bootstrap/stage1.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "refreshed-pin-validation/bootstrap/stage2.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "refreshed-pin-validation/bootstrap/stage3.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "stage0-build.log",
+      "bytes": 336,
+      "sha256": "94b8f54cab0ff6f2a9fb7a47a9355ceddd6b2af287ebcdf2f1cc2eaf0b964990"
+    },
+    {
+      "path": "stage0-run.stderr",
+      "bytes": 113,
+      "sha256": "466ca538a1766930dd1f0f2e792e4cc4fe724d24c2cc087ade41f9d4a8380692"
+    },
+    {
+      "path": "released-stage0.lock",
+      "bytes": 524,
+      "sha256": "ae49d9abeadd45f76d7f0ca4f347edb97624fa64f5247374d3c6295e8d89a192"
+    },
+    {
+      "path": "change.patch.gz",
+      "bytes": 2252,
+      "sha256": "df805ed0aee02b05b6f1c66ef6f426a3fedc074bb61790b0497b163cf33db32c"
+    },
+    {
+      "path": "execution-logs.tar.gz",
+      "bytes": 966,
+      "sha256": "9c4530c7841c284afb792c5c556a8cb5655751a8337fed8319d6926a45e482e6"
+    }
+  ]
+}

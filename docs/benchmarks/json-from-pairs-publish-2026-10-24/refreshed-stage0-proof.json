@@ -1,0 +1,11 @@
+{
+  "pin_sha256": "9caea1e43f0942ed9ba6fa432fcc29d9a57fce1fe35ff97716def7c2443c4faa",
+  "program_sha256": "16c638b26a991fa2e75e7ab5b6efd50789c4032159ca8ee746292d849d7d2f8f",
+  "build_exit": 0,
+  "run_exit": 0,
+  "census": {
+    "allocs": 866,
+    "frees": 866,
+    "live_bytes": 0
+  }
+}
