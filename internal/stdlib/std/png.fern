@@ -4,6 +4,7 @@ import "std/binary";
 import "std/deflate";
 import "std/hash";
 import "std/error";
+import "core/cmp";
 
 pub enum EncodeError { InvalidDimensions, InvalidBufferLength }
 
@@ -19,6 +20,12 @@ pub function (e: EncodeError) message(): string {
 }
 
 impl error.Error for EncodeError {}
+
+impl cmp.Display for EncodeError {}
+
+pub function (e: EncodeError) to_string(): string {
+  return e.message();
+}
 
 // Pixels are consecutive RGB triples, from left to right and top to bottom.
 pub function encode_rgb8(width: i32, height: i32, pixels: [u8]): Result[u8[], EncodeError] {
