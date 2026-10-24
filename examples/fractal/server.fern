@@ -382,7 +382,7 @@ function own_binary(): (i64, string) {
   }
   // Without the executable, the source digest identifies the session only.
   // Such a response does not receive an immutable cache policy.
-  return (0, crypto.sha256_hex(text).take(24));
+  return (0, crypto.sha256_hex(text.as_bytes()).take(24));
 }
 
 function main(): i32 {
