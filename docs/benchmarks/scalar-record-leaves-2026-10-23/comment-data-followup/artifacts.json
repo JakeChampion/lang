@@ -1,0 +1,46 @@
+{
+  "source_commit": "d71975903aac7ef7847105b9e4922f3e3ead1150",
+  "public_base": "1d0d1a0a58666a0d7500e3ef5afa3e1ea882a52f",
+  "node_tests": 18,
+  "failures": 0,
+  "skips": 0,
+  "all_compiler_stages_byte_identical_to_public_base": true,
+  "native_sha256": "d294ee4d34be58c3f2cd8335c0ba382d39f4732ed99bef46624554038044fb24",
+  "files": [
+    {
+      "path": "shim-tests.log.gz",
+      "bytes": 843,
+      "sha256": "ce7b6992682721ed674d6043116498d401993fde5ed3719d99821a4a46e7db1a"
+    },
+    {
+      "path": "bootstrap-bootstrap.json.gz",
+      "bytes": 396,
+      "sha256": "73fe3a0eec389595654e9c4863c9003ec7e2628d8dbb11e2bc02828e84257085"
+    },
+    {
+      "path": "bootstrap-stage1.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap-stage2.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap-stage3.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "format.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "change.patch.gz",
+      "bytes": 432,
+      "sha256": "3c69b9c7f128c2989e544fa3b038b895c87651794dc75d844beace366987eaf7"
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "source_commit": "1ce3fe349119092beecb1cf4e3a3c568a829650e",
+  "public_base": "b528c9b423ac6e513805ee6433db17ccd612aca0",
+  "overlay_tests": 18,
+  "node_tests": 18,
+  "failures": 0,
+  "skips": 0,
+  "all_three_compiler_images_identical": true,
+  "native_sha256": "d294ee4d34be58c3f2cd8335c0ba382d39f4732ed99bef46624554038044fb24",
+  "files": [
+    {
+      "path": "overlay-tests.jsonl.gz",
+      "bytes": 1553,
+      "sha256": "2056beb4c94c8ad90b14bb944d6ebe556feccf8ae77efa49e838a6c631c72e04"
+    },
+    {
+      "path": "shim-tests.log.gz",
+      "bytes": 839,
+      "sha256": "6541037d7b6947ab1cbef2f8e561c1ca4ed7399252a99f23d6a4306d7d2d108d"
+    },
+    {
+      "path": "format.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap-bootstrap.json.gz",
+      "bytes": 397,
+      "sha256": "3286cb99578713c3bbe13debb4e9dac652146c1a774520efe641120d2c341d64"
+    },
+    {
+      "path": "bootstrap-stage1.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap-stage2.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap-stage3.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "change.patch.gz",
+      "bytes": 247,
+      "sha256": "d81b885f29a78a4806afd436c4d535205f43669a52f75883921cfd14a4af3bb0"
+    }
+  ]
+}

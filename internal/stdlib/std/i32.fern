@@ -3,6 +3,7 @@
 import "core/int";
 import "std/string";
 
+// Return the absolute value. The minimum value wraps to itself.
 pub function (n: i32) abs(): i32 {
   if (n < 0) {
     let w: i64 = 0 - n as i64;
@@ -879,6 +880,7 @@ pub function (n: i32) ordinal(): string {
   return n.to_string() + suffix;
 }
 
+// The decimal text of `n`, with a leading `-` when it is negative.
 pub function (n: i32) to_string(): string {
   return int.int_to_string(n);
 }

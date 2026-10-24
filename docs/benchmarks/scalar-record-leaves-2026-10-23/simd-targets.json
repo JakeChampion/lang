@@ -1,0 +1,29 @@
+{
+  "compiler_sha256": "249ac984201e7eba37250232c138e120e5c28b706cc9ef97dbd467c90e150828",
+  "runs": [
+    {
+      "target": "x86-64-linux",
+      "exit": 0,
+      "seconds": 1.7109164739995322,
+      "stdout": "TAP version 13\n# Suite: simd\nok 1 - kernel on f64\nok 2 - kernel on f32\nok 3 - LANES through a bound\nok 4 - dual polynomial\nok 5 - dual select\nok 6 - dual sigmoid\nok 7 - dual chain rules\nok 8 - dual pow\nok 9 - double-double keeps low bits\nok 10 - double-double sqrt\nok 11 - double-double exp and log\nok 12 - double-double trig\nok 13 - double-double small arguments\nok 14 - double-double generic kernel\nok 15 - dual of double-double\nok 16 - double-double over f32\nok 17 - eq is IEEE for NaN\nok 18 - sweep against std/f64\n1..18\n# tests 18\n# pass 18\n# fail 0\n",
+      "stderr": "leakcheck: allocs=5527 frees=5527 live_bytes=0\n",
+      "binary_sha256": "66fc6f44b0571c6ef0512973ea759e7695ddeeabdce389508445462dbb05c4f9"
+    },
+    {
+      "target": "arm64-linux",
+      "exit": 0,
+      "seconds": 1.7159290499985218,
+      "stdout": "TAP version 13\n# Suite: simd\nok 1 - kernel on f64\nok 2 - kernel on f32\nok 3 - LANES through a bound\nok 4 - dual polynomial\nok 5 - dual select\nok 6 - dual sigmoid\nok 7 - dual chain rules\nok 8 - dual pow\nok 9 - double-double keeps low bits\nok 10 - double-double sqrt\nok 11 - double-double exp and log\nok 12 - double-double trig\nok 13 - double-double small arguments\nok 14 - double-double generic kernel\nok 15 - dual of double-double\nok 16 - double-double over f32\nok 17 - eq is IEEE for NaN\nok 18 - sweep against std/f64\n1..18\n# tests 18\n# pass 18\n# fail 0\n",
+      "stderr": "leakcheck: allocs=5527 frees=5527 live_bytes=0\n",
+      "binary_sha256": "e0b5a69b3b3d9ef7a7b1a678e4dd6305a36d77c458cb23ff0a149e853db2bd47"
+    },
+    {
+      "target": "wasm32-wasi",
+      "exit": 0,
+      "seconds": 1.844339706000028,
+      "stdout": "TAP version 13\n# Suite: simd\nok 1 - kernel on f64\nok 2 - kernel on f32\nok 3 - LANES through a bound\nok 4 - dual polynomial\nok 5 - dual select\nok 6 - dual sigmoid\nok 7 - dual chain rules\nok 8 - dual pow\nok 9 - double-double keeps low bits\nok 10 - double-double sqrt\nok 11 - double-double exp and log\nok 12 - double-double trig\nok 13 - double-double small arguments\nok 14 - double-double generic kernel\nok 15 - dual of double-double\nok 16 - double-double over f32\nok 17 - eq is IEEE for NaN\nok 18 - sweep against std/f64\n1..18\n# tests 18\n# pass 18\n# fail 0\n",
+      "stderr": "leakcheck: allocs=5579 frees=5579 live_bytes=0\n",
+      "binary_sha256": "0f617a6cdb8c25eeb9058fa44cf22af7a3bf5fb57931c06da2b12fc7b2b9e6d0"
+    }
+  ]
+}

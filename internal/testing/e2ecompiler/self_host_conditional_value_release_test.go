@@ -156,8 +156,9 @@ function main(): i32 {
 }
 `
 
+// Keep the consumer call so this probe exercises conditional releases of allocated records.
 const condAliasStructSrc = `struct P { x: i32, y: i32, a:i32, b:i32, c:i32 }
-function px(p: P): i32 { return p.x; }
+@noinline function px(p: P): i32 { return p.x; }
 function mkp(j: i32): P { return P { x: j, y: 4, a:0, b:0, c:0 }; }
 function retp(j: i32): P { let p = P { x: j, y: 7, a:0, b:0, c:0 }; return if (j > 1) { p } else { mkp(j) }; }
 function retq(j: i32): P { let p = P { x: j, y: 8, a:0, b:0, c:0 }; return match (j) { 0 => P { x: 1, y: j, a:0, b:0, c:0 }, _ => p }; }

@@ -1,0 +1,3 @@
+f64: 20 iters 3444 ops/s p50=262508ns p99=587184ns p99.9=587184ns allocs=0 fresh_bytes=0
+Dual[f64]: 20 iters 2305 ops/s p50=413336ns p99=813733ns p99.9=813733ns allocs=0 fresh_bytes=0
+DoubleDouble[f64]: 20 iters 37 ops/s p50=26409616ns p99=27795617ns p99.9=27795617ns allocs=0 fresh_bytes=0

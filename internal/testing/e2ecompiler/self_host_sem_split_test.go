@@ -185,13 +185,16 @@ func TestSelfHostSemanticSplicedBodies(t *testing.T) {
 				if got := strings.Contains(asm, tc.scaled); got != off {
 					t.Errorf("FERN_SEM_INLINE off=%v: body of scaled emitted=%v, want %v", off, got, off)
 				}
-				if !strings.Contains(asm, tc.bump) || !strings.Contains(asm, tc.call) {
-					t.Errorf("FERN_SEM_INLINE off=%v: Acc.bump is not a body called by main", off)
+				if got := strings.Contains(asm, tc.bump); got != off {
+					t.Errorf("FERN_SEM_INLINE off=%v: body of Acc.bump emitted=%v, want %v", off, got, off)
+				}
+				if got := strings.Contains(asm, tc.call); got != off {
+					t.Errorf("FERN_SEM_INLINE off=%v: call to Acc.bump emitted=%v, want %v", off, got, off)
+				}
+				if stderr, code := cli.exitOf(t, semSplicedProgram, tc.target, env...); code != 51 {
+					t.Errorf("FERN_SEM_INLINE off=%v: exited %d, want 51\n%s", off, code, stderr)
 				}
 			}
 		})
-	}
-	if stderr, code := cli.exitOf(t, semSplicedProgram, "x86-64-linux"); code != 51 {
-		t.Errorf("exited %d, want 51\n%s", code, stderr)
 	}
 }
