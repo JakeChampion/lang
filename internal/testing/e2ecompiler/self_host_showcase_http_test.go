@@ -178,6 +178,17 @@ func TestSelfHostShowcaseHTTP(t *testing.T) {
 			t.Fatal("no form token")
 		}
 		values := url.Values{"name": {"A <guest>"}, "message": {"<script>alert(1)</script>"}, "token": {string(token[1])}}
+		for _, invalid := range []string{"control\x00", "noncharacter\ufffe", "noncharacter\uffff"} {
+			for _, field := range []string{"name", "message"} {
+				valid := values.Get(field)
+				values.Set(field, invalid)
+				response, _ := request("POST", "/notes/", values.Encode(), map[string]string{"Content-Type": "application/x-www-form-urlencoded"})
+				if response.StatusCode != 422 {
+					t.Fatalf("invalid Atom text in %s: status %d", field, response.StatusCode)
+				}
+				values.Set(field, valid)
+			}
+		}
 		response, _ := request("POST", "/notes/", values.Encode(), map[string]string{"Content-Type": "application/x-www-form-urlencoded"})
 		if response.StatusCode != 303 || !strings.HasPrefix(response.Header.Get("Location"), "/notes/?posted=1#note-") {
 			t.Fatalf("form status %d", response.StatusCode)

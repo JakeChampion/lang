@@ -107,7 +107,7 @@ pub function document(state: State, req: HttpRequest, notice: string, status: i3
 
 ## Validate and redirect
 
-Verify the token before a mutation. Count Unicode code points and reject forbidden control characters.
+Verify the token before a mutation. Count Unicode code points and reject characters that XML cannot represent.
 Limit each anonymous token to one note per three seconds. This is a demo limit, not an identity system.
 A successful POST returns a 303 redirect. A page refresh then repeats only GET.
 
@@ -125,9 +125,10 @@ pub function post(state: State, req: HttpRequest): HttpResponse {
       if (name.len() < 1 || utf8.codepoint_count(name) > 48 || text.len() < 1 || utf8.codepoint_count(text) > 600) {
         return document(state, req, "Please use a name of 48 characters and a note of 600 characters or fewer.", 422);
       }
-      for c in (name + text).as_bytes() {
-        if (c < 32 && c != 9 && c != 10 && c != 13) {
-          return document(state, req, "Notes cannot contain control characters.", 422);
+      for point in utf8.codepoints(name + text) {
+        let c: i32 = point as i32;
+        if (c < 32 && c != 9 && c != 10 && c != 13 || c == 65534 || c == 65535) {
+          return document(state, req, "Please remove unsupported characters from your name or note.", 422);
         }
       }
       let author_key: string = crypto.sha256_hex(token.bytes());
