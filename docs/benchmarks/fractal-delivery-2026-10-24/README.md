@@ -118,7 +118,9 @@ The compiler now handles literal values, negation, float casts, and arithmetic w
 It preserves intermediate `f32` rounding, signed zero, and subnormal values.
 It keeps computed NaN operations at runtime because target payloads can differ.
 
-A bounded expression walk leaves unsupported expressions on the existing runtime path.
+A shared budget permits at most 32 SSA node visits per candidate.
+It prevents exponential work when expressions reuse earlier values.
+Unsupported or over-budget expressions retain the runtime path.
 
 The tests check zero allocation from the first read on x86-64, ARM64, and WASI.
 They also check full-width integer values and copy-on-write updates that preserve shared originals.

@@ -1547,7 +1547,7 @@ function integer_literal(f: ssasem.Func, ins: ssa.SInst): boolean {
 // element in an 8-byte slot, so the word is the slot's bytes on each.
 function wide_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
   if (ssasem.is_float(t)) {
-    match (float_constant_bits(f, defs, v, 32)) {
+    match (float_constant_bits(f, defs, v, cell_new(32))) {
       Some(bits) => {
         return util.i64_to_string(bits);
       },
@@ -1581,10 +1581,12 @@ function wide_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type):
 
 // Static floating tables retain the same intermediate rounding as runtime code.
 // f32 arrays use promoted f64 slots on every backend, including WASI.
-function float_constant_bits(f: ssasem.Func, defs: ssa.SInst[], v: i32, budget: i32): Option[i64] {
-  if (budget <= 0 || v < 0 || v >= defs.len()) {
+// One shared node budget also bounds repeated visits through a shared SSA graph.
+function float_constant_bits(f: ssasem.Func, defs: ssa.SInst[], v: i32, budget: Cell[i32]): Option[i64] {
+  if (budget.get() <= 0 || v < 0 || v >= defs.len()) {
     return None;
   }
+  budget.set(budget.get() - 1);
   let d: ssa.SInst = through_copies(defs, v);
   if (d.result < 0 || !ssasem.is_float(f.values[d.result])) {
     return None;
@@ -1593,7 +1595,7 @@ function float_constant_bits(f: ssasem.Func, defs: ssa.SInst[], v: i32, budget: 
   if (d.kind_tag == 1) {
     bits = util.parse_f64_bits(d.str);
   } else if (d.args.len() == 1 && (d.kind_tag == ssasem.cast() || d.kind_tag == 10 && d.str == "-")) {
-    match (float_constant_bits(f, defs, d.args[0], budget - 1)) {
+    match (float_constant_bits(f, defs, d.args[0], budget)) {
       Some(value) => {
         bits = value;
       },
@@ -1607,7 +1609,7 @@ function float_constant_bits(f: ssasem.Func, defs: ssa.SInst[], v: i32, budget: 
   } else if (d.kind_tag == 9 && d.args.len() == 2 && (d.str == "+" || d.str == "-" || d.str == "*" || d.str == "/")) {
     let left: i64 = 0;
     let right: i64 = 0;
-    match (float_constant_bits(f, defs, d.args[0], budget - 1)) {
+    match (float_constant_bits(f, defs, d.args[0], budget)) {
       Some(value) => {
         left = value;
       },
@@ -1615,7 +1617,7 @@ function float_constant_bits(f: ssasem.Func, defs: ssa.SInst[], v: i32, budget: 
         return None;
       }
     }
-    match (float_constant_bits(f, defs, d.args[1], budget - 1)) {
+    match (float_constant_bits(f, defs, d.args[1], budget)) {
       Some(value) => {
         right = value;
       },

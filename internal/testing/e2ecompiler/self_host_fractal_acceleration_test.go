@@ -1,6 +1,9 @@
 package e2ecompiler
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 // Sign masks must preserve lane order, signed zero, and NaN sign bits.
 func TestSelfHostLaneBitmask(t *testing.T) {
@@ -123,6 +126,7 @@ const UNSIGNED: u64[] = [0u64, 18446744073709551615u64];
 @noinline fip function narrow(i: i32): f32 { return FLOATS[i]; }
 @noinline fip function wide(i: i32): f64 { return DOUBLES[i]; }
 function main(): i32 {
+  if (shared_expression()[0] != 167772160.0) { return 11; }
   let before: i64 = __heap_alloc_count();
   let casts: f32[] = local_casts();
   if (casts[0] != 0.1f32 || casts[1] != 16777216.0f32) { return 10; }
@@ -144,6 +148,13 @@ function main(): i32 {
   if (INTEGERS[0] != -9223372036854775807 - 1 || INTEGERS[1] != 9223372036854775807 || UNSIGNED[1] != 18446744073709551615u64) { return 9; }
   return 0;
 }`
+	// Repeated references form a small SSA graph with an exponential tree.
+	// A depth limit alone makes a static-table candidate revisit millions of nodes.
+	src += "\n@noinline function shared_expression(): f64[] {\nlet x0: f64 = 1.25;\n"
+	for i := 1; i <= 27; i++ {
+		src += fmt.Sprintf("let x%d: f64 = x%d + x%d;\n", i, i-1, i-1)
+	}
+	src += "return [x27];\n}\n"
 	testAccelerationTargets(t, src)
 }
 
