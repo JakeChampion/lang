@@ -1,0 +1,1 @@
+leakcheck: allocs=0 frees=0 live_bytes=0

@@ -1,0 +1,82 @@
+FUNC local_nested entry=0 nvals=29
+BLOCK 0 preds=
+  v0 = k-7 [] imm=0 mk
+  v1 = k1 [] imm=0
+  v2 = k-5 [0,1,] imm=0
+  v3 = k-7 [] imm=0 __heap_alloc_count
+  v4 = k1 [] imm=0
+  TERM k2 cond=0 target=1 t=0 f=0 value=0
+BLOCK 1 preds=0,6,
+  v26 = k8 [1,25,] imm=0
+  v28 = k8 [0,27,] imm=0
+  v5 = k8 [2,10,] imm=0
+  v6 = k8 [4,22,] imm=0
+  v7 = k1 [] imm=10
+  v8 = k9 [6,7,] imm=0 <
+  TERM k3 cond=8 target=0 t=2 f=3 value=0
+BLOCK 2 preds=1,
+  v9 = k1 [] imm=0
+  TERM k2 cond=0 target=4 t=0 f=0 value=0
+BLOCK 4 preds=2,5,
+  v25 = k8 [26,16,] imm=0
+  v27 = k8 [28,27,] imm=0
+  v10 = k8 [5,18,] imm=0
+  v11 = k8 [9,20,] imm=0
+  v12 = k1 [] imm=10
+  v13 = k9 [11,12,] imm=0 <
+  TERM k3 cond=13 target=0 t=5 f=6 value=0
+BLOCK 5 preds=4,
+  v14 = k7 [25,] imm=0
+  v15 = k1 [] imm=1
+  v16 = k9 [25,15,] imm=0 +
+  v17 = k7 [27,] imm=0
+  v18 = k-5 [27,16,] imm=11
+  v19 = k1 [] imm=1
+  v20 = k9 [11,19,] imm=0 +
+  TERM k2 cond=0 target=4 t=0 f=0 value=0
+BLOCK 6 preds=4,
+  v21 = k1 [] imm=1
+  v22 = k9 [6,21,] imm=0 +
+  TERM k2 cond=0 target=1 t=0 f=0 value=0
+BLOCK 3 preds=1,
+  v23 = k-7 [] imm=0 __heap_alloc_count
+  v24 = k9 [23,3,] imm=0 -
+  TERM k1 cond=0 target=0 t=0 f=0 value=24
+FERN_SEM_DUMP: local_nested modes
+func local_nested {
+  b0:
+    v0 = call mk
+    v1 = const_int 0
+    v3 = call __heap_alloc_count
+    v4 = const_int 0
+    br b1
+  b1:
+    v26 = phi v1 v25
+    v6 = phi v4 v22
+    v7 = const_int 10
+    v8 = binary < v6 v7
+    brif v8 b2 b3
+  b2:
+    v9 = const_int 0
+    br b4
+  b4:
+    v25 = phi v26 v16
+    v11 = phi v9 v20
+    v12 = const_int 10
+    v13 = binary < v11 v12
+    brif v13 b5 b6
+  b5:
+    v15 = const_int 1
+    v16 = binary + v25 v15
+    v19 = const_int 1
+    v20 = binary + v11 v19
+    br b4
+  b6:
+    v21 = const_int 1
+    v22 = binary + v6 v21
+    br b1
+  b3:
+    v23 = call __heap_alloc_count
+    v24 = binary - v23 v3
+    ret v24
+}

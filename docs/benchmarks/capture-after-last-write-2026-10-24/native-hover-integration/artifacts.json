@@ -1,0 +1,62 @@
+{
+  "source_identity": {
+    "packaged_source": "f25bf39ecba3171ae1b3698d91ac8b745ed5d1ff",
+    "bootstrap_source": "f25bf39ecba3171ae1b3698d91ac8b745ed5d1ff",
+    "measured_source": "5d4dd36f62d792e27c57db48e180ad444eff0b41",
+    "previous_bootstrap_source": "5d4dd36f62d792e27c57db48e180ad444eff0b41",
+    "source_sha256": "57fe3622b91fd74f6e401e91e9dc7b88cec7fc1680ed49bad81686b6b5aefc34",
+    "source_files": 497,
+    "native_images_sha256": [
+      "0648bc174b2420ad063f85bd38a4386e7cd80c1e49066ff1c875d172a7513822",
+      "3abcae01dc938975608d1bb34765a9abff968b94146332c37a1a81a72c0cb5e6",
+      "3abcae01dc938975608d1bb34765a9abff968b94146332c37a1a81a72c0cb5e6"
+    ],
+    "all_three_compiler_images_identical": true,
+    "only_library_change": "Restore the i32.to_string doc comment; all other compiler and library bytes are unchanged.",
+    "go_changes_equal_standard_gofmt": [],
+    "all_test_and_conformance_files_unchanged": true,
+    "dependency_base": "fix/scalar-record-leaves-publish"
+  },
+  "artifacts": [
+    {
+      "path": "source-identity.json",
+      "bytes": 948,
+      "sha256": "24b945e2fb13cc8a2dc53cea9f3c82ccd1e321250f1343d1ac53713ede1c3f4e"
+    },
+    {
+      "path": "source-files.json",
+      "bytes": 78238,
+      "sha256": "bfa4ff0d40e1df681cdeabf338354fd191cd8335b51a83f764e343185c0985e7"
+    },
+    {
+      "path": "bootstrap-bootstrap.json.gz",
+      "bytes": 397,
+      "sha256": "fa7c6a7ea41060343464a9bbb57aabff17d0a14724d62b0dd8873e4d19061679"
+    },
+    {
+      "path": "bootstrap-stage1.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap-stage2.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap-stage3.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "seal-script.py.gz",
+      "bytes": 3061,
+      "sha256": "c33fb761a0533335e57abfc413a69681cd3737ac8b56b849867ae50a0d76d689"
+    },
+    {
+      "path": "change.patch.gz",
+      "bytes": 4109771,
+      "sha256": "304aaeda7fbc0fae2dbc108c5d3f019fe2a176acdcff872e4bf5385099aad7c3"
+    }
+  ]
+}

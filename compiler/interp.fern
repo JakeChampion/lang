@@ -1014,12 +1014,8 @@ function lam_read_names(st: ast.Stmt): string[] {
   return astwalk.fold_stmt_own_pruned(st, no_names(), lam_read_of, not_lambda_expr);
 }
 
-function body_assign_names(stmts: ast.Stmt[], acc: string[]): string[] {
-  let a: string[] = acc;
-  for st in stmts {
-    a = astwalk.fold_stmt_spine(st, a, assign_target_of);
-  }
-  return a;
+function body_assign_names(stmts: ast.Stmt[], own acc: string[]): string[] {
+  return lam_assign_targets(stmts, acc);
 }
 
 function assign_target_of(st: ast.Stmt, own acc: string[]): string[] {

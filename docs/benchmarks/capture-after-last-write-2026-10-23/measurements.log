@@ -1,0 +1,83 @@
+map 25000 0 baseline 0.357103 50016
+map 25000 0 candidate 0.003041 15
+map 25000 1 candidate 0.002667 15
+map 25000 1 baseline 0.370135 50016
+map 25000 2 baseline 0.36097 50016
+map 25000 2 candidate 0.003544 15
+map 25000 3 candidate 0.003006 15
+map 25000 3 baseline 0.369103 50016
+map 50000 0 baseline 2.838029 100017
+map 50000 0 candidate 0.005591 16
+map 50000 1 candidate 0.004597 16
+map 50000 1 baseline 2.790312 100017
+map 50000 2 baseline 2.731644 100017
+map 50000 2 candidate 0.005125 16
+map 50000 3 candidate 0.005017 16
+map 50000 3 baseline 2.850386 100017
+map 100000 0 baseline 14.907643 200018
+map 100000 0 candidate 0.01147 17
+map 100000 1 candidate 0.009148 17
+map 100000 1 baseline 14.716775 200018
+map 100000 2 baseline 14.585112 200018
+map 100000 2 candidate 0.010306 17
+map 100000 3 candidate 0.009782 17
+map 100000 3 baseline 15.258821 200018
+compiler 0 baseline 27.157255
+compiler 0 candidate 23.39064
+compiler 1 candidate 22.880934
+compiler 1 baseline 21.929452
+compiler 2 baseline 21.955253
+compiler 2 candidate 22.040676
+compiler 3 candidate 22.690195
+compiler 3 baseline 27.553699
+{
+  "maps": {
+    "25000": {
+      "baseline": {
+        "median_seconds": 0.3650364185014041,
+        "allocations": [
+          50016
+        ]
+      },
+      "candidate": {
+        "median_seconds": 0.0030233124998630956,
+        "allocations": [
+          15
+        ]
+      }
+    },
+    "50000": {
+      "baseline": {
+        "median_seconds": 2.8141705250000086,
+        "allocations": [
+          100017
+        ]
+      },
+      "candidate": {
+        "median_seconds": 0.005071186998975463,
+        "allocations": [
+          16
+        ]
+      }
+    },
+    "100000": {
+      "baseline": {
+        "median_seconds": 14.81220897899766,
+        "allocations": [
+          200018
+        ]
+      },
+      "candidate": {
+        "median_seconds": 0.01004402499893331,
+        "allocations": [
+          17
+        ]
+      }
+    }
+  },
+  "compiler": {
+    "baseline": 24.556254078001075,
+    "candidate": 22.785564475499996
+  },
+  "compiler_ratio": 0.9278925198901828
+}

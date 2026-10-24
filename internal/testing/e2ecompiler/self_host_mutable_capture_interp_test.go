@@ -23,6 +23,10 @@ func TestSelfHostMutableScalarCaptureInterp(t *testing.T) {
 		{"write-only-capture", `function main(): i32 { let x = 1; let f = (): i32 => { x = 42; return 7; }; let r = f(); return r + x; }`},
 		{"counter", `function main(): i32 { let x = 0; let inc = (): i32 => { x = x + 1; return x; }; inc(); inc(); return x; }`},
 		{"two-closures-share", `function main(): i32 { let n: i32 = 0; let a: () => i32 = (): i32 => { n = n + 1; return n; }; let b: () => i32 = (): i32 => { n = n + 10; return n; }; a(); b(); return n; }`},
+		{"read-before-write", `function main(): i32 { let n: i32 = 0; let reader = (): i32 => n; let writer = (): i32 => { n = n + 7; return n; }; writer(); return reader(); }`},
+		{"read-before-escaped-write", `function call(f: () => i32): i32 { return f(); } function main(): i32 { let n: i32 = 0; let reader = (): i32 => n; let writer = (): i32 => { n = n + 7; return n; }; call(writer); return call(reader); }`},
+		{"later-writer-shadows-reader", `function main(): i32 { let n: i32 = 1; let reader = (): i32 => n; let other = (): i32 => { let n: i32 = 5; n = n + 1; return n; }; other(); return reader(); }`},
+		{"iteration-reader-and-local-writer", `function main(): i32 { let fs: (() => i32)[] = []; let k: i32 = 0; while (k < 3) { let n: i32 = k; fs = fs.append(() => n); let other = (): i32 => { let n: i32 = 99; n = n + 1; return n; }; other(); k = k + 1; } let total: i32 = 0; for f in fs { total = total + f(); } return total; }`},
 		{"bool-capture", `function main(): i32 { let b: boolean = false; let f: () => i32 = (): i32 => { b = true; return 0; }; f(); if (b) { return 7; } return 0; }`},
 
 		{"inner-shadow-control", `function main(): i32 { let x: i32 = 1; let f: () => i32 = (): i32 => { let x: i32 = 5; x = x + 1; return x; }; let r = f(); return r + x; }`},
