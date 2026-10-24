@@ -101,7 +101,7 @@ function main(): i32 { return fwd(other); }`, 2},
 	// CAPTURE, not parameter: the lambda `() => run(target)` closes over the
 	// fn-typed parameter `target`, which shadows an uncalled module function of
 	// the same name. This is the shape `std/fuzz`'s `r.fuzz` receiver method
-	// takes — `r.it(name, () => fuzz_run(seeds, iterations, target))`.
+	// takes — `r.it(name, () => run(seeds, iterations, target))`.
 	{"captured-fn-param", `
 function target(x: i32): i32 { return 1; }
 function other(x: i32): i32 { return 2; }

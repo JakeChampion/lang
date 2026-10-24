@@ -258,16 +258,16 @@ pure-Fern runner). `from_entries` is spelled `map.from(pairs)`.
 
 ### 8. Path manipulation (string-level) · small · ☑
 
-**Surface**: `path_join(parts: string[])`, `path_parent(p)`,
-`path_file_name(p)`, `path_extension(p)`, `path_clean(p)`.
+**Surface**: `join(parts: string[])`, `parent(p)`,
+`file_name(p)`, `extension(p)`, `clean(p)`.
 
 **Why**: Every CLI tool needs these; pure string ops, no
 FS interaction required.
 
 **Inspiration**: Go `path/filepath`, Zig `fs.path`.
 
-**Status**: shipped — `path_join` / `path_parent` /
-`path_file_name` / `path_extension` / `path_clean`. `path_clean`
+**Status**: shipped — `path.join` / `path.parent` /
+`path.file_name` / `path.extension` / `path.clean`. `path.clean`
 resolves `..`, `.`, and duplicate `/` lexically (Go `path.Clean`,
 Unix mode); a rooted `..` cannot climb above `/`, a relative
 leading `..` is kept, and a path that cancels out cleans to `.`.
@@ -628,8 +628,8 @@ think they're free additions to make.
   `http.text(status, body)`,
   `http.not_found()`. Saves the
   `HttpResponse { status: 200, body: ... }` boilerplate.
-- **Log helpers**: `log_info(msg)` / `log_warn(msg)` /
-  `log_error(msg)`. Thin wrappers around `eprint` with a
+- **Log helpers**: `info(msg)` / `warn(msg)` /
+  `error(msg)`. Thin wrappers around `eprint` with a
   `[LEVEL]` prefix.
 - **String array hygiene**: `arr.filter_non_empty()` /
   `arr.count_non_empty()`. Useful after `split(sep)` when

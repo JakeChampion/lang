@@ -11,7 +11,7 @@ import "std/test";
 //
 // Result[T, IoError] is the canonical shape for fallible
 // I/O in the stdlib (read_file / read_dir / temp_dir /
-// fuzz_corpus_from_dir), which is what the helpers
+// fuzz.corpus_from_dir), which is what the helpers
 // specialise for.
 
 function test_is_ok_string_pass(r: test.TestRunner): test.TestRunner {

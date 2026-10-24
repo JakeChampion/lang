@@ -157,7 +157,7 @@ Repeat the Phase 3 pattern, one PR per module:
 - `std/format` — `format(template, args)`, `format_bytes`.
 - `std/math` — pow, sqrt_floor, etc. (overlap with std/i32;
   decide on boundary: math = generic, i32 = receiver methods).
-- `std/log` — log_info / warn / error.
+- `std/log` — log.info / warn / error.
 - `core/mem` — `__alloc_u8`, `string_from_bytes`, `__memcpy`.
 - `core/io` — `__write_stdout`, `read_chunk`, `read_all_stdin`.
 - `core/net` — `tcp_serve` and the WASI socket plumbing.

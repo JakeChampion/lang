@@ -12,7 +12,7 @@
 // Build a spec, parse argv, query the result:
 //
 //   import "std/cli" as cli;
-//   let spec: cli.CliSpec = cli.cli_new("greet", "print a greeting");
+//   let spec: cli.CliSpec = cli.new("greet", "print a greeting");
 //   spec = spec.option("name", "n", "who to greet");
 //   spec = spec.flag("shout", "s", "upper-case the greeting");
 //   let a: cli.CliArgs = spec.parse(args());
@@ -57,8 +57,8 @@ pub struct CliArgs { opts: Map[string, string], positionals: string[], command: 
 // argv index to continue from, and the error ("" when none).
 struct CliStep { opts: Map[string, string], next: i32, error: string }
 
-// `cli_new(name, about)` — start a spec with no flags.
-pub function cli_new(name: string, about: string): CliSpec {
+// `new(name, about)` — start a spec with no flags.
+pub function new(name: string, about: string): CliSpec {
   let fs: CliFlag[] = [];
   let cs: CliSpec[] = [];
   return CliSpec { name: name, about: about, flags: fs, commands: cs };
@@ -676,10 +676,10 @@ pub function (s: CliSpec) completion(shell: string): Option[string] {
 // a terminal degrades to plain text automatically, so piping a
 // coloured CLI tool into a file or `less` needs no per-call guard
 // at the use site. FORCE_COLOR overrides that, NO_COLOR
-// (no-color.org) and TERM=dumb force it off; see cli_color_enabled
+// (no-color.org) and TERM=dumb force it off; see color_enabled
 // below for the precedence.
 // ============================================================
-// `cli_color_enabled()` — the gate every coloriser consults.
+// `color_enabled()` — the gate every coloriser consults.
 //
 // Four signals, in precedence order:
 //
@@ -704,7 +704,7 @@ pub function (s: CliSpec) completion(shell: string): Option[string] {
 // The tty test comes last among the four rather than first because the
 // three environment variables are overrides — a user who exported one
 // has said something more specific than the stream shape has.
-pub function cli_color_enabled(): boolean {
+pub function color_enabled(): boolean {
   match (env("FORCE_COLOR")) {
     Some(_) => {
       return true;
@@ -731,43 +731,43 @@ pub function cli_color_enabled(): boolean {
 // Wrap `s` in the SGR `code` and a reset, or return it unchanged
 // when colour is disabled.
 function __cli_sgr(code: string, s: string): string {
-  if (!cli_color_enabled()) {
+  if (!color_enabled()) {
     return s;
   }
   return "\x1b[" + code + "m" + s + "\x1b[0m";
 }
 
 // Foreground colours.
-pub function cli_red(s: string): string {
+pub function red(s: string): string {
   return __cli_sgr("31", s);
 }
 
-pub function cli_green(s: string): string {
+pub function green(s: string): string {
   return __cli_sgr("32", s);
 }
 
-pub function cli_yellow(s: string): string {
+pub function yellow(s: string): string {
   return __cli_sgr("33", s);
 }
 
-pub function cli_blue(s: string): string {
+pub function blue(s: string): string {
   return __cli_sgr("34", s);
 }
 
-pub function cli_magenta(s: string): string {
+pub function magenta(s: string): string {
   return __cli_sgr("35", s);
 }
 
-pub function cli_cyan(s: string): string {
+pub function cyan(s: string): string {
   return __cli_sgr("36", s);
 }
 
 // Text attributes.
-pub function cli_bold(s: string): string {
+pub function bold(s: string): string {
   return __cli_sgr("1", s);
 }
 
-pub function cli_dim(s: string): string {
+pub function dim(s: string): string {
   return __cli_sgr("2", s);
 }
 

@@ -10,7 +10,7 @@ import (
 
 // nestedArrPayloadCases pin the NESTED-array (`T[][]`) Option/Result match
 // payload on the IR path (the std/fuzz corpus shape: `match
-// (fuzz_corpus_from_dir(d)) { Ok(seeds) => … }` over a `Result[u8[][], E]`).
+// (corpus_from_dir(d)) { Ok(seeds) => … }` over a `Result[u8[][], E]`).
 // The payload binding types as the nested array, as a `let m: T[][]` binding
 // does, so nested reads (`seeds[0][1]`), inner string dispatch
 // (`rows[0][1].len()`), and a lambda CAPTURING the binding all resolve.

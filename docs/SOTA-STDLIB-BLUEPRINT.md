@@ -653,21 +653,21 @@ the way `std/rand` now does.
 **`std/fuzz` mutations come from the seeded generator, and failures are now
 replayable.** Mutation drew from `math.random_int` at 14 sites — a syscall per
 draw, up to two per mutation, and no way to reproduce a run. It now threads a
-PCG32 state; `fuzz_run` draws ONE seed from the CSPRNG, names it in the failure
-diagnostic, and `fuzz_run_seeded(seeds, iterations, rng_seed, target)` replays
+PCG32 state; `fuzz.run` draws ONE seed from the CSPRNG, names it in the failure
+diagnostic, and `run_seeded(seeds, iterations, rng_seed, target)` replays
 that exact sequence. A fuzz failure you can re-run is worth considerably more
 than one you can only read about.
 
 **It also surfaced a self-host x86-64 miscompile, and the workaround is
-documented at the call site.** The obvious shape for `fuzz_run` is a one-line
-delegation to `fuzz_run_seeded` with a freshly drawn seed. That delegation
+documented at the call site.** The obvious shape for `fuzz.run` is a one-line
+delegation to `fuzz.run_seeded` with a freshly drawn seed. That delegation
 makes the callee invoke a DIFFERENT function value than the one passed:
-`fuzz_run` with an always-passing target reported a failure raised by a target
+`fuzz.run` with an always-passing target reported a failure raised by a target
 from an earlier call. Established by bisection — the pre-delegation shape and
 the inlined shape both behave, tail and non-tail delegation both misbehave.
 
 The trigger is narrower than "forwarding a function parameter", which is why
-`fuzz_run` is inlined rather than this being filed as a blanket hazard: a
+`fuzz.run` is inlined rather than this being filed as a blanket hazard: a
 single-module forward of an i32-returning fn, of an enum-returning fn, and
 **std/array's own `(xs: T[]) any(pred) { return any(xs, pred); }` receiver
 delegations** all lower correctly — that last one checked specifically,

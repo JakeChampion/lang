@@ -11,19 +11,19 @@ import "std/string";
 // through the self-host stdtest gate as well as the interpreter.
 
 function test_text_basic(): test.TestOutcome {
-  let lg: log.Logger = log.new_logger(log.level_info());
+  let lg: log.Logger = log.new(log.INFO);
   return test.assert_eq(lg.info_().render("hello"), "[INFO] hello\n");
 }
 
 function test_text_fields(): test.TestOutcome {
-  let lg: log.Logger = log.new_logger(log.level_trace());
+  let lg: log.Logger = log.new(log.TRACE);
   let line: string = lg.warn_().str("user", "bob").int("id", 7).bool("ok", true).render("hi");
   return test.assert_eq(line, "[WARN] hi user=bob id=7 ok=true\n");
 }
 
 function test_threshold_filters_below(): test.TestOutcome {
   // INFO threshold drops DEBUG / TRACE.
-  let lg: log.Logger = log.new_logger(log.level_info());
+  let lg: log.Logger = log.new(log.INFO);
   if (lg.debug_().str("k", "v").render("d") != "") {
     return test.fail("DEBUG should be filtered at INFO threshold");
   }
@@ -31,7 +31,7 @@ function test_threshold_filters_below(): test.TestOutcome {
 }
 
 function test_threshold_passes_at_or_above(): test.TestOutcome {
-  let lg: log.Logger = log.new_logger(log.level_warn());
+  let lg: log.Logger = log.new(log.WARN);
   if (lg.warn_().render("w") == "") {
     return test.fail("WARN should pass at WARN threshold");
   }
@@ -39,19 +39,19 @@ function test_threshold_passes_at_or_above(): test.TestOutcome {
 }
 
 function test_json_basic(): test.TestOutcome {
-  let lg: log.Logger = log.new_json_logger(log.level_trace());
+  let lg: log.Logger = log.new_json(log.TRACE);
   return test.assert_eq(lg.info_().render("m"), "{\"level\":\"INFO\",\"msg\":\"m\"}\n");
 }
 
 function test_json_fields(): test.TestOutcome {
-  let lg: log.Logger = log.new_json_logger(log.level_trace());
+  let lg: log.Logger = log.new_json(log.TRACE);
   let line: string = lg.error_().str("k", "v").int("n", 42).bool("ok", false).render("boom");
   return test.assert_eq(line, "{\"level\":\"ERROR\",\"msg\":\"boom\",\"k\":\"v\",\"n\":42,\"ok\":false}\n");
 }
 
 function test_json_escaping(): test.TestOutcome {
   // Quote + backslash in the message must not break the JSON object.
-  let lg: log.Logger = log.new_json_logger(log.level_trace());
+  let lg: log.Logger = log.new_json(log.TRACE);
   let line: string = lg.info_().render("a\"b\\c");
   return test.assert_eq(line, "{\"level\":\"INFO\",\"msg\":\"a\\\"b\\\\c\"}\n");
 }
@@ -59,7 +59,7 @@ function test_json_escaping(): test.TestOutcome {
 // Newline / CR / tab take the 2-byte named escapes (\n \r \t), not \u00XX —
 // exercises the escaper's 2-byte-expansion branch on the whitespace controls.
 function test_json_escaping_whitespace(): test.TestOutcome {
-  let lg: log.Logger = log.new_json_logger(log.level_trace());
+  let lg: log.Logger = log.new_json(log.TRACE);
   let line: string = lg.info_().render("x\ny\rz\tw");
   return test.assert_eq(line, "{\"level\":\"INFO\",\"msg\":\"x\\ny\\rz\\tw\"}\n");
 }
@@ -70,38 +70,38 @@ function test_json_escaping_whitespace(): test.TestOutcome {
 function test_json_escaping_control(): test.TestOutcome {
   let raw: u8[] = [65 as u8, 1 as u8, 66 as u8, 31 as u8];  // "A", 0x01, "B", 0x1F
   let msg: string = string_from_bytes_unchecked(raw);
-  let lg: log.Logger = log.new_json_logger(log.level_trace());
+  let lg: log.Logger = log.new_json(log.TRACE);
   let line: string = lg.info_().render(msg);
   return test.assert_eq(line, "{\"level\":\"INFO\",\"msg\":\"A\\u0001B\\u001f\"}\n");
 }
 
 function test_level_names(): test.TestOutcome {
-  if (log.level_name(log.level_trace()) != "TRACE") {
+  if (log.level_name(log.TRACE) != "TRACE") {
     return test.fail("trace name");
   }
-  if (log.level_name(log.level_debug()) != "DEBUG") {
+  if (log.level_name(log.DEBUG) != "DEBUG") {
     return test.fail("debug name");
   }
-  if (log.level_name(log.level_info()) != "INFO") {
+  if (log.level_name(log.INFO) != "INFO") {
     return test.fail("info name");
   }
-  if (log.level_name(log.level_warn()) != "WARN") {
+  if (log.level_name(log.WARN) != "WARN") {
     return test.fail("warn name");
   }
-  return test.assert_eq(log.level_name(log.level_error()), "ERROR");
+  return test.assert_eq(log.level_name(log.ERROR), "ERROR");
 }
 
 function test_at_explicit_level(): test.TestOutcome {
   // `.at(level)` is the general form the shortcuts delegate to.
-  let lg: log.Logger = log.new_logger(log.level_debug());
-  return test.assert_eq(lg.at(log.level_debug()).render("x"), "[DEBUG] x\n");
+  let lg: log.Logger = log.new(log.DEBUG);
+  return test.assert_eq(lg.at(log.DEBUG).render("x"), "[DEBUG] x\n");
 }
 
 // `emit` hands the sink each record once, without its newline, and
 // nothing for a record under the threshold.
 function test_sink_receives_each_line(): test.TestOutcome {
   let seen: Cell[string] = cell_new("");
-  let lg: log.Logger = log.new_json_logger(log.level_info()).to((line: string): void => { seen.set(seen.get() + line + "|"); });
+  let lg: log.Logger = log.new_json(log.INFO).to((line: string): void => { seen.set(seen.get() + line + "|"); });
   lg.info_().emit("a");
   lg.debug_().emit("dropped");
   lg.warn_().str("k", "v").emit("b");
@@ -112,7 +112,7 @@ function test_sink_receives_each_line(): test.TestOutcome {
 // sink without the newline `render` ends it with.
 function test_sink_keeps_level_and_mode(): test.TestOutcome {
   let seen: Cell[string] = cell_new("");
-  let lg: log.Logger = log.new_logger(log.level_warn()).to((line: string): void => { seen.set(seen.get() + "<" + line + ">"); });
+  let lg: log.Logger = log.new(log.WARN).to((line: string): void => { seen.set(seen.get() + "<" + line + ">"); });
   lg.info_().emit("quiet");
   lg.error_().int("n", 3).emit("loud");
   if (lg.error_().int("n", 3).render("loud") != "[ERROR] loud n=3\n") {

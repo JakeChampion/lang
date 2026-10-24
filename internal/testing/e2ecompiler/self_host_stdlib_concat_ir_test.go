@@ -32,10 +32,10 @@ var cryptoIRCases = []stdlibConcatCase{
 }
 
 var pathIRCases = []stdlibConcatCase{
-	{"join-len", `return path_join(["usr", "local", "bin"]).len();`}, // "usr/local/bin" = 13
-	{"ext-len", `return path_extension("a.b.c.txt").len();`},         // "txt" = 3
-	{"filename-len", `return path_file_name("/a/b/c.txt").len();`},   // "c.txt" = 5
-	{"parent-len", `return path_parent("/a/b/c.txt").len();`},        // "/a/b" = 4
+	{"join-len", `return join(["usr", "local", "bin"]).len();`}, // "usr/local/bin" = 13
+	{"ext-len", `return extension("a.b.c.txt").len();`},         // "txt" = 3
+	{"filename-len", `return file_name("/a/b/c.txt").len();`},   // "c.txt" = 5
+	{"parent-len", `return parent("/a/b/c.txt").len();`},        // "/a/b" = 4
 }
 
 var mathIRCases = []stdlibConcatCase{

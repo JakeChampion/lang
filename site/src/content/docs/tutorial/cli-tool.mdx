@@ -227,7 +227,7 @@ import "std/option";
 import "std/string";
 
 function main(): i32 {
-    let spec: cli.CliSpec = cli.cli_new("grep", "print lines that match a pattern");
+    let spec: cli.CliSpec = cli.new("grep", "print lines that match a pattern");
     spec = spec.flag("ignore-case", "i", "ignore case distinctions");
     spec = spec.flag("line-number", "n", "prefix each line with its line number");
     let a: cli.CliArgs = spec.parse(args());

@@ -286,9 +286,9 @@ func TestRunnerMathExamplePasses(t *testing.T) {
 }
 
 // `tests/stdlib/path_test.fern` covers the std/path POSIX helpers
-// (string-level, no FS) — path_join / path_parent / path_file_name /
-// path_extension / path_clean / path_is_absolute / path_stem /
-// path_with_extension, incl. separator-collapsing, root-preservation,
+// (string-level, no FS) — path.join / path.parent / path.file_name /
+// path.extension / path.clean / path.is_absolute / path.stem /
+// path.with_extension, incl. separator-collapsing, root-preservation,
 // trailing-slash, hidden-file, multi-extension, and `.`/`..`
 // resolution edges. Passing suite → exit 0.
 func TestRunnerPathExamplePasses(t *testing.T) {
@@ -2539,7 +2539,7 @@ func TestRunnerFloatExample(t *testing.T) {
 // `tests/stdlib/fuzz_shrink_test.fern` exercises the
 // `r.fuzz_shrink` receiver method on three benign properties
 // (no failures expected) — the harness's mutation loop runs
-// each one through `fuzz_default_iterations()` mutated
+// each one through `DEFAULT_ITERATIONS` mutated
 // variants. The shrinker only kicks in on a failure, so
 // this gate confirms the no-failure path stays clean +
 // returns exit 0.
@@ -3282,7 +3282,7 @@ func TestRunnerLinesLogExample(t *testing.T) {
 }
 
 // `tests/stdlib/fuzz_corpus_test.fern` exercises the
-// `fuzz_corpus_from_dir` + `fuzz_corpus_from_dir_or` helpers
+// `fuzz.corpus_from_dir` + `fuzz.corpus_from_dir_or` helpers
 // that load seed corpora from disk. Six cases cover the
 // loaded-seeds path, the fallback paths (missing directory
 // + empty directory), and a smoke test for the new fuzz
