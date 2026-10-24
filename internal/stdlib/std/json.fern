@@ -1,5 +1,4 @@
 // This module encodes and decodes JSON values.
-
 import "core/map";
 import "std/string";
 import "std/i32";
@@ -25,6 +24,17 @@ const JSON_LINEAR_MAX: i32 = 8;
 
 pub function object(): JsonObject {
   return JsonObject { names: [], items: [], index: [] };
+}
+
+// A repeated key retains its first position and last value.
+pub function from(pairs: (string, JsonValue)[]): JsonObject {
+  let keys: string[] = [];
+  let values: JsonValue[] = [];
+  for pair in pairs {
+    keys = keys.append(pair.0);
+    values = values.append(pair.1);
+  }
+  return object_of(keys, values);
 }
 
 pub function object_of(keys: string[], values: JsonValue[]): JsonObject {
@@ -989,7 +999,7 @@ function __json_message(s: string, off: i32): string {
   if (b < 128) {
     return "unexpected byte '" + string_from_bytes_unchecked([s[off]]) + "'";
   }
-  return "unexpected byte '\\x" + b.to_hex().pad_start(2, "0") + "'";
+  return "unexpected byte '\\x" + b.to_hex().pad_start(2, '0') + "'";
 }
 
 pub function json_parse_result(s: string): Result[JsonValue, JsonError] {

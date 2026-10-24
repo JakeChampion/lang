@@ -1,3 +1,4 @@
+// If x30 holds data, the caller must save its return address outside this fragment.
 import "./util";
 import "./ssaproofnames" as names;
 import "./ssacredithelper" as helper;
@@ -28,8 +29,9 @@ function label(line: string): boolean {
 
 function location(name: string, arm: boolean): boolean {
   let r = isa.reg(name, arm, 64);
+  // Frame bases must stay fixed. A caller with a frame can use x30 for data.
   if (r >= 0) {
-    return if (arm) { r != 29 && r != 30 } else { r != 4 && r != 5 };
+    return if (arm) { r != 29 } else { r != 4 && r != 5 };
   }
   return isa.frame_slot(name, arm);
 }

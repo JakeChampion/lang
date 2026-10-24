@@ -1,0 +1,142 @@
+{
+  "source_commit": "0e4dae30a8af5cad5458fbc051dcae18086878ef",
+  "dependency_base": "0a3f4b944c28c5b1ab00b6e8e1d3506e3c87867f",
+  "source_sha256": "f28b007a51016dcd31496c9fe8862a80f5bf163266f6c5cc71f00310aacd2cab",
+  "source_files": 496,
+  "matrix_commands": 66,
+  "balanced_execution_censuses": 18,
+  "tests": [
+    {
+      "suite": "family-tests",
+      "actions": {
+        "start": 1,
+        "run": 41,
+        "output": 98,
+        "pass": 42,
+        "pause": 7,
+        "cont": 7
+      }
+    },
+    {
+      "suite": "compiler-tests",
+      "actions": {
+        "start": 1,
+        "run": 59,
+        "output": 138,
+        "pass": 60
+      }
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "source-files.json",
+      "bytes": 78158,
+      "sha256": "4d9655fb6b0818d14a689abf5ae4b536f1978f0c53626241613f9e8998fbb714"
+    },
+    {
+      "path": "change.patch.gz",
+      "bytes": 115422,
+      "sha256": "d3ff0d6c7e8a3a9f00cb77576a2d88d322ab493b3e0e9d929e6d32e07c071cd1"
+    },
+    {
+      "path": "bootstrap/bootstrap.json.gz",
+      "bytes": 393,
+      "sha256": "e1db2f8e2a772c2be575a9b4b6f86545b6d39c6208c923bbe617e0230d0c2dce"
+    },
+    {
+      "path": "bootstrap/stage1.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "bootstrap/stage2.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "bootstrap/stage3.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "driver-builds.json.gz",
+      "bytes": 1042,
+      "sha256": "c2d80500a74b966d8a9e4181f092c69346565d551824b011a07b1b9e660fb0c9"
+    },
+    {
+      "path": "driver-build.log",
+      "bytes": 357,
+      "sha256": "88f3d4210f1807e73841d0362fc263a55cb67c7cbe62636fcdd23c69463be13c"
+    },
+    {
+      "path": "driver-gate.log",
+      "bytes": 896,
+      "sha256": "c73fac7209e38a42f2a060976ce86a9fbaeff21740af9367441472887a972479"
+    },
+    {
+      "path": "driver-sizes.txt",
+      "bytes": 358,
+      "sha256": "ac6931807980aa4cca77eadb8eab5b3c4b0f2a7c90dbcf6c7a14d2a6d6d101cb"
+    },
+    {
+      "path": "check-sizes.py.gz",
+      "bytes": 889,
+      "sha256": "a3a0a1dd80e4546a7005f9782ae5ef557c24eb1d172908afdced20c46571ea61"
+    },
+    {
+      "path": "oracle-version.txt",
+      "bytes": 604,
+      "sha256": "a96efbb413d08800c03fe63e248cfdbc288bf27bb9756f3acb5368d5541eec14"
+    },
+    {
+      "path": "format.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "format.json",
+      "bytes": 34,
+      "sha256": "5699f09ab7c54311c0e0d631ac2247f668a85614e798c99caf54728825dfa1ff"
+    },
+    {
+      "path": "vet.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "gofmt.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "family-tests.jsonl.gz",
+      "bytes": 3304,
+      "sha256": "e3b6e6987359f64b9d6b981e7f64b774777e7b2b36753550d9985f19df2b5a3c"
+    },
+    {
+      "path": "compiler-tests.jsonl.gz",
+      "bytes": 4511,
+      "sha256": "be9ffc6160e779170430dfb0c67c76169d8ddd0835cd90ab8c59536af7c4137b"
+    },
+    {
+      "path": "matrix.json.gz",
+      "bytes": 2303,
+      "sha256": "28ac1eb67c83d1d96ec9395df987d965a40a801b1aa329468c206f39a2bce94e"
+    },
+    {
+      "path": "matrix.py.gz",
+      "bytes": 1379,
+      "sha256": "ed85a1cb20e50b2855c6c6dac00fe958f07c7b69df1104647b4154edf1fef9dc"
+    },
+    {
+      "path": "matrix.log.gz",
+      "bytes": 1915,
+      "sha256": "de40725a7bd75b1205828f7fce372748b615c42bf9efd53216fad6fd0d0a9180"
+    },
+    {
+      "path": "matrix-logs.tar.gz",
+      "bytes": 3252,
+      "sha256": "8b84ca62f456f94f476ca8fa223e51e9e0af34d2083c8987b850aff1ba10b8e2"
+    }
+  ]
+}

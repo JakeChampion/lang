@@ -43,7 +43,7 @@ func TestSelfHostShippedFernCarriesItsStdlib(t *testing.T) {
 	dir := t.TempDir()
 	cache := filepath.Join(dir, "cache")
 	prog := writeShippedSrc(t, dir, "args.fern", shippedArgsSrc)
-	stdProg := writeShippedSrc(t, dir, "std.fern", "import \"std/path\";\nfunction main(): i32 { print(path.path_file_name(\"/a/b.fern\")); return 0; }\n")
+	stdProg := writeShippedSrc(t, dir, "std.fern", "import \"std/path\";\nfunction main(): i32 { print(path.file_name(\"/a/b.fern\")); return 0; }\n")
 
 	if out, code := runFern(t, fern, cache, "-interp", prog, "one", "-two"); code != 3 || out != "one\n-two\n" {
 		t.Errorf("-interp with program arguments: exit %d, output %q; want 3, \"one\\n-two\\n\"", code, out)

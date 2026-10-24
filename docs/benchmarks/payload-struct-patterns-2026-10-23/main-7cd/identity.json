@@ -1,0 +1,17 @@
+{
+  "payload-main-7cd-targeted.jsonl": {
+    "run": 61,
+    "pass": 62,
+    "fail": 0,
+    "skip": 0
+  },
+  "payload-main-7cd-formatter.jsonl": {
+    "run": 2,
+    "pass": 3,
+    "fail": 0,
+    "skip": 0
+  },
+  "source_commit": "3cd56bf0f43ea2962919a35ad1e519e97d1172c6",
+  "tested_main": "7cd648eb7e6ea2741497424ca278537fdce0a70f",
+  "compiler_and_stdlib_source_sha256": "31102667621ff785dd135c8663e3225ed7346642668df8cf922a5c1756dbee7a"
+}

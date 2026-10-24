@@ -2,75 +2,75 @@ import "std/test";
 import "std/uuid" as uuid;
 
 function test_v4_len(): test.TestOutcome {
-  return test.assert_eq(uuid.uuid_v4().len(), 36);
+  return test.assert_eq(uuid.v4().len(), 36);
 }
 
 function test_v4_is_valid(): test.TestOutcome {
-  return test.assert_true(uuid.is_valid(uuid.uuid_v4()));
+  return test.assert_true(uuid.is_valid(uuid.v4()));
 }
 
 function test_v4_hyphens(): test.TestOutcome {
-  let u: string = uuid.uuid_v4();
+  let u: string = uuid.v4();
   return test.assert_true(u[8] == 45 && u[13] == 45 && u[18] == 45 && u[23] == 45);
 }
 
 function test_v4_version(): test.TestOutcome {
-  return test.assert_eq(uuid.uuid_v4()[14] as i32, 52);
+  return test.assert_eq(uuid.v4()[14] as i32, 52);
 }
 
 function test_v4_variant(): test.TestOutcome {
-  let c: i32 = uuid.uuid_v4()[19] as i32;
+  let c: i32 = uuid.v4()[19] as i32;
   return test.assert_true(c == 56 || c == 57 || c == 97 || c == 98);
 }
 
 function test_v4_distinct(): test.TestOutcome {
-  return test.assert_true(uuid.uuid_v4() != uuid.uuid_v4());
+  return test.assert_true(uuid.v4() != uuid.v4());
 }
 
 function test_v7_len(): test.TestOutcome {
-  return test.assert_eq(uuid.uuid_v7().len(), 36);
+  return test.assert_eq(uuid.v7().len(), 36);
 }
 
 function test_v7_is_valid(): test.TestOutcome {
-  return test.assert_true(uuid.is_valid(uuid.uuid_v7()));
+  return test.assert_true(uuid.is_valid(uuid.v7()));
 }
 
 function test_v7_version(): test.TestOutcome {
-  return test.assert_eq(uuid.uuid_v7()[14] as i32, 55);
+  return test.assert_eq(uuid.v7()[14] as i32, 55);
 }
 
 function test_nil(): test.TestOutcome {
-  if (uuid.uuid_nil() != "00000000-0000-0000-0000-000000000000") {
+  if (uuid.NIL != "00000000-0000-0000-0000-000000000000") {
     return test.fail("nil value");
   }
-  if (!uuid.uuid_is_nil(uuid.uuid_nil())) {
+  if (!uuid.is_nil(uuid.NIL)) {
     return test.fail("is_nil on nil");
   }
-  return test.assert_false(uuid.uuid_is_nil(uuid.uuid_v4()));
+  return test.assert_false(uuid.is_nil(uuid.v4()));
 }
 
 function test_version_extract(): test.TestOutcome {
-  if (!has_version(uuid.uuid_v4(), 4)) {
+  if (!has_version(uuid.v4(), 4)) {
     return test.fail("v4");
   }
-  if (!has_version(uuid.uuid_v7(), 7)) {
+  if (!has_version(uuid.v7(), 7)) {
     return test.fail("v7");
   }
-  return test.assert_is_some_eq_i32(uuid.uuid_version(uuid.uuid_nil()), 0);
+  return test.assert_true(has_version(uuid.NIL, 0));
 }
 
 function test_version_malformed(): test.TestOutcome {
-  if let Some(_) = uuid.uuid_version("not-a-uuid") {
+  if let Ok(_) = uuid.version("not-a-uuid") {
     return test.fail("short");
   }
-  if let Some(_) = uuid.uuid_version("f47ac10b58cc4372a5670e02b2c3d479") {
+  if let Ok(_) = uuid.version("f47ac10b58cc4372a5670e02b2c3d479") {
     return test.fail("no hyphens");
   }
-  return test.assert_is_none_i32(uuid.uuid_version(""));
+  return test.assert_true(!has_version("", 0));
 }
 
 function has_version(s: string, want: i32): boolean {
-  if let Some(v) = uuid.uuid_version(s) {
+  if let Ok(v) = uuid.version(s) {
     return v == want;
   }
   return false;

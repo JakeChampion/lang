@@ -1,5 +1,4 @@
 // This module reads and writes Protocol Buffers fields without a schema.
-
 import "std/string";
 
 pub const VARINT: i32 = 0;
@@ -12,7 +11,7 @@ pub const FIXED32: i32 = 5;
 
 pub struct Field { number: i32, wire: i32, word: i64, bytes: u8[] }
 
-pub function decode(bytes: u8[]): Result[Field[], string] {
+pub function decode(bytes: [u8]): Result[Field[], string] {
   let out: Field[] = [];
   let at: i32 = 0;
   while (at < bytes.len()) {
@@ -42,7 +41,7 @@ pub function decode(bytes: u8[]): Result[Field[], string] {
   return Ok(out);
 }
 
-function __value(bytes: u8[], at: i32, number: i32, wire: i32): Result[(Field, i32), string] {
+function __value(bytes: [u8], at: i32, number: i32, wire: i32): Result[(Field, i32), string] {
   if (wire == VARINT) {
     match (__varint(bytes, at)) {
       Ok(v) => {
@@ -66,7 +65,7 @@ function __value(bytes: u8[], at: i32, number: i32, wire: i32): Result[(Field, i
   return Err("field " + number.to_string() + " has wire type " + wire.to_string());
 }
 
-function __fixed(bytes: u8[], at: i32, number: i32, wire: i32): Result[(Field, i32), string] {
+function __fixed(bytes: [u8], at: i32, number: i32, wire: i32): Result[(Field, i32), string] {
   let n: i32 = 8;
   if (wire == FIXED32) {
     n = 4;
@@ -84,7 +83,7 @@ function __fixed(bytes: u8[], at: i32, number: i32, wire: i32): Result[(Field, i
   return Ok((Field { number: number, wire: wire, word: word, bytes: none }, at + n));
 }
 
-function __delimited(bytes: u8[], at: i32, number: i32): Result[(Field, i32), string] {
+function __delimited(bytes: [u8], at: i32, number: i32): Result[(Field, i32), string] {
   match (__varint(bytes, at)) {
     Ok(len) => {
       let n: i32 = len.0 as i32;
@@ -106,7 +105,7 @@ function __delimited(bytes: u8[], at: i32, number: i32): Result[(Field, i32), st
   return Err("unreachable");
 }
 
-function __varint(bytes: u8[], at: i32): Result[(i64, i32), string] {
+function __varint(bytes: [u8], at: i32): Result[(i64, i32), string] {
   let value: i64 = 0 as i64;
   let shift: i32 = 0;
   let i: i32 = at;
@@ -159,12 +158,16 @@ pub function varint_field(number: i32, value: i64): u8[] {
   return encode_varint(number as i64 << 3 | VARINT as i64).concat(encode_varint(value));
 }
 
-pub function bytes_field(number: i32, value: u8[]): u8[] {
-  return encode_varint(number as i64 << 3 | BYTES as i64).concat(encode_varint(value.len() as i64)).concat(value);
+pub function bytes_field(number: i32, value: [u8]): u8[] {
+  let out: u8[] = encode_varint(number as i64 << 3 | BYTES as i64).concat(encode_varint(value.len() as i64));
+  for byte in value {
+    out = out.append(byte);
+  }
+  return out;
 }
 
 pub function string_field(number: i32, value: string): u8[] {
-  return bytes_field(number, value.bytes());
+  return bytes_field(number, value.as_bytes());
 }
 
 pub function encode_varint(value: i64): u8[] {

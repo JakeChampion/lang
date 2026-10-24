@@ -4515,10 +4515,10 @@ function call_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
     return emit(r, ir.packed(ir.op_count_byte_bytes()));
   }
   if (ins.str == "__sum_bytes_array") {
-    return emit(r, ir.packed(ir.op_sum_bytes_array()));
+    return emit(r, ir.op_call_direct(ssabytes.sum_name(), 1));
   }
   if (ins.str == "__bsd_sum_bytes") {
-    return emit(r, ir.packed(ir.op_bsd_sum_bytes()));
+    return emit(r, ir.op_call_direct(ssabytes.bsd_name(), 2));
   }
   if (ins.str == "__memchr_bytes") {
     return emit(r, ir.packed(ir.op_memchr_bytes()));
@@ -5667,7 +5667,7 @@ function byte_scan_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
     return Lowered { found: true, r: emit(r, ir.op_crc32_cksum()) };
   }
   if (ins.str == "__crc32_cksum_array") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_crc32_cksum_array())) };
+    return Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.crc32_name(), 2)) };
   }
   if (ins.str == "__ascii_run") {
     return Lowered { found: true, r: emit(r, ir.op_ascii_run()) };

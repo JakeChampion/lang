@@ -1,31 +1,22 @@
 package e2ecompiler
 
-import (
-	"os"
-	"testing"
-)
+import "testing"
 
 var hexIRCases = []struct {
 	name string
 	main string
 }{
-	{"encode-len", `return hex_encode([104 as u8, 105 as u8]).len();`},
-	{"encode-digit", `return hex_encode([65 as u8])[0] as i32;`},
-	{"decode-len", `return hex_decode("6869").len();`},
-	{"decode-char", `return hex_decode("7a")[0] as i32;`},
-	{"roundtrip", `return hex_decode(hex_encode([72 as u8, 105 as u8]))[0] as i32;`},
-	{"roundtrip-len", `return hex_decode(hex_encode([104 as u8, 101 as u8, 108 as u8, 108 as u8, 111 as u8])).len();`},
+	{"encode-len", `return hex.encode([104 as u8, 105 as u8]).len();`},
+	{"encode-digit", `return hex.encode([65 as u8])[0] as i32;`},
+	{"decode-len", `let Ok(bytes) = hex.decode("6869") else { return 127; }; return bytes.len();`},
+	{"decode-char", `let Ok(bytes) = hex.decode("7a") else { return 127; }; return bytes[0] as i32;`},
+	{"roundtrip", `let Ok(bytes) = hex.decode(hex.encode([72 as u8, 105 as u8])) else { return 127; }; return bytes[0] as i32;`},
+	{"roundtrip-len", `let Ok(bytes) = hex.decode(hex.encode([104 as u8, 101 as u8, 108 as u8, 108 as u8, 111 as u8])) else { return 127; }; return bytes.len();`},
 }
 
 func hexSource(t *testing.T, mainBody string) []byte {
 	t.Helper()
-	src, err := os.ReadFile("../../stdlib/std/hex.fern")
-	if err != nil {
-		t.Fatalf("read std/hex.fern: %v", err)
-	}
-	out := append([]byte{}, src...)
-	out = append(out, []byte("\nfunction main(): i32 { "+mainBody+" }\n")...)
-	return out
+	return []byte("import \"std/hex\";\nfunction main(): i32 { " + mainBody + " }\n")
 }
 
 func TestSelfHostHexIR(t *testing.T) {

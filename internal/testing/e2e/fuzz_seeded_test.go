@@ -34,8 +34,8 @@ function main(): i32 {
     let seeds: u8[][] = ["abc".bytes(), "hello".bytes(), "xyzzy".bytes()];
 
     // Equal seeds replay identically -- same outcome AND same diagnostic.
-    let a = fuzz.fuzz_run_seeded(seeds, 300, 12345 as i64, target);
-    let b = fuzz.fuzz_run_seeded(seeds, 300, 12345 as i64, target);
+    let a = fuzz.run_seeded(seeds, 300, 12345 as i64, target);
+    let b = fuzz.run_seeded(seeds, 300, 12345 as i64, target);
     if (outcome_failed(a) != outcome_failed(b)) { return 1; }
     if (outcome_msg(a) != outcome_msg(b)) { return 2; }
 
@@ -46,23 +46,23 @@ function main(): i32 {
     if (!outcome_msg(a).contains("rng_seed 12345")) { return 4; }
 
     // A different seed gives a different sequence (so seeding is real).
-    let c = fuzz.fuzz_run_seeded(seeds, 300, 999 as i64, target);
+    let c = fuzz.run_seeded(seeds, 300, 999 as i64, target);
     if (outcome_failed(c) && outcome_msg(c) == outcome_msg(a)) { return 5; }
 
     // A passing target passes at any seed.
-    if (outcome_failed(fuzz.fuzz_run_seeded(seeds, 200, 7 as i64, always_pass))) { return 6; }
+    if (outcome_failed(fuzz.run_seeded(seeds, 200, 7 as i64, always_pass))) { return 6; }
 
     // Guards preserved.
-    if (!outcome_failed(fuzz.fuzz_run_seeded(seeds, 0, 1 as i64, always_pass))) { return 7; }
+    if (!outcome_failed(fuzz.run_seeded(seeds, 0, 1 as i64, always_pass))) { return 7; }
     let empty: u8[][] = [];
-    if (!outcome_failed(fuzz.fuzz_run_seeded(empty, 10, 1 as i64, always_pass))) { return 8; }
+    if (!outcome_failed(fuzz.run_seeded(empty, 10, 1 as i64, always_pass))) { return 8; }
 
     // The unseeded entry point still works. NOTE: this specific call is what
-    // caught a self-host x86-64 miscompile when fuzz_run delegated to
-    // fuzz_run_seeded -- the callee invoked a different function value than
+    // caught a self-host x86-64 miscompile when fuzz.run delegated to
+    // fuzz.run_seeded -- the callee invoked a different function value than
     // the one passed, so an always-passing target reported a failure raised
     // by an earlier target. Keep this assertion.
-    if (outcome_failed(fuzz.fuzz_run(seeds, 100, always_pass))) { return 9; }
+    if (outcome_failed(fuzz.run(seeds, 100, always_pass))) { return 9; }
 
     return 42;
 }

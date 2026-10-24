@@ -84,7 +84,9 @@ struct Named { s: string } struct Plain { n: i32 } trait Tag { function t(self: 
 	{name: "dyn-f64-chained",
 		src: `trait Fl { function f(self: Self): f64; } struct S { v: f64 } impl Fl for S { function f(self: Self): f64 { return self.v; } } function main(): i32 { let s: S = S { v: 2.5 }; let d: dyn Fl = s; let r: f64 = d.f() + 0.5; if (r == 3.0) { return 1; } return 0; }`, expected: 1, static: true},
 	{name: "dyn-f32-chained",
-		src: `trait F { function v(self: Self): f32; } struct P { n: f32 } impl F for P { function v(self: Self): f32 { return self.n; } } function main(): i32 { let p: P = P { n: 2.5 }; let d: dyn F = p; let r: f32 = d.v() + 0.5; if (r == 3.0) { return 1; } return 0; }`, expected: 1},
+		src: `trait F { function v(self: Self): f32; } struct P { n: f32 } impl F for P { function v(self: Self): f32 { return self.n; } } function main(): i32 { let p: P = P { n: 2.5 }; let d: dyn F = p; let r: f32 = d.v() + 0.5; if (r == 3.0) { return 1; } return 0; }`, expected: 1, static: true},
+	{name: "dyn-f32-chained-dynamic",
+		src: `trait F { function v(self: Self): f32; } struct P { n: f32 } impl F for P { function v(self: Self): f32 { return self.n; } } @noinline function n(x: f32): f32 { return x; } function main(): i32 { let p: P = P { n: n(2.5) }; let d: dyn F = p; let r: f32 = d.v() + 0.5; if (r == 3.0) { return 1; } return 0; }`, expected: 1},
 	{name: "dyn-array-len-chained",
 		src: `trait Arr { function make(self: Self): i32[]; } struct S { n: i32 } impl Arr for S { function make(self: Self): i32[] { return [self.n, self.n, self.n]; } } function main(): i32 { let s: S = S { n: 1 }; let d: dyn Arr = s; return d.make().len(); }`, expected: 3},
 

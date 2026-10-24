@@ -3374,6 +3374,21 @@ function qualified_call(e: ast.Expr, head: string, name: string, c: ast.ExprCall
 }
 
 function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
+  // The fresh byte copy has no other reader. This pass constructs the string directly from the borrowed source.
+  if (name == "string_from_bytes_unchecked" && c.args.len() == 1
+    && !util.has_str(s.shadows, name) && !util.has_str(s.shadows, "__bytes_owned")) {
+    if let ast.ExprCall(copy) = c.args[0] {
+      if let ast.ExprIdent(id) = copy.callee {
+        if (id.name == "__bytes_owned" && copy.args.len() == 1 && lookup(s, id.name) < 0) {
+          let contract: ssasem.Contract = ssasem.Contract {
+            name: ssabytes.string_name(), params: [typeinfo.TypeArray { elem: t_u8(), view: true }],
+            modes: [ssaunits.borrow_mode()], result: t_string(),
+          };
+          return invoke(copy.args, contract, s, ssasem.unbound(), ssasem.unbound());
+        }
+      }
+    }
+  }
   if (is_slice_call(name, c)) {
     return string_slice(c, s);
   }
@@ -7209,7 +7224,7 @@ function byte_scan_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__outer_mul_f64", params: [typeinfo.TypeArray { elem: t_f64(), view: false }, typeinfo.TypeArray { elem: t_f64(), view: false }], modes: [lent, lent], result: typeinfo.TypeArray { elem: t_f64(), view: false } },
     ssasem.Contract { name: "__inner_mul_add_f64", params: [typeinfo.TypeArray { elem: t_f64(), view: false }, typeinfo.TypeArray { elem: t_f64(), view: false }, t_i32(), t_i32(), t_i32(), t_f64()], modes: [lent, lent, value, value, value, value], result: typeinfo.TypeArray { elem: t_f64(), view: false } },
     ssasem.Contract { name: "__crc32_cksum", params: [t_i32(), t_string()], modes: [value, lent], result: t_i32() },
-    ssasem.Contract { name: "__crc32_cksum_array", params: [t_i32(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [value, lent], result: t_i32() },
+    ssasem.Contract { name: "__crc32_cksum_array", params: [t_i32(), typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [value, lent], result: t_i32() },
     ssasem.Contract { name: "__ascii_run", params: [t_string(), t_i32()], modes: [lent, value], result: t_i32() },
     ssasem.Contract { name: "__scan_set", params: [t_string(), t_i32(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [lent, value, lent], result: t_i32() },
     ssasem.Contract { name: "__scan_set_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [lent, value, lent], result: t_i32() },
@@ -7220,8 +7235,8 @@ function byte_scan_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__count_byte", params: [t_string(), t_i32()], modes: [lent, value], result: t_i32() },
     ssasem.Contract { name: "__memchr", params: [t_string(), t_i32(), t_i32()], modes: [lent, value, value], result: t_i32() },
     ssasem.Contract { name: "__count_byte_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32()], modes: [lent, value], result: t_i32() },
-    ssasem.Contract { name: "__sum_bytes_array", params: [typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [lent], result: t_i32() },
-    ssasem.Contract { name: "__bsd_sum_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32()], modes: [lent, value], result: t_i32() },
+    ssasem.Contract { name: "__sum_bytes_array", params: [typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [lent], result: t_i32() },
+    ssasem.Contract { name: "__bsd_sum_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: true }, t_i32()], modes: [lent, value], result: t_i32() },
     ssasem.Contract { name: "__memchr_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_i32()], modes: [lent, value, value], result: t_i32() },
     ssasem.Contract { name: "__rmemchr_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_i32()], modes: [lent, value, value], result: t_i32() },
     ssasem.Contract { name: "__mismatch_bytes", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_i32()], modes: [lent, value, lent, value, value], result: t_i32() },

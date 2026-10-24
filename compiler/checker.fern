@@ -1024,7 +1024,7 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
     return ([t_i32(), t_string()], true);
   }
   if (name == "__crc32_cksum_array") {
-    return ([t_i32(), t_array(t_u8())], true);
+    return ([t_i32(), t_view(t_u8())], true);
   }
   if (name == "__memchr" || name == "__rmemchr") {
     return ([t_string(), t_i32(), t_i32()], true);
@@ -1033,10 +1033,10 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
     return ([t_array(t_u8()), t_i32()], true);
   }
   if (name == "__sum_bytes_array") {
-    return ([t_array(t_u8())], true);
+    return ([t_view(t_u8())], true);
   }
   if (name == "__bsd_sum_bytes") {
-    return ([t_array(t_u8()), t_i32()], true);
+    return ([t_view(t_u8()), t_i32()], true);
   }
   if (name == "__memchr_bytes" || name == "__rmemchr_bytes") {
     return ([t_array(t_u8()), t_i32(), t_i32()], true);
@@ -3815,6 +3815,9 @@ function coercible(from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean {
 }
 
 function dyn_conforms(from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean {
+  if let typeinfo.TypeNever(_) = from {
+    return true;
+  }
   let traits: string = "";
   if let typeinfo.TypeDyn(d) = to {
     traits = d.traits;
@@ -3983,6 +3986,9 @@ function any_promotes_view(from: typeinfo.Type[], to: typeinfo.Type[]): boolean 
 }
 
 function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSig[]): boolean {
+  if let typeinfo.TypeNever(_) = from {
+    return true;
+  }
   if (integer_literal_widens(from, to)) {
     return true;
   }
@@ -6068,15 +6074,15 @@ function bitwise_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.
 }
 
 function check_unary_expr(u: ast.ExprUnary, s: Scope): typeinfo.Type {
+  return unary_result_type(u, check_expr(u.operand, s), s);
+}
+
+function unary_result_type(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope): typeinfo.Type {
   if (u.op == "-" && unsettled_int_literal(ast.ExprUnary { ...u })) {
     if let ast.ExprNumber(_) = u.operand {
       return t_i32();
     }
   }
-  return unary_result_type(u, check_expr(u.operand, s), s);
-}
-
-function unary_result_type(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope): typeinfo.Type {
   if (u.op == "-") {
     if (is_integer(ot)) {
       return ot;
@@ -8689,7 +8695,7 @@ function mc_seq(stmts: ast.Stmt[], from: i32, name: string, tname: string, struc
         }
       },
       ast.StmtMatch(m) => {
-        if (m.origin == "") {
+        if (ordinary_match_origin(m.origin)) {
           let all: boolean = m.arms.len() > 0;
           for arm in m.arms {
             let (ac, av, ad) = mc_seq(arm.body, 0, name, tname, structs, enums);
@@ -14326,7 +14332,7 @@ function sugar_rows(sg: ast.MatchSugar, t: typeinfo.Type, s: Scope): CoverPat[][
   }
   for a in sg.arms {
     if (!a.has_guard) {
-      rows = rows.append([pattern_cover(a.pattern)]);
+      rows = rows.append([typed_pattern_cover(a.pattern, t, s)]);
     }
   }
   return rows;
@@ -14371,7 +14377,7 @@ function struct_cover(a: ast.StructArm, t: typeinfo.Type, s: Scope): CoverPat {
       if (j >= 0 && j < a.field_kinds.len() && a.field_kinds[j] == 2) {
         p = literal_cover(a.field_lits[j]);
       } else if (j >= 0 && j < a.field_kinds.len() && a.field_kinds[j] == 3) {
-        p = pattern_cover(a.field_pats[j]);
+        p = typed_pattern_cover(a.field_pats[j], struct_field_type(st, name, s), s);
       }
       args = args.append(p);
     }
@@ -14419,6 +14425,48 @@ function pattern_cover(p: ast.Pattern): CoverPat {
       return CoverPat { ctor: variant_pattern_name(pv.type_name), opaque: false, args: args };
     }
   }
+}
+
+// Coverage follows each payload type, with support for structs inside enum slots.
+function typed_pattern_cover(p: ast.Pattern, t: typeinfo.Type, s: Scope): CoverPat {
+  if let ast.PatVariant(pv) = p {
+    if let typeinfo.TypeStruct(st) = t {
+      if (parser.is_record_pattern(pv) && pv.type_name == st.name) {
+        return record_pattern_cover(pv, st, s);
+      }
+    }
+    let base: CoverPat = pattern_cover(p);
+    if (pv.nested.len() == 0) {
+      return base;
+    }
+    let args: CoverPat[] = base.args;
+    let types: typeinfo.Type[] = cover_arg_types(t, base.ctor, args.len(), s);
+    let i: i32 = 0;
+    while (i < args.len() && i < pv.nested.len() && i < types.len()) {
+      if (nested_tests(pv.nested[i])) {
+        args = args.with(i, typed_pattern_cover(pv.nested[i], types[i], s));
+      }
+      i = i + 1;
+    }
+    return CoverPat { ...base, args: args };
+  }
+  return cover_any();
+}
+
+function record_pattern_cover(pv: ast.PatVariant, st: typeinfo.TypeStruct, s: Scope): CoverPat {
+  let args: CoverPat[] = [];
+  for field in s.lookup_struct(st.name).field_names {
+    let p: CoverPat = cover_any();
+    let i: i32 = util.index_of_str(pv.field_names, field);
+    if (i >= 0) {
+      p = slot_literal_cover(pv.lit_cond, parser.payload_binder(pv, i));
+      if (i < pv.nested.len() && nested_tests(pv.nested[i])) {
+        p = typed_pattern_cover(pv.nested[i], struct_field_type(st, field, s), s);
+      }
+    }
+    args = args.append(p);
+  }
+  return CoverPat { ctor: "{}", opaque: false, args: args };
 }
 
 function nested_tests(p: ast.Pattern): boolean {
@@ -14494,7 +14542,9 @@ function cover_arg_types(t: typeinfo.Type, ctor: string, arity: i32, s: Scope): 
       return tt.elements;
     },
     typeinfo.TypeStruct(st) => {
-      return s.lookup_struct(st.name).field_types;
+      for field in s.lookup_struct(st.name).field_names {
+        out = out.append(struct_field_type(st, field, s));
+      }
     },
     typeinfo.TypeUnion(u) => {
       let i: i32 = 0;
@@ -14639,6 +14689,10 @@ function cover_tail(r: CoverPat[]): CoverPat[] {
     j = j + 1;
   }
   return out;
+}
+
+function ordinary_match_origin(origin: string): boolean {
+  return origin == "" || origin == parser.ORIGIN_PATTERN_PROBE;
 }
 
 function literal_bound_diags(value: ast.Expr, scrut: typeinfo.Type, scope: Scope, subject: string, line: i32, col: i32): util.Diag[] {
@@ -14806,7 +14860,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
         }
         if let typeinfo.TypeStruct(msts) = mst {
           let msig: StructSig = cur.lookup_struct(msts.name);
-          if (m.origin == "" && msig.name == msts.name && msig.enum_owner.len() == 0) {
+          if (ordinary_match_origin(m.origin) && msig.name == msts.name && msig.enum_owner.len() == 0) {
             for sarm in m.arms {
               if let ast.PatVariant(spv) = sarm.pattern {
                 if (spv.type_name.len() > 0) {
@@ -14816,7 +14870,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             }
           }
         }
-        if (is_primitive_type(mst) && m.origin == "") {
+        if (is_primitive_type(mst) && ordinary_match_origin(m.origin)) {
           for arm in m.arms {
             match (arm.pattern) {
               ast.PatVariant(epv) => {
@@ -14834,7 +14888,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             if (usig.name.len() == 0) {
               usig = builtin_union_sig(mun.name);
             }
-            if (usig.name.len() == 0 && !parser.is_reserved_enum_name(mun.name) && m.origin == "") {
+            if (usig.name.len() == 0 && !parser.is_reserved_enum_name(mun.name) && ordinary_match_origin(m.origin)) {
               out = out.append(dg_at("E023", "unknown enum \"" + mun.name + "\"", expr_line(m.scrutinee), expr_col(m.scrutinee)));
             }
             if (usig.name.len() > 0) {
@@ -16201,7 +16255,12 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
           return ctx.ofuncs.ctors.has(cid.name) || util.has_str(ctx.fresh, cid.name);
         },
         ast.ExprFieldAccess(mfa) => {
-          return util.has_str(ctx.fresh_methods, mfa.field);
+          for ns in ow_type_namespaces(check_expr(mfa.obj, ctx.scope)) {
+            if (util.has_str(ctx.fresh_methods, ns + "." + mfa.field)) {
+              return true;
+            }
+          }
+          return false;
         },
         _ => {
           return false;
@@ -17677,8 +17736,10 @@ function ow_type_namespaces(t: typeinfo.Type): string[] {
       return out;
     },
     _ => {
-      let none: string[] = [];
-      return none;
+      if (!is_unknown(t)) {
+        return [ow_receiver_ns(type_label(t))];
+      }
+      return [];
     }
   }
   let none: string[] = [];
@@ -18072,6 +18133,7 @@ function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.Na
   return out;
 }
 
+// The receiver namespace and method name identify a fresh method.
 function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, borrows: util.NameIndex): string[] {
   let out: string[] = [];
   let refused: string[] = [];
@@ -18082,10 +18144,11 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.N
     if (!ow_type_is_pointer(fn.ret_type, ofuncs)) {
       continue;
     }
+    let key: string = ow_receiver_ns(fn.receiver_type) + "." + fn.name;
     if (ow_func_result_borrows(fn, mod, ofuncs, borrows, builtins)) {
-      refused = refused.append(fn.name);
+      refused = refused.append(key);
     } else {
-      out = out.append(fn.name);
+      out = out.append(key);
     }
   }
   let kept: string[] = [];
@@ -21756,6 +21819,8 @@ pub function variant_shape_sig(s: Scope, name: string, owner: string): StructSig
   return s.lookup_struct("");
 }
 
+// An earlier return exits the function and does not determine the block type.
+// Integer literal tails retain their polymorphic type for the receiver.
 function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
   if (body.len() == 0) {
     return t_unknown("empty value block");
@@ -21765,8 +21830,11 @@ function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
       return t_void();
     }
   }
+  if (parser.branch_exits_early(body)) {
+    return typeinfo.TypeNever { tag: 0 };
+  }
   if let ast.StmtReturn(r) = body[body.len() - 1] {
-    if (parser.bare_return(r.value) || int_literal_tree(r.value)) {
+    if (parser.bare_return(r.value)) {
       return t_unknown("value block tail");
     }
     let bs: Scope = s;
@@ -21776,6 +21844,9 @@ function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
       i = i + 1;
     }
     let t: typeinfo.Type = check_expr(r.value, bs);
+    if (int_literal_tree(r.value)) {
+      return unsettled_marked(t, r.value, bs.lit_locals, true);
+    }
     if (!names_whole_type(t, bs)) {
       return t_unknown("value block tail");
     }

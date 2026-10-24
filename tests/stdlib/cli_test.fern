@@ -3,7 +3,7 @@ import "std/cli" as cli;
 import "std/option";
 
 function spec(): cli.CliSpec {
-  let s: cli.CliSpec = cli.cli_new("greet", "print a greeting");
+  let s: cli.CliSpec = cli.new("greet", "print a greeting");
   s = s.option("name", "n", "who to greet");
   s = s.flag("shout", "s", "upper-case the greeting");
   s = s.flag("verbose", "v", "explain what is happening");
@@ -97,25 +97,25 @@ function test_short_multibyte_unknown(): test.TestOutcome {
 }
 
 function test_color_red(): test.TestOutcome {
-  let red: string = cli.cli_red("x");
-  if (cli.cli_color_enabled()) {
+  let red: string = cli.red("x");
+  if (cli.color_enabled()) {
     return test.assert_true(red[0] == 27 && red.contains("31m") && red.contains("x"));
   }
   return test.assert_eq(red, "x");
 }
 
 function test_color_bold(): test.TestOutcome {
-  let b: string = cli.cli_bold("hi");
-  if (cli.cli_color_enabled()) {
+  let b: string = cli.bold("hi");
+  if (cli.color_enabled()) {
     return test.assert_true(b[0] == 27 && b.contains("1m") && b.contains("hi"));
   }
   return test.assert_eq(b, "hi");
 }
 
 function spec_cmds(): cli.CliSpec {
-  let deploy: cli.CliSpec = cli.cli_new("deploy", "push the build");
+  let deploy: cli.CliSpec = cli.new("deploy", "push the build");
   deploy = deploy.option("env", "e", "target environment");
-  let s: cli.CliSpec = cli.cli_new("tool", "ship things");
+  let s: cli.CliSpec = cli.new("tool", "ship things");
   s = s.flag("verbose", "v", "explain what is happening");
   s = s.option("name", "n", "who to ship as");
   return s.command(deploy);
@@ -193,7 +193,7 @@ function test_completion_unknown_shell(): test.TestOutcome {
 }
 
 function test_completion_quotes_help(): test.TestOutcome {
-  let s: cli.CliSpec = cli.cli_new("q", "quoting");
+  let s: cli.CliSpec = cli.new("q", "quoting");
   s = s.flag("it", "", "don't break");
   match (s.completion("fish")) {
     Some(c) => {
@@ -229,14 +229,14 @@ function test_manpage_commands(): test.TestOutcome {
 }
 
 function test_manpage_roff_escapes_backslash(): test.TestOutcome {
-  let s: cli.CliSpec = cli.cli_new("bs", "escaping");
+  let s: cli.CliSpec = cli.new("bs", "escaping");
   s = s.flag("win", "", "a \\ separator");
   let m: string = s.manpage("1");
   return test.assert_true(m.contains("a \\\\ separator") && !m.contains("a \\ separator"));
 }
 
 function test_manpage_roff_escapes_leading_dot(): test.TestOutcome {
-  let s: cli.CliSpec = cli.cli_new("dot", ".config tool");
+  let s: cli.CliSpec = cli.new("dot", ".config tool");
   s = s.flag("run", "", "./build first");
   let m: string = s.manpage("1");
   return test.assert_true(m.contains(".SH DESCRIPTION\n\\&.config tool")
@@ -263,7 +263,7 @@ function test_usage_spec_commands(): test.TestOutcome {
 }
 
 function test_usage_spec_quotes(): test.TestOutcome {
-  let s: cli.CliSpec = cli.cli_new("q", "");
+  let s: cli.CliSpec = cli.new("q", "");
   s = s.flag("raw", "", "keep \"as is\", C:\\path");
   return test.assert_eq(s.usage_spec(), "bin \"q\"\nflag \"--raw\" help=\"keep \\\"as is\\\", C:\\\\path\"\narg \"[args]...\" var=#true\n");
 }

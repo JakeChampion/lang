@@ -52,7 +52,7 @@ function admin(req: HttpRequest): Result[HttpResponse, dyn http.ToResponse] {
 }
 
 function basic_header(text: string): string {
-  return "Basic " + base64.base64_encode(text.bytes());
+  return "Basic " + base64.encode(text.bytes());
 }
 
 function test_basic_accepted_with_a_colon_in_the_password(): test.TestOutcome {

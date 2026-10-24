@@ -1,5 +1,4 @@
 // This module decodes DEFLATE, zlib, and gzip data.
-
 import "std/hash";
 import "std/array";
 import "core/cmp";
@@ -45,16 +44,16 @@ pub function (e: InflateError) to_string(): string {
 
 pub struct Inflated { out: u8[], consumed: i32 }
 
-pub function inflate(input: u8[], max_out: i32): Result[Inflated, InflateError] {
+pub function inflate(input: [u8], max_out: i32): Result[Inflated, InflateError] {
   return inflate_from(input, 0, max_out);
 }
 
-pub function inflate_from(input: u8[], from: i32, max_out: i32): Result[Inflated, InflateError] {
+pub function inflate_from(input: [u8], from: i32, max_out: i32): Result[Inflated, InflateError] {
   return __inflated(input, from, [], max_out);
 }
 
-pub function inflate_after(history: u8[], input: u8[], max_out: i32): Result[Inflated, InflateError] {
-  match (__inflated(input, 0, history, max_out)) {
+pub function inflate_after(history: [u8], input: [u8], max_out: i32): Result[Inflated, InflateError] {
+  match (__inflated(input, 0, __bytes_owned(history), max_out)) {
     Ok(got) => {
       return Ok(Inflated { ...got, out: array.drop(got.out, history.len()) });
     },
@@ -65,7 +64,7 @@ pub function inflate_after(history: u8[], input: u8[], max_out: i32): Result[Inf
   return Err(Truncated);
 }
 
-function __inflated(input: u8[], from: i32, history: u8[], max_out: i32): Result[Inflated, InflateError] {
+function __inflated(input: [u8], from: i32, history: u8[], max_out: i32): Result[Inflated, InflateError] {
   let s: __State = __State { pos: from, bitbuf: 0, bitcnt: 0, out: history, max_out: max_out + history.len(), last: 0, distance: 0, failed: false, error: Truncated, lengths: [] };
   let done: boolean = false;
   while (!done && !s.failed) {
@@ -90,7 +89,7 @@ function __fail(own s: __State, e: InflateError): __State {
   return __State { ...s, failed: true, error: e, last: 0, distance: 0 };
 }
 
-function __block(own s: __State, data: u8[], kind: i32): __State {
+function __block(own s: __State, data: [u8], kind: i32): __State {
   if (kind == 0) {
     return __stored(s, data);
   }
@@ -103,7 +102,7 @@ function __block(own s: __State, data: u8[], kind: i32): __State {
   return __fail(s, Malformed("a reserved block type"));
 }
 
-function __bits(own s: __State, data: u8[], need: i32): __State {
+function __bits(own s: __State, data: [u8], need: i32): __State {
   if (s.failed) {
     return s;
   }
@@ -122,7 +121,7 @@ function __bits(own s: __State, data: u8[], need: i32): __State {
   return __State { ...s, pos: pos, bitbuf: val >> need, bitcnt: cnt - need, last: val & mask };
 }
 
-function __stored(own s: __State, data: u8[]): __State {
+function __stored(own s: __State, data: [u8]): __State {
   s = __State { ...s, bitbuf: 0, bitcnt: 0 };
   if (s.pos + 4 > data.len()) {
     return __fail(s, Truncated);
@@ -196,7 +195,7 @@ function __zeros(n: i32): i32[] {
   return out;
 }
 
-function __decode(own s: __State, data: u8[], h: __Huff): __State {
+function __decode(own s: __State, data: [u8], h: __Huff): __State {
   let code: i32 = 0;
   let first: i32 = 0;
   let index: i32 = 0;
@@ -278,7 +277,7 @@ function __walk(h: __Huff, bits: i64, avail: i32): i32 {
 }
 
 // fern-lint: allow cyclomatic-complexity
-function __codes(own s: __State, data: u8[], lencode: __Huff, distcode: __Huff): __State {
+function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff): __State {
   let lit: i32[] = __table(lencode, LIT_BITS);
   let dtab: i32[] = __table(distcode, DIST_BITS);
   let lmask: i64 = (1 << LIT_BITS) as i64 - 1;
@@ -407,7 +406,7 @@ function __copy(own out: u8[], len: i32, dist: i32): u8[] {
   return out;
 }
 
-function __fixed(own s: __State, data: u8[]): __State {
+function __fixed(own s: __State, data: [u8]): __State {
   let lengths: i32[] = [];
   let sym: i32 = 0;
   while (sym < 288) {
@@ -440,7 +439,7 @@ function __code_length_order(): i32[] {
   return [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
 }
 
-function __dynamic(own s: __State, data: u8[]): __State {
+function __dynamic(own s: __State, data: [u8]): __State {
   s = __bits(s, data, 5);
   let nlen: i32 = s.last + 257;
   s = __bits(s, data, 5);
@@ -469,7 +468,7 @@ function __dynamic(own s: __State, data: u8[]): __State {
   return __dynamic_codes(s, data, nlen, ndist);
 }
 
-function __dynamic_codes(own s: __State, data: u8[], nlen: i32, ndist: i32): __State {
+function __dynamic_codes(own s: __State, data: [u8], nlen: i32, ndist: i32): __State {
   let all: i32[] = s.lengths;
   if (all[256] == 0) {
     return __fail(s, Malformed("no end-of-block code"));
@@ -495,7 +494,7 @@ function __tail(xs: i32[], from: i32, end: i32): i32[] {
   return out;
 }
 
-function __code_lengths(own s: __State, data: u8[], code: __Huff, n: i32): __State {
+function __code_lengths(own s: __State, data: [u8], code: __Huff, n: i32): __State {
   let lengths: i32[] = [];
   while (lengths.len() < n && !s.failed) {
     s = __decode(s, data, code);
@@ -514,7 +513,7 @@ function __code_lengths(own s: __State, data: u8[], code: __Huff, n: i32): __Sta
   return __State { ...s, lengths: lengths };
 }
 
-function __repeat(own s: __State, data: u8[], sym: i32, lengths: i32[]): __State {
+function __repeat(own s: __State, data: [u8], sym: i32, lengths: i32[]): __State {
   if (sym == 16) {
     if (lengths.len() == 0) {
       return __fail(s, Malformed("a repeat with no length before it"));
@@ -546,7 +545,7 @@ function __repeated(own lengths: i32[], times: i32, value: i32): i32[] {
   return lengths;
 }
 
-pub function gunzip(input: u8[], max_out: i32): Result[u8[], InflateError] {
+pub function gunzip(input: [u8], max_out: i32): Result[u8[], InflateError] {
   let out: u8[] = [];
   let at: i32 = 0;
   while (at < input.len()) {
@@ -560,7 +559,7 @@ pub function gunzip(input: u8[], max_out: i32): Result[u8[], InflateError] {
   return Ok(out);
 }
 
-function __joined(own out: u8[], more: u8[]): u8[] {
+function __joined(own out: u8[], more: [u8]): u8[] {
   let i: i32 = 0;
   while (i < more.len()) {
     out = out.append(more[i]);
@@ -569,7 +568,7 @@ function __joined(own out: u8[], more: u8[]): u8[] {
   return out;
 }
 
-function __gzip_member(input: u8[], from: i32, max_out: i32): Result[Inflated, InflateError] {
+function __gzip_member(input: [u8], from: i32, max_out: i32): Result[Inflated, InflateError] {
   let body: i32 = __gzip_header(input, from)?;
   let inflated: Inflated = inflate_from(input, body, max_out)?;
   let trailer: i32 = body + inflated.consumed;
@@ -578,13 +577,13 @@ function __gzip_member(input: u8[], from: i32, max_out: i32): Result[Inflated, I
   }
   let crc: u32 = __le32(input, trailer);
   let isize: u32 = __le32(input, trailer + 4);
-  if (crc != hash.crc32_new().update_bytes(inflated.out[:]).finish() || isize != inflated.out.len() as u32) {
+  if (crc != hash.crc32_new().update(inflated.out[:]).finish() || isize != inflated.out.len() as u32) {
     return Err(BadChecksum);
   }
   return Ok(Inflated { out: inflated.out, consumed: trailer + 8 - from });
 }
 
-function __gzip_header(input: u8[], from: i32): Result[i32, InflateError] {
+function __gzip_header(input: [u8], from: i32): Result[i32, InflateError] {
   if (from + 2 > input.len()) {
     return Err(Truncated);
   }
@@ -604,7 +603,7 @@ function __gzip_header(input: u8[], from: i32): Result[i32, InflateError] {
   return __gzip_optional(input, from + 10, flags);
 }
 
-function __gzip_optional(input: u8[], at: i32, flags: i32): Result[i32, InflateError] {
+function __gzip_optional(input: [u8], at: i32, flags: i32): Result[i32, InflateError] {
   if ((flags & 4) != 0) {
     if (at + 2 > input.len()) {
       return Err(Truncated);
@@ -626,7 +625,7 @@ function __gzip_optional(input: u8[], at: i32, flags: i32): Result[i32, InflateE
   return Ok(at);
 }
 
-function __past_nul(input: u8[], at: i32): Result[i32, InflateError] {
+function __past_nul(input: [u8], at: i32): Result[i32, InflateError] {
   let i: i32 = at;
   while (i < input.len()) {
     if (input[i] == 0 as u8) {
@@ -637,11 +636,11 @@ function __past_nul(input: u8[], at: i32): Result[i32, InflateError] {
   return Err(Truncated);
 }
 
-function __le32(input: u8[], at: i32): u32 {
+function __le32(input: [u8], at: i32): u32 {
   return input[at] as u32 | input[at + 1] as u32 << 8 | input[at + 2] as u32 << 16 | input[at + 3] as u32 << 24;
 }
 
-pub function zlib_decode(input: u8[], max_out: i32): Result[u8[], InflateError] {
+pub function zlib_decode(input: [u8], max_out: i32): Result[u8[], InflateError] {
   if (input.len() < 2) {
     return Err(Truncated);
   }
@@ -668,7 +667,7 @@ pub function zlib_decode(input: u8[], max_out: i32): Result[u8[], InflateError] 
   return Ok(inflated.out);
 }
 
-pub function adler32(bs: u8[]): u32 {
+pub function adler32(bs: [u8]): u32 {
   let a: u32 = 1;
   let b: u32 = 0;
   let i: i32 = 0;
@@ -680,16 +679,16 @@ pub function adler32(bs: u8[]): u32 {
   return b << 16 | a;
 }
 
-pub function deflate(input: u8[]): u8[] {
+pub function deflate(input: [u8]): u8[] {
   return __deflated(input, 15, true);
 }
 
-pub function deflate_fast(input: u8[]): u8[] {
+pub function deflate_fast(input: [u8]): u8[] {
   return __deflated_tokens(input, __fast_tokens(input), true);
 }
 
-pub function gzip(input: u8[]): u8[] {
-  let crc: u32 = hash.crc32_new().update_array(input).finish();
+pub function gzip(input: [u8]): u8[] {
+  let crc: u32 = hash.crc32_new().update(input).finish();
   let head: u8[] = [31 as u8, 139 as u8, 8 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 255 as u8];
   return __put_le32(__put_le32(__joined(head, deflate(input)), crc), input.len() as u32);
 }
@@ -698,7 +697,7 @@ function __put_le32(own out: u8[], v: u32): u8[] {
   return out.append((v & 255) as u8).append((v >> 8 & 255) as u8).append((v >> 16 & 255) as u8).append((v >> 24) as u8);
 }
 
-pub function deflate_flushed(input: u8[], window_bits: i32): u8[] {
+pub function deflate_flushed(input: [u8], window_bits: i32): u8[] {
   return __deflated(input, window_bits, false);
 }
 
@@ -863,11 +862,11 @@ function __put_match(w: __Bits, length: i32, distance: i32, lit: __Code, dist: _
   return __put(w, distance - __dist_base_of(di), __dist_extra_of(di));
 }
 
-function __deflated(input: u8[], window_bits: i32, final: boolean): u8[] {
+function __deflated(input: [u8], window_bits: i32, final: boolean): u8[] {
   return __deflated_tokens(input, __tokens(input, 1 << window_bits), final);
 }
 
-function __deflated_tokens(input: u8[], toks: i32[], final: boolean): u8[] {
+function __deflated_tokens(input: [u8], toks: i32[], final: boolean): u8[] {
   let fixed: (__Code, __Code) = (__fixed_lit(), __fixed_dist());
   let empty: u8[] = [];
   let w: __Bits = __Bits { out: empty, acc: 0, n: 0 };
@@ -907,7 +906,7 @@ function __span(toks: i32[], at: i32, end: i32): i32 {
   return n;
 }
 
-function __put_block(w: __Bits, input: u8[], toks: i32[], s: __Span, fixed: (__Code, __Code)): __Bits {
+function __put_block(w: __Bits, input: [u8], toks: i32[], s: __Span, fixed: (__Code, __Code)): __Bits {
   let f: (i32[], i32[]) = __freqs(toks, s.at, s.end);
   let lit: __Code = __canonical(huffman_lengths(__two_used(f.0), 15));
   let dist: __Code = __canonical(huffman_lengths(__two_used(f.1), 15));
@@ -978,7 +977,7 @@ function __stored_cost(len: i32): i32 {
   return (len / 65535 + 1) * 42 + len * 8;
 }
 
-function __put_stored(w: __Bits, input: u8[], s: __Span): __Bits {
+function __put_stored(w: __Bits, input: [u8], s: __Span): __Bits {
   let at: i32 = s.from;
   let end: i32 = s.from + s.len;
   let first: boolean = true;
@@ -997,7 +996,7 @@ function __put_stored(w: __Bits, input: u8[], s: __Span): __Bits {
   return w;
 }
 
-function __joined_range(out: u8[], more: u8[], from: i32, to: i32): u8[] {
+function __joined_range(out: u8[], more: [u8], from: i32, to: i32): u8[] {
   let i: i32 = from;
   while (i < to) {
     out = out.append(more[i]);
@@ -1261,7 +1260,7 @@ function __put_header(w: __Bits, h: __Header): __Bits {
   return w;
 }
 
-function __tokens(input: u8[], window: i32): i32[] {
+function __tokens(input: [u8], window: i32): i32[] {
   let n: i32 = input.len();
   let head: i32[] = __filled(32768, 0 - 1);
   let prev: i32[] = __filled(window, 0 - 1);
@@ -1297,7 +1296,7 @@ function __tokens(input: u8[], window: i32): i32[] {
   return out;
 }
 
-function __fast_tokens(input: u8[]): i32[] {
+function __fast_tokens(input: [u8]): i32[] {
   let head: i32[] = __filled(32768, -1);
   let out: i32[] = [];
   let pos: i32 = 0;
@@ -1328,7 +1327,7 @@ function __fast_tokens(input: u8[]): i32[] {
   return out;
 }
 
-function __match_at(input: u8[], pos: i32, skip: i32, head: i32[], prev: i32[], window: i32): (i32, i32) {
+function __match_at(input: [u8], pos: i32, skip: i32, head: i32[], prev: i32[], window: i32): (i32, i32) {
   if (pos < skip || pos + 2 >= input.len()) {
     return (0, 0);
   }
@@ -1345,7 +1344,7 @@ function __filled(n: i32, v: i32): i32[] {
   return out;
 }
 
-function __hash3(input: u8[], pos: i32): i32 {
+function __hash3(input: [u8], pos: i32): i32 {
   if (pos + 2 >= input.len()) {
     return 0;
   }
@@ -1353,7 +1352,7 @@ function __hash3(input: u8[], pos: i32): i32 {
   return h * 2057 & 32767;
 }
 
-function __common(input: u8[], from: i32, pos: i32): i32 {
+function __common(input: [u8], from: i32, pos: i32): i32 {
   let n: i32 = input.len();
   let len: i32 = 0;
   while (len < 258 && pos + len < n && input[from + len] == input[pos + len]) {
@@ -1362,7 +1361,7 @@ function __common(input: u8[], from: i32, pos: i32): i32 {
   return len;
 }
 
-function __longest(input: u8[], pos: i32, cand: i32, prev: i32[], window: i32): (i32, i32) {
+function __longest(input: [u8], pos: i32, cand: i32, prev: i32[], window: i32): (i32, i32) {
   let n: i32 = input.len();
   let best_len: i32 = 0;
   let best_dist: i32 = 0;

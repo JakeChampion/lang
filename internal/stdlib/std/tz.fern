@@ -1,5 +1,4 @@
 // This module resolves local time zones from TZif files and POSIX rules.
-
 import "std/string";
 import "std/array";
 import "std/time";
@@ -321,7 +320,7 @@ function table_digit(c: i32): i32 {
   return c - 61;
 }
 
-function be32(bs: u8[], o: i32): i64 {
+function be32(bs: [u8], o: i32): i64 {
   let v: i64 = 0;
   let i: i32 = 0;
   while (i < 4) {
@@ -331,7 +330,7 @@ function be32(bs: u8[], o: i32): i64 {
   return v;
 }
 
-function be32s(bs: u8[], o: i32): i64 {
+function be32s(bs: [u8], o: i32): i64 {
   let v: i64 = be32(bs, o);
   if (v > 2147483647 as i64) {
     return v - 4294967296 as i64;
@@ -339,7 +338,7 @@ function be32s(bs: u8[], o: i32): i64 {
   return v;
 }
 
-function be64s(bs: u8[], o: i32): i64 {
+function be64s(bs: [u8], o: i32): i64 {
   let v: i64 = 0;
   let i: i32 = 0;
   while (i < 8) {
@@ -351,7 +350,7 @@ function be64s(bs: u8[], o: i32): i64 {
 
 struct Counts { isut: i32, isstd: i32, leap: i32, time: i32, type_: i32, chars: i32 }
 
-function read_counts(bs: u8[], off: i32): Counts {
+function read_counts(bs: [u8], off: i32): Counts {
   let bad: Counts = Counts { isut: 0 - 1, isstd: 0, leap: 0, time: 0, type_: 0, chars: 0 };
   if (off < 0 || off + 44 > bs.len()) {
     return bad;
@@ -391,7 +390,7 @@ function read_zone_file(path: string): Option[Zone] {
   }
 }
 
-pub function parse_tzif(bs: u8[]): Option[Zone] {
+pub function parse_tzif(bs: [u8]): Option[Zone] {
   let h1: Counts = read_counts(bs, 0);
   if (h1.isut < 0 || h1.type_ < 1) {
     return None;
@@ -430,7 +429,7 @@ pub function parse_tzif(bs: u8[]): Option[Zone] {
   return read_zone_block(bs, c, off, width, footer);
 }
 
-function read_zone_block(bs: u8[], c: Counts, off: i32, width: i32, footer: string): Option[Zone] {
+function read_zone_block(bs: [u8], c: Counts, off: i32, width: i32, footer: string): Option[Zone] {
   let idx_off: i32 = off + c.time * width;
   let type_off: i32 = idx_off + c.time;
   let chars_off: i32 = type_off + c.type_ * 6;
@@ -488,7 +487,7 @@ function read_zone_block(bs: u8[], c: Counts, off: i32, width: i32, footer: stri
   return Some(Zone { times: times, offs: tofs, abbrs: tabb, dsts: tdst, first: first, first_abbr: first_name, first_dst: false, rule: parse_posix(footer) });
 }
 
-function designation(bs: u8[], base: i32, len: i32, at: i32): Option[string] {
+function designation(bs: [u8], base: i32, len: i32, at: i32): Option[string] {
   if (at < 0 || at >= len) {
     return Some("");
   }
@@ -502,7 +501,7 @@ function designation(bs: u8[], base: i32, len: i32, at: i32): Option[string] {
   return utf8.from_bytes(out);
 }
 
-function read_footer(bs: u8[], start: i32): Option[string] {
+function read_footer(bs: [u8], start: i32): Option[string] {
   if (start >= bs.len() || bs[start] as i32 != 10) {
     return Some("");
   }

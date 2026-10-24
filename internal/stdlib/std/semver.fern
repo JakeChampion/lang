@@ -1,6 +1,49 @@
 // This module implements the `Semantic Versioning 2.0.0` rules.
-
 import "std/string";
+import "std/error";
+import "core/cmp";
+import "std/i32";
+
+@derive(cmp.Eq)
+pub enum ParseErrorKind { ExpectedCore, ExpectedNumber, LeadingZero, NumberOutOfRange, EmptyIdentifier, InvalidByte(u8) }
+
+@derive(cmp.Eq)
+pub struct ParseError { offset: i32, kind: ParseErrorKind }
+
+impl error.Error for ParseError {}
+
+impl cmp.Display for ParseError {}
+
+pub function (e: ParseError) message(): string {
+  return e.to_string();
+}
+
+pub function (e: ParseError) to_string(): string {
+  let reason: string = "expected major.minor.patch";
+  match (e.kind) {
+    ParseErrorKind.ExpectedCore => {},
+    ParseErrorKind.ExpectedNumber => {
+      reason = "expected a numeric component";
+    },
+    ParseErrorKind.LeadingZero => {
+      reason = "numeric identifier has a leading zero";
+    },
+    ParseErrorKind.NumberOutOfRange => {
+      reason = "numeric component exceeds i32";
+    },
+    ParseErrorKind.EmptyIdentifier => {
+      reason = "empty identifier";
+    },
+    ParseErrorKind.InvalidByte(byte) => {
+      reason = "invalid byte " + (byte as i32).to_string();
+    }
+  }
+  return "semver byte " + e.offset.to_string() + ": " + reason;
+}
+
+function __sv_error(offset: i32, kind: ParseErrorKind): ParseError {
+  return ParseError { offset: offset, kind: kind };
+}
 
 pub struct SemVer {
   major: i32,
@@ -24,14 +67,48 @@ function __sv_all_digits(s: string): boolean {
   return true;
 }
 
-function __sv_num(s: string): Option[i32] {
-  if (!__sv_all_digits(s)) {
-    return None;
+function __sv_num(s: string, offset: i32): Result[i32, ParseError] {
+  if (s.len() == 0) {
+    return Err(__sv_error(offset, ParseErrorKind.ExpectedNumber));
+  }
+  for i in 0..s.len() {
+    if (s[i] < 48 || s[i] > 57) {
+      return Err(__sv_error(offset + i, ParseErrorKind.InvalidByte(s[i])));
+    }
   }
   if (s.len() > 1 && s[0] == 48) {
-    return None;
+    return Err(__sv_error(offset, ParseErrorKind.LeadingZero));
   }
-  return s.parse_int();
+  match (s.parse_int()) {
+    Some(number) => {
+      return Ok(number);
+    },
+    None => {
+      return Err(__sv_error(offset, ParseErrorKind.NumberOutOfRange));
+    }
+  }
+}
+
+function __sv_identifiers(s: string, offset: i32, prerelease: boolean): Result[boolean, ParseError] {
+  let start: i32 = 0;
+  for i in 0..s.len() + 1 {
+    if (i == s.len() || s[i] == 46) {
+      if (i == start) {
+        return Err(__sv_error(offset + i, ParseErrorKind.EmptyIdentifier));
+      }
+      let identifier: string = __sv_slice(s, start, i);
+      if (prerelease && identifier.len() > 1 && identifier[0] == 48 && __sv_all_digits(identifier)) {
+        return Err(__sv_error(offset + start, ParseErrorKind.LeadingZero));
+      }
+      start = i + 1;
+    } else {
+      let byte: u8 = s[i];
+      if (!(byte >= 48 && byte <= 57 || byte >= 65 && byte <= 90 || byte >= 97 && byte <= 122 || byte == 45)) {
+        return Err(__sv_error(offset + i, ParseErrorKind.InvalidByte(byte)));
+      }
+    }
+  }
+  return Ok(true);
 }
 
 function __sv_slice(s: string, start: i32, end: i32): string {
@@ -103,68 +180,31 @@ function __sv_cmp_ident(x: string, y: string): i32 {
   return __sv_str_cmp(x, y);
 }
 
-pub function parse(s: string): Option[SemVer] {
+// parse checks the complete SemVer syntax. Error offsets count bytes.
+// Numeric core components must fit i32. Numeric prerelease identifiers have no size limit.
+pub function parse(s: string): Result[SemVer, ParseError] {
   let core_pre: string = s;
   let build: string = "";
   if let Some(plus) = s.index_of("+") {
     core_pre = __sv_slice(s, 0, plus);
     build = __sv_slice(s, plus + 1, s.len());
-    if (build.len() == 0) {
-      return None;
-    }
+    let valid: boolean = __sv_identifiers(build, plus + 1, false)?;
   }
   let core: string = core_pre;
   let pre: string = "";
   if let Some(dash) = core_pre.index_of("-") {
     core = __sv_slice(core_pre, 0, dash);
     pre = __sv_slice(core_pre, dash + 1, core_pre.len());
-    if (pre.len() == 0) {
-      return None;
-    }
+    let valid: boolean = __sv_identifiers(pre, dash + 1, true)?;
   }
   let parts: string[] = core.split(".");
   if (parts.len() != 3) {
-    return None;
+    return Err(__sv_error(core.len(), ParseErrorKind.ExpectedCore));
   }
-  let maj: Option[i32] = __sv_num(parts[0]);
-  let min: Option[i32] = __sv_num(parts[1]);
-  let pat: Option[i32] = __sv_num(parts[2]);
-  match (maj) {
-    None => {
-      return None;
-    },
-    Some(mj) => {
-      match (min) {
-        None => {
-          return None;
-        },
-        Some(mn) => {
-          match (pat) {
-            None => {
-              return None;
-            },
-            Some(pt) => {
-              if (pre.len() > 0) {
-                let ids: string[] = pre.split(".");
-                let i: i32 = 0;
-                while (i < ids.len()) {
-                  let id: string = ids[i];
-                  if (id.len() == 0) {
-                    return None;
-                  }
-                  if (__sv_all_digits(id) && id.len() > 1 && id[0] == 48) {
-                    return None;
-                  }
-                  i = i + 1;
-                }
-              }
-              return Some(SemVer { major: mj, minor: mn, patch: pt, prerelease: pre, build: build });
-            }
-          }
-        }
-      }
-    }
-  }
+  let major: i32 = __sv_num(parts[0], 0)?;
+  let minor: i32 = __sv_num(parts[1], parts[0].len() + 1)?;
+  let patch: i32 = __sv_num(parts[2], parts[0].len() + parts[1].len() + 2)?;
+  return Ok(SemVer { major: major, minor: minor, patch: patch, prerelease: pre, build: build });
 }
 
 pub function (a: SemVer) compare(b: SemVer): i32 {

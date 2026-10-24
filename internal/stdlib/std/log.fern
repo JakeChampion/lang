@@ -1,39 +1,28 @@
 // This module writes log messages.
-
 import "std/i32";
 import "std/json";
 
-pub function log_info(msg: string): void {
+pub function info(msg: string): void {
   eprint("[INFO] " + msg);
 }
 
-pub function log_warn(msg: string): void {
+pub function warn(msg: string): void {
   eprint("[WARN] " + msg);
 }
 
-pub function log_error(msg: string): void {
+pub function error(msg: string): void {
   eprint("[ERROR] " + msg);
 }
 
-pub function level_trace(): i32 {
-  return 0;
-}
+pub const TRACE: i32 = 0;
 
-pub function level_debug(): i32 {
-  return 1;
-}
+pub const DEBUG: i32 = 1;
 
-pub function level_info(): i32 {
-  return 2;
-}
+pub const INFO: i32 = 2;
 
-pub function level_warn(): i32 {
-  return 3;
-}
+pub const WARN: i32 = 3;
 
-pub function level_error(): i32 {
-  return 4;
-}
+pub const ERROR: i32 = 4;
 
 pub function level_name(n: i32): string {
   if (n <= 0) {
@@ -57,11 +46,11 @@ pub struct Logger {
   sink: (string) => void,
 }
 
-pub function new_logger(min_level: i32): Logger {
+pub function new(min_level: i32): Logger {
   return Logger { min_level: min_level, json: false, sink: __to_stderr };
 }
 
-pub function new_json_logger(min_level: i32): Logger {
+pub function new_json(min_level: i32): Logger {
   return Logger { min_level: min_level, json: true, sink: __to_stderr };
 }
 
@@ -87,23 +76,23 @@ pub function (lg: Logger) at(level: i32): LogEntry {
 }
 
 pub function (lg: Logger) trace_(): LogEntry {
-  return lg.at(level_trace());
+  return lg.at(TRACE);
 }
 
 pub function (lg: Logger) debug_(): LogEntry {
-  return lg.at(level_debug());
+  return lg.at(DEBUG);
 }
 
 pub function (lg: Logger) info_(): LogEntry {
-  return lg.at(level_info());
+  return lg.at(INFO);
 }
 
 pub function (lg: Logger) warn_(): LogEntry {
-  return lg.at(level_warn());
+  return lg.at(WARN);
 }
 
 pub function (lg: Logger) error_(): LogEntry {
-  return lg.at(level_error());
+  return lg.at(ERROR);
 }
 
 pub function (e: LogEntry) str(key: string, val: string): LogEntry {

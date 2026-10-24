@@ -54,15 +54,15 @@ function test_fields_empty(): test.TestOutcome {
 }
 
 function test_center(): test.TestOutcome {
-  return test.assert_eq("hi".center(6, "*"), "**hi**");
+  return test.assert_eq("hi".center(6, '*'), "**hi**");
 }
 
 function test_center_odd(): test.TestOutcome {
-  return test.assert_eq("hi".center(5, "-"), "-hi--");
+  return test.assert_eq("hi".center(5, '-'), "-hi--");
 }
 
 function test_center_noop(): test.TestOutcome {
-  return test.assert_eq("hello".center(3, "*"), "hello");
+  return test.assert_eq("hello".center(3, '*'), "hello");
 }
 
 function test_starts_with_any(): test.TestOutcome {

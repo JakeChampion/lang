@@ -1,6 +1,7 @@
 import "std/test";
 import "std/http/hpack";
 import "std/hex";
+import "std/codec";
 import "core/int";
 
 function fields_text(fs: hpack.Field[]): string {
@@ -16,7 +17,7 @@ function fields_text(fs: hpack.Field[]): string {
 }
 
 function decoded(d: hpack.Decoder, block: string): string {
-  match (d.decode(hex.hex_decode(block))) {
+  match (d.decode(__codec_bytes(hex.decode(block)))) {
     Ok(got) => {
       return fields_text(got.fields) + "table " + int.int_to_string(got.decoder.table_size());
     },
@@ -28,7 +29,7 @@ function decoded(d: hpack.Decoder, block: string): string {
 }
 
 function encoded(e: hpack.Encoder, fs: hpack.Field[]): string {
-  return hex.hex_encode(e.encode(fs).bytes);
+  return hex.encode(e.encode(fs).bytes);
 }
 
 function test_literals(): test.TestOutcome {
@@ -63,8 +64,8 @@ function three_requests(blocks: string[], huffman: boolean): string {
   while (i < 3) {
     let enc: hpack.Encoded = e.encode(request_fields(i + 1));
     e = enc.encoder;
-    if (hex.hex_encode(enc.bytes) != blocks[i]) {
-      return "request " + int.int_to_string(i + 1) + " encoded as " + hex.hex_encode(enc.bytes);
+    if (hex.encode(enc.bytes) != blocks[i]) {
+      return "request " + int.int_to_string(i + 1) + " encoded as " + hex.encode(enc.bytes);
     }
     match (d.decode(enc.bytes)) {
       Ok(got) => {
@@ -112,8 +113,8 @@ function three_responses(blocks: string[], huffman: boolean): string {
   while (i < 3) {
     let enc: hpack.Encoded = e.encode(response_fields(i + 1));
     e = enc.encoder;
-    if (hex.hex_encode(enc.bytes) != blocks[i]) {
-      return "response " + int.int_to_string(i + 1) + " encoded as " + hex.hex_encode(enc.bytes);
+    if (hex.encode(enc.bytes) != blocks[i]) {
+      return "response " + int.int_to_string(i + 1) + " encoded as " + hex.encode(enc.bytes);
     }
     match (d.decode(enc.bytes)) {
       Ok(got) => {
@@ -143,8 +144,8 @@ function test_responses_huffman(): test.TestOutcome {
 function test_size_updates(): test.TestOutcome {
   let e: hpack.Encoder = hpack.encoder(4096).with_max_table(0).without_huffman();
   let enc: hpack.Encoded = e.encode([hpack.field(":method", "GET"), hpack.field("x", "y")]);
-  if (hex.hex_encode(enc.bytes) != "20824001780179" || enc.encoder.table_size() != 0) {
-    return test.fail(hex.hex_encode(enc.bytes));
+  if (hex.encode(enc.bytes) != "20824001780179" || enc.encoder.table_size() != 0) {
+    return test.fail(hex.encode(enc.bytes));
   }
   let d: hpack.Decoder = hpack.decoder(100, 65536);
   let got: string = decoded(d, "3fe101") + "|" + decoded(d, "8220") + "|" + decoded(d, "3f0582");
@@ -160,7 +161,7 @@ function test_malformed(): test.TestOutcome {
 function decoded_twice(d: hpack.Decoder, first: u8[], second: u8[]): string {
   match (d.decode(first)) {
     Ok(got) => {
-      return decoded(got.decoder, hex.hex_encode(second));
+      return decoded(got.decoder, hex.encode(second));
     },
     Err(e) => {
       return "first: " + e.message();
@@ -174,7 +175,7 @@ function test_bounds(): test.TestOutcome {
   let two: hpack.Encoded = e.encode([hpack.field(":method", "GET"), hpack.field("custom-key", "custom-value")]);
   let three: hpack.Encoded = two.encoder.encode([hpack.field(":method", "GET"), hpack.field("custom-key", "custom-value"), hpack.field("another-key", "another-value")]);
   let small: hpack.Decoder = hpack.decoder(4096, 100);
-  let got: string = decoded(small, hex.hex_encode(two.bytes)) + "|" + decoded_twice(small, two.bytes, three.bytes);
+  let got: string = decoded(small, hex.encode(two.bytes)) + "|" + decoded_twice(small, two.bytes, three.bytes);
   let few: hpack.Decoder = hpack.decoder(4096, 65536).with_max_fields(2);
   got = got + "|" + decoded_twice(few, two.bytes, three.bytes);
   return test.assert_eq(got, ":method: GET\ncustom-key: custom-value\ntable 54|hpack: header list over 100 bytes|hpack: more than 2 header fields");
@@ -212,12 +213,12 @@ function test_field_by_field(): test.TestOutcome {
     en = en.put(f.name, f.value, f.sensitive);
   }
   let parts: hpack.Encoded = en.finish();
-  if (hex.hex_encode(parts.bytes) != hex.hex_encode(whole.bytes)) {
-    return test.fail("field by field " + hex.hex_encode(parts.bytes) + ", whole " + hex.hex_encode(whole.bytes));
+  if (hex.encode(parts.bytes) != hex.encode(whole.bytes)) {
+    return test.fail("field by field " + hex.encode(parts.bytes) + ", whole " + hex.encode(whole.bytes));
   }
   let behind: hpack.Encoded = hpack.encoder(4096).with_max_table(256).begin_in([1 as u8, 2 as u8]).put(":status", "200", false).finish();
-  if (hex.hex_encode(behind.bytes) != "0102" + hex.hex_encode(hpack.encoder(4096).with_max_table(256).encode([hpack.field(":status", "200")]).bytes)) {
-    return test.fail("begun behind bytes " + hex.hex_encode(behind.bytes));
+  if (hex.encode(behind.bytes) != "0102" + hex.encode(hpack.encoder(4096).with_max_table(256).encode([hpack.field(":status", "200")]).bytes)) {
+    return test.fail("begun behind bytes " + hex.encode(behind.bytes));
   }
   return test.assert_eq(parts.encoder.table_size(), whole.encoder.table_size());
 }
@@ -264,11 +265,11 @@ function read_fields_in(d: hpack.Decoder, bytes: u8[], from: i32, end: i32): str
 
 function test_in_place(): test.TestOutcome {
   let d: hpack.Decoder = hpack.decoder(4096, 65536);
-  let bytes: u8[] = hex.hex_decode("ffffff" + "828684410f7777772e6578616d706c652e636f6d" + "0000");
+  let bytes: u8[] = __codec_bytes(hex.decode("ffffff" + "828684410f7777772e6578616d706c652e636f6d" + "0000"));
   let whole: string = read_fields_in(d, bytes, 3, bytes.len() - 2);
   let cut: string = read_fields_in(d, bytes, 3, bytes.len() - 4);
-  let short: string = read_fields_in(d, hex.hex_decode("82867fff"), 0, 3);
-  return test.assert_eq(whole + "|" + cut + "|" + short, read_fields(d, hex.hex_decode("828684410f7777772e6578616d706c652e636f6d")) + "|hpack: header block ends inside a field|hpack: header block ends inside a field");
+  let short: string = read_fields_in(d, __codec_bytes(hex.decode("82867fff")), 0, 3);
+  return test.assert_eq(whole + "|" + cut + "|" + short, read_fields(d, __codec_bytes(hex.decode("828684410f7777772e6578616d706c652e636f6d"))) + "|hpack: header block ends inside a field|hpack: header block ends inside a field");
 }
 
 function test_field_at_a_time(): test.TestOutcome {
@@ -279,7 +280,7 @@ function test_field_at_a_time(): test.TestOutcome {
     let enc: hpack.Encoded = e.encode(request_fields(i + 1));
     e = enc.encoder;
     let one: string = read_fields(d, enc.bytes);
-    if (one != decoded(d, hex.hex_encode(enc.bytes))) {
+    if (one != decoded(d, hex.encode(enc.bytes))) {
       return test.fail("request " + int.int_to_string(i + 1) + " read as " + one);
     }
     match (d.decode(enc.bytes)) {
@@ -292,7 +293,7 @@ function test_field_at_a_time(): test.TestOutcome {
     }
     i = i + 1;
   }
-  let got: string = read_fields(d, hex.hex_decode("20100870617373776f726406736563726574")) + "|" + read_fields(hpack.decoder(4096, 100), hex.hex_decode("828684410f7777772e6578616d706c652e636f6d")) + "|" + read_fields(hpack.decoder(4096, 65536).with_max_fields(2), hex.hex_decode("828684")) + "|" + read_fields(d, hex.hex_decode("82"));
+  let got: string = read_fields(d, __codec_bytes(hex.decode("20100870617373776f726406736563726574"))) + "|" + read_fields(hpack.decoder(4096, 100), __codec_bytes(hex.decode("828684410f7777772e6578616d706c652e636f6d"))) + "|" + read_fields(hpack.decoder(4096, 65536).with_max_fields(2), __codec_bytes(hex.decode("828684"))) + "|" + read_fields(d, __codec_bytes(hex.decode("82")));
   return test.assert_eq(got, "password: secret (sensitive)\ntable 0|hpack: header list over 100 bytes|hpack: more than 2 header fields|:method: GET\ntable 164");
 }
 
@@ -317,21 +318,21 @@ function test_static_entries(): test.TestOutcome {
   while (i < STATIC_TABLE.len() / 2) {
     let name: string = STATIC_TABLE[2 * i];
     let whole: hpack.Encoded = hpack.encoder(4096).without_huffman().encode([hpack.field(name, STATIC_TABLE[2 * i + 1])]);
-    if (hex.hex_encode(whole.bytes) != hex.hex_encode([(128 + i + 1) as u8])) {
-      return test.fail(name + " " + STATIC_TABLE[2 * i + 1] + " is " + hex.hex_encode(whole.bytes));
+    if (hex.encode(whole.bytes) != hex.encode([(128 + i + 1) as u8])) {
+      return test.fail(name + " " + STATIC_TABLE[2 * i + 1] + " is " + hex.encode(whole.bytes));
     }
     let first: i32 = i;
     while (first > 0 && STATIC_TABLE[2 * (first - 1)] == name) {
       first = first - 1;
     }
     let other: hpack.Encoded = hpack.encoder(4096).without_huffman().encode([hpack.field(name, "x")]);
-    if (hex.hex_encode(other.bytes) != hex.hex_encode([(64 + first + 1) as u8, 1 as u8, 120 as u8])) {
-      return test.fail(name + " x is " + hex.hex_encode(other.bytes));
+    if (hex.encode(other.bytes) != hex.encode([(64 + first + 1) as u8, 1 as u8, 120 as u8])) {
+      return test.fail(name + " x is " + hex.encode(other.bytes));
     }
     i = i + 1;
   }
   let none: hpack.Encoded = hpack.encoder(4096).without_huffman().encode([hpack.field("x-a-name-longer-than-any-static-one", "v")]);
-  return test.assert_eq(hex.hex_encode(none.bytes), "4023782d612d6e616d652d6c6f6e6765722d7468616e2d616e792d7374617469632d6f6e650176");
+  return test.assert_eq(hex.encode(none.bytes), "4023782d612d6e616d652d6c6f6e6765722d7468616e2d616e792d7374617469632d6f6e650176");
 }
 
 function main(): i32 {
@@ -350,4 +351,17 @@ function main(): i32 {
   r = r.it("a block read one field at a time is the block decode reads", test_field_at_a_time);
   r = r.it("a block read where it lies among other bytes", test_in_place);
   return r.finish();
+}
+
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

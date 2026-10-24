@@ -48,7 +48,7 @@ function main(): i32 {
   }
 
   let num: i32 = o.start;
-  let blanks: string = "".pad_start(o.width, " ");
+  let blanks: string = "".pad_start(o.width, ' ');
   let j: i32 = 0;
   while (j < inputs.len()) {
     let lines: string[] = slurp(inputs[j]).lines();
@@ -62,7 +62,7 @@ function main(): i32 {
         number_it = !line.is_empty();
       }
       if (number_it) {
-        print(num.to_string().pad_start(o.width, " ") + o.sep + line);
+        print(num.to_string().pad_start(o.width, ' ') + o.sep + line);
         num = num + o.incr;
       } else {
         print(blanks + o.sep + line);

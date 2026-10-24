@@ -1,7 +1,5 @@
 // This module reads and writes TLS records and handshake messages.
-
 import "core/int";
-import "std/hex";
 import "std/utf8";
 import "std/error";
 import "core/cmp";
@@ -155,14 +153,22 @@ pub function (m: Message) kind(): i32 {
   return 0;
 }
 
-const RETRY_RANDOM: string = "cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c";
+const RETRY_RANDOM: u8[] = [207, 33, 173, 116, 229, 154, 97, 17, 190, 29, 140, 2, 30, 101, 184, 145, 194, 162, 17, 22, 122, 187, 140, 94, 7, 158, 9, 226, 200, 168, 51, 156];
 
 pub function retry_random(): u8[] {
-  return hex.hex_decode(RETRY_RANDOM);
+  return RETRY_RANDOM;
 }
 
 pub function (s: ServerHello) is_retry(): boolean {
-  return hex.hex_encode(s.random) == RETRY_RANDOM;
+  if (s.random.len() != RETRY_RANDOM.len()) {
+    return false;
+  }
+  for i in 0..RETRY_RANDOM.len() {
+    if (s.random[i] != RETRY_RANDOM[i]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function __u8(own out: u8[], v: i32): u8[] {

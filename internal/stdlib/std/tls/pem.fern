@@ -83,11 +83,11 @@ function __close(cur: Open, line: string): Result[Block, PemError] {
       return Err(MismatchedEnd(cur.label));
     }
   }
-  match (base64.base64_decode_strict(cur.body)) {
-    Some(b) => {
+  match (base64.decode(cur.body)) {
+    Ok(b) => {
       return Ok(Block { label: cur.label, bytes: b });
     },
-    None => {
+    Err(_) => {
       return Err(BadBase64(cur.label));
     }
   }
@@ -105,7 +105,7 @@ pub function certificates(text: string): Result[u8[][], PemError] {
 }
 
 pub function encode(label: string, bytes: u8[]): string {
-  let body: string = base64.base64_encode(bytes);
+  let body: string = base64.encode(bytes);
   let out: string = "-----BEGIN " + label + "-----\n";
   let at: i32 = 0;
   while (at < body.len()) {

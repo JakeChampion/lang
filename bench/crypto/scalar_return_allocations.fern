@@ -1,10 +1,11 @@
 import "std/crypto/x25519";
 import "std/hex";
+import "std/codec";
 import "std/i64";
 import "core/int";
 
 function main(): i32 {
-  let key = hex.hex_decode("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a");
+  let key = __codec_bytes(hex.decode("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a"));
   let before = __heap_alloc_count();
   let sum = 0;
   let i = 0;
@@ -23,4 +24,17 @@ function main(): i32 {
   print(allocations.to_string());
   print(int.int_to_string(sum));
   return 0;
+}
+
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

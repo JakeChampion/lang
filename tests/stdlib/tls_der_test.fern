@@ -1,11 +1,12 @@
 import "std/test";
 import "core/int";
 import "std/hex";
+import "std/codec";
 import "std/i64";
 import "std/tls/der";
 
 function h(s: string): u8[] {
-  return hex.hex_decode(s);
+  return __codec_bytes(hex.decode(s));
 }
 
 function element(r: Result[der.Element, der.DerError]): string {
@@ -35,7 +36,7 @@ function first(s: string): der.Element {
 function shown_bytes(r: Result[u8[], der.DerError]): string {
   match (r) {
     Ok(b) => {
-      return hex.hex_encode(b);
+      return hex.encode(b);
     },
     Err(e) => {
       return e.message();
@@ -212,7 +213,7 @@ function test_booleans_and_bits(): test.TestOutcome {
   }
   match (der.bit_string(h("03020780"), first("03020780"))) {
     Ok(bs) => {
-      if (bs.unused != 7 || hex.hex_encode(bs.bytes) != "80") {
+      if (bs.unused != 7 || hex.encode(bs.bytes) != "80") {
         return test.fail("bit string");
       }
     },
@@ -273,4 +274,17 @@ function main(): i32 {
   r = r.it("times", test_times);
   r = r.it("strings", test_text);
   return r.finish();
+}
+
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

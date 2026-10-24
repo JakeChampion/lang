@@ -1,5 +1,4 @@
 // This module adds ANSI terminal colors and text styles.
-
 import "std/i32";
 
 function __esc(): string {

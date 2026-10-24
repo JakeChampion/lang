@@ -1,0 +1,18 @@
+/workspace/scratch/lang-system-api-names/main-codec-integration/oracle: go1.27.3
+	path	github.com/jakechampion/lang/cmd/fern
+	mod	github.com/jakechampion/lang	v0.0.0-20261024053328-0e4dae30a8af	
+	build	-buildmode=exe
+	build	-compiler=gc
+	build	DefaultGODEBUG=tracebacklabels=0,x509sslcertoverrideplatform=0
+	build	CGO_ENABLED=1
+	build	CGO_CFLAGS=
+	build	CGO_CPPFLAGS=
+	build	CGO_CXXFLAGS=
+	build	CGO_LDFLAGS=
+	build	GOARCH=amd64
+	build	GOOS=linux
+	build	GOAMD64=v1
+	build	vcs=git
+	build	vcs.revision=0e4dae30a8af5cad5458fbc051dcae18086878ef
+	build	vcs.time=2026-10-24T05:33:28Z
+	build	vcs.modified=false

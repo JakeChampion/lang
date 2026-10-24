@@ -1,5 +1,4 @@
 // This module provides string methods.
-
 import "core/int";
 import "core/bigint";
 import "std/i32";
@@ -399,19 +398,19 @@ pub function (s: string) strip_quotes(): Option[string] {
   return None;
 }
 
-pub function (s: string) leading_count(b: i32): i32 {
+pub function (s: string) leading_count(b: u8): i32 {
   let n: i32 = s.len();
   let i: i32 = 0;
-  while (i < n && s[i] as i32 == b) {
+  while (i < n && s[i] as i32 == b as i32) {
     i = i + 1;
   }
   return i;
 }
 
-pub function (s: string) trailing_count(b: i32): i32 {
+pub function (s: string) trailing_count(b: u8): i32 {
   let n: i32 = s.len();
   let i: i32 = 0;
-  while (i < n && s[n - 1 - i] as i32 == b) {
+  while (i < n && s[n - 1 - i] as i32 == b as i32) {
     i = i + 1;
   }
   return i;
@@ -1013,13 +1012,13 @@ pub function (s: string) split_at(i: i32): (string, string) {
   return (slice_unchecked(s, 0, k).to_owned(), slice_unchecked(s, k, n).to_owned());
 }
 
-pub function (s: string) replace_byte(from: i32, to: i32): u8[] {
+pub function (s: string) replace_byte(from: u8, to: u8): u8[] {
   let n: i32 = s.len();
   let buf: u8[] = __alloc_u8(n);
   let i: i32 = 0;
   while (i < n) {
     let b: i32 = s[i] as i32;
-    if (b == from) {
+    if (b == from as i32) {
       buf = buf.with(i, to as u8);
     } else {
       buf = buf.with(i, b as u8);
@@ -1610,19 +1609,19 @@ pub function (s: string) rsplitn(sep: string, n: i32): string[] {
   return out.append(head);
 }
 
-pub function (s: string) first(): Option[i32] {
+pub function (s: string) first(): Option[u8] {
   if (s.len() == 0) {
     return None;
   }
-  return Some(s[0] as i32);
+  return Some(s[0]);
 }
 
-pub function (s: string) last(): Option[i32] {
+pub function (s: string) last(): Option[u8] {
   let n: i32 = s.len();
   if (n == 0) {
     return None;
   }
-  return Some(s[n - 1] as i32);
+  return Some(s[n - 1]);
 }
 
 function __floor_boundary(s: string, i: i32): i32 {
@@ -1895,15 +1894,12 @@ function __fill_bytes(ch: string, need: i32): u8[] {
   return buf;
 }
 
-pub function (s: string) pad_start(n: i32, ch: string): string {
+pub function (s: string) pad_start(n: i32, ch: char): string {
   let sl: i32 = s.len();
   if (sl >= n) {
     return s;
   }
-  if (ch.len() == 0) {
-    return s;
-  }
-  let fill: u8[] = __fill_bytes(ch, n - sl);
+  let fill: u8[] = __fill_bytes(string_from_codepoint(ch), n - sl);
   let fl: i32 = fill.len();
   let buf: u8[] = __alloc_u8(fl + sl);
   let i: i32 = 0;
@@ -1919,15 +1915,12 @@ pub function (s: string) pad_start(n: i32, ch: string): string {
   return string_from_bytes_unchecked(buf);
 }
 
-pub function (s: string) pad_end(n: i32, ch: string): string {
+pub function (s: string) pad_end(n: i32, ch: char): string {
   let sl: i32 = s.len();
   if (sl >= n) {
     return s;
   }
-  if (ch.len() == 0) {
-    return s;
-  }
-  let fill: u8[] = __fill_bytes(ch, n - sl);
+  let fill: u8[] = __fill_bytes(string_from_codepoint(ch), n - sl);
   let fl: i32 = fill.len();
   let buf: u8[] = __alloc_u8(sl + fl);
   let j: i32 = 0;
@@ -2119,15 +2112,15 @@ pub function (s: string) pad_end_str(width: i32, fill: string): string {
   return s + pad;
 }
 
-pub function (s: string) center(width: i32, ch: string): string {
+pub function (s: string) center(width: i32, ch: char): string {
   let sLen: i32 = s.len();
-  if (sLen >= width || ch.len() == 0) {
+  if (sLen >= width) {
     return s;
   }
   let total: i32 = width - sLen;
   let lpad: i32 = total / 2;
   let rpad: i32 = total - lpad;
-  return string_from_bytes_unchecked(__fill_bytes(ch, lpad)) + s + string_from_bytes_unchecked(__fill_bytes(ch, rpad));
+  return string_from_bytes_unchecked(__fill_bytes(string_from_codepoint(ch), lpad)) + s + string_from_bytes_unchecked(__fill_bytes(string_from_codepoint(ch), rpad));
 }
 
 pub function (s: string) reverse_words(): string {
@@ -2177,11 +2170,11 @@ pub function (s: string) first_line(): Option[string] {
   return Some(slice_unchecked(s, 0, idx).to_owned());
 }
 
-pub function (s: string) at(i: i32): Option[i32] {
+pub function (s: string) at(i: i32): Option[u8] {
   if (i < 0 || i >= s.len()) {
     return None;
   }
-  return Some(s[i] as i32);
+  return Some(s[i]);
 }
 
 pub function (s: string) to_array(): string[] {
@@ -2446,8 +2439,8 @@ pub function (s: string) count_matches(sub: string): i32 {
   return count;
 }
 
-pub function (s: string) count_byte(b: i32): i32 {
-  return __count_byte(s, b);
+pub function (s: string) count_byte(b: u8): i32 {
+  return __count_byte(s, b as i32);
 }
 
 pub function (s: string) replace_n(old: string, new: string, n: i32): string {
@@ -3848,13 +3841,13 @@ pub function (s: string) replace_at(i: i32, new: string): string {
   return slice_unchecked(s, 0, i) + slice_unchecked(new, 0, width) + slice_unchecked(s, end, n);
 }
 
-pub function (s: string) without_byte(b: i32): u8[] {
+pub function (s: string) without_byte(b: u8): u8[] {
   let n: i32 = s.len();
   let buf: u8[] = __alloc_u8(n);
   let pos: i32 = 0;
   let i: i32 = 0;
   while (i < n) {
-    if (s[i] as i32 != b) {
+    if (s[i] as i32 != b as i32) {
       buf = buf.with(pos, s[i] as u8);
       pos = pos + 1;
     }

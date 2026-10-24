@@ -26,7 +26,7 @@ function home(row: ssaprepare.Emitted, h: i32): string {
 function check(text: string, arch: string, input: string, result: string, flags: boolean, expected: boolean): void {
   let p = unique.check_fragment(text, arch, input, result, flags);
   if (p.ok != expected) {
-    print(arch + " " + input + " -> " + result + ": " + p.message + "\n" + text);
+    eprint(arch + " " + input + " -> " + result + ": " + p.message + "\n" + text);
     exit(172);
   }
   require(p.function_name == "inline __fern_rc_is_unique" && (p.ok || p.message != ""), 173);
@@ -137,11 +137,33 @@ function slot_controls(site: ssaprepare.UniqueSite, arch: string, input: string,
   check(change(site.text, load, ""), arch, input, result, false, false);
 }
 
+function link_registers(): void {
+  let before = "    mov x6, #0\n    tbnz ";
+  let after = ", #0, .Llink_unique\n    cmp ";
+  let tail = ", #16, lsl #12\n    b.lo .Llink_unique\n    and x7, ";
+  let finish = ", #0xfffffffffffffffd\n    ldur w5, [x7, #-8]\n    cmp w5, #1\n    b.ne .Llink_unique\n    mov x6, #1\n.Llink_unique:\n    mov ";
+  let input = before + "x30" + after + "x30" + tail + "x30" + finish + "x0, x6\n";
+  check(input, "arm64", "x30", "x0", false, true);
+  check(input + "    mov x30, #0\n", "arm64", "x30", "x0", false, false);
+  check(input, "arm64", "x29", "x0", false, false);
+  let result = before + "x0" + after + "x0" + tail + "x0" + finish + "x30, x6\n";
+  check(result, "arm64", "x0", "x30", false, true);
+  check(result + "    mov x29, #0\n", "arm64", "x0", "x30", false, false);
+  check(result, "arm64", "x0", "x29", false, false);
+}
+
 pub function run(row: ssaprepare.Emitted, mutations: boolean): void {
+  if (mutations && row.context.architecture == "arm64") {
+    link_registers();
+  }
   let checked_slot = false;
   for site in row.sites {
     let input = home(row, site.input_home);
     let result = if (site.flags) { "" } else { home(row, site.result_home) };
+    if (row.context.architecture == "arm64" && (input == "x30" || result == "x30")) {
+      require(row.allocation.framed, 175);
+      require(row.assembly.contains("stp x29, x30, [sp, #-16]!") && row.assembly.contains("ldp x29, x30, [sp], #16"), 176);
+    }
     check(site.text, row.context.architecture, input, result, site.flags, !site.aligned);
     if (!site.aligned && mutations) {
       corruptions(site, row.context.architecture, input, result);

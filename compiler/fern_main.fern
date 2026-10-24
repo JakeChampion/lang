@@ -15,7 +15,7 @@ function main(): i32 {
 function stdlib_digest(): string {
   let h: crypto.Sha256 = crypto.sha256_new();
   for a in __fern_assets() {
-    h = h.update(a.0).update("\n").update(util.i32_to_string(a.1.len())).update("\n").update(a.1);
+    h = h.update(a.0.as_bytes()).update("\n".as_bytes()).update(util.i32_to_string(a.1.len()).as_bytes()).update("\n".as_bytes()).update(a.1.as_bytes());
   }
   return slice_unchecked(h.final_hex(), 0, 16) + "";
 }

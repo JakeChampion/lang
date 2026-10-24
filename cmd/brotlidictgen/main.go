@@ -47,11 +47,12 @@ func generate(data []byte) (string, error) {
 // Use `+"`go run ./cmd/brotlidictgen`"+` to regenerate this file.
 
 import "std/base64";
+import "std/codec";
 
 pub const SIZE: i32 = %d;
 
-pub function bytes(): u8[] {
-  return base64.base64_decode("%s");
+pub function bytes(): Result[u8[], codec.DecodeError] {
+  return base64.decode("%s");
 }
 `, size, digest, size, base64.StdEncoding.EncodeToString(data)), nil
 }

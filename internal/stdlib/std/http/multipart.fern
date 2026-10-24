@@ -462,7 +462,7 @@ function __find(hay: u8[], needle: u8[], from: i32): i32 {
 pub struct Builder { boundary: string, body: u8[] }
 
 pub function builder(): Builder {
-  return builder_with(hex.hex_encode(random_bytes(16)));
+  return builder_with(hex.encode(random_bytes(16)));
 }
 
 pub function builder_with(boundary: string): Builder {

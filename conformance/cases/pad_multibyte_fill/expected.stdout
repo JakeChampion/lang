@@ -7,4 +7,4 @@ zeros=00042 len=5 valid
 spaces=ab    len=5 valid
 dashes=---x--- len=7 valid
 already_long=long len=4 valid
-empty_fill=q len=1 valid
+no_whole_fill=q len=1 valid

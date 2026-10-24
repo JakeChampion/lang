@@ -1,5 +1,4 @@
 // This module parses command-line arguments.
-
 import "std/string";
 import "std/utf8" as utf8;
 import "core/map";
@@ -12,7 +11,7 @@ pub struct CliArgs { opts: Map[string, string], positionals: string[], command: 
 
 struct CliStep { opts: Map[string, string], next: i32, error: string }
 
-pub function cli_new(name: string, about: string): CliSpec {
+pub function new(name: string, about: string): CliSpec {
   let fs: CliFlag[] = [];
   let cs: CliSpec[] = [];
   return CliSpec { name: name, about: about, flags: fs, commands: cs };
@@ -522,7 +521,7 @@ pub function (s: CliSpec) completion(shell: string): Option[string] {
   return None;
 }
 
-pub function cli_color_enabled(): boolean {
+pub function color_enabled(): boolean {
   match (env("FORCE_COLOR")) {
     Some(_) => {
       return true;
@@ -547,41 +546,41 @@ pub function cli_color_enabled(): boolean {
 }
 
 function __cli_sgr(code: string, s: string): string {
-  if (!cli_color_enabled()) {
+  if (!color_enabled()) {
     return s;
   }
   return "\x1b[" + code + "m" + s + "\x1b[0m";
 }
 
-pub function cli_red(s: string): string {
+pub function red(s: string): string {
   return __cli_sgr("31", s);
 }
 
-pub function cli_green(s: string): string {
+pub function green(s: string): string {
   return __cli_sgr("32", s);
 }
 
-pub function cli_yellow(s: string): string {
+pub function yellow(s: string): string {
   return __cli_sgr("33", s);
 }
 
-pub function cli_blue(s: string): string {
+pub function blue(s: string): string {
   return __cli_sgr("34", s);
 }
 
-pub function cli_magenta(s: string): string {
+pub function magenta(s: string): string {
   return __cli_sgr("35", s);
 }
 
-pub function cli_cyan(s: string): string {
+pub function cyan(s: string): string {
   return __cli_sgr("36", s);
 }
 
-pub function cli_bold(s: string): string {
+pub function bold(s: string): string {
   return __cli_sgr("1", s);
 }
 
-pub function cli_dim(s: string): string {
+pub function dim(s: string): string {
   return __cli_sgr("2", s);
 }
 

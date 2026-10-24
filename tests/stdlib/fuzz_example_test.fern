@@ -51,7 +51,7 @@ function main(): i32 {
   r = r.fuzz(
     "trivial",
     ["".bytes(), "a".bytes(), "hello world".bytes()],
-    fuzz.fuzz_default_iterations(),
+    fuzz.DEFAULT_ITERATIONS,
     check_always_ok,
   );
 

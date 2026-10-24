@@ -41,7 +41,7 @@ function main(): i32 {
   r = r.fuzz_shrink(
     "reverse_bytes idempotent",
     ["".bytes(), "a".bytes(), "abc".bytes(), "hello world".bytes()],
-    fuzz.fuzz_default_iterations(),
+    fuzz.DEFAULT_ITERATIONS,
     check_reverse_idempotent,
   );
 

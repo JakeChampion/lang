@@ -1,5 +1,6 @@
 import "std/test";
 import "std/hex";
+import "std/codec";
 import "std/crypto/field25519" as fe;
 
 const ZERO: string = "0000000000000000000000000000000000000000000000000000000000000000";
@@ -19,11 +20,11 @@ const TOP: string = "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
 const MIXED: string = "0f1e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412";
 
 function el(h: string): fe.Fe {
-  return fe.from_bytes(hex.hex_decode(h));
+  return fe.from_bytes(__codec_bytes(hex.decode(h)));
 }
 
 function out(a: fe.Fe): string {
-  return hex.hex_encode(fe.to_bytes(a));
+  return hex.encode(fe.to_bytes(a));
 }
 
 function test_mul(): test.TestOutcome {
@@ -710,4 +711,17 @@ function main(): i32 {
   r = r.it("sq, neg, invert, pow22523 and mul_small", test_unary);
   r = r.it("cswap and cmov", test_select);
   return r.finish();
+}
+
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

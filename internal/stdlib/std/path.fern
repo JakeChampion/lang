@@ -1,6 +1,6 @@
 // This module processes POSIX paths without filesystem access.
 
-pub function path_join(parts: string[]): string {
+pub function join(parts: string[]): string {
   let n: i32 = parts.len();
   if (n == 0) {
     return "";
@@ -35,7 +35,7 @@ pub function path_join(parts: string[]): string {
   return out;
 }
 
-pub function path_parent(p: string): string {
+pub function parent(p: string): string {
   let n: i32 = p.len();
   if (n == 0) {
     return "";
@@ -59,7 +59,7 @@ pub function path_parent(p: string): string {
   return slice_unchecked(p, 0, i) + "";
 }
 
-pub function path_file_name(p: string): string {
+pub function file_name(p: string): string {
   let n: i32 = p.len();
   if (n == 0) {
     return "";
@@ -78,8 +78,8 @@ pub function path_file_name(p: string): string {
   return slice_unchecked(p, i + 1, end) + "";
 }
 
-pub function path_extension(p: string): string {
-  let name: string = path_file_name(p);
+pub function extension(p: string): string {
+  let name: string = file_name(p);
   let n: i32 = name.len();
   if (n == 0) {
     return "";
@@ -105,7 +105,7 @@ function seg_pop(xs: string[]): string[] {
   return out;
 }
 
-pub function path_clean(p: string): string {
+pub function clean(p: string): string {
   let n: i32 = p.len();
   if (n == 0) {
     return ".";
@@ -155,12 +155,12 @@ pub function path_clean(p: string): string {
   return joined;
 }
 
-pub function path_is_absolute(p: string): boolean {
+pub function is_absolute(p: string): boolean {
   return p.len() > 0 && p[0] == 47;
 }
 
-pub function path_stem(p: string): string {
-  let name: string = path_file_name(p);
+pub function stem(p: string): string {
+  let name: string = file_name(p);
   let n: i32 = name.len();
   if (n == 0) {
     return "";
@@ -175,7 +175,7 @@ pub function path_stem(p: string): string {
   return slice_unchecked(name, 0, i) + "";
 }
 
-pub function path_with_extension(p: string, ext: string): string {
+pub function with_extension(p: string, ext: string): string {
   let n: i32 = p.len();
   let end: i32 = n;
   while (end > 0 && p[end - 1] == 47) {

@@ -157,7 +157,7 @@ var strBindStdlibCases = []struct {
 	want int
 }{
 	{"stdlib-drop-view", `base.drop(2)`, 0},
-	{"stdlib-pad-start-owned", `base.pad_start(200, " ")`, 0},
+	{"stdlib-pad-start-owned", `base.pad_start(200, ' ')`, 0},
 	{"stdlib-remove-prefix-view", `base.remove_prefix("abcd")`, 0},
 	{"stdlib-drop-identity-guarded", `base.drop(0)`, 0},
 }

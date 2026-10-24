@@ -23,13 +23,13 @@ function __thousand_a(): string {
 }
 
 function test_cksum_vectors(): test.TestOutcome {
-  if (hash.cksum_of("") != 4294967295) {
+  if (hash.cksum_of("".as_bytes()) != 4294967295) {
     return test.fail("empty");
   }
-  if (hash.cksum_of("abc") != 1219131554) {
+  if (hash.cksum_of("abc".as_bytes()) != 1219131554) {
     return test.fail("abc");
   }
-  let c: hash.Cksum = hash.cksum_new().update("abc");
+  let c: hash.Cksum = hash.cksum_new().update("abc".as_bytes());
   if (c.byte_count() != 3 as u64) {
     return test.fail("len");
   }
@@ -37,9 +37,9 @@ function test_cksum_vectors(): test.TestOutcome {
 }
 
 function test_cksum_finish_is_a_read(): test.TestOutcome {
-  let c: hash.Cksum = hash.cksum_new().update("ab");
+  let c: hash.Cksum = hash.cksum_new().update("ab".as_bytes());
   let mid: u32 = c.finish();
-  c = c.update("c");
+  c = c.update("c".as_bytes());
   if (mid != 2072780115) {
     return test.fail("mid");
   }
@@ -51,17 +51,17 @@ function test_cksum_seven_byte_updates(): test.TestOutcome {
   let c: hash.Cksum = hash.cksum_new();
   let i: i32 = 0;
   while (i + 7 <= 10003) {
-    c = c.update_bytes(msg[i:i + 7]);
+    c = c.update(msg[i:i + 7]);
     i = i + 7;
   }
-  c = c.update_bytes(msg[i:10003]);
+  c = c.update(msg[i:10003]);
   if (c.finish() != 741291487) {
     return test.fail("chunked");
   }
   if (c.byte_count() != 10003 as u64) {
     return test.fail("len");
   }
-  return test.assert_eq(c.finish(), hash.cksum_of(string_from_bytes_unchecked(msg)));
+  return test.assert_eq(c.finish(), hash.cksum_of(msg));
 }
 
 function test_cksum_string_chunks_match_the_table(): test.TestOutcome {
@@ -75,43 +75,43 @@ function test_cksum_string_chunks_match_the_table(): test.TestOutcome {
     if (at + take > 10003) {
       take = 10003 - at;
     }
-    c = c.update(slice_unchecked(msg, at, at + take));
+    c = c.update(slice_unchecked(msg, at, at + take).as_bytes());
     at = at + take;
     k = k + 1;
   }
   if (c.byte_count() != 10003 as u64) {
     return test.fail("len");
   }
-  let viabytes: hash.Cksum = hash.cksum_new().update_bytes(__pseudo());
+  let viabytes: hash.Cksum = hash.cksum_new().update(__pseudo());
   if (c.finish() != viabytes.finish()) {
     return test.fail("chunked string vs table");
   }
-  return test.assert_eq(c.finish(), hash.cksum_of(msg));
+  return test.assert_eq(c.finish(), hash.cksum_of(msg.as_bytes()));
 }
 
 function test_bsd_sum(): test.TestOutcome {
-  if (hash.bsd_sum_of("") != 0) {
+  if (hash.bsd_sum_of("".as_bytes()) != 0) {
     return test.fail("empty");
   }
-  if (hash.bsd_sum_of("abc") != 16556) {
+  if (hash.bsd_sum_of("abc".as_bytes()) != 16556) {
     return test.fail("abc");
   }
   let msg: u8[] = __pseudo();
   let s: hash.BsdSum = hash.bsd_sum_new();
   let i: i32 = 0;
   while (i + 7 <= 10003) {
-    s = s.update_bytes(msg[i:i + 7]);
+    s = s.update(msg[i:i + 7]);
     i = i + 7;
   }
-  s = s.update_bytes(msg[i:10003]);
+  s = s.update(msg[i:10003]);
   if (s.finish() != 21454) {
     return test.fail("chunked");
   }
-  let array_sum: hash.BsdSum = hash.bsd_sum_new().update_array(msg);
+  let array_sum: hash.BsdSum = hash.bsd_sum_new().update(msg);
   if (array_sum.finish() != s.finish() || array_sum.byte_count() != s.byte_count()) {
     return test.fail("owned-array BSD kernel");
   }
-  if (s.finish() != hash.bsd_sum_of(string_from_bytes_unchecked(msg))) {
+  if (s.finish() != hash.bsd_sum_of(msg)) {
     return test.fail("one-shot");
   }
   if (s.byte_count() != 10003 as u64) {
@@ -121,28 +121,28 @@ function test_bsd_sum(): test.TestOutcome {
 }
 
 function test_sysv_sum(): test.TestOutcome {
-  if (hash.sysv_sum_of("") != 0) {
+  if (hash.sysv_sum_of("".as_bytes()) != 0) {
     return test.fail("empty");
   }
-  if (hash.sysv_sum_of("abc") != 294) {
+  if (hash.sysv_sum_of("abc".as_bytes()) != 294) {
     return test.fail("abc");
   }
   let msg: u8[] = __pseudo();
   let s: hash.SysvSum = hash.sysv_sum_new();
   let i: i32 = 0;
   while (i + 7 <= 10003) {
-    s = s.update_bytes(msg[i:i + 7]);
+    s = s.update(msg[i:i + 7]);
     i = i + 7;
   }
-  s = s.update_bytes(msg[i:10003]);
+  s = s.update(msg[i:10003]);
   if (s.finish() != 29049) {
     return test.fail("chunked");
   }
-  let array_sum: hash.SysvSum = hash.sysv_sum_new().update_array(msg);
+  let array_sum: hash.SysvSum = hash.sysv_sum_new().update(msg);
   if (array_sum.finish() != s.finish() || array_sum.byte_count() != s.byte_count()) {
     return test.fail("owned-array System V kernel");
   }
-  if (s.finish() != hash.sysv_sum_of(string_from_bytes_unchecked(msg))) {
+  if (s.finish() != hash.sysv_sum_of(msg)) {
     return test.fail("one-shot");
   }
   if (s.byte_count() != 10003 as u64) {
@@ -166,17 +166,17 @@ function test_sysv_sum_string_updates(): test.TestOutcome {
   let s: hash.SysvSum = hash.sysv_sum_new();
   let i: i32 = 0;
   while (i + 7 <= 10003) {
-    s = s.update(__chunk(msg, i, 7));
+    s = s.update(__chunk(msg, i, 7).as_bytes());
     i = i + 7;
   }
-  s = s.update(__chunk(msg, i, 10003 - i));
+  s = s.update(__chunk(msg, i, 10003 - i).as_bytes());
   if (s.finish() != 29049) {
     return test.fail("chunked string");
   }
   if (s.byte_count() != 10003 as u64) {
     return test.fail("len");
   }
-  let b: hash.SysvSum = hash.sysv_sum_new().update_bytes(msg);
+  let b: hash.SysvSum = hash.sysv_sum_new().update(msg);
   return test.assert_eq(s.finish(), b.finish());
 }
 
@@ -187,8 +187,8 @@ function test_block_counts(): test.TestOutcome {
     b = b.with(i, 0 as u8);
     i = i + 1;
   }
-  let r: hash.BsdSum = hash.bsd_sum_new().update_bytes(b);
-  let s: hash.SysvSum = hash.sysv_sum_new().update_bytes(b);
+  let r: hash.BsdSum = hash.bsd_sum_new().update(b);
+  let s: hash.SysvSum = hash.sysv_sum_new().update(b);
   if (r.blocks() != 2 as u64) {
     return test.fail("bsd 1025 -> 2");
   }

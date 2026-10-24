@@ -2,6 +2,7 @@ import "std/test";
 import "std/http/h3";
 import "std/http/qpack";
 import "std/hex";
+import "std/codec";
 import "std/string";
 import "std/option";
 
@@ -216,13 +217,13 @@ function test_malformed(): test.TestOutcome {
 
 function test_connection_errors(): test.TestOutcome {
   let p: Link = linked();
-  let out: string = closes(p.s.on_stream(0 as i64, hex.hex_decode("000161"), false));
-  out = out + closes(h3.server(h3.config()).on_stream(2 as i64, hex.hex_decode("00070100"), false));
-  out = out + closes(p.s.on_stream(14 as i64, hex.hex_decode("000400"), false));
-  out = out + closes(h3.server(h3.config()).on_stream(2 as i64, hex.hex_decode("0004020300"), false));
+  let out: string = closes(p.s.on_stream(0 as i64, __codec_bytes(hex.decode("000161")), false));
+  out = out + closes(h3.server(h3.config()).on_stream(2 as i64, __codec_bytes(hex.decode("00070100")), false));
+  out = out + closes(p.s.on_stream(14 as i64, __codec_bytes(hex.decode("000400")), false));
+  out = out + closes(h3.server(h3.config()).on_stream(2 as i64, __codec_bytes(hex.decode("0004020300")), false));
   out = out + closes(p.s.on_stream(6 as i64, [], true));
-  out = out + closes(p.s.on_stream(18 as i64, hex.hex_decode("01"), false));
-  out = out + closes(p.s.on_stream(22 as i64, hex.hex_decode("21"), false));
+  out = out + closes(p.s.on_stream(18 as i64, __codec_bytes(hex.decode("01")), false));
+  out = out + closes(p.s.on_stream(22 as i64, __codec_bytes(hex.decode("21")), false));
   let step3: h3.Session = p.c.send_headers(4 as i64, get("/g"), true);
   let cacts: h3.Action[] = step3.actions;
   let request: u8[] = [];
@@ -233,7 +234,7 @@ function test_connection_errors(): test.TestOutcome {
       }
     }
   }
-  let step4: h3.Session = p.s.on_stream(4 as i64, hex.hex_decode("2103abcdef").concat(request), true);
+  let step4: h3.Session = p.s.on_stream(4 as i64, __codec_bytes(hex.decode("2103abcdef")).concat(request), true);
   let evs: h3.Event[] = step4.events;
   return test.assert_eq(out + "| " + noted("server", evs), "261 DATA outside a message's body; 266 the control stream did not open with SETTINGS; 259 a second critical stream of one type; 265 a repeated setting, or one of HTTP/2's; 260 a critical stream ended; 259 a push stream from a client; stop 22 259; | server headers 4 [:method=GET :scheme=https :authority=example.com :path=/g ]; server end 4; ");
 }
@@ -268,18 +269,18 @@ function test_qpack_blocked(): test.TestOutcome {
   let s0: h3.Session = step6.taken();
   let section: string = "03811011d1d7";
   let headers: string = "0106" + section;
-  let step7: h3.Session = s0.on_stream(0 as i64, hex.hex_decode(headers), true);
+  let step7: h3.Session = s0.on_stream(0 as i64, __codec_bytes(hex.decode(headers)), true);
   let acts1: h3.Action[] = step7.actions;
   let evs1: h3.Event[] = step7.events;
   let s1: h3.Session = step7.taken();
   let encoder: string = "02" + "3fbd01c00f7777772e6578616d706c652e636f6dc10c2f73616d706c652f70617468";
-  let step8: h3.Session = s1.on_stream(6 as i64, hex.hex_decode(encoder), false);
+  let step8: h3.Session = s1.on_stream(6 as i64, __codec_bytes(hex.decode(encoder)), false);
   let acts2: h3.Action[] = step8.actions;
   let evs2: h3.Event[] = step8.events;
   let written: string = "";
   for a in acts2 {
     if let h3.Write(id, bytes, _) = a {
-      written = written + id.to_string() + ":" + hex.hex_encode(bytes) + " ";
+      written = written + id.to_string() + ":" + hex.encode(bytes) + " ";
     }
   }
   let waits: string = s0.waiting(0 as i64).to_string() + " " + s1.waiting(0 as i64).to_string() + " " + step8.waiting(0 as i64).to_string();
@@ -287,7 +288,7 @@ function test_qpack_blocked(): test.TestOutcome {
 }
 
 function test_slot_sharing(): test.TestOutcome {
-  let headers: u8[] = hex.hex_decode("0106" + "03811011d1d7");
+  let headers: u8[] = __codec_bytes(hex.decode("0106" + "03811011d1d7"));
   let s: h3.Session = h3.server(h3.config()).start(3 as i64, 7 as i64, 11 as i64).taken();
   s = s.on_stream(0 as i64, headers, true).on_stream(4 as i64, headers, true).taken();
   let waits: string = "";
@@ -295,11 +296,11 @@ function test_slot_sharing(): test.TestOutcome {
     waits = waits + id.to_string() + "=" + s.waiting(id).to_string() + " ";
   }
   let encoder: string = "02" + "3fbd01c00f7777772e6578616d706c652e636f6dc10c2f73616d706c652f70617468";
-  let step: h3.Session = s.on_stream(6 as i64, hex.hex_decode(encoder), false);
+  let step: h3.Session = s.on_stream(6 as i64, __codec_bytes(hex.decode(encoder)), false);
   let evs: string = noted("server", step.events);
   let unblocked: string = (evs.contains("headers 0 ") && evs.contains("headers 4 ")).to_string() + " " + step.waiting(0 as i64).to_string() + " " + step.waiting(4 as i64).to_string();
   let c: h3.Session = h3.client(h3.config()).start(2 as i64, 6 as i64, 10 as i64).send_headers(0 as i64, get("/a"), true).taken();
-  let c2: h3.Session = c.on_stream(1 as i64, hex.hex_decode("01030000d9"), false);
+  let c2: h3.Session = c.on_stream(1 as i64, __codec_bytes(hex.decode("01030000d9")), false);
   return test.assert_eq(waits + "| " + unblocked + " | client [" + noted("client", c2.events) + "]", "0=true 1=false 2=false 4=true 5=false 6=false 10=false | true false false | client []");
 }
 
@@ -319,4 +320,17 @@ function main(): i32 {
   r = r.it("a request stream below the swept window is still answered", test_reordered_low_stream);
   r = r.it("a stream is not taken for the request sharing its slot", test_slot_sharing);
   return r.finish();
+}
+
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

@@ -18,7 +18,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 		"bijection_ok=162\n" +
 		"bijection_failures=0\n" +
 		"retired=26\n" +
-		"ext_ok=256\n" +
+		"ext_ok=257\n" +
 		"ext_failures=0\n" +
 		"neg_ok=15\n" +
 		"neg_failures=0\n" +
@@ -33,7 +33,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 		"is_term return=1 br=1 exit=1 brif=0\n" +
 		"is_fold add=1 div_s=1 ge_s=1 fadd=0\n" +
 		"is_commute add=1 xor=1 sub=0 shl=0\n" +
-		"tag_consistency ok=227 bad=0\n"
+		"tag_consistency ok=228 bad=0\n"
 
 	table, err := os.ReadFile(filepath.Join("testdata", "ir-kind-ids.txt"))
 	if err != nil {

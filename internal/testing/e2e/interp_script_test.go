@@ -232,16 +232,16 @@ func TestInterpScriptUuid(t *testing.T) {
 	cmd.Stdin = strings.NewReader(`
 import "std/uuid";
 function main(): i32 {
-    let a: string = uuid.uuid_v4();
+    let a: string = uuid.v4();
     if (a.len() != 36) { return 1; }
     if (!uuid.is_valid(a)) { return 2; }
     if (a[14] != 52) { return 3; }          // version '4'
     if (a[8] != 45 || a[13] != 45 || a[18] != 45 || a[23] != 45) { return 4; }
-    let b: string = uuid.uuid_v7();
+    let b: string = uuid.v7();
     if (b.len() != 36) { return 5; }
     if (!uuid.is_valid(b)) { return 6; }
     if (b[14] != 55) { return 7; }          // version '7'
-    if (uuid.uuid_v4() == uuid.uuid_v4()) { return 8; }
+    if (uuid.v4() == uuid.v4()) { return 8; }
     return 0;
 }`)
 	var out, errb bytes.Buffer

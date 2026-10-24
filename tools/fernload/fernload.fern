@@ -27,7 +27,7 @@ struct Plan { addr: net.SocketAddr, request: u8[], rate: i64, connections: i32, 
 struct Tally { sent: i64, done: i64, errors: i64, corrected: i64[], raw: i64[], max_us: i64 }
 
 function main(): i32 {
-  let spec: cli.CliSpec = cli.cli_new("fernload", "an open-loop HTTP/1.1 load generator: a fixed request rate over kept connections, latency measured from each request's scheduled time").option("rate", "r", "requests per second over all connections (default 100)").option("connections", "c", "connections kept open (default 16)").option("duration", "d", "seconds to send for (default 10)");
+  let spec: cli.CliSpec = cli.new("fernload", "an open-loop HTTP/1.1 load generator: a fixed request rate over kept connections, latency measured from each request's scheduled time").option("rate", "r", "requests per second over all connections (default 100)").option("connections", "c", "connections kept open (default 16)").option("duration", "d", "seconds to send for (default 10)");
   let parsed: cli.CliArgs = spec.parse(args());
   if (parsed.is_error()) {
     eprint("fernload: " + parsed.error_text());

@@ -36,9 +36,10 @@ func TestSelfHostX25519Iterated1000(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
 	prog := `import "std/hex";
+import "std/codec";
 import "std/crypto/x25519";
 function main(): i32 {
-  let k: u8[] = hex.hex_decode("0900000000000000000000000000000000000000000000000000000000000000");
+  let k: u8[] = __codec_bytes(hex.decode("0900000000000000000000000000000000000000000000000000000000000000"));
   let u: u8[] = k;
   let i: i32 = 0;
   while (i < 1000) {
@@ -48,8 +49,16 @@ function main(): i32 {
     }
     i = i + 1;
   }
-  print(hex.hex_encode(k));
+  print(hex.encode(k));
   return 0;
+}
+
+// Decode a valid fixture. Report a malformed fixture before ending the test.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => { return bytes; },
+    Err(problem) => { eprint(problem.message()); exit(98); return []; }
+  }
 }
 `
 	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {

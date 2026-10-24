@@ -1,5 +1,4 @@
 // This module encodes and decodes Zstandard data without dictionaries.
-
 import "std/deflate";
 import "std/hash";
 import "core/cmp";
@@ -36,7 +35,7 @@ pub function (e: ZstdError) message(): string {
   return "zstd";
 }
 
-pub function decompress(input: u8[], max_out: i32): Result[u8[], ZstdError] {
+pub function decompress(input: [u8], max_out: i32): Result[u8[], ZstdError] {
   if (input.len() == 0) {
     return Err(ZstdTruncated);
   }
@@ -63,7 +62,7 @@ pub function decompress(input: u8[], max_out: i32): Result[u8[], ZstdError] {
   return Ok(out);
 }
 
-function __le(buf: u8[], at: i32, n: i32): i64 {
+function __le(buf: [u8], at: i32, n: i32): i64 {
   let v: i64 = 0;
   let i: i32 = n - 1;
   while (i >= 0) {
@@ -86,7 +85,7 @@ struct __Frame { out: u8[], end: i32 }
 
 struct __Header { size: i64, checksum: boolean, at: i32 }
 
-function __frame(input: u8[], at: i32, max_out: i32): Result[__Frame, ZstdError] {
+function __frame(input: [u8], at: i32, max_out: i32): Result[__Frame, ZstdError] {
   let h: __Header = __frame_header(input, at)?;
   if (h.size > max_out as i64) {
     return Err(ZstdTooLarge);
@@ -110,7 +109,7 @@ function __frame(input: u8[], at: i32, max_out: i32): Result[__Frame, ZstdError]
   return __frame_end(input, pos, out, h);
 }
 
-function __frame_end(input: u8[], pos: i32, out: u8[], h: __Header): Result[__Frame, ZstdError] {
+function __frame_end(input: [u8], pos: i32, out: u8[], h: __Header): Result[__Frame, ZstdError] {
   if (h.size >= 0 && h.size != out.len() as i64) {
     return Err(ZstdMalformed("content size"));
   }
@@ -127,7 +126,7 @@ function __frame_end(input: u8[], pos: i32, out: u8[], h: __Header): Result[__Fr
   return Ok(__Frame { out: out, end: pos + 4 });
 }
 
-function __frame_header(input: u8[], at: i32): Result[__Header, ZstdError] {
+function __frame_header(input: [u8], at: i32): Result[__Header, ZstdError] {
   if (at >= input.len()) {
     return Err(ZstdTruncated);
   }
@@ -176,7 +175,7 @@ function __tables_none(): __Tables {
 
 struct __Block { out: u8[], z: __Tables, end: i32 }
 
-function __block(input: u8[], at: i32, kind: i32, size: i32, out: u8[], z: __Tables, max_out: i32): Result[__Block, ZstdError] {
+function __block(input: [u8], at: i32, kind: i32, size: i32, out: u8[], z: __Tables, max_out: i32): Result[__Block, ZstdError] {
   if (kind == 3) {
     return Err(ZstdMalformed("reserved block type"));
   }
@@ -211,7 +210,7 @@ function __repeated(out: u8[], b: u8, n: i32): u8[] {
   return out;
 }
 
-function __copied(out: u8[], src: u8[], from: i32, to: i32): u8[] {
+function __copied(out: u8[], src: [u8], from: i32, to: i32): u8[] {
   let i: i32 = from;
   while (i < to) {
     out = out.append(src[i]);
@@ -220,7 +219,7 @@ function __copied(out: u8[], src: u8[], from: i32, to: i32): u8[] {
   return out;
 }
 
-function __compressed(input: u8[], at: i32, end: i32, out: u8[], z: __Tables, max_out: i32): Result[__Block, ZstdError] {
+function __compressed(input: [u8], at: i32, end: i32, out: u8[], z: __Tables, max_out: i32): Result[__Block, ZstdError] {
   let lit: __Literals = __literals(input, at, end, z.huf)?;
   let seq: __Seqs = __sequences(input, lit.end, end, __Tables { ...z, huf: lit.huf })?;
   if (out.len() + lit.bytes.len() + seq.matched > max_out) {
@@ -230,7 +229,7 @@ function __compressed(input: u8[], at: i32, end: i32, out: u8[], z: __Tables, ma
   return Ok(__Block { out: done, z: seq.z, end: end });
 }
 
-function __fwd(buf: u8[], bit: i32, n: i32): i32 {
+function __fwd(buf: [u8], bit: i32, n: i32): i32 {
   let v: i64 = 0;
   let first: i32 = bit >> 3;
   let i: i32 = (bit + n + 7 >> 3) - 1;
@@ -245,7 +244,7 @@ function __fwd(buf: u8[], bit: i32, n: i32): i32 {
   return (v >> (bit & 7) & (1 as i64 << n) - 1) as i32;
 }
 
-function __back(buf: u8[], start: i32, pos: i32, n: i32): i32 {
+function __back(buf: [u8], start: i32, pos: i32, n: i32): i32 {
   if (n == 0) {
     return 0;
   }
@@ -259,7 +258,7 @@ function __back(buf: u8[], start: i32, pos: i32, n: i32): i32 {
   return __fwd(buf, start * 8, pos) << 0 - lo;
 }
 
-function __back_start(buf: u8[], start: i32, end: i32): Result[i32, ZstdError] {
+function __back_start(buf: [u8], start: i32, end: i32): Result[i32, ZstdError] {
   if (end <= start || buf[end - 1] == 0) {
     return Err(ZstdMalformed("bitstream end"));
   }
@@ -342,7 +341,7 @@ function __zeros(n: i32): i32[] {
 
 struct __Nc { probs: i32[], bit: i32, remaining: i32, threshold: i32, nbits: i32, zero: boolean }
 
-function __read_fse(buf: u8[], at: i32, end: i32, max_sym: i32, max_log: i32): Result[(__Fse, i32), ZstdError] {
+function __read_fse(buf: [u8], at: i32, end: i32, max_sym: i32, max_log: i32): Result[(__Fse, i32), ZstdError] {
   if (at >= end) {
     return Err(ZstdTruncated);
   }
@@ -365,7 +364,7 @@ function __read_fse(buf: u8[], at: i32, end: i32, max_sym: i32, max_log: i32): R
   return Ok((__fse_table(c.probs, log), (c.bit + 7 >> 3) - at));
 }
 
-function __nc_zeros(buf: u8[], c: __Nc): __Nc {
+function __nc_zeros(buf: [u8], c: __Nc): __Nc {
   let probs: i32[] = c.probs;
   let bit: i32 = c.bit;
   let r: i32 = 3;
@@ -381,7 +380,7 @@ function __nc_zeros(buf: u8[], c: __Nc): __Nc {
   return __Nc { ...c, probs: probs, bit: bit, zero: false };
 }
 
-function __nc_count(buf: u8[], c: __Nc): __Nc {
+function __nc_count(buf: [u8], c: __Nc): __Nc {
   let max: i32 = 2 * c.threshold - 1 - c.remaining;
   let count: i32 = __fwd(buf, c.bit, c.nbits - 1);
   let bit: i32 = c.bit + c.nbits - 1;
@@ -414,7 +413,7 @@ struct __Huf { max: i32, sym: i32[], nb: i32[] }
 
 struct __Literals { bytes: u8[], huf: __Huf, end: i32 }
 
-function __literals(input: u8[], at: i32, end: i32, prev: __Huf): Result[__Literals, ZstdError] {
+function __literals(input: [u8], at: i32, end: i32, prev: __Huf): Result[__Literals, ZstdError] {
   if (at >= end) {
     return Err(ZstdTruncated);
   }
@@ -442,7 +441,7 @@ function __literals(input: u8[], at: i32, end: i32, prev: __Huf): Result[__Liter
   return Ok(__Literals { bytes: bytes, huf: huf, end: start + sizes.1 });
 }
 
-function __plain_literals(input: u8[], at: i32, end: i32, prev: __Huf, kind: i32): Result[__Literals, ZstdError] {
+function __plain_literals(input: [u8], at: i32, end: i32, prev: __Huf, kind: i32): Result[__Literals, ZstdError] {
   let b0: i32 = input[at] as i32;
   let format: i32 = b0 >> 2 & 3;
   let size: i32 = b0 >> 3;
@@ -471,7 +470,7 @@ function __plain_literals(input: u8[], at: i32, end: i32, prev: __Huf, kind: i32
   return Ok(__Literals { bytes: __copied(empty, input, at + head, at + head + size), huf: prev, end: at + head + size });
 }
 
-function __coded_sizes(input: u8[], at: i32, end: i32): Result[(i32, i32, i32, i32), ZstdError] {
+function __coded_sizes(input: [u8], at: i32, end: i32): Result[(i32, i32, i32, i32), ZstdError] {
   let format: i32 = input[at] as i32 >> 2 & 3;
   let head: i32 = [3, 3, 4, 5][format];
   let bits: i32 = [10, 10, 14, 18][format];
@@ -487,7 +486,7 @@ function __coded_sizes(input: u8[], at: i32, end: i32): Result[(i32, i32, i32, i
   return Ok(((v & mask) as i32, (v >> bits & mask) as i32, head, streams));
 }
 
-function __read_huf(input: u8[], at: i32, end: i32): Result[(__Huf, i32), ZstdError] {
+function __read_huf(input: [u8], at: i32, end: i32): Result[(__Huf, i32), ZstdError] {
   if (at >= end) {
     return Err(ZstdTruncated);
   }
@@ -513,7 +512,7 @@ function __read_huf(input: u8[], at: i32, end: i32): Result[(__Huf, i32), ZstdEr
   return Ok((__huf_table(weights)?, 1 + head));
 }
 
-function __fse_weights(input: u8[], at: i32, end: i32): Result[i32[], ZstdError] {
+function __fse_weights(input: [u8], at: i32, end: i32): Result[i32[], ZstdError] {
   let read: (__Fse, i32) = __read_fse(input, at, end, 255, 6)?;
   let t: __Fse = read.0;
   let start: i32 = at + read.1;
@@ -589,7 +588,7 @@ function __huf_fill(weights: i32[], max: i32): __Huf {
   return __Huf { max: max, sym: sym, nb: nb };
 }
 
-function __huf_streams(input: u8[], at: i32, end: i32, huf: __Huf, size: i32, streams: i32): Result[u8[], ZstdError] {
+function __huf_streams(input: [u8], at: i32, end: i32, huf: __Huf, size: i32, streams: i32): Result[u8[], ZstdError] {
   let out: u8[] = [];
   if (streams == 1) {
     return __huf_stream(out, input, at, end, huf, size);
@@ -624,7 +623,7 @@ function __huf_streams(input: u8[], at: i32, end: i32, huf: __Huf, size: i32, st
   return Ok(out);
 }
 
-function __huf_stream(out: u8[], input: u8[], at: i32, end: i32, huf: __Huf, n: i32): Result[u8[], ZstdError] {
+function __huf_stream(out: u8[], input: [u8], at: i32, end: i32, huf: __Huf, n: i32): Result[u8[], ZstdError] {
   let pos: i32 = __back_start(input, at, end)?;
   let i: i32 = 0;
   while (i < n) {
@@ -669,7 +668,7 @@ function __ml_bits(): i32[] {
   return [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 3, 3, 4, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 }
 
-function __sequences(input: u8[], at: i32, end: i32, z: __Tables): Result[__Seqs, ZstdError] {
+function __sequences(input: [u8], at: i32, end: i32, z: __Tables): Result[__Seqs, ZstdError] {
   let none: i32[] = [];
   let count: (i32, i32) = __seq_count(input, at, end)?;
   if (count.0 == 0) {
@@ -690,7 +689,7 @@ function __sequences(input: u8[], at: i32, end: i32, z: __Tables): Result[__Seqs
   return __decode_seqs(input, pos + ll.1 + of.1 + ml.1, end, count.0, t);
 }
 
-function __seq_count(input: u8[], at: i32, end: i32): Result[(i32, i32), ZstdError] {
+function __seq_count(input: [u8], at: i32, end: i32): Result[(i32, i32), ZstdError] {
   if (at >= end) {
     return Err(ZstdTruncated);
   }
@@ -712,7 +711,7 @@ function __seq_count(input: u8[], at: i32, end: i32): Result[(i32, i32), ZstdErr
 
 struct __Field { probs: i32[], log: i32, max_sym: i32, max_log: i32 }
 
-function __seq_table(input: u8[], at: i32, end: i32, mode: i32, prev: __Fse, f: __Field): Result[(__Fse, i32), ZstdError] {
+function __seq_table(input: [u8], at: i32, end: i32, mode: i32, prev: __Fse, f: __Field): Result[(__Fse, i32), ZstdError] {
   if (mode == 0) {
     return Ok((__fse_table(f.probs, f.log), 0));
   }
@@ -735,7 +734,7 @@ struct __Codes { llb: i32[], llx: i32[], mlb: i32[], mlx: i32[] }
 
 struct __Sd { pos: i32, ll: i32, of: i32, ml: i32 }
 
-function __decode_seqs(input: u8[], start: i32, end: i32, n: i32, t: __Tables): Result[__Seqs, ZstdError] {
+function __decode_seqs(input: [u8], start: i32, end: i32, n: i32, t: __Tables): Result[__Seqs, ZstdError] {
   let codes: __Codes = __Codes { llb: __ll_base(), llx: __ll_bits(), mlb: __ml_base(), mlx: __ml_bits() };
   let pos: i32 = __back_start(input, start, end)?;
   let d: __Sd = __Sd { pos: pos - t.ll.log - t.of.log - t.ml.log, ll: __back(input, start, pos, t.ll.log), of: __back(input, start, pos - t.ll.log, t.of.log), ml: __back(input, start, pos - t.ll.log - t.of.log, t.ml.log) };
@@ -763,7 +762,7 @@ function __decode_seqs(input: u8[], start: i32, end: i32, n: i32, t: __Tables): 
   return Ok(__Seqs { ll: lls, ml: mls, of: ofs, matched: matched, z: __Tables { ...t, reps: reps } });
 }
 
-function __seq_values(input: u8[], start: i32, d: __Sd, t: __Tables, codes: __Codes): Result[(i32, i32, i32, i32), ZstdError] {
+function __seq_values(input: [u8], start: i32, d: __Sd, t: __Tables, codes: __Codes): Result[(i32, i32, i32, i32), ZstdError] {
   let oc: i32 = t.of.sym[d.of];
   let mc: i32 = t.ml.sym[d.ml];
   let lc: i32 = t.ll.sym[d.ll];
@@ -779,7 +778,7 @@ function __seq_values(input: u8[], start: i32, d: __Sd, t: __Tables, codes: __Co
   return Ok((ofv, ml, ll, pos - codes.llx[lc]));
 }
 
-function __seq_update(input: u8[], start: i32, d: __Sd, t: __Tables): __Sd {
+function __seq_update(input: [u8], start: i32, d: __Sd, t: __Tables): __Sd {
   let pos: i32 = d.pos;
   let ll: i32 = t.ll.base[d.ll] + __back(input, start, pos, t.ll.nb[d.ll]);
   pos = pos - t.ll.nb[d.ll];
@@ -840,7 +839,7 @@ function __execute(out: u8[], lits: u8[], seq: __Seqs): Result[u8[], ZstdError] 
   return Ok(out);
 }
 
-pub function compress(input: u8[]): u8[] {
+pub function compress(input: [u8]): u8[] {
   let window: i32 = __window_for(input.len());
   let toks: i64[] = __ztokens(input, window);
   let out: u8[] = __frame_head(input.len(), window);
@@ -904,7 +903,7 @@ function __frame_head(n: i32, window: i32): u8[] {
   return __put_le(out, size, [1, 2, 4][flag]);
 }
 
-function __ztokens(input: u8[], window: i32): i64[] {
+function __ztokens(input: [u8], window: i32): i64[] {
   let n: i32 = input.len();
   let head: i32[] = __filled_neg(65536);
   let prev: i32[] = __filled_neg(window);
@@ -952,12 +951,12 @@ function __filled_neg(n: i32): i32[] {
   return out;
 }
 
-function __hash4(input: u8[], pos: i32): i32 {
+function __hash4(input: [u8], pos: i32): i32 {
   let v: i64 = __le(input, pos, 4);
   return (v * 2654435761 >> 16 & 65535) as i32;
 }
 
-function __zmatch_at(input: u8[], pos: i32, skip: i32, head: i32[], prev: i32[], window: i32, rep: i32): (i32, i32) {
+function __zmatch_at(input: [u8], pos: i32, skip: i32, head: i32[], prev: i32[], window: i32, rep: i32): (i32, i32) {
   if (pos < skip || pos + 3 >= input.len()) {
     return (0, 0);
   }
@@ -982,7 +981,7 @@ function __zmatch_at(input: u8[], pos: i32, skip: i32, head: i32[], prev: i32[],
   return best;
 }
 
-function __match_len(input: u8[], from: i32, pos: i32, limit: i32): i32 {
+function __match_len(input: [u8], from: i32, pos: i32, limit: i32): i32 {
   let len: i32 = 0;
   while (pos + len < limit && input[from + len] == input[pos + len]) {
     len = len + 1;
@@ -1002,7 +1001,7 @@ function __gain(m: (i32, i32), rep: i32): i32 {
 
 struct __Seqb { lits: u8[], ll: i32[], ml: i32[], of: i32[], next: i32 }
 
-function __block_seqs(input: u8[], toks: i64[], t: i32, at: i32, end: i32): __Seqb {
+function __block_seqs(input: [u8], toks: i64[], t: i32, at: i32, end: i32): __Seqb {
   let lits: u8[] = [];
   let ll: i32[] = [];
   let ml: i32[] = [];
@@ -1027,7 +1026,7 @@ function __block_seqs(input: u8[], toks: i64[], t: i32, at: i32, end: i32): __Se
   return __Seqb { lits: lits, ll: ll, ml: ml, of: of, next: t };
 }
 
-function __kind(input: u8[], at: i32, end: i32, body: u8[]): i32 {
+function __kind(input: [u8], at: i32, end: i32, body: u8[]): i32 {
   if (end - at > 1 && __one_byte(input, at, end)) {
     return 1;
   }
@@ -1037,7 +1036,7 @@ function __kind(input: u8[], at: i32, end: i32, body: u8[]): i32 {
   return 0;
 }
 
-function __put_block(own out: u8[], input: u8[], at: i32, end: i32, body: u8[], kind: i32): u8[] {
+function __put_block(own out: u8[], input: [u8], at: i32, end: i32, body: u8[], kind: i32): u8[] {
   let last: i32 = 0;
   if (end == input.len()) {
     last = 1;
@@ -1051,7 +1050,7 @@ function __put_block(own out: u8[], input: u8[], at: i32, end: i32, body: u8[], 
   return __copied(__put_le(out, (last | end - at << 3) as i64, 3), input, at, end);
 }
 
-function __one_byte(input: u8[], at: i32, end: i32): boolean {
+function __one_byte(input: [u8], at: i32, end: i32): boolean {
   let i: i32 = at + 1;
   while (i < end) {
     if (input[i] != input[at]) {

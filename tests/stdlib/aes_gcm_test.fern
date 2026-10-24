@@ -1,12 +1,13 @@
 import "std/test";
 import "std/hex";
+import "std/codec";
 import "std/crypto/aead";
 import "std/crypto/aes_gcm";
 
 function shown(r: Result[u8[], aead.AeadError]): string {
   match (r) {
     Ok(b) => {
-      return hex.hex_encode(b);
+      return hex.encode(b);
     },
     Err(e) => {
       return e.message();
@@ -20,13 +21,13 @@ function zeros(n: i32): u8[] {
 }
 
 function test_block128(): test.TestOutcome {
-  let rk: u8[] = __aes_expand_key(hex.hex_decode("000102030405060708090a0b0c0d0e0f"));
-  return test.assert_eq(hex.hex_encode(__aes_ctr32(rk, hex.hex_decode("00112233445566778899aabbccddeeff"), zeros(16))), "69c4e0d86a7b0430d8cdb78070b4c55a");
+  let rk: u8[] = __aes_expand_key(__codec_bytes(hex.decode("000102030405060708090a0b0c0d0e0f")));
+  return test.assert_eq(hex.encode(__aes_ctr32(rk, __codec_bytes(hex.decode("00112233445566778899aabbccddeeff")), zeros(16))), "69c4e0d86a7b0430d8cdb78070b4c55a");
 }
 
 function test_block256(): test.TestOutcome {
-  let rk: u8[] = __aes_expand_key(hex.hex_decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"));
-  return test.assert_eq(hex.hex_encode(__aes_ctr32(rk, hex.hex_decode("00112233445566778899aabbccddeeff"), zeros(16))), "8ea2b7ca516745bfeafc49904b496089");
+  let rk: u8[] = __aes_expand_key(__codec_bytes(hex.decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")));
+  return test.assert_eq(hex.encode(__aes_ctr32(rk, __codec_bytes(hex.decode("00112233445566778899aabbccddeeff")), zeros(16))), "8ea2b7ca516745bfeafc49904b496089");
 }
 
 function k3(): string {
@@ -34,19 +35,19 @@ function k3(): string {
 }
 
 function iv3(): u8[] {
-  return hex.hex_decode("cafebabefacedbaddecaf888");
+  return __codec_bytes(hex.decode("cafebabefacedbaddecaf888"));
 }
 
 function aad3(): u8[] {
-  return hex.hex_decode("feedfacedeadbeeffeedfacedeadbeefabaddad2");
+  return __codec_bytes(hex.decode("feedfacedeadbeeffeedfacedeadbeefabaddad2"));
 }
 
 function p64(): u8[] {
-  return hex.hex_decode("d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b391aafd255");
+  return __codec_bytes(hex.decode("d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b391aafd255"));
 }
 
 function p60(): u8[] {
-  return hex.hex_decode("d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39");
+  return __codec_bytes(hex.decode("d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39"));
 }
 
 function sealed4(): string {
@@ -67,21 +68,21 @@ function test_case2(): test.TestOutcome {
 
 function test_case3(): test.TestOutcome {
   return test.assert_eq(
-    shown(aes_gcm.seal(hex.hex_decode(k3()), iv3(), p64(), zeros(0))),
+    shown(aes_gcm.seal(__codec_bytes(hex.decode(k3())), iv3(), p64(), zeros(0))),
     "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091473f5985" + "4d5c2af327cd64a62cf35abd2ba6fab4",
   );
 }
 
 function test_case4(): test.TestOutcome {
-  return test.assert_eq(shown(aes_gcm.seal(hex.hex_decode(k3()), iv3(), p60(), aad3())), sealed4());
+  return test.assert_eq(shown(aes_gcm.seal(__codec_bytes(hex.decode(k3())), iv3(), p60(), aad3())), sealed4());
 }
 
 function test_open4(): test.TestOutcome {
-  return test.assert_eq(shown(aes_gcm.open(hex.hex_decode(k3()), iv3(), hex.hex_decode(sealed4()), aad3())), hex.hex_encode(p60()));
+  return test.assert_eq(shown(aes_gcm.open(__codec_bytes(hex.decode(k3())), iv3(), __codec_bytes(hex.decode(sealed4())), aad3())), hex.encode(p60()));
 }
 
 function test_aad_only(): test.TestOutcome {
-  return test.assert_eq(shown(aes_gcm.seal(hex.hex_decode(k3()), iv3(), zeros(0), aad3())), "346434fd51d5cd0c5887ec63e39b907a");
+  return test.assert_eq(shown(aes_gcm.seal(__codec_bytes(hex.decode(k3())), iv3(), zeros(0), aad3())), "346434fd51d5cd0c5887ec63e39b907a");
 }
 
 function test_case13(): test.TestOutcome {
@@ -94,22 +95,22 @@ function test_case14(): test.TestOutcome {
 
 function test_case15(): test.TestOutcome {
   return test.assert_eq(
-    shown(aes_gcm.seal(hex.hex_decode(k3() + k3()), iv3(), p64(), zeros(0))),
+    shown(aes_gcm.seal(__codec_bytes(hex.decode(k3() + k3())), iv3(), p64(), zeros(0))),
     "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662898015ad" + "b094dac5d93471bdec1a502270e3cc6c",
   );
 }
 
 function test_case16(): test.TestOutcome {
-  return test.assert_eq(shown(aes_gcm.seal(hex.hex_decode(k3() + k3()), iv3(), p60(), aad3())), sealed16());
+  return test.assert_eq(shown(aes_gcm.seal(__codec_bytes(hex.decode(k3() + k3())), iv3(), p60(), aad3())), sealed16());
 }
 
 function test_open16(): test.TestOutcome {
-  return test.assert_eq(shown(aes_gcm.open(hex.hex_decode(k3() + k3()), iv3(), hex.hex_decode(sealed16()), aad3())), hex.hex_encode(p60()));
+  return test.assert_eq(shown(aes_gcm.open(__codec_bytes(hex.decode(k3() + k3())), iv3(), __codec_bytes(hex.decode(sealed16())), aad3())), hex.encode(p60()));
 }
 
 function test_one_byte(): test.TestOutcome {
   return test.assert_eq(
-    shown(aes_gcm.seal(hex.hex_decode("6bde975873204aa11ef4542e6534cdcc"), hex.hex_decode("b97eb97974f6ae3cb42c48b0"), hex.hex_decode("d1"), zeros(0))),
+    shown(aes_gcm.seal(__codec_bytes(hex.decode("6bde975873204aa11ef4542e6534cdcc")), __codec_bytes(hex.decode("b97eb97974f6ae3cb42c48b0")), __codec_bytes(hex.decode("d1")), zeros(0))),
     "5cf01f12c6abc9aab9f74f52c57def930b",
   );
 }
@@ -117,10 +118,10 @@ function test_one_byte(): test.TestOutcome {
 function test_33_bytes(): test.TestOutcome {
   return test.assert_eq(
     shown(aes_gcm.seal(
-      hex.hex_decode("8aabbb8fc6f7fb70889749a4217c6b25fef57f1026be930ca781337b0b6cc916"),
-      hex.hex_decode("b1a9caa290eea335ac6ae190"),
-      hex.hex_decode("3e07904f4e861069bdfbd2ed4f8f301ef617a6932c92ff8a7c644796f44fed8441"),
-      hex.hex_decode("1d14ae1328bc6c"),
+      __codec_bytes(hex.decode("8aabbb8fc6f7fb70889749a4217c6b25fef57f1026be930ca781337b0b6cc916")),
+      __codec_bytes(hex.decode("b1a9caa290eea335ac6ae190")),
+      __codec_bytes(hex.decode("3e07904f4e861069bdfbd2ed4f8f301ef617a6932c92ff8a7c644796f44fed8441")),
+      __codec_bytes(hex.decode("1d14ae1328bc6c")),
     )),
     "0ebf3615b57c33e791086da11e95ee8dc58a4b2743f0a6f6ace562494632e7d66ade37217bcb312d3212a74fe57dfa6a92",
   );
@@ -132,7 +133,7 @@ function plain255(): string {
 }
 
 function aad64(): u8[] {
-  return hex.hex_decode("4082c25f594139595f64d038db2f8338ec1e6697dc7fe97181a92f38391076876a8b18a260e3c6064a77383929826d911b9398d634b2c12e96def9352d89bd4c");
+  return __codec_bytes(hex.decode("4082c25f594139595f64d038db2f8338ec1e6697dc7fe97181a92f38391076876a8b18a260e3c6064a77383929826d911b9398d634b2c12e96def9352d89bd4c"));
 }
 
 function sealed255(): string {
@@ -141,12 +142,12 @@ function sealed255(): string {
 }
 
 function test_255_bytes(): test.TestOutcome {
-  let key: u8[] = hex.hex_decode("504cae995b35bdd93579f9e580109f8a");
-  let nonce: u8[] = hex.hex_decode("053f345b77676adbfa3035f1");
-  if (shown(aes_gcm.seal(key, nonce, hex.hex_decode(plain255()), aad64())) != sealed255()) {
+  let key: u8[] = __codec_bytes(hex.decode("504cae995b35bdd93579f9e580109f8a"));
+  let nonce: u8[] = __codec_bytes(hex.decode("053f345b77676adbfa3035f1"));
+  if (shown(aes_gcm.seal(key, nonce, __codec_bytes(hex.decode(plain255())), aad64())) != sealed255()) {
     return test.fail("seal disagrees with crypto/cipher");
   }
-  return test.assert_eq(shown(aes_gcm.open(key, nonce, hex.hex_decode(sealed255()), aad64())), plain255());
+  return test.assert_eq(shown(aes_gcm.open(key, nonce, __codec_bytes(hex.decode(sealed255())), aad64())), plain255());
 }
 
 function forged(r: Result[u8[], aead.AeadError]): boolean {
@@ -169,8 +170,8 @@ function forged(r: Result[u8[], aead.AeadError]): boolean {
 }
 
 function test_open_refuses(): test.TestOutcome {
-  let key: u8[] = hex.hex_decode(k3());
-  let sealed: u8[] = hex.hex_decode(sealed4());
+  let key: u8[] = __codec_bytes(hex.decode(k3()));
+  let sealed: u8[] = __codec_bytes(hex.decode(sealed4()));
   let last: i32 = sealed.len() - 1;
   if (!forged(aes_gcm.open(key, iv3(), sealed.with(last, sealed[last] ^ 1 as u8), aad3()))) {
     return test.fail("a flipped tag bit opened");
@@ -206,16 +207,16 @@ function test_lengths(): test.TestOutcome {
 }
 
 function test_prepared_key(): test.TestOutcome {
-  let Ok(k) = aes_gcm.key(hex.hex_decode(k3())) else {
+  let Ok(k) = aes_gcm.key(__codec_bytes(hex.decode(k3()))) else {
     return test.fail("a 16-byte key was refused");
   };
   if (shown(k.seal(iv3(), p60(), aad3())) != sealed4()) {
     return test.fail("the prepared key sealed differently");
   }
-  if (shown(k.open(iv3(), hex.hex_decode(sealed4()), aad3())) != hex.hex_encode(p60())) {
+  if (shown(k.open(iv3(), __codec_bytes(hex.decode(sealed4())), aad3())) != hex.encode(p60())) {
     return test.fail("the prepared key opened differently");
   }
-  let Ok(k2) = aes_gcm.key(hex.hex_decode(k3() + k3())) else {
+  let Ok(k2) = aes_gcm.key(__codec_bytes(hex.decode(k3() + k3()))) else {
     return test.fail("a 32-byte key was refused");
   };
   if (shown(k2.seal(iv3(), p60(), aad3())) != sealed16()) {
@@ -257,4 +258,17 @@ function main(): i32 {
   r = r.it("key and nonce lengths", test_lengths);
   r = r.it("a key prepared once", test_prepared_key);
   return r.finish();
+}
+
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

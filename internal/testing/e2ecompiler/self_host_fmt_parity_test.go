@@ -31,6 +31,11 @@ function main(): i32 {
   return match (shapes.make()) { shapes.Open { n: k, .. } => k };
 }
 `},
+	{"nested-whole-struct-pattern", `struct P { x: i32 }
+enum H { S(P) }
+function f(h: H): i32 { return match (h) { S(w @ P { x }) => w.x + x }; }
+function main(): i32 { return 0; }
+`},
 	{"lambda-return-as-written", fmtLambdaAsWrittenSrc},
 	{"opaque-struct-kept", "pub opaque struct A { a: i32 }\npub(package) opaque struct B { b: i32 }\n@must_consume pub opaque struct C { c: i32 }\ntrait Default { function default(): Self; }\n@derive(Default) opaque struct D { d: i32 }\nfunction main(): i32 { return 0; }\n"},
 	{"omitted-return-type-as-written", "function helper() {}\n\nfunction main(): i32 {\n  return 0;\n}\n"},

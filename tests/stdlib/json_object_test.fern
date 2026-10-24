@@ -3,6 +3,28 @@ import "std/json";
 import "std/i32";
 import "std/option";
 
+function test_from_pairs(): test.TestOutcome {
+  if (!json.from([]).is_empty()) {
+    return test.fail("empty pairs must produce an empty object");
+  }
+  let small: json.JsonObject = json.from([("a", JNumber("1")), ("b", JBool(true)), ("a", JString("last"))]);
+  if (json.json_encode(JObject(small)) != "{\"a\":\"last\",\"b\":true}") {
+    return test.fail("pairs must retain first key order and last values");
+  }
+  let pairs: (string, json.JsonValue)[] = [];
+  let i: i32 = 0;
+  while (i < 20) {
+    pairs = pairs.append(("key" + i.to_string(), JNumber(i.to_string())));
+    i = i + 1;
+  }
+  pairs = pairs.append(("key0", JString("replaced")));
+  let large: json.JsonObject = json.from(pairs);
+  if (large.len() != 20 || large.keys()[0] != "key0" || json.json_encode(large.get_or("key0", JNull)) != "\"replaced\"") {
+    return test.fail("indexed objects must retain duplicate key semantics");
+  }
+  return test.assert_eq(json.json_encode(JObject(json.from(large.entries()))), json.json_encode(JObject(large)));
+}
+
 function parsed(text: string): json.JsonObject {
   match (json.json_parse(text)) {
     Some(v) => {
@@ -138,6 +160,7 @@ function test_document_order(): test.TestOutcome {
 
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/json object");
+  r = r.it("from pairs", test_from_pairs);
   r = r.it("lookup, linear", test_lookup_linear);
   r = r.it("lookup, indexed", test_lookup_indexed);
   r = r.it("insert replaces in place", test_insert_replaces_in_place);

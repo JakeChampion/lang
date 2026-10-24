@@ -36,7 +36,7 @@ function __put_le32(own d: u8[], at: i32, v: u32): u8[] {
   return d;
 }
 
-function __get_le32(b: u8[], at: i32): u32 {
+function __get_le32(b: [u8], at: i32): u32 {
   return b[at] as u32 | b[at + 1] as u32 << 8 | b[at + 2] as u32 << 16 | b[at + 3] as u32 << 24;
 }
 
@@ -58,17 +58,6 @@ function __put_le64(own d: u8[], at: i32, v: u64): u8[] {
   return d;
 }
 
-function __str_to_bytes(s: string): u8[] {
-  let n: i32 = s.len();
-  let b: u8[] = __alloc_u8(n);
-  let i: i32 = 0;
-  while (i < n) {
-    b = b.with(i, s[i] as u8);
-    i = i + 1;
-  }
-  return b;
-}
-
 function __hex_char(d: i32): i32 {
   if (d < 10) {
     return 48 + d;
@@ -76,7 +65,7 @@ function __hex_char(d: i32): i32 {
   return 87 + d;
 }
 
-function __bytes_to_hex(b: u8[]): string {
+function __bytes_to_hex(b: [u8]): string {
   let n: i32 = b.len();
   if (n == 0) {
     return "";
@@ -264,18 +253,7 @@ function __md5_absorb(own h: Md5, bs: [u8]): Md5 {
 }
 
 // Use the returned state for the next update.
-pub function (h: Md5) update(chunk: string): Md5 {
-  h = __md5_absorb(h, chunk.as_bytes());
-  return h;
-}
-
-pub function (h: Md5) update_bytes(chunk: [u8]): Md5 {
-  h = __md5_absorb(h, chunk);
-  return h;
-}
-
-// This method reads an owned byte buffer without transfer of ownership.
-pub function (h: Md5) update_array(chunk: u8[]): Md5 {
+pub function (h: Md5) update(chunk: [u8]): Md5 {
   h = __md5_absorb(h, chunk);
   return h;
 }
@@ -304,11 +282,11 @@ pub function (h: Md5) final_hex(): string {
 }
 
 // md5_bytes and md5_hex calculate the digest of `s`.
-pub function md5_bytes(s: string): u8[] {
+pub function md5_bytes(s: [u8]): u8[] {
   return md5_new().update(s).final_bytes();
 }
 
-pub function md5_hex(s: string): string {
+pub function md5_hex(s: [u8]): string {
   return __bytes_to_hex(md5_new().update(s).final_bytes());
 }
 
@@ -661,18 +639,7 @@ function __sha1_absorb(own h: Sha1, bs: [u8]): Sha1 {
 }
 
 // Use the returned state for the next update.
-pub function (h: Sha1) update(chunk: string): Sha1 {
-  h = __sha1_absorb(h, chunk.as_bytes());
-  return h;
-}
-
-pub function (h: Sha1) update_bytes(chunk: [u8]): Sha1 {
-  h = __sha1_absorb(h, chunk);
-  return h;
-}
-
-// This method reads an owned byte buffer without transfer of ownership.
-pub function (h: Sha1) update_array(chunk: u8[]): Sha1 {
+pub function (h: Sha1) update(chunk: [u8]): Sha1 {
   h = __sha1_absorb(h, chunk);
   return h;
 }
@@ -702,11 +669,11 @@ pub function (h: Sha1) final_hex(): string {
 }
 
 // sha1_bytes and sha1_hex calculate the digest of `s`.
-pub function sha1_bytes(s: string): u8[] {
+pub function sha1_bytes(s: [u8]): u8[] {
   return sha1_new().update(s).final_bytes();
 }
 
-pub function sha1_hex(s: string): string {
+pub function sha1_hex(s: [u8]): string {
   return __bytes_to_hex(sha1_new().update(s).final_bytes());
 }
 
@@ -1097,18 +1064,7 @@ function __sha256_absorb(own h: Sha256, bs: [u8]): Sha256 {
 }
 
 // Use the returned state for the next update.
-pub function (h: Sha256) update(chunk: string): Sha256 {
-  h = __sha256_absorb(h, chunk.as_bytes());
-  return h;
-}
-
-pub function (h: Sha256) update_bytes(chunk: [u8]): Sha256 {
-  h = __sha256_absorb(h, chunk);
-  return h;
-}
-
-// This method reads an owned byte buffer without transfer of ownership.
-pub function (h: Sha256) update_array(chunk: u8[]): Sha256 {
+pub function (h: Sha256) update(chunk: [u8]): Sha256 {
   h = __sha256_absorb(h, chunk);
   return h;
 }
@@ -1143,20 +1099,20 @@ pub function (h: Sha256) final_hex(): string {
 }
 
 // sha256_bytes and sha256_hex calculate the digest of `s`.
-pub function sha256_bytes(s: string): u8[] {
+pub function sha256_bytes(s: [u8]): u8[] {
   return sha256_new().update(s).final_bytes();
 }
 
-pub function sha256_hex(s: string): string {
+pub function sha256_hex(s: [u8]): string {
   return __bytes_to_hex(sha256_new().update(s).final_bytes());
 }
 
 // sha224_bytes and sha224_hex calculate the digest of `s`.
-pub function sha224_bytes(s: string): u8[] {
+pub function sha224_bytes(s: [u8]): u8[] {
   return sha224_new().update(s).final_bytes();
 }
 
-pub function sha224_hex(s: string): string {
+pub function sha224_hex(s: [u8]): string {
   return __bytes_to_hex(sha224_new().update(s).final_bytes());
 }
 
@@ -1593,18 +1549,7 @@ function __sha512_absorb(own h: Sha512, bs: [u8]): Sha512 {
 }
 
 // Use the returned state for the next update.
-pub function (h: Sha512) update(chunk: string): Sha512 {
-  h = __sha512_absorb(h, chunk.as_bytes());
-  return h;
-}
-
-pub function (h: Sha512) update_bytes(chunk: [u8]): Sha512 {
-  h = __sha512_absorb(h, chunk);
-  return h;
-}
-
-// This method reads an owned byte buffer without transfer of ownership.
-pub function (h: Sha512) update_array(chunk: u8[]): Sha512 {
+pub function (h: Sha512) update(chunk: [u8]): Sha512 {
   h = __sha512_absorb(h, chunk);
   return h;
 }
@@ -1641,20 +1586,20 @@ pub function (h: Sha512) final_hex(): string {
 }
 
 // sha512_bytes and sha512_hex calculate the digest of `s`.
-pub function sha512_bytes(s: string): u8[] {
+pub function sha512_bytes(s: [u8]): u8[] {
   return sha512_new().update(s).final_bytes();
 }
 
-pub function sha512_hex(s: string): string {
+pub function sha512_hex(s: [u8]): string {
   return __bytes_to_hex(sha512_new().update(s).final_bytes());
 }
 
 // sha384_bytes and sha384_hex calculate the digest of `s`.
-pub function sha384_bytes(s: string): u8[] {
+pub function sha384_bytes(s: [u8]): u8[] {
   return sha384_new().update(s).final_bytes();
 }
 
-pub function sha384_hex(s: string): string {
+pub function sha384_hex(s: [u8]): string {
   return __bytes_to_hex(sha384_new().update(s).final_bytes());
 }
 
@@ -2340,18 +2285,7 @@ function __sm3_absorb(own h: Sm3, bs: [u8]): Sm3 {
 }
 
 // Use the returned state for the next update.
-pub function (h: Sm3) update(chunk: string): Sm3 {
-  h = __sm3_absorb(h, chunk.as_bytes());
-  return h;
-}
-
-pub function (h: Sm3) update_bytes(chunk: [u8]): Sm3 {
-  h = __sm3_absorb(h, chunk);
-  return h;
-}
-
-// This method reads an owned byte buffer without transfer of ownership.
-pub function (h: Sm3) update_array(chunk: u8[]): Sm3 {
+pub function (h: Sm3) update(chunk: [u8]): Sm3 {
   h = __sm3_absorb(h, chunk);
   return h;
 }
@@ -2384,11 +2318,11 @@ pub function (h: Sm3) final_hex(): string {
 }
 
 // sm3_bytes and sm3_hex calculate the digest of `s`.
-pub function sm3_bytes(s: string): u8[] {
+pub function sm3_bytes(s: [u8]): u8[] {
   return sm3_new().update(s).final_bytes();
 }
 
-pub function sm3_hex(s: string): string {
+pub function sm3_hex(s: [u8]): string {
   return __bytes_to_hex(sm3_new().update(s).final_bytes());
 }
 
@@ -3270,8 +3204,8 @@ function __blake2b_absorb(own h: Blake2b, bs: [u8]): Blake2b {
   let pos: i32 = 0;
   let bl: i32 = h.buf_len;
   let total: u64 = h.total;
-  // Only compress once the input runs past a full block: the block that
-  // ends the message must be the one compressed with `last` set.
+  // Compress a full block only when more input follows. The final block
+  // must have `last` set.
   if (bl + n > 128) {
     let take: i32 = 128 - bl;
     if (take > 0) {
@@ -3293,18 +3227,7 @@ function __blake2b_absorb(own h: Blake2b, bs: [u8]): Blake2b {
 }
 
 // Use the returned state for the next update.
-pub function (h: Blake2b) update(chunk: string): Blake2b {
-  h = __blake2b_absorb(h, chunk.as_bytes());
-  return h;
-}
-
-pub function (h: Blake2b) update_bytes(chunk: [u8]): Blake2b {
-  h = __blake2b_absorb(h, chunk);
-  return h;
-}
-
-// This method reads an owned byte buffer without transfer of ownership.
-pub function (h: Blake2b) update_array(chunk: u8[]): Blake2b {
+pub function (h: Blake2b) update(chunk: [u8]): Blake2b {
   h = __blake2b_absorb(h, chunk);
   return h;
 }
@@ -3333,11 +3256,11 @@ pub function (h: Blake2b) final_hex(): string {
 }
 
 // blake2b_bytes and blake2b_hex calculate an `out_len`-byte digest of `s`.
-pub function blake2b_bytes(s: string, out_len: i32): u8[] {
+pub function blake2b_bytes(s: [u8], out_len: i32): u8[] {
   return blake2b_new(out_len).update(s).final_bytes();
 }
 
-pub function blake2b_hex(s: string, out_len: i32): string {
+pub function blake2b_hex(s: [u8], out_len: i32): string {
   return __bytes_to_hex(blake2b_new(out_len).update(s).final_bytes());
 }
 
@@ -3345,9 +3268,9 @@ pub function blake2b_hex(s: string, out_len: i32): string {
 
 function __mac_digest(hlen: i32, msg: [u8]): u8[] {
   if (hlen == 48) {
-    return sha384_new().update_bytes(msg).final_bytes();
+    return sha384_new().update(msg).final_bytes();
   }
-  return sha256_new().update_bytes(msg).final_bytes();
+  return sha256_new().update(msg).final_bytes();
 }
 
 function __mac_block(hlen: i32): i32 {
@@ -3373,9 +3296,9 @@ function __pad_block(bs: i32, key: [u8], pad: i32): u8[] {
 
 function __mac_digest2(hlen: i32, a: [u8], b: [u8]): u8[] {
   if (hlen == 48) {
-    return sha384_new().update_bytes(a).update_bytes(b).final_bytes();
+    return sha384_new().update(a).update(b).final_bytes();
   }
-  return sha256_new().update_bytes(a).update_bytes(b).final_bytes();
+  return sha256_new().update(a).update(b).final_bytes();
 }
 
 function __hmac(hlen: i32, key: [u8], msg: [u8]): u8[] {
@@ -3395,15 +3318,11 @@ pub function hmac_sha384(key: [u8], msg: [u8]): u8[] {
   return __hmac(48, key, msg);
 }
 
-pub function hmac_sha256_bytes(key: u8[], msg: string): u8[] {
-  return __hmac(32, key, __str_to_bytes(msg));
+pub function hmac_sha256_hex(key: [u8], msg: [u8]): string {
+  return __bytes_to_hex(__hmac(32, key, msg));
 }
 
-pub function hmac_sha256_hex(key: u8[], msg: string): string {
-  return __bytes_to_hex(__hmac(32, key, __str_to_bytes(msg)));
-}
-
-pub function consteq(a: u8[], b: u8[]): boolean {
+pub function consteq(a: [u8], b: [u8]): boolean {
   let la: i32 = a.len();
   let lb: i32 = b.len();
   let diff: i32 = la ^ lb;
@@ -3419,15 +3338,15 @@ pub function consteq(a: u8[], b: u8[]): boolean {
   return diff == 0;
 }
 
-pub function hmac_verify(key: u8[], msg: string, mac: u8[]): boolean {
-  return consteq(hmac_sha256_bytes(key, msg), mac);
+pub function hmac_verify(key: [u8], msg: [u8], mac: [u8]): boolean {
+  return consteq(hmac_sha256(key, msg), mac);
 }
 
-pub function hmac_verify_hex(key: u8[], msg: string, mac_hex: string): boolean {
-  return consteq(__str_to_bytes(hmac_sha256_hex(key, msg)), __str_to_bytes(mac_hex));
+pub function hmac_verify_hex(key: [u8], msg: [u8], mac_hex: string): boolean {
+  return consteq(hmac_sha256_hex(key, msg).as_bytes(), mac_hex.as_bytes());
 }
 
-function __pbkdf2_core(pw: u8[], salt: u8[], iterations: i32, dk_len: i32): u8[] {
+function __pbkdf2_core(pw: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[] {
   let hLen: i32 = 32;
   let dk: u8[] = __alloc_u8(dk_len);
   let offset: i32 = 0;
@@ -3468,20 +3387,20 @@ function __pbkdf2_core(pw: u8[], salt: u8[], iterations: i32, dk_len: i32): u8[]
   return dk;
 }
 
-pub function pbkdf2_sha256(password: string, salt: u8[], iterations: i32, dk_len: i32): u8[] {
-  return __pbkdf2_core(__str_to_bytes(password), salt, iterations, dk_len);
+pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[] {
+  return __pbkdf2_core(password, salt, iterations, dk_len);
 }
 
-pub function pbkdf2_sha256_hex(password: string, salt: u8[], iterations: i32, dk_len: i32): string {
-  return __bytes_to_hex(__pbkdf2_core(__str_to_bytes(password), salt, iterations, dk_len));
+pub function pbkdf2_sha256_hex(password: [u8], salt: [u8], iterations: i32, dk_len: i32): string {
+  return __bytes_to_hex(__pbkdf2_core(password, salt, iterations, dk_len));
 }
 
-pub function pbkdf2_verify(password: string, salt: u8[], iterations: i32, expected: u8[]): boolean {
+pub function pbkdf2_verify(password: [u8], salt: [u8], iterations: i32, expected: [u8]): boolean {
   return consteq(pbkdf2_sha256(password, salt, iterations, expected.len()), expected);
 }
 
-pub function pbkdf2_verify_hex(password: string, salt: u8[], iterations: i32, expected_hex: string): boolean {
-  return consteq(__str_to_bytes(pbkdf2_sha256_hex(password, salt, iterations, expected_hex.len() / 2)), __str_to_bytes(expected_hex));
+pub function pbkdf2_verify_hex(password: [u8], salt: [u8], iterations: i32, expected_hex: string): boolean {
+  return consteq(pbkdf2_sha256_hex(password, salt, iterations, expected_hex.len() / 2).as_bytes(), expected_hex.as_bytes());
 }
 
 function __hkdf_extract(hlen: i32, salt: [u8], ikm: [u8]): u8[] {
@@ -3541,7 +3460,7 @@ pub function hkdf_sha384(salt: [u8], ikm: [u8], info: [u8], length: i32): u8[] {
   return __hkdf_expand(48, __hkdf_extract(48, salt, ikm), info, length);
 }
 
-pub function hotp_sha256(key: u8[], counter: i64, digits: i32): i32 {
+pub function hotp_sha256(key: [u8], counter: i64, digits: i32): i32 {
   let msg: u8[] = __alloc_u8(8);
   let i: i32 = 0;
   while (i < 8) {
@@ -3564,7 +3483,7 @@ pub function hotp_sha256(key: u8[], counter: i64, digits: i32): i32 {
   return bin % m;
 }
 
-pub function totp_sha256(key: u8[], unix_time: i64, period: i32, digits: i32): i32 {
+pub function totp_sha256(key: [u8], unix_time: i64, period: i32, digits: i32): i32 {
   let counter: i64 = unix_time / (period as i64);
   return hotp_sha256(key, counter, digits);
 }
@@ -3846,17 +3765,7 @@ function __sha3_absorb(own h: Sha3, bs: [u8]): Sha3 {
   return Sha3 { ...h, buf_len: bl };
 }
 
-pub function (h: Sha3) update(chunk: string): Sha3 {
-  h = __sha3_absorb(h, chunk.as_bytes());
-  return h;
-}
-
-pub function (h: Sha3) update_bytes(chunk: [u8]): Sha3 {
-  h = __sha3_absorb(h, chunk);
-  return h;
-}
-
-pub function (h: Sha3) update_array(chunk: u8[]): Sha3 {
+pub function (h: Sha3) update(chunk: [u8]): Sha3 {
   h = __sha3_absorb(h, chunk);
   return h;
 }
@@ -3909,7 +3818,7 @@ pub function (h: Sha3) final_hex(): string {
   return __bytes_to_hex(h.final_bytes());
 }
 
-pub function sha3_256_hex(s: string): string {
+pub function sha3_256_hex(s: [u8]): string {
   return sha3_256_new().update(s).final_hex();
 }
 
@@ -3929,7 +3838,7 @@ pub function shake256_new(): Shake {
   return Shake { sponge: __sponge(136, 0) };
 }
 
-pub function (own x: Shake) update_bytes(chunk: [u8]): Shake {
+pub function (own x: Shake) update(chunk: [u8]): Shake {
   return Shake { ...x, sponge: __sha3_absorb(x.sponge, chunk) };
 }
 
@@ -3959,9 +3868,9 @@ pub function (r: ShakeReader) squeeze(n: i32): (u8[], ShakeReader) {
 }
 
 pub function shake128(data: [u8], out_len: i32): u8[] {
-  return shake128_new().update_bytes(data).reader().squeeze(out_len).0;
+  return shake128_new().update(data).reader().squeeze(out_len).0;
 }
 
 pub function shake256(data: [u8], out_len: i32): u8[] {
-  return shake256_new().update_bytes(data).reader().squeeze(out_len).0;
+  return shake256_new().update(data).reader().squeeze(out_len).0;
 }

@@ -103,8 +103,8 @@ function __challenge(status: i32, detail: string, challenge: string): HttpRespon
 }
 
 function __user_pass(encoded: string): Option[(string, string)] {
-  match (base64.base64_decode_strict(encoded)) {
-    Some(bytes) => {
+  match (base64.decode(encoded)) {
+    Ok(bytes) => {
       match (utf8.from_bytes(bytes)) {
         Some(text) => {
           let Some(colon) = text.index_of(":") else {
@@ -120,7 +120,7 @@ function __user_pass(encoded: string): Option[(string, string)] {
         }
       }
     },
-    None => {
+    Err(_) => {
       return None;
     }
   }

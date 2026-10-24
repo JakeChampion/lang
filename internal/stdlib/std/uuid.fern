@@ -1,22 +1,51 @@
 // This module generates and validates UUIDs.
-
 import "std/hex";
 import "std/i32";
+import "std/error";
+import "core/cmp";
+
+@derive(cmp.Eq)
+pub enum ParseErrorKind { InvalidLength, InvalidSeparator, InvalidByte(u8) }
+
+@derive(cmp.Eq)
+pub struct ParseError { offset: i32, kind: ParseErrorKind }
+
+impl error.Error for ParseError {}
+
+impl cmp.Display for ParseError {}
+
+pub function (e: ParseError) message(): string {
+  return e.to_string();
+}
+
+pub function (e: ParseError) to_string(): string {
+  let reason: string = "expected 36 bytes";
+  match (e.kind) {
+    ParseErrorKind.InvalidLength => {},
+    ParseErrorKind.InvalidSeparator => {
+      reason = "expected a hyphen";
+    },
+    ParseErrorKind.InvalidByte(byte) => {
+      reason = "invalid hexadecimal byte " + (byte as i32).to_string();
+    }
+  }
+  return "uuid byte " + e.offset.to_string() + ": " + reason;
+}
 
 function canonical(b: u8[]): string {
-  let h: string = hex.hex_encode(b);
+  let h: string = hex.encode(b);
   return slice_unchecked(h, 0, 8) + "-" + slice_unchecked(h, 8, 12) + "-" + slice_unchecked(h, 12, 16)
     + "-" + slice_unchecked(h, 16, 20) + "-" + slice_unchecked(h, 20, 32);
 }
 
-pub function uuid_v4(): string {
+pub function v4(): string {
   let b: u8[] = random_bytes(16);
   b = b.with(6, b[6] & 15 | 64);
   b = b.with(8, b[8] & 63 | 128);
   return canonical(b);
 }
 
-pub function uuid_v7(): string {
+pub function v7(): string {
   let ms: i64 = now_unix_ms();
   let r: u8[] = random_bytes(10);
   let b: u8[] = [];
@@ -36,37 +65,52 @@ pub function uuid_v7(): string {
   return canonical(b);
 }
 
-pub function uuid_nil(): string {
-  return "00000000-0000-0000-0000-000000000000";
-}
+pub const NIL: string = "00000000-0000-0000-0000-000000000000";
 
-pub function uuid_is_nil(s: string): boolean {
-  return s == uuid_nil();
+pub function is_nil(s: string): boolean {
+  return s == NIL;
 }
 
 pub function is_valid(s: string): boolean {
-  if (s.len() != 36) {
-    return false;
-  }
-  let i: i32 = 0;
-  while (i < 36) {
-    if (i == 8 || i == 13 || i == 18 || i == 23) {
-      if (s[i] != 45) {
-        return false;
-      }
-    } else {
-      if (!s[i].is_ascii_hex_digit()) {
-        return false;
-      }
+  match (__problem(s)) {
+    None => {
+      return true;
+    },
+    Some(_) => {
+      return false;
     }
-    i = i + 1;
   }
-  return true;
 }
 
-pub function uuid_version(s: string): Option[i32] {
-  if (!is_valid(s)) {
-    return None;
+function __problem(s: string): Option[ParseError] {
+  if (s.len() != 36) {
+    let offset: i32 = if (s.len() < 36) { s.len() } else { 36 };
+    return Some(ParseError { offset: offset, kind: ParseErrorKind.InvalidLength });
   }
-  return s[14].hex_value();
+  for i in 0..36 {
+    if (i == 8 || i == 13 || i == 18 || i == 23) {
+      if (s[i] != 45) {
+        return Some(ParseError { offset: i, kind: ParseErrorKind.InvalidSeparator });
+      }
+    } else if (!s[i].is_ascii_hex_digit()) {
+      return Some(ParseError { offset: i, kind: ParseErrorKind.InvalidByte(s[i]) });
+    }
+  }
+  return None;
+}
+
+// version checks the UUID format and returns its version nibble.
+// It accepts uppercase and lowercase hexadecimal digits, with no restriction on version or variant nibbles.
+pub function version(s: string): Result[i32, ParseError] {
+  if let Some(problem) = __problem(s) {
+    return Err(problem);
+  }
+  let byte: i32 = s[14] as i32;
+  if (byte <= 57) {
+    return Ok(byte - 48);
+  }
+  if (byte <= 70) {
+    return Ok(byte - 55);
+  }
+  return Ok(byte - 87);
 }

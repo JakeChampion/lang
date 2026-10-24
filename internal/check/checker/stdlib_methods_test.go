@@ -198,13 +198,20 @@ func stdlibMethodsGoSource(index, narrow map[string]map[string]string) string {
 }
 
 func stdlibMethodsFernSource(index, narrow map[string]map[string]string) string {
-	var recvs, methods, mods, receivers []string
+	var recvs, methods, mods, moduleSlots []string
+	moduleIndex := map[string]int{}
 	for _, recv := range sortedKeys(index) {
 		for _, m := range sortedKeys(index[recv]) {
 			recvs = append(recvs, recv)
 			methods = append(methods, m)
-			mods = append(mods, index[recv][m])
-			receivers = append(receivers, narrow[recv][m])
+			module := index[recv][m]
+			slot, found := moduleIndex[module]
+			if !found {
+				slot = len(mods)
+				moduleIndex[module] = slot
+				mods = append(mods, module)
+			}
+			moduleSlots = append(moduleSlots, fmt.Sprint(slot))
 		}
 	}
 	list := func(xs []string) string {
@@ -220,7 +227,10 @@ func stdlibMethodsFernSource(index, narrow map[string]map[string]string) string 
 	b.WriteString("const RECEIVERS: string[] = " + list(recvs) + ";\n\n")
 	b.WriteString("const METHODS: string[] = " + list(methods) + ";\n\n")
 	b.WriteString("const MODULES: string[] = " + list(mods) + ";\n\n")
-	b.WriteString("const DECLARED_RECEIVERS: string[] = " + list(receivers) + ";\n\n")
+	if len(mods) > 256 {
+		panic("stdlib method module index exceeds u8")
+	}
+	b.WriteString("const MODULE_SLOTS: u8[] = [" + strings.Join(moduleSlots, ", ") + "];\n\n")
 	b.WriteString("// receiver_params returns the declaration's type parameters.\n")
 	b.WriteString("pub function receiver_params(receiver: string, method: string): string[] {\n")
 	for _, recv := range sortedKeys(narrow) {
@@ -236,24 +246,24 @@ func stdlibMethodsFernSource(index, narrow map[string]map[string]string) string 
   let i: i32 = 0;
   while (i < METHODS.len()) {
     if (METHODS[i] == method && RECEIVERS[i] == receiver) {
-      return MODULES[i];
+      return MODULES[MODULE_SLOTS[i] as i32];
     }
     i = i + 1;
   }
   return "";
 }
 
-pub function receiver_of(receiver: string, method: string): string {
-  let i: i32 = 0;
-  while (i < METHODS.len()) {
-    if (METHODS[i] == method && RECEIVERS[i] == receiver) {
-      return DECLARED_RECEIVERS[i];
-    }
-    i = i + 1;
-  }
-  return "";
-}
-
+`)
+	b.WriteString("pub function receiver_of(receiver: string, method: string): string {\n")
+	for _, recv := range sortedKeys(narrow) {
+		fmt.Fprintf(&b, "  if (receiver == %q) {\n", recv)
+		for _, method := range sortedKeys(narrow[recv]) {
+			fmt.Fprintf(&b, "    if (method == %q) {\n      return %q;\n    }\n", method, narrow[recv][method])
+		}
+		b.WriteString("  }\n")
+	}
+	b.WriteString("  return \"\";\n}\n\n")
+	b.WriteString(`
 pub function methods_on(receiver: string): string[] {
   let out: string[] = [];
   let i: i32 = 0;

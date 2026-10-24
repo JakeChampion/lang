@@ -15,18 +15,18 @@ type stdlibConcatCase struct {
 }
 
 var cryptoIRCases = []stdlibConcatCase{
-	{"sha256-len", `return sha256_hex("hello").len();`},
-	{"sha256-abc-d0", `return sha256_hex("abc")[0] as i32;`},
-	{"sha256-empty-d0", `return sha256_hex("")[0] as i32;`},
-	{"sha256-bytes-len", `return sha256_bytes("abc").len();`},
-	{"hmac-len", `return hmac_sha256_hex([107 as u8, 101 as u8, 121 as u8], "msg").len();`},
+	{"sha256-len", `return sha256_hex("hello".as_bytes()).len();`},
+	{"sha256-abc-d0", `return sha256_hex("abc".as_bytes())[0] as i32;`},
+	{"sha256-empty-d0", `return sha256_hex("".as_bytes())[0] as i32;`},
+	{"sha256-bytes-len", `return sha256_bytes("abc".as_bytes()).len();`},
+	{"hmac-len", `return hmac_sha256_hex([107 as u8, 101 as u8, 121 as u8], "msg".as_bytes()).len();`},
 }
 
 var pathIRCases = []stdlibConcatCase{
-	{"join-len", `return path_join(["usr", "local", "bin"]).len();`},
-	{"ext-len", `return path_extension("a.b.c.txt").len();`},
-	{"filename-len", `return path_file_name("/a/b/c.txt").len();`},
-	{"parent-len", `return path_parent("/a/b/c.txt").len();`},
+	{"join-len", `return join(["usr", "local", "bin"]).len();`},
+	{"ext-len", `return extension("a.b.c.txt").len();`},
+	{"filename-len", `return file_name("/a/b/c.txt").len();`},
+	{"parent-len", `return parent("/a/b/c.txt").len();`},
 }
 
 var mathIRCases = []stdlibConcatCase{

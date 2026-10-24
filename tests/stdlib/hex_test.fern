@@ -1,5 +1,6 @@
 import "std/test";
 import "std/hex" as hex;
+import "std/codec";
 import "std/string";
 
 function text(b: u8[]): string {
@@ -7,79 +8,93 @@ function text(b: u8[]): string {
 }
 
 function test_encode(): test.TestOutcome {
-  return test.assert_eq(hex.hex_encode("ABC".bytes()), "414243");
+  return test.assert_eq(hex.encode("ABC".bytes()), "414243");
 }
 
 function test_encode_empty(): test.TestOutcome {
-  return test.assert_eq(hex.hex_encode("".bytes()), "");
+  return test.assert_eq(hex.encode("".bytes()), "");
 }
 
 function test_decode(): test.TestOutcome {
-  return test.assert_eq(text(hex.hex_decode("414243")), "ABC");
+  return test.assert_eq(text(__codec_bytes(hex.decode("414243"))), "ABC");
 }
 
 function test_decode_empty(): test.TestOutcome {
-  return test.assert_eq(text(hex.hex_decode("")), "");
+  return test.assert_eq(text(__codec_bytes(hex.decode(""))), "");
 }
 
 function test_decode_uppercase(): test.TestOutcome {
-  return test.assert_eq(text(hex.hex_decode("4A")), "J");
+  return test.assert_eq(text(__codec_bytes(hex.decode("4A"))), "J");
 }
 
 function test_decode_lowercase(): test.TestOutcome {
-  return test.assert_eq(text(hex.hex_decode("4a")), "J");
+  return test.assert_eq(text(__codec_bytes(hex.decode("4a"))), "J");
 }
 
-function test_decode_stops_at_nonhex(): test.TestOutcome {
-  return test.assert_eq(text(hex.hex_decode("41ZZ")), "A");
+function test_decode_rejects_nonhex(): test.TestOutcome {
+  match (hex.decode("41ZZ")) {
+    Err(problem) => {
+      return test.assert_true(problem.encoding == "hex" && problem.offset == 2 && problem.kind == codec.InvalidByte(90 as u8));
+    },
+    Ok(_) => {
+      return test.fail("accepted invalid byte");
+    }
+  }
 }
 
-function test_decode_odd_tail(): test.TestOutcome {
-  return test.assert_eq(text(hex.hex_decode("414")), "A");
+function test_decode_rejects_odd_tail(): test.TestOutcome {
+  match (hex.decode("414")) {
+    Err(problem) => {
+      return test.assert_true(problem.offset == 3 && problem.kind == codec.InvalidLength);
+    },
+    Ok(_) => {
+      return test.fail("accepted incomplete pair");
+    }
+  }
 }
 
 function test_roundtrip(): test.TestOutcome {
-  return test.assert_eq(text(hex.hex_decode(hex.hex_encode("Hello, Fern!".bytes()))), "Hello, Fern!");
+  return test.assert_eq(text(__codec_bytes(hex.decode(hex.encode("Hello, Fern!".bytes())))), "Hello, Fern!");
 }
 
 function test_encode_lowercase_digits(): test.TestOutcome {
-  return test.assert_eq(hex.hex_encode(hex.hex_decode("ff")), "ff");
+  return test.assert_eq(hex.encode(__codec_bytes(hex.decode("ff"))), "ff");
 }
 
-function test_decode_strict_valid(): test.TestOutcome {
-  match (hex.hex_decode_strict("48656c6c6f")) {
-    Some(v) => {
+function test_decode_checked_valid(): test.TestOutcome {
+  match (hex.decode("48656c6c6f")) {
+    Ok(v) => {
       return test.assert_eq(text(v), "Hello");
     },
-    None => {
+    Err(_) => {
       return test.assert_true(false);
     }
   }
 }
 
-function hex_is_none(s: string): boolean {
-  match (hex.hex_decode_strict(s)) {
-    Some(v) => {
+function hex_is_err(s: string): boolean {
+  match (hex.decode(s)) {
+    Ok(v) => {
       return false;
     },
-    None => {
+    Err(_) => {
       return true;
     }
   }
 }
 
-function test_decode_strict_rejects(): test.TestOutcome {
-  return test.assert_true(hex_is_none("414") && hex_is_none("zz") && hex_is_none("48656c6c6fzz"));
+function test_decode_checked_rejects(): test.TestOutcome {
+  return test.assert_true(hex_is_err("414") && hex_is_err("zz") && hex_is_err("48656c6c6fzz"));
 }
 
 function test_encode_upper(): test.TestOutcome {
-  if (hex.hex_encode_upper("z".bytes()) != "7A") {
+  if (hex.encode_upper("z".bytes()) != "7A") {
     return test.fail("7A");
   }
-  if (hex.hex_encode_upper("".bytes()) != "") {
+  if (hex.encode_upper("".bytes()) != "") {
     return test.fail("empty");
   }
-  return test.assert_eq(text(hex.hex_decode(hex.hex_encode_upper("Hello".bytes()))), "Hello");
+  return test.assert_eq(text(__codec_bytes(hex.decode(hex.encode_upper("Hello".bytes())))), "Hello");
 }
 
 function main(): i32 {
@@ -90,12 +105,25 @@ function main(): i32 {
   r = r.it("decode empty", test_decode_empty);
   r = r.it("decode uppercase", test_decode_uppercase);
   r = r.it("decode lowercase", test_decode_lowercase);
-  r = r.it("decode stops at non-hex", test_decode_stops_at_nonhex);
-  r = r.it("decode odd tail", test_decode_odd_tail);
+  r = r.it("decode rejects invalid bytes", test_decode_rejects_nonhex);
+  r = r.it("decode rejects odd tail", test_decode_rejects_odd_tail);
   r = r.it("round-trip", test_roundtrip);
   r = r.it("encode emits lowercase", test_encode_lowercase_digits);
-  r = r.it("decode_strict valid", test_decode_strict_valid);
-  r = r.it("decode_strict rejects", test_decode_strict_rejects);
+  r = r.it("decode_checked valid", test_decode_checked_valid);
+  r = r.it("decode_checked rejects", test_decode_checked_rejects);
   r = r.it("encode_upper", test_encode_upper);
   return r.finish();
+}
+
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

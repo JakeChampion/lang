@@ -61,7 +61,7 @@ function main(): i32 {
     }
     if (show) {
       if (o.count) {
-        print(rep.to_string().pad_start(7, " ") + " " + lines[idx]);
+        print(rep.to_string().pad_start(7, ' ') + " " + lines[idx]);
       } else {
         print(lines[idx]);
       }

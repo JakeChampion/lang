@@ -1,14 +1,15 @@
 import "std/test";
 import "std/protobuf";
 import "std/hex";
+import "std/codec";
 
 function test_varints(): test.TestOutcome {
-  let got: string = hex.hex_encode(protobuf.encode_varint(1 as i64)) + " " + hex.hex_encode(protobuf.encode_varint(150 as i64)) + " " + hex.hex_encode(protobuf.encode_varint(0 as i64 - 1 as i64));
+  let got: string = hex.encode(protobuf.encode_varint(1 as i64)) + " " + hex.encode(protobuf.encode_varint(150 as i64)) + " " + hex.encode(protobuf.encode_varint(0 as i64 - 1 as i64));
   return test.assert_eq(got, "01 9601 ffffffffffffffffff01");
 }
 
 function test_guide_message(): test.TestOutcome {
-  match (protobuf.decode(hex.hex_decode("089601"))) {
+  match (protobuf.decode(__codec_bytes(hex.decode("089601")))) {
     Ok(fields) => {
       let v: string = "none";
       match (protobuf.varint(fields, 1)) {
@@ -17,7 +18,7 @@ function test_guide_message(): test.TestOutcome {
         },
         None => {}
       }
-      return test.assert_eq(fields.len().to_string() + " " + v + " " + hex.hex_encode(protobuf.varint_field(1, 150 as i64)), "1 150 089601");
+      return test.assert_eq(fields.len().to_string() + " " + v + " " + hex.encode(protobuf.varint_field(1, 150 as i64)), "1 150 089601");
     },
     Err(e) => {
       return test.fail(e);
@@ -28,7 +29,7 @@ function test_guide_message(): test.TestOutcome {
 
 function test_fields(): test.TestOutcome {
   let inner: u8[] = protobuf.varint_field(1, 27182 as i64);
-  let msg: u8[] = protobuf.string_field(2, "testing").concat(protobuf.bytes_field(3, inner)).concat(protobuf.bytes_field(4, "a".bytes())).concat(protobuf.bytes_field(4, "bc".bytes())).concat(hex.hex_decode("2d04000000"));
+  let msg: u8[] = protobuf.string_field(2, "testing").concat(protobuf.bytes_field(3, inner)).concat(protobuf.bytes_field(4, "a".bytes())).concat(protobuf.bytes_field(4, "bc".bytes())).concat(__codec_bytes(hex.decode("2d04000000")));
   match (protobuf.decode(msg)) {
     Ok(fields) => {
       let text: string = "";
@@ -64,7 +65,7 @@ function test_fields(): test.TestOutcome {
           fixed = f.wire.to_string() + ":" + f.word.to_string();
         }
       }
-      return test.assert_eq(hex.hex_encode(protobuf.string_field(2, "testing")) + " " + text + " " + size + " " + reps.len().to_string() + string_from_bytes_unchecked(reps[1]) + " " + fixed, "120774657374696e67 testing 27182 2bc 5:4");
+      return test.assert_eq(hex.encode(protobuf.string_field(2, "testing")) + " " + text + " " + size + " " + reps.len().to_string() + string_from_bytes_unchecked(reps[1]) + " " + fixed, "120774657374696e67 testing 27182 2bc 5:4");
     },
     Err(e) => {
       return test.fail(e);
@@ -79,7 +80,7 @@ function test_zigzag(): test.TestOutcome {
 }
 
 function fault(bytes_hex: string): string {
-  match (protobuf.decode(hex.hex_decode(bytes_hex))) {
+  match (protobuf.decode(__codec_bytes(hex.decode(bytes_hex)))) {
     Ok(fields) => {
       return "ok " + fields.len().to_string();
     },
@@ -103,4 +104,17 @@ function main(): i32 {
   r = r.it("zigzag", test_zigzag);
   r = r.it("faults", test_faults);
   return r.finish();
+}
+
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

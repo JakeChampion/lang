@@ -1,5 +1,4 @@
 // This module decodes Brotli data under RFC 7932.
-
 import "std/brotli/dictionary";
 import "core/cmp";
 import "std/error";
@@ -29,7 +28,7 @@ pub function (e: BrotliError) message(): string {
   return "brotli";
 }
 
-pub function decompress(input: u8[], max_out: i32): Result[u8[], BrotliError] {
+pub function decompress(input: [u8], max_out: i32): Result[u8[], BrotliError] {
   let w: (i32, i32) = __window(input);
   if (w.0 < 0) {
     return Err(BrotliMalformed("window size"));
@@ -55,7 +54,7 @@ struct __St { bit: i32, ring: i32[], window: i32, dict: u8[], t: __Tab }
 
 struct __Run { out: u8[], s: __St }
 
-function __bits(buf: u8[], bit: i32, n: i32): i32 {
+function __bits(buf: [u8], bit: i32, n: i32): i32 {
   let v: i64 = 0;
   let first: i32 = bit >> 3;
   let i: i32 = (bit + n + 7 >> 3) - 1;
@@ -70,7 +69,7 @@ function __bits(buf: u8[], bit: i32, n: i32): i32 {
   return (v >> (bit & 7) & (1 as i64 << n) - 1) as i32;
 }
 
-function __window(buf: u8[]): (i32, i32) {
+function __window(buf: [u8]): (i32, i32) {
   if (__bits(buf, 0, 1) == 0) {
     return (16, 1);
   }
@@ -88,7 +87,7 @@ function __window(buf: u8[]): (i32, i32) {
   return (8 + m, 7);
 }
 
-function __varlen(buf: u8[], bit: i32): (i32, i32) {
+function __varlen(buf: [u8], bit: i32): (i32, i32) {
   if (__bits(buf, bit, 1) == 0) {
     return (0, bit + 1);
   }
@@ -132,7 +131,7 @@ function __code(lens: i32[]): __Pc {
   return __Pc { count: count, sym: sym, single: 0 - 1 };
 }
 
-function __decode(buf: u8[], bit: i32, pc: __Pc): (i32, i32) {
+function __decode(buf: [u8], bit: i32, pc: __Pc): (i32, i32) {
   if (pc.single >= 0) {
     return (pc.single, bit);
   }
@@ -155,7 +154,7 @@ function __decode(buf: u8[], bit: i32, pc: __Pc): (i32, i32) {
   return (0 - 1, bit);
 }
 
-function __symbol(buf: u8[], bit: i32, pc: __Pc): Result[(i32, i32), BrotliError] {
+function __symbol(buf: [u8], bit: i32, pc: __Pc): Result[(i32, i32), BrotliError] {
   let r: (i32, i32) = __decode(buf, bit, pc);
   if (r.0 < 0) {
     return Err(BrotliMalformed("prefix code"));
@@ -163,7 +162,7 @@ function __symbol(buf: u8[], bit: i32, pc: __Pc): Result[(i32, i32), BrotliError
   return Ok(r);
 }
 
-function __read_code(buf: u8[], bit: i32, size: i32): Result[(__Pc, i32), BrotliError] {
+function __read_code(buf: [u8], bit: i32, size: i32): Result[(__Pc, i32), BrotliError] {
   let hskip: i32 = __bits(buf, bit, 2);
   if (hskip == 1) {
     return __simple_code(buf, bit + 2, size);
@@ -171,7 +170,7 @@ function __read_code(buf: u8[], bit: i32, size: i32): Result[(__Pc, i32), Brotli
   return __complex_code(buf, bit + 2, hskip, size);
 }
 
-function __simple_code(buf: u8[], bit: i32, size: i32): Result[(__Pc, i32), BrotliError] {
+function __simple_code(buf: [u8], bit: i32, size: i32): Result[(__Pc, i32), BrotliError] {
   let n: i32 = __bits(buf, bit, 2) + 1;
   let width: i32 = __highbit(size - 1) + 1;
   bit = bit + 2;
@@ -212,7 +211,7 @@ function __has(xs: i32[], x: i32): boolean {
   return false;
 }
 
-function __complex_code(buf: u8[], bit: i32, hskip: i32, size: i32): Result[(__Pc, i32), BrotliError] {
+function __complex_code(buf: [u8], bit: i32, hskip: i32, size: i32): Result[(__Pc, i32), BrotliError] {
   let order: i32[] = [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15];
   let fixed: i32[] = [0x020000, 0x020004, 0x020003, 0x030002, 0x020000, 0x020004, 0x020003, 0x040001, 0x020000, 0x020004, 0x020003, 0x030002, 0x020000, 0x020004, 0x020003, 0x040005];
   let lens: i32[] = __zeros(18);
@@ -239,7 +238,7 @@ function __complex_code(buf: u8[], bit: i32, hskip: i32, size: i32): Result[(__P
 
 struct __Sl { lens: i32[], prev: i32, repeat: i32, rlen: i32, space: i32, bit: i32 }
 
-function __symbol_lens(buf: u8[], bit: i32, clc: __Pc, size: i32): Result[(i32[], i32), BrotliError] {
+function __symbol_lens(buf: [u8], bit: i32, clc: __Pc, size: i32): Result[(i32[], i32), BrotliError] {
   let none: i32[] = [];
   let st: __Sl = __Sl { lens: none, prev: 8, repeat: 0, rlen: 0, space: 32768, bit: bit };
   while (st.lens.len() < size && st.space > 0) {
@@ -271,7 +270,7 @@ function __literal_len(st: __Sl, c: i32): __Sl {
   return __Sl { ...st, lens: st.lens.append(c), repeat: 0, prev: c, space: st.space - (32768 >> c) };
 }
 
-function __repeat_len(buf: u8[], st: __Sl, c: i32): __Sl {
+function __repeat_len(buf: [u8], st: __Sl, c: i32): __Sl {
   let extra: i32 = c - 14;
   let len: i32 = 0;
   if (c == 16) {
@@ -318,7 +317,7 @@ function __highbit(x: i32): i32 {
 
 struct __Mh { last: boolean, len: i32, raw: boolean, skip: i32, bit: i32 }
 
-function __mb_header(buf: u8[], bit: i32): Result[__Mh, BrotliError] {
+function __mb_header(buf: [u8], bit: i32): Result[__Mh, BrotliError] {
   let last: boolean = __bits(buf, bit, 1) == 1;
   bit = bit + 1;
   if (last) {
@@ -345,7 +344,7 @@ function __mb_header(buf: u8[], bit: i32): Result[__Mh, BrotliError] {
   return Ok(__Mh { last: last, len: len, raw: raw, skip: 0, bit: bit });
 }
 
-function __metadata(buf: u8[], bit: i32, last: boolean): Result[__Mh, BrotliError] {
+function __metadata(buf: [u8], bit: i32, last: boolean): Result[__Mh, BrotliError] {
   if (last || __bits(buf, bit, 1) != 0) {
     return Err(BrotliMalformed("metadata block"));
   }
@@ -361,7 +360,7 @@ function __metadata(buf: u8[], bit: i32, last: boolean): Result[__Mh, BrotliErro
   return Ok(__Mh { last: false, len: 0, raw: false, skip: skip, bit: bit + bytes * 8 });
 }
 
-function __meta_block(buf: u8[], h: __Mh, s: __St, out: u8[], max_out: i32): Result[__Run, BrotliError] {
+function __meta_block(buf: [u8], h: __Mh, s: __St, out: u8[], max_out: i32): Result[__Run, BrotliError] {
   if (out.len() + h.len > max_out) {
     return Err(BrotliTooLarge);
   }
@@ -386,7 +385,7 @@ function __meta_block(buf: u8[], h: __Mh, s: __St, out: u8[], max_out: i32): Res
   return __commands(buf, m, s, out, out.len() + h.len);
 }
 
-function __aligned(buf: u8[], bit: i32): Result[i32, BrotliError] {
+function __aligned(buf: [u8], bit: i32): Result[i32, BrotliError] {
   if (__bits(buf, bit, 8 - (bit & 7) & 7) != 0) {
     return Err(BrotliMalformed("padding"));
   }
@@ -395,14 +394,14 @@ function __aligned(buf: u8[], bit: i32): Result[i32, BrotliError] {
 
 struct __Cat { n: i32, types: __Pc, lens: __Pc, cur: i32, prev: i32, left: i32 }
 
-function __block_len(buf: u8[], bit: i32, pc: __Pc): Result[(i32, i32), BrotliError] {
+function __block_len(buf: [u8], bit: i32, pc: __Pc): Result[(i32, i32), BrotliError] {
   let offset: i32[] = [1, 5, 9, 13, 17, 25, 33, 41, 49, 65, 81, 97, 113, 145, 177, 209, 241, 305, 369, 497, 753, 1265, 2289, 4337, 8433, 16625];
   let extra: i32[] = [2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 7, 8, 9, 10, 11, 12, 13, 24];
   let s: (i32, i32) = __symbol(buf, bit, pc)?;
   return Ok((offset[s.0] + __bits(buf, s.1, extra[s.0]), s.1 + extra[s.0]));
 }
 
-function __read_cat(buf: u8[], bit: i32): Result[(__Cat, i32), BrotliError] {
+function __read_cat(buf: [u8], bit: i32): Result[(__Cat, i32), BrotliError] {
   let n: (i32, i32) = __varlen(buf, bit);
   let none: __Pc = __Pc { count: [], sym: [], single: 0 };
   if (n.0 == 0) {
@@ -414,7 +413,7 @@ function __read_cat(buf: u8[], bit: i32): Result[(__Cat, i32), BrotliError] {
   return Ok((__Cat { n: n.0 + 1, types: types.0, lens: lens.0, cur: 0, prev: 1, left: first.0 }, first.1));
 }
 
-function __switched(buf: u8[], bit: i32, c: __Cat): Result[(__Cat, i32), BrotliError] {
+function __switched(buf: [u8], bit: i32, c: __Cat): Result[(__Cat, i32), BrotliError] {
   let s: (i32, i32) = __symbol(buf, bit, c.types)?;
   let t: i32 = s.0 - 2;
   if (s.0 == 0) {
@@ -431,7 +430,7 @@ function __switched(buf: u8[], bit: i32, c: __Cat): Result[(__Cat, i32), BrotliE
 
 struct __Mb { lit: __Cat, cmd: __Cat, dist: __Cat, postfix: i32, direct: i32, modes: i32[], lmap: i32[], dmap: i32[], lcodes: __Pc[], ccodes: __Pc[], dcodes: __Pc[], bit: i32 }
 
-function __mb_codes(buf: u8[], bit: i32): Result[__Mb, BrotliError] {
+function __mb_codes(buf: [u8], bit: i32): Result[__Mb, BrotliError] {
   let lit: (__Cat, i32) = __read_cat(buf, bit)?;
   let cmd: (__Cat, i32) = __read_cat(buf, lit.1)?;
   let dist: (__Cat, i32) = __read_cat(buf, cmd.1)?;
@@ -452,7 +451,7 @@ function __mb_codes(buf: u8[], bit: i32): Result[__Mb, BrotliError] {
   return Ok(__Mb { lit: lit.0, cmd: cmd.0, dist: dist.0, postfix: postfix, direct: direct, modes: modes, lmap: lmap.0, dmap: dmap.0, lcodes: lcodes.0, ccodes: ccodes.0, dcodes: dcodes.0, bit: dcodes.1 });
 }
 
-function __codes(buf: u8[], bit: i32, n: i32, size: i32): Result[(__Pc[], i32), BrotliError] {
+function __codes(buf: [u8], bit: i32, n: i32, size: i32): Result[(__Pc[], i32), BrotliError] {
   let out: __Pc[] = [];
   while (out.len() < n) {
     let c: (__Pc, i32) = __read_code(buf, bit, size)?;
@@ -462,7 +461,7 @@ function __codes(buf: u8[], bit: i32, n: i32, size: i32): Result[(__Pc[], i32), 
   return Ok((out, bit));
 }
 
-function __context_map(buf: u8[], bit: i32, size: i32): Result[(i32[], i32, i32), BrotliError] {
+function __context_map(buf: [u8], bit: i32, size: i32): Result[(i32[], i32, i32), BrotliError] {
   let trees: (i32, i32) = __varlen(buf, bit);
   let n: i32 = trees.0 + 1;
   bit = trees.1;
@@ -497,7 +496,7 @@ function __context_map(buf: u8[], bit: i32, size: i32): Result[(i32[], i32, i32)
   return Ok((map, n, bit + 1));
 }
 
-function __rle_prefix(buf: u8[], bit: i32): (i32, i32) {
+function __rle_prefix(buf: [u8], bit: i32): (i32, i32) {
   if (__bits(buf, bit, 1) == 0) {
     return (0, bit + 1);
   }
@@ -540,7 +539,7 @@ struct __Cs { lit: __Cat, cmd: __Cat, dist: __Cat, bit: i32, ring: i32[], dict: 
 
 struct __Cmd { insert: i32, copy: i32, implicit: boolean, c: __Cs }
 
-function __commands(buf: u8[], m: __Mb, s: __St, out: u8[], end: i32): Result[__Run, BrotliError] {
+function __commands(buf: [u8], m: __Mb, s: __St, out: u8[], end: i32): Result[__Run, BrotliError] {
   let c: __Cs = __Cs { lit: m.lit, cmd: m.cmd, dist: m.dist, bit: m.bit, ring: s.ring, dict: s.dict };
   let dst: u8[] = out;
   while (dst.len() < end) {
@@ -569,13 +568,20 @@ function __overrun(past_end: boolean): BrotliError {
 
 struct __Step { bytes: u8[], c: __Cs }
 
-function __copy_step(buf: u8[], m: __Mb, s: __St, c: __Cs, cmd: __Cmd, dst: u8[]): Result[__Step, BrotliError] {
+function __copy_step(buf: [u8], m: __Mb, s: __St, c: __Cs, cmd: __Cmd, dst: u8[]): Result[__Step, BrotliError] {
   let d: (i32, i32, __Cs) = __distance(buf, m, c, cmd)?;
   let max: i32 = cmp.min(s.window, dst.len());
   if (d.0 > max) {
     let loaded: __Cs = d.2;
     if (loaded.dict.len() == 0) {
-      loaded = __Cs { ...loaded, dict: dictionary.bytes() };
+      match (dictionary.bytes()) {
+        Ok(bytes) => {
+          loaded = __Cs { ...loaded, dict: bytes };
+        },
+        Err(problem) => {
+          return Err(BrotliMalformed("dictionary: " + problem.message()));
+        }
+      }
     }
     return Ok(__Step { bytes: __dict_word(s.t, loaded.dict, d.0 - max - 1, cmd.copy)?, c: loaded });
   }
@@ -610,7 +616,7 @@ function __joined(own out: u8[], more: u8[]): u8[] {
   return out;
 }
 
-function __command(buf: u8[], m: __Mb, c: __Cs): Result[__Cmd, BrotliError] {
+function __command(buf: [u8], m: __Mb, c: __Cs): Result[__Cmd, BrotliError] {
   let cat: __Cat = c.cmd;
   let bit: i32 = c.bit;
   if (cat.left == 0) {
@@ -634,7 +640,7 @@ function __command(buf: u8[], m: __Mb, c: __Cs): Result[__Cmd, BrotliError] {
 
 struct __Lits { bytes: u8[], c: __Cs }
 
-function __literals(buf: u8[], m: __Mb, t: __Tab, c: __Cs, n: i32, p1: i32, p2: i32): Result[__Lits, BrotliError] {
+function __literals(buf: [u8], m: __Mb, t: __Tab, c: __Cs, n: i32, p1: i32, p2: i32): Result[__Lits, BrotliError] {
   let out: u8[] = [];
   let cat: __Cat = c.lit;
   let bit: i32 = c.bit;
@@ -659,7 +665,7 @@ function __literals(buf: u8[], m: __Mb, t: __Tab, c: __Cs, n: i32, p1: i32, p2: 
   return Ok(__Lits { bytes: out, c: __Cs { ...c, lit: cat, bit: bit } });
 }
 
-function __distance(buf: u8[], m: __Mb, c: __Cs, cmd: __Cmd): Result[(i32, i32, __Cs), BrotliError] {
+function __distance(buf: [u8], m: __Mb, c: __Cs, cmd: __Cmd): Result[(i32, i32, __Cs), BrotliError] {
   if (cmd.implicit) {
     return Ok((c.ring[0], 0, c));
   }
@@ -679,7 +685,7 @@ function __distance(buf: u8[], m: __Mb, c: __Cs, cmd: __Cmd): Result[(i32, i32, 
   return Ok((d.0, s.0, __Cs { ...c, dist: __Cat { ...cat, left: cat.left - 1 }, bit: d.1 }));
 }
 
-function __distance_of(buf: u8[], bit: i32, code: i32, m: __Mb, ring: i32[]): (i32, i32) {
+function __distance_of(buf: [u8], bit: i32, code: i32, m: __Mb, ring: i32[]): (i32, i32) {
   if (code < 16) {
     let idx: i32 = [0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1][code];
     let delta: i32 = [0, 0, 0, 0, 0 - 1, 1, 0 - 2, 2, 0 - 3, 3, 0 - 1, 1, 0 - 2, 2, 0 - 3, 3][code];

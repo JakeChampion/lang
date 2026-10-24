@@ -455,7 +455,7 @@ func TestSelfHostTreeshakeKeepsMapRuntimeOnlyForLiveMapsX86_64(t *testing.T) {
 		maps      bool
 	}{
 		{"cli-without-maps", `import "std/cli";
-function main(): i32 { if (cli.cli_dim("a").len() == 0) { return 1; } return 0; }
+function main(): i32 { if (cli.dim("a").len() == 0) { return 1; } return 0; }
 `, false},
 		{"unused-map-struct", `import "core/map";
 struct S { m: Map[string, string] }

@@ -953,6 +953,7 @@ func substituteNode(n ast.Node, sub map[string]ast.Type) {
 		return
 	}
 	ast.Walk(n, func(n ast.Node) bool {
+		rewritePatternNodeTypes(n, func(t ast.Type) ast.Type { return substituteType(t, sub) })
 		switch x := n.(type) {
 		case *ast.Var:
 			x.Type = substituteType(x.Type, sub)
@@ -1368,6 +1369,7 @@ func rewriteBlockTypes(b *ast.Block, info *checker.Info, into map[instKey][]ast.
 		return rewriteType(t, info, into)
 	}
 	ast.Walk(b, func(n ast.Node) bool {
+		rewritePatternNodeTypes(n, rewrite)
 		switch x := n.(type) {
 		case *ast.Var:
 			x.Type = rewrite(x.Type)
@@ -1410,4 +1412,46 @@ func rewriteBlockTypes(b *ast.Block, info *checker.Info, into map[instKey][]ast.
 		}
 		return true
 	})
+}
+
+// Pattern names use the concrete struct types of their payload slots.
+func rewritePatternNodeTypes(n ast.Node, rewrite func(ast.Type) ast.Type) {
+	switch x := n.(type) {
+	case *ast.Match:
+		for _, arm := range x.Arms {
+			rewritePayloadPatternTypes(arm.Payloads, arm.BindingTypes, rewrite)
+			rewriteTuplePatternTypes(arm.TupleElems, arm.BindingTypes, rewrite)
+		}
+	case *ast.MatchExpr:
+		for _, arm := range x.Arms {
+			rewritePayloadPatternTypes(arm.Payloads, arm.BindingTypes, rewrite)
+			rewriteTuplePatternTypes(arm.TupleElems, arm.BindingTypes, rewrite)
+		}
+	}
+}
+
+func rewritePayloadPatternTypes(elems []*ast.TuplePatElem, types []ast.Type, rewrite func(ast.Type) ast.Type) {
+	for i, elem := range elems {
+		if elem != nil && i < len(types) {
+			types[i] = rewrite(types[i])
+			rewritePatternElemType(elem, types[i], rewrite)
+		}
+	}
+}
+
+func rewriteTuplePatternTypes(elems []ast.TuplePatElem, types []ast.Type, rewrite func(ast.Type) ast.Type) {
+	for i := range elems {
+		if i < len(types) {
+			types[i] = rewrite(types[i])
+			rewritePatternElemType(&elems[i], types[i], rewrite)
+		}
+	}
+}
+
+func rewritePatternElemType(elem *ast.TuplePatElem, t ast.Type, rewrite func(ast.Type) ast.Type) {
+	if st, ok := t.(ast.StructType); ok && elem.IsStruct {
+		elem.VariantName = st.Name
+	}
+	rewritePayloadPatternTypes(elem.VariantPayloads, elem.VariantBindingTypes, rewrite)
+	rewriteTuplePatternTypes(elem.Nested, elem.NestedTypes, rewrite)
 }

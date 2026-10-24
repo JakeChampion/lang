@@ -81,7 +81,7 @@ The standard library lives at `std/*` — `std/io`, `std/string`,
 import "std/path";
 
 function main(): i32 {
-    print(path.path_join(["docs", "tutorial", "modules.md"]));
+    print(path.join(["docs", "tutorial", "modules.md"]));
     return 0;
 }
 ```

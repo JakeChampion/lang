@@ -1,6 +1,7 @@
 import "std/test";
 import "std/http/qpack";
 import "std/hex";
+import "std/codec";
 import "std/option";
 import "core/int";
 
@@ -38,7 +39,7 @@ function error_text(e: qpack.QpackError): string {
 }
 
 function fed(d: qpack.Decoder, encoder_stream: string): Result[qpack.Decoder, string] {
-  match (d.on_encoder_stream(hex.hex_decode(encoder_stream))) {
+  match (d.on_encoder_stream(__codec_bytes(hex.decode(encoder_stream)))) {
     Ok(next) => {
       return Ok(next);
     },
@@ -49,14 +50,14 @@ function fed(d: qpack.Decoder, encoder_stream: string): Result[qpack.Decoder, st
 }
 
 function section(d: qpack.Decoder, stream: i64, bytes: string): Result[(qpack.Decoder, string), string] {
-  match (decode_on(d, stream, hex.hex_decode(bytes))) {
+  match (decode_on(d, stream, __codec_bytes(hex.decode(bytes)))) {
     Ok(got) => {
       let (next, owed) = instructions(got.decoder);
       let text: string = fields_text(got.fields);
       if (got.blocked) {
         text = "blocked";
       }
-      return Ok((next, text + "| " + hex.hex_encode(owed)));
+      return Ok((next, text + "| " + hex.encode(owed)));
     },
     Err(e) => {
       return Err(error_text(e));
@@ -66,7 +67,7 @@ function section(d: qpack.Decoder, stream: i64, bytes: string): Result[(qpack.De
 
 function owed(d: qpack.Decoder): (qpack.Decoder, string) {
   let (next, out) = instructions(d);
-  return (next, hex.hex_encode(out));
+  return (next, hex.encode(out));
 }
 
 function test_b1(): test.TestOutcome {
@@ -198,7 +199,7 @@ function test_encoder(): test.TestOutcome {
       }
     }
   }
-  return test.assert_eq(hex.hex_encode(plain) + " " + int.int_to_string(coded.len()) + " " + back, "0000d1510b2f696e6465782e68746d6c26782d6665726e03796573"
+  return test.assert_eq(hex.encode(plain) + " " + int.int_to_string(coded.len()) + " " + back, "0000d1510b2f696e6465782e68746d6c26782d6665726e03796573"
     + "7f4506736563726574f5 " + int.int_to_string(coded.len()) + " :method=GET; :path=/index.html; x-fern=yes; authorization=secret (never); content-type=text/plain; | :method=GET; :path=/index.html; x-fern=yes; authorization=secret (never); content-type=text/plain; | ");
 }
 
@@ -218,7 +219,7 @@ function test_errors(): test.TestOutcome {
   let no_static: string = result_text(section(d, 0 as i64, "0000ff24"));
   let negative_base: string = result_text(section(d, 0 as i64, "0281"));
   let enc_ack: string = "-";
-  match (qpack.encoder().on_decoder_stream(hex.hex_decode("84"))) {
+  match (qpack.encoder().on_decoder_stream(__codec_bytes(hex.decode("84")))) {
     Ok(_) => {
       enc_ack = "accepted";
     },
@@ -366,7 +367,7 @@ function largest_integer(first: u8, prefix: i64): u8[] {
 
 function test_integer_overflow(): test.TestOutcome {
   let d: qpack.Decoder = qpack.decoder(220 as i64, 2, 16384 as i64);
-  let capacity: string = result_text_d(fed(d, hex.hex_encode(overflowing_integer(63u8))));
+  let capacity: string = result_text_d(fed(d, hex.encode(overflowing_integer(63u8))));
   let want: string = "513 qpack: encoder stream: an integer over 2^62";
   if (capacity != want) {
     return test.assert_eq(capacity, want);
@@ -397,7 +398,7 @@ function test_integer_overflow(): test.TestOutcome {
 
 function test_largest_integer(): test.TestOutcome {
   let d: qpack.Decoder = qpack.decoder(4611686018427387903 as i64, 0, 16384 as i64);
-  let capacity: string = result_text_d(fed(d, hex.hex_encode(largest_integer(63u8, 31 as i64))));
+  let capacity: string = result_text_d(fed(d, hex.encode(largest_integer(63u8, 31 as i64))));
   let short: string = "accepted";
   match (decode_on(d, 0 as i64, [0u8, 0u8, 81u8].concat(largest_integer(127u8, 127 as i64)))) {
     Ok(_) => {},
@@ -422,7 +423,7 @@ function test_cancellation(): test.TestOutcome {
       let (d2, second) = instructions(d1.cancel(132 as i64));
       let again: string = result_text(section(d2, 8 as i64, "03811011"));
       let (_, empty) = instructions(qpack.decoder(0 as i64, 0, 16384 as i64).cancel(4 as i64));
-      return test.assert_eq(hex.hex_encode(first) + " " + hex.hex_encode(second) + " " + again + "[" + hex.hex_encode(empty) + "]", "44 7f45 ok blocked| []");
+      return test.assert_eq(hex.encode(first) + " " + hex.encode(second) + " " + again + "[" + hex.encode(empty) + "]", "44 7f45 ok blocked| []");
     },
     Err(e) => {
       return test.fail(e);
@@ -454,4 +455,17 @@ function main(): i32 {
   r = r.it("stream cancellation encoding and blocked-slot release", test_cancellation);
   r = r.it("an encoder-stream literal too long for the table is refused at its length", test_oversized_literal);
   return r.finish();
+}
+
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

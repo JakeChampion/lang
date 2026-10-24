@@ -889,10 +889,10 @@ pub function (n: i32) to_string_padded(width: i32): string {
     return s;
   }
   if (n >= 0) {
-    return s.pad_start(width, "0");
+    return s.pad_start(width, '0');
   }
   let body: str = slice_unchecked(s, 1, s.len());
-  return "-" + body.pad_start(width - 1, "0");
+  return "-" + body.pad_start(width - 1, '0');
 }
 
 pub function (n: i32) to_string_with_sep(sep: string): string {
@@ -927,9 +927,9 @@ pub function (n: i32) to_rgb_hex(): string {
   let r: i32 = n >> 16 & 255;
   let g: i32 = n >> 8 & 255;
   let b: i32 = n & 255;
-  return "#" + r.to_hex().pad_start(2, "0")
-    + g.to_hex().pad_start(2, "0")
-    + b.to_hex().pad_start(2, "0");
+  return "#" + r.to_hex().pad_start(2, '0')
+    + g.to_hex().pad_start(2, '0')
+    + b.to_hex().pad_start(2, '0');
 }
 
 pub function (n: i32) is_one(): boolean {

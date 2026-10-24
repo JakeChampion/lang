@@ -268,7 +268,7 @@ function main(): i32 {
   let input: string = "abcdefghijklmnop".repeat(256);
   let state = hash.crc32_new();
   let before: i64 = __heap_alloc_count();
-  state = state.update(input);
+  state = state.update(input.as_bytes());
   if (__heap_alloc_count() != before) { return 71; }
   if (state.finish() != 3631681148 || state.byte_count() != 4096 as u64) { return 72; }
   if (__rc_underflow_count() != 0) { return 73; }

@@ -9,6 +9,7 @@ import "std/result";
 import "std/tls/identity";
 import "std/tls/verify";
 import "std/hex";
+import "std/codec";
 import "std/i64";
 import "std/option";
 import "core/int";
@@ -32,7 +33,7 @@ const NOT_AFTER_MS: i64 = 4102444800000;
 function server_config(alpn: string[]): conn.Config {
   match (identity.private_key_from_pem(ED_PKCS8)) {
     Ok(k) => {
-      match (identity.pair([hex.hex_decode(ED_LEAF)], k)) {
+      match (identity.pair([__codec_bytes(hex.decode(ED_LEAF))], k)) {
         Ok(id) => {
           return conn.config(alpn).server_side(id);
         },
@@ -45,7 +46,7 @@ function server_config(alpn: string[]): conn.Config {
 }
 
 function client_config(name: string, alpn: string[]): conn.Config {
-  return conn.config(alpn).client_side(name, verify.roots([hex.hex_decode(ROOT)]));
+  return conn.config(alpn).client_side(name, verify.roots([__codec_bytes(hex.decode(ROOT))]));
 }
 
 function entropy(seed: i32, n: i32): u8[] {
@@ -377,8 +378,8 @@ function test_retry(): test.TestOutcome {
       let out: u8[][] = c.datagrams();
       c = c.sent();
       let first: packet.Header = header_of(out[0]);
-      let r: u8[] = packet.retry(first.scid, hex.hex_decode("0102030405060708"), first.dcid, "fern-token".bytes());
-      let bad: u8[] = packet.retry(first.scid, hex.hex_decode("0a0b0c0d0e0f0001"), hex.hex_decode("00"), "nope".bytes());
+      let r: u8[] = packet.retry(first.scid, __codec_bytes(hex.decode("0102030405060708")), first.dcid, "fern-token".bytes());
+      let bad: u8[] = packet.retry(first.scid, __codec_bytes(hex.decode("0a0b0c0d0e0f0001")), __codec_bytes(hex.decode("00")), "nope".bytes());
       let c2: conn.Conn = c.receive(bad, 0 as i64).receive(r, 0 as i64);
       let c3: conn.Conn = c2.tick(1000 * MS).transmit(1000 * MS);
       let out2: u8[][] = c3.datagrams();
@@ -393,7 +394,7 @@ function test_retry(): test.TestOutcome {
           opened = e;
         }
       }
-      return test.assert_eq(hex.hex_encode(again.dcid) + " " + string_from_bytes_unchecked(again.token) + " " + opened, "0102030405060708 fern-token pn 2");
+      return test.assert_eq(hex.encode(again.dcid) + " " + string_from_bytes_unchecked(again.token) + " " + opened, "0102030405060708 fern-token pn 2");
     },
     Err(e) => {
       return test.fail(e);
@@ -639,7 +640,7 @@ function test_peer_key_update_stream(): test.TestOutcome {
   let Ok(r) = step.read(0 as i64) else {
     return test.fail("updated-key STREAM was not delivered");
   };
-  return test.assert_eq(hex.hex_encode(r.1) + " " + r.2.to_string(), "050c13 true");
+  return test.assert_eq(hex.encode(r.1) + " " + r.2.to_string(), "050c13 true");
 }
 
 function phase_packet(p: Pair, pn: i64, generations: i32): u8[] {
@@ -738,7 +739,7 @@ function test_forged_key_phase(): test.TestOutcome {
   let Some(after) = rejected.key_next_recv else {
     return test.fail("forgery removed next key");
   };
-  return test.assert_eq(rejected.key_phase.to_string() + " " + rejected.key_previous_recv.is_none().to_string() + " " + rejected.key_generate_at.to_string() + " " + rejected.failed_auth.to_string() + " " + (hex.hex_encode(before.secret) == hex.hex_encode(after.secret)).to_string() + " " + close_code(rejected).to_string(), "false true 0 1 true -1");
+  return test.assert_eq(rejected.key_phase.to_string() + " " + rejected.key_previous_recv.is_none().to_string() + " " + rejected.key_generate_at.to_string() + " " + rejected.failed_auth.to_string() + " " + (hex.encode(before.secret) == hex.encode(after.secret)).to_string() + " " + close_code(rejected).to_string(), "false true 0 1 true -1");
 }
 
 function test_unconfirmed_key_update(): test.TestOutcome {
@@ -867,4 +868,17 @@ function main(): i32 {
   r = r.it("the encryption limit rotates or closes before overuse", test_key_encryption_limit);
   r = r.it("the ChaCha authentication limit is cumulative", test_chacha_authentication_limit);
   return r.finish();
+}
+
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

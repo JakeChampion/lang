@@ -65,7 +65,7 @@ function main(): i32 {
 import "std/hash" as hash;
 function bigger[T: cmp.Ord](x: T, y: T): boolean { return x.cmp(y) > 0; }
 function main(): i32 {
-    let s: hash.SysvSum = hash.sysv_sum_new().update("abc");
+    let s: hash.SysvSum = hash.sysv_sum_new().update("abc".as_bytes());
     let e: hash.SysvSum = hash.sysv_sum_new();
     if (bigger(s.finish(), e.finish())) { return 7; }
     return 3;

@@ -1,0 +1,66 @@
+// This module defines shared errors for byte encodings.
+
+import "core/cmp";
+import "std/error";
+import "std/i32";
+
+@derive(cmp.Eq)
+pub enum DecodeErrorKind {
+  InvalidByte(u8),
+  InvalidLength,
+  InvalidPadding,
+  NonZeroTrailingBits,
+}
+
+@derive(cmp.Eq)
+pub struct DecodeError { encoding: string, offset: i32, kind: DecodeErrorKind }
+
+impl error.Error for DecodeError {}
+
+impl cmp.Display for DecodeError {}
+
+pub function (e: DecodeError) message(): string {
+  return e.to_string();
+}
+
+pub function (e: DecodeError) to_string(): string {
+  let reason: string = "invalid encoded input";
+  match (e.kind) {
+    DecodeErrorKind.InvalidByte(byte) => {
+      reason = "invalid byte " + (byte as i32).to_string();
+    },
+    DecodeErrorKind.InvalidLength => {
+      reason = "invalid input length";
+    },
+    DecodeErrorKind.InvalidPadding => {
+      reason = "invalid padding";
+    },
+    DecodeErrorKind.NonZeroTrailingBits => {
+      reason = "nonzero trailing bits";
+    }
+  }
+  return e.encoding + " byte " + e.offset.to_string() + ": " + reason;
+}
+
+pub function error(encoding: string, offset: i32, kind: DecodeErrorKind): DecodeError {
+  return DecodeError { encoding: encoding, offset: offset, kind: kind };
+}
+
+// A missing error means that the pad bytes are valid.
+pub(package) function padding_error(input: string, data_end: i32, max_pad: i32, group: i32, encoding: string): Option[DecodeError] {
+  let i: i32 = data_end;
+  while (i < input.len()) {
+    if (input[i] != 61) {
+      return Some(error(encoding, i, DecodeErrorKind.InvalidPadding));
+    }
+    i = i + 1;
+  }
+  let count: i32 = input.len() - data_end;
+  if (count > max_pad) {
+    return Some(error(encoding, data_end + max_pad, DecodeErrorKind.InvalidPadding));
+  }
+  if (count > 0 && (data_end == 0 || input.len() % group != 0)) {
+    return Some(error(encoding, data_end, DecodeErrorKind.InvalidPadding));
+  }
+  return None;
+}

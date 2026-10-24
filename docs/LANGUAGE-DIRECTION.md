@@ -1184,12 +1184,12 @@ tests.
 - **Standard library shaping.** json, url parsing, base64, hex,
   random — all the usual suspects for edge handlers. After PRs 1-4
   the type system is rich enough to design these properly.
-  - **base64 shipped.** `base64_encode(s)` /
-    `base64_decode(s)` builtins, RFC 4648 standard alphabet,
+  - **base64 shipped.** `encode(s)` /
+    `decode(s)` builtins, RFC 4648 standard alphabet,
     `=` padding on encode, decoding terminates at the first
     non-base64 character. Strings are treated as raw byte
     arrays so the round-trip is content-preserving.
-  - **hex shipped.** `hex_encode(s)` / `hex_decode(s)`
+  - **hex shipped.** `encode(s)` / `decode(s)`
     builtins. Lowercase output (`0-9a-f`); decode accepts
     both cases. Decoding terminates at the first non-hex
     char or odd-length tail without raising — the prefix
@@ -1458,7 +1458,7 @@ the Fern's abstraction layers.
 - **~~`Bytes` vs `[u8]`~~ — settled no nominal type.** `u8[]` is
   the bytes type: owned byte arrays for the codec / crypto /
   `random_bytes` boundary, and `[u8]` for a borrowed view. No
-  standalone `Bytes` newtype. (`base64_encode` / `hex_encode`
+  standalone `Bytes` newtype. (`encode` / `encode`
   and friends originally took a `string` used as a raw byte bag;
   #5730 moved them to `u8[]` so a `string` can carry the D9
   invariant that it is well-formed UTF-8.)

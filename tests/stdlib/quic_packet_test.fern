@@ -2,19 +2,20 @@ import "std/test";
 import "std/quic/packet";
 import "std/tls/keyschedule";
 import "std/hex";
+import "std/codec";
 import "std/i64";
 import "core/int";
 
 function dcid(): u8[] {
-  return hex.hex_decode("8394c8f03e515708");
+  return __codec_bytes(hex.decode("8394c8f03e515708"));
 }
 
 function shown_keys(k: packet.Keys): string {
-  return hex.hex_encode(k.key) + " " + hex.hex_encode(k.iv) + " " + hex.hex_encode(k.hp);
+  return hex.encode(k.key) + " " + hex.encode(k.iv) + " " + hex.encode(k.hp);
 }
 
 function test_initial_keys(): test.TestOutcome {
-  let got: string = hex.hex_encode(packet.initial_secret(dcid(), true)) + "\n" + shown_keys(packet.initial_keys(dcid(), true)) + "\n" + hex.hex_encode(packet.initial_secret(dcid(), false)) + "\n" + shown_keys(packet.initial_keys(dcid(), false));
+  let got: string = hex.encode(packet.initial_secret(dcid(), true)) + "\n" + shown_keys(packet.initial_keys(dcid(), true)) + "\n" + hex.encode(packet.initial_secret(dcid(), false)) + "\n" + shown_keys(packet.initial_keys(dcid(), false));
   return test.assert_eq(got, "c00cf151ca5be075ed0ebfb5c80323c42d6b7db67881289af4008f1f6c357aea\n1f369613dd76d5467730efcbe3b1a22d fa044b2f42a3fd3b46fb255c 9f50449e04a0e810283a1e9933adedd2\n3c199828fd139efd216c155ad844cc81fb82fa8d7446fa7d78be803acdda951b\ncf3a5331653c364c88f0f379b6067e37 0ac1493ca1905853b0bba03e c206b8d9b9f0f37644430b490eeaa314");
 }
 
@@ -29,7 +30,7 @@ function zeros(n: i32): u8[] {
 }
 
 function client_payload(): u8[] {
-  return hex.hex_decode("060040f1010000ed0303ebf8fa56f12939b9584a3896472ec40bb863cfd3e86804fe3a47f06a2b69484c00000413011302010000c000000010000e00000b6578616d706c652e636f6dff01000100000a00080006001d0017001800100007000504616c706e000500050100000000003300260024001d00209370b2c9caa47fbabaf4559fedba753de171fa71f50f1ce15d43e994ec74d748002b0003020304000d0010000e0403050306030203080408050806002d00020101001c00024001003900320408ffffffffffffffff05048000ffff07048000ffff0801100104800075300901100f088394c8f03e51570806048000ffff").concat(zeros(917));
+  return __codec_bytes(hex.decode("060040f1010000ed0303ebf8fa56f12939b9584a3896472ec40bb863cfd3e86804fe3a47f06a2b69484c00000413011302010000c000000010000e00000b6578616d706c652e636f6dff01000100000a00080006001d0017001800100007000504616c706e000500050100000000003300260024001d00209370b2c9caa47fbabaf4559fedba753de171fa71f50f1ce15d43e994ec74d748002b0003020304000d0010000e0403050306030203080408050806002d00020101001c00024001003900320408ffffffffffffffff05048000ffff07048000ffff0801100104800075300901100f088394c8f03e51570806048000ffff")).concat(zeros(917));
 }
 
 function client_packet(): string {
@@ -41,7 +42,7 @@ function opened(wire: u8[], k: packet.Keys, largest: i64): string {
     Ok(h) => {
       match (packet.open(wire, h, k, largest)) {
         Ok(o) => {
-          return "dcid " + hex.hex_encode(h.dcid) + " scid " + hex.hex_encode(h.scid) + " end " + int.int_to_string(h.end) + " pn " + o.pn.to_string() + " payload " + int.int_to_string(o.payload.len()) + " reserved " + o.reserved_ok.to_string();
+          return "dcid " + hex.encode(h.dcid) + " scid " + hex.encode(h.scid) + " end " + int.int_to_string(h.end) + " pn " + o.pn.to_string() + " payload " + int.int_to_string(o.payload.len()) + " reserved " + o.reserved_ok.to_string();
         },
         Err(e) => {
           return "open: " + e;
@@ -58,28 +59,28 @@ function opened(wire: u8[], k: packet.Keys, largest: i64): string {
 function test_client_initial(): test.TestOutcome {
   let k: packet.Keys = packet.initial_keys(dcid(), true);
   let sealed: u8[] = packet.seal_long(packet.Long { kind: packet.Initial, dcid: dcid(), scid: [], token: [], pn: 2 as i64, pn_len: 4 }, client_payload(), k);
-  let same: boolean = hex.hex_encode(sealed) == client_packet();
-  let back: string = opened(hex.hex_decode(client_packet()), k, 0 - 1 as i64);
+  let same: boolean = hex.encode(sealed) == client_packet();
+  let back: string = opened(__codec_bytes(hex.decode(client_packet())), k, 0 - 1 as i64);
   return test.assert_eq(same.to_string() + " " + int.int_to_string(sealed.len()) + " | " + back, "true 1200 | dcid 8394c8f03e515708 scid  end 1200 pn 2 payload 1162 reserved true");
 }
 
 function test_server_initial(): test.TestOutcome {
   let k: packet.Keys = packet.initial_keys(dcid(), false);
-  let payload: u8[] = hex.hex_decode("02000000000600405a020000560303eefce7f7b37ba1d1632e96677825ddf73988cfc79825df566dc5430b9a045a1200130100002e00330024001d00209d3c940d89690b84d08a60993c144eca684d1081287c834d5311bcf32bb9da1a002b00020304");
+  let payload: u8[] = __codec_bytes(hex.decode("02000000000600405a020000560303eefce7f7b37ba1d1632e96677825ddf73988cfc79825df566dc5430b9a045a1200130100002e00330024001d00209d3c940d89690b84d08a60993c144eca684d1081287c834d5311bcf32bb9da1a002b00020304"));
   let want: string = "cf000000010008f067a5502a4262b5004075c0d95a482cd0991cd25b0aac406a5816b6394100f37a1c69797554780bb38cc5a99f5ede4cf73c3ec2493a1839b3dbcba3f6ea46c5b7684df3548e7ddeb9c3bf9c73cc3f3bded74b562bfb19fb84022f8ef4cdd93795d77d06edbb7aaf2f58891850abbdca3d20398c276456cbc42158407dd074ee";
-  let sealed: u8[] = packet.seal_long(packet.Long { kind: packet.Initial, dcid: [], scid: hex.hex_decode("f067a5502a4262b5"), token: [], pn: 1 as i64, pn_len: 2 }, payload, k);
-  return test.assert_eq(hex.hex_encode(sealed) + "\n" + opened(sealed, k, 0 as i64), want + "\ndcid  scid f067a5502a4262b5 end 135 pn 1 payload 99 reserved true");
+  let sealed: u8[] = packet.seal_long(packet.Long { kind: packet.Initial, dcid: [], scid: __codec_bytes(hex.decode("f067a5502a4262b5")), token: [], pn: 1 as i64, pn_len: 2 }, payload, k);
+  return test.assert_eq(hex.encode(sealed) + "\n" + opened(sealed, k, 0 as i64), want + "\ndcid  scid f067a5502a4262b5 end 135 pn 1 payload 99 reserved true");
 }
 
 function test_chacha20_short(): test.TestOutcome {
-  let k: packet.Keys = packet.keys(keyschedule.ChaCha20Poly1305Sha256, hex.hex_decode("9ac312a7f877468ebe69422748ad00a15443f18203a07d6060f688f30f21632b"));
+  let k: packet.Keys = packet.keys(keyschedule.ChaCha20Poly1305Sha256, __codec_bytes(hex.decode("9ac312a7f877468ebe69422748ad00a15443f18203a07d6060f688f30f21632b")));
   let sealed: u8[] = packet.seal_short([], 654360564 as i64, 3, false, false, [1 as u8], k);
   let back: string = "";
   match (packet.parse(sealed, 0, 0)) {
     Ok(h) => {
       match (packet.open(sealed, h, k, 654360563 as i64)) {
         Ok(o) => {
-          back = o.pn.to_string() + " " + hex.hex_encode(o.payload);
+          back = o.pn.to_string() + " " + hex.encode(o.payload);
         },
         Err(e) => {
           back = e;
@@ -90,15 +91,15 @@ function test_chacha20_short(): test.TestOutcome {
       back = e;
     }
   }
-  return test.assert_eq(shown_keys(k) + "\n" + hex.hex_encode(sealed) + "\n" + back, "c6d98ff3441c3fe1b2182094f69caa2ed4b716b65488960a7a984979fb23e1c8 e0459b3474bdd0e44a41c144 25a282b9e82f06f21f488917a4fc8f1b73573685608597d0efcb076b0ab7a7a4\n4cfe4189655e5cd55c41f69080575d7999c25a5bfb\n654360564 01");
+  return test.assert_eq(shown_keys(k) + "\n" + hex.encode(sealed) + "\n" + back, "c6d98ff3441c3fe1b2182094f69caa2ed4b716b65488960a7a984979fb23e1c8 e0459b3474bdd0e44a41c144 25a282b9e82f06f21f488917a4fc8f1b73573685608597d0efcb076b0ab7a7a4\n4cfe4189655e5cd55c41f69080575d7999c25a5bfb\n654360564 01");
 }
 
 function test_retry(): test.TestOutcome {
-  let r: u8[] = packet.retry([], hex.hex_decode("f067a5502a4262b5"), dcid(), "token".bytes());
-  let got: string = hex.hex_encode(r) + " " + packet.retry_valid(r, dcid()).to_string() + " " + packet.retry_valid(r, hex.hex_decode("8394c8f03e515709")).to_string();
+  let r: u8[] = packet.retry([], __codec_bytes(hex.decode("f067a5502a4262b5")), dcid(), "token".bytes());
+  let got: string = hex.encode(r) + " " + packet.retry_valid(r, dcid()).to_string() + " " + packet.retry_valid(r, __codec_bytes(hex.decode("8394c8f03e515709"))).to_string();
   match (packet.parse(r, 0, 8)) {
     Ok(h) => {
-      got = got + " | " + string_from_bytes_unchecked(h.token) + " " + hex.hex_encode(h.tag) + " " + hex.hex_encode(h.scid);
+      got = got + " | " + string_from_bytes_unchecked(h.token) + " " + hex.encode(h.tag) + " " + hex.encode(h.scid);
     },
     Err(e) => {
       got = got + " | " + e;
@@ -113,17 +114,17 @@ function test_packet_numbers(): test.TestOutcome {
 }
 
 function test_version_negotiation(): test.TestOutcome {
-  let probe: u8[] = hex.hex_decode("c0" + "1a2a3a4a" + "04" + "01020304" + "02" + "0506" + "0000000000000000000000000000000000000000");
+  let probe: u8[] = __codec_bytes(hex.decode("c0" + "1a2a3a4a" + "04" + "01020304" + "02" + "0506" + "0000000000000000000000000000000000000000"));
   let got: string = "";
   match (packet.parse(probe, 0, 8)) {
     Ok(h) => {
       let vn: u8[] = packet.version_negotiation(h);
-      got = hex.hex_encode(vn);
+      got = hex.encode(vn);
       match (packet.parse(vn, 0, 8)) {
         Ok(back) => {
           match (back.kind) {
             packet.VersionNegotiation => {
-              got = got + " offers " + back.versions[0].to_string() + " to " + hex.hex_encode(back.dcid);
+              got = got + " offers " + back.versions[0].to_string() + " to " + hex.encode(back.dcid);
             },
             _ => {
               got = got + " not version negotiation";
@@ -145,8 +146,8 @@ function test_version_negotiation(): test.TestOutcome {
 function test_coalesced(): test.TestOutcome {
   let ki: packet.Keys = packet.initial_keys(dcid(), false);
   let kh: packet.Keys = packet.keys(keyschedule.Aes128GcmSha256, zeros(32));
-  let a: u8[] = packet.seal_long(packet.Long { kind: packet.Initial, dcid: dcid(), scid: hex.hex_decode("0102"), token: [], pn: 0 as i64, pn_len: 1 }, [1 as u8], ki);
-  let b: u8[] = packet.seal_long(packet.Long { kind: packet.Handshake, dcid: dcid(), scid: hex.hex_decode("0102"), token: [], pn: 7 as i64, pn_len: 1 }, [1 as u8, 1 as u8], kh);
+  let a: u8[] = packet.seal_long(packet.Long { kind: packet.Initial, dcid: dcid(), scid: __codec_bytes(hex.decode("0102")), token: [], pn: 0 as i64, pn_len: 1 }, [1 as u8], ki);
+  let b: u8[] = packet.seal_long(packet.Long { kind: packet.Handshake, dcid: dcid(), scid: __codec_bytes(hex.decode("0102")), token: [], pn: 7 as i64, pn_len: 1 }, [1 as u8, 1 as u8], kh);
   let datagram: u8[] = a.concat(b);
   let got: string = "";
   match (packet.parse(datagram, 0, 8)) {
@@ -156,7 +157,7 @@ function test_coalesced(): test.TestOutcome {
         Ok(h2) => {
           match (packet.open(datagram, h2, kh, 6 as i64)) {
             Ok(o) => {
-              got = got + " handshake pn " + o.pn.to_string() + " " + hex.hex_encode(o.payload) + " end " + int.int_to_string(h2.end);
+              got = got + " handshake pn " + o.pn.to_string() + " " + hex.encode(o.payload) + " end " + int.int_to_string(h2.end);
             },
             Err(e) => {
               got = got + " " + e;
@@ -178,7 +179,7 @@ function test_coalesced(): test.TestOutcome {
 function test_key_update(): test.TestOutcome {
   let k0: packet.Keys = packet.keys(keyschedule.Aes128GcmSha256, zeros(32));
   let k1: packet.Keys = k0.updated();
-  let sealed: u8[] = packet.seal_short(hex.hex_decode("aabb"), 9 as i64, 1, true, false, [1 as u8, 1 as u8, 1 as u8], k1);
+  let sealed: u8[] = packet.seal_short(__codec_bytes(hex.decode("aabb")), 9 as i64, 1, true, false, [1 as u8, 1 as u8, 1 as u8], k1);
   let with_new: string = "";
   let with_old: string = "";
   match (packet.parse(sealed, 0, 2)) {
@@ -204,8 +205,8 @@ function test_key_update(): test.TestOutcome {
       with_new = e;
     }
   }
-  let same_hp: boolean = hex.hex_encode(k0.hp) == hex.hex_encode(k1.hp);
-  let new_key: boolean = hex.hex_encode(k0.key) != hex.hex_encode(k1.key);
+  let same_hp: boolean = hex.encode(k0.hp) == hex.encode(k1.hp);
+  let new_key: boolean = hex.encode(k0.key) != hex.encode(k1.key);
   return test.assert_eq(with_new + " | " + with_old + " | " + same_hp.to_string() + " " + new_key.to_string(), "9 phase true | packet does not decrypt | true true");
 }
 
@@ -213,7 +214,7 @@ function test_malformed(): test.TestOutcome {
   let got: string = "";
   let cases: string[] = ["", "00", "80", "c000000001", "c0000000011500", "c000000001080102030405060708", "c0000000010000004005", "c0000000010000000100", "f00000000100000102"];
   for c in cases {
-    match (packet.parse(hex.hex_decode(c), 0, 8)) {
+    match (packet.parse(__codec_bytes(hex.decode(c)), 0, 8)) {
       Ok(h) => {
         got = got + "ok end " + int.int_to_string(h.end) + ";";
       },
@@ -238,4 +239,17 @@ function main(): i32 {
   r = r.it("key update", test_key_update);
   r = r.it("malformed headers", test_malformed);
   return r.finish();
+}
+
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

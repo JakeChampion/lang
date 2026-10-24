@@ -123,6 +123,8 @@ both_arms_read_p                                     0
 break_continue                                       0
 byte_slice_after_set_len_regrows                     0
 byte_view_of_a_field_after_a_failed_try              0
+byte_views_in_binary_codecs                         0
+byte_views_in_codecs                                0
 bytes_writer                                         0
 c2_consuming_reuse                                   0
 call_of_a_call_through_a_function_value              0
@@ -153,6 +155,7 @@ closure_field_match                                  0
 closure_field_rebind                                 0
 closure_returns_composite                            0
 cmp_float_traits                                     0
+codec_errors                                         0
 compound_assign_wider                                0
 concat_of_empties                                    0
 concrete_view_methods                                0
@@ -455,6 +458,7 @@ match_wildcard                                       0
 math_range                                           0
 method_type_arg_names_the_method                     0
 method_written_type_arg_result                       0
+minimum_i32_crc_seed                                0
 mock_platform_log                                    0
 module_scoped_variant                                0
 multi_file                                           0
@@ -547,6 +551,7 @@ prop_url_roundtrip                                   0
 pub_use_reexport                                     0
 pure_collection_aliases                              0
 pure_copy                                            0
+payload_struct_patterns                              0
 question_op                                          0
 qualified_struct_patterns                            0
 radix_literals                                       0
@@ -908,6 +913,7 @@ result_of_a_call_through_a_function_field_is_released 0
 result_register_pair                                 0
 scalar_edge_cases                                    0
 scalar_sum_reassign                                  0
+semver_uuid_errors                                   0
 sentinel_roundtrip                                   0
 shadow_captured_by_lambda                            0
 shadow_depth_2                                       0

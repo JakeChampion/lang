@@ -102,7 +102,7 @@ for you.
 import "std/cli";
 
 function main(): i32 {
-    let spec: cli.CliSpec = cli.cli_new("greet", "Say hello")
+    let spec: cli.CliSpec = cli.new("greet", "Say hello")
         .option("name", "n", "who to greet")
         .flag("loud", "l", "shout it");
     let parsed: cli.CliArgs = spec.parse(args());
@@ -234,10 +234,11 @@ std/json's `json.JsonValue` is an ordinary enum, so a document is an ordinary va
 import "std/json";
 
 function main(): i32 {
-    let doc: json.JsonValue = JObject(json.object()
-        .insert("name", JString("fern"))
-        .insert("stars", JNumber("42"))
-        .insert("tags", JArray([JString("cli"), JString("wasm")])));
+    let doc: json.JsonValue = JObject(json.from([
+        ("name", JString("fern")),
+        ("stars", JNumber("42")),
+        ("tags", JArray([JString("cli"), JString("wasm")]))
+    ]));
     print(json.json_encode(doc));
     return 0;
 }
@@ -312,14 +313,14 @@ there too.
 import "std/path";
 
 function main(): i32 {
-    let p: string = path.path_join(["build", "out", "report.txt"]);
+    let p: string = path.join(["build", "out", "report.txt"]);
     print(p);                                   // build/out/report.txt
-    print(path.path_parent(p));                 // build/out
-    print(path.path_file_name(p));              // report.txt
-    print(path.path_stem(p));                   // report
-    print(path.path_extension(p));              // txt
-    print(path.path_with_extension(p, "md"));   // build/out/report.md
-    print(path.path_clean("a/./b/../c//d/"));   // a/c/d
+    print(path.parent(p));                 // build/out
+    print(path.file_name(p));              // report.txt
+    print(path.stem(p));                   // report
+    print(path.extension(p));              // txt
+    print(path.with_extension(p, "md"));   // build/out/report.md
+    print(path.clean("a/./b/../c//d/"));   // a/c/d
     return 0;
 }
 ```

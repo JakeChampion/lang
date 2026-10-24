@@ -1,5 +1,4 @@
 // This module encodes, decodes, and validates UTF-8 code points.
-
 import "std/string";
 
 pub function utf8_decode_at(s: string, i: i32): Option[(i32, i32)] {
@@ -193,16 +192,16 @@ pub function is_valid_utf8(s: string): boolean {
   return true;
 }
 
-pub function from_bytes(b: u8[]): Option[string] {
-  let s: string = string_from_bytes_unchecked(b);
+pub function from_bytes(b: [u8]): Option[string] {
+  let s: string = string_from_bytes_unchecked(__bytes_owned(b));
   if (is_valid_utf8(s)) {
     return Some(s);
   }
   return None;
 }
 
-pub function from_bytes_lossy(b: u8[]): string {
-  let s: string = string_from_bytes_unchecked(b);
+pub function from_bytes_lossy(b: [u8]): string {
+  let s: string = string_from_bytes_unchecked(__bytes_owned(b));
   if (is_valid_utf8(s)) {
     return s;
   }

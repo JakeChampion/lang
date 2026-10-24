@@ -22,26 +22,28 @@ import "std/utf8" as utf8;
 
 
 function show(label: string, s: string): void {
-    let verdict: string = "INVALID";
-    if (utf8.is_valid_utf8(s)) { verdict = "valid"; }
-    print(label + "=" + s + " len=" + s.len().to_string() + " " + verdict);
+  let verdict: string = "INVALID";
+  if (utf8.is_valid_utf8(s)) {
+    verdict = "valid";
+  }
+  print(label + "=" + s + " len=" + s.len().to_string() + " " + verdict);
 }
 
 function main(): i32 {
 
-    show("pad_start", "a".pad_start(4, "é"));
-    show("pad_end", "a".pad_end(4, "é"));
-    show("center", "a".center(6, "ß"));
-    show("exact", "ab".pad_start(6, "é"));
-    show("four_byte", "a".center(9, "𝄞"));
+  show("pad_start", "a".pad_start(4, 'é'));
+  show("pad_end", "a".pad_end(4, 'é'));
+  show("center", "a".center(6, 'ß'));
+  show("exact", "ab".pad_start(6, 'é'));
+  show("four_byte", "a".center(9, '𝄞'));
 
 
-    show("zeros", "42".pad_start(5, "0"));
-    show("spaces", "ab".pad_end(5, " "));
-    show("dashes", "x".center(7, "-"));
+  show("zeros", "42".pad_start(5, '0'));
+  show("spaces", "ab".pad_end(5, ' '));
+  show("dashes", "x".center(7, '-'));
 
 
-    show("already_long", "long".pad_start(2, "0"));
-    show("empty_fill", "q".pad_start(5, ""));
-    return 0;
+  show("already_long", "long".pad_start(2, '0'));
+  show("no_whole_fill", "q".pad_start(2, 'é'));
+  return 0;
 }

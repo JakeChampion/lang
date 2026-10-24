@@ -809,8 +809,8 @@ function getmonth(text: u8[], from: i32, end: i32): i64 {
 }
 
 function compare_random(seed: [u8], ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 {
-  let da: u8[] = crypto.md5_new().update_bytes(seed).update_bytes(ta[a0:a1]).final_bytes();
-  let db: u8[] = crypto.md5_new().update_bytes(seed).update_bytes(tb[b0:b1]).final_bytes();
+  let da: u8[] = crypto.md5_new().update(seed).update(ta[a0:a1]).final_bytes();
+  let db: u8[] = crypto.md5_new().update(seed).update(tb[b0:b1]).final_bytes();
   let i: i32 = 0;
   while (i < da.len()) {
     let x: i32 = da[i] as i32;

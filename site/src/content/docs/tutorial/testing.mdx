@@ -210,7 +210,7 @@ function main(): i32 {
     let r: test.TestRunner = test.test_new("fuzz");
     r = r.fuzz("to_upper idempotent",
                ["".bytes(), "abc".bytes(), "Hello".bytes()],
-               fuzz.fuzz_default_iterations(),
+               fuzz.DEFAULT_ITERATIONS,
                check_to_upper_idempotent);
     return r.finish();
 }
@@ -220,7 +220,7 @@ The harness picks among eight mutations — byte flip, drop, insert and
 duplicate, bit flip, set a byte to `0x00` or `0xFF`, or run the seed
 unchanged. Failures stop the loop and report the input with
 non-printable bytes escaped to `\xNN`, so the log doubles as a
-reproducer. `fuzz.fuzz_run_seeded` fixes the random seed, so a run can be
+reproducer. `fuzz.run_seeded` fixes the random seed, so a run can be
 replayed exactly.
 
 ### Shrinking

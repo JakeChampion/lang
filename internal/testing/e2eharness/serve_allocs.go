@@ -177,6 +177,7 @@ func ServeAllocsH3ServerSource(port, rounds int) string {
 import "std/serve";
 import "std/platform";
 import "std/hex";
+import "std/codec";
 import "std/tls/identity";
 import "std/tls/server";
 %s
@@ -188,8 +189,16 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 function main(): i32 {
     let Ok(k) = identity.private_key_from_pem(ED_PKCS8) else { return 2; };
-    let Ok(id) = identity.pair([hex.hex_decode(ED_LEAF)], k) else { return 3; };
+    let Ok(id) = identity.pair([__codec_bytes(hex.decode(ED_LEAF))], k) else { return 3; };
     return serve.run(%d, serve.Config { ...serve.config().with_tls(server.config(id)).with_h3(), keep_alive_requests: %d }, handle);
+}
+
+// Decode a valid fixture. Report a malformed fixture before ending the test.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => { return bytes; },
+    Err(problem) => { eprint(problem.message()); exit(98); return []; }
+  }
 }
 `, serveAllocsH3Identity, port, serveAllocsWarm+rounds+8)
 }
@@ -284,7 +293,8 @@ function main(): i32 {
   let Some(rounds) = argv[2].parse_int() else {
     return 2;
   };
-  let cfg: conn.Config = h3q.transport(conn.config([]).client_side("tls.example", verify.roots([hex.hex_decode(ROOT)])));
+  let Ok(root) = hex.decode(ROOT) else { return 2; };
+  let cfg: conn.Config = h3q.transport(conn.config([]).client_side("tls.example", verify.roots([root])));
   let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), now_unix_ms()) else {
     return 2;
   };
@@ -409,7 +419,8 @@ function main(): i32 {
   let Some(m) = argv[3].parse_int() else {
     return 2;
   };
-  let cfg: conn.Config = h3q.transport(conn.config([]).client_side("tls.example", verify.roots([hex.hex_decode(ROOT)])));
+  let Ok(root) = hex.decode(ROOT) else { return 2; };
+  let cfg: conn.Config = h3q.transport(conn.config([]).client_side("tls.example", verify.roots([root])));
   let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), now_unix_ms()) else {
     return 2;
   };

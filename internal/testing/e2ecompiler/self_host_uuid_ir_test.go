@@ -19,8 +19,8 @@ function validate(u: string, ver: i32): i32 {
 		name string
 		src  string
 	}{
-		{"v4", validate + `function main(): i32 { return validate(uuid.uuid_v4(), 52); }`},
-		{"v7", validate + `function main(): i32 { return validate(uuid.uuid_v7(), 55); }`},
+		{"v4", validate + `function main(): i32 { return validate(uuid.v4(), 52); }`},
+		{"v7", validate + `function main(): i32 { return validate(uuid.v7(), 55); }`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

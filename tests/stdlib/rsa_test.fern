@@ -1,5 +1,6 @@
 import "std/test";
 import "std/hex";
+import "std/codec";
 import "std/string";
 import "std/crypto/rsa";
 import "std/crypto/sha2";
@@ -57,9 +58,9 @@ function message(): u8[] {
 }
 
 function pkcs1(n: string, h: sha2.Hash, msg: u8[], sig: string): boolean {
-  match (rsa.public_key(hex.hex_decode(n), hex.hex_decode("010001"))) {
+  match (rsa.public_key(__codec_bytes(hex.decode(n)), __codec_bytes(hex.decode("010001")))) {
     Ok(k) => {
-      return rsa.verify_pkcs1v15(k, h, msg, hex.hex_decode(sig));
+      return rsa.verify_pkcs1v15(k, h, msg, __codec_bytes(hex.decode(sig)));
     },
     Err(e) => {
       return false;
@@ -69,9 +70,9 @@ function pkcs1(n: string, h: sha2.Hash, msg: u8[], sig: string): boolean {
 }
 
 function pss(n: string, h: sha2.Hash, msg: u8[], sig: string): boolean {
-  match (rsa.public_key(hex.hex_decode(n), hex.hex_decode("010001"))) {
+  match (rsa.public_key(__codec_bytes(hex.decode(n)), __codec_bytes(hex.decode("010001")))) {
     Ok(k) => {
-      return rsa.verify_pss(k, h, msg, hex.hex_decode(sig));
+      return rsa.verify_pss(k, h, msg, __codec_bytes(hex.decode(sig)));
     },
     Err(e) => {
       return false;
@@ -125,9 +126,9 @@ function test_refusals(): test.TestOutcome {
   if (pkcs1(k2048_n(), sha2.Sha256, other, k2048_pkcs1_sha256()) || pss(k2048_n(), sha2.Sha256, other, k2048_pss_sha256())) {
     return test.fail("a signature over another message verified");
   }
-  let flipped: u8[] = hex.hex_decode(k2048_pss_sha256());
+  let flipped: u8[] = __codec_bytes(hex.decode(k2048_pss_sha256()));
   flipped = flipped.with(100, flipped[100] ^ 1 as u8);
-  if (pss(k2048_n(), sha2.Sha256, message(), hex.hex_encode(flipped))) {
+  if (pss(k2048_n(), sha2.Sha256, message(), hex.encode(flipped))) {
     return test.fail("a flipped bit verified");
   }
   if (pss(k2048_n(), sha2.Sha256, message(), k2048_pkcs1_sha256()) || pkcs1(k2048_n(), sha2.Sha256, message(), k2048_pss_sha256())) {
@@ -143,7 +144,7 @@ function test_refusals(): test.TestOutcome {
 }
 
 function key_refusal(n: string, e: string): string {
-  match (rsa.public_key(hex.hex_decode(n), hex.hex_decode(e))) {
+  match (rsa.public_key(__codec_bytes(hex.decode(n)), __codec_bytes(hex.decode(e)))) {
     Ok(k) => {
       return "accepted";
     },
@@ -155,7 +156,7 @@ function key_refusal(n: string, e: string): string {
 }
 
 function test_bad_keys(): test.TestOutcome {
-  match (rsa.public_key(hex.hex_decode("c3"), hex.hex_decode("010001"))) {
+  match (rsa.public_key(__codec_bytes(hex.decode("c3")), __codec_bytes(hex.decode("010001")))) {
     Ok(k) => {
       return test.fail("an 8-bit modulus was accepted");
     },
@@ -199,4 +200,17 @@ function main(): i32 {
   r = r.it("refusals", test_refusals);
   r = r.it("malformed keys", test_bad_keys);
   return r.finish();
+}
+
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

@@ -25,7 +25,7 @@ pub function (c: Config) with_alpn(protocols: string[]): Config {
 }
 
 pub function (c: Config) with_ticket_key(key: u8[]): Config {
-  return Config { ...c, ticket_key: crypto.sha256_new().update_bytes(key).final_bytes() };
+  return Config { ...c, ticket_key: crypto.sha256_new().update(key).final_bytes() };
 }
 
 pub function (c: Config) with_ticket_lifetime(d: Duration): Config {

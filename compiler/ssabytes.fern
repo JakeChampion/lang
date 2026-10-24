@@ -241,6 +241,49 @@ pub function slice_frame(src: i32, lo: i32, hi: i32): ir.Op[] {
   ]);
 }
 
+// Both byte-view layouts use the accelerated CRC kernels.
+// An empty null view retains the input CRC.
+pub function crc32_name(): string {
+  return "__sem_byte_view_crc32";
+}
+
+function crc32(): irtables.LowerResult {
+  return body(crc32_name(), 2, 2, [
+    ir.op_load_local(1), ir.op_const_i32(0), ir.op_bin("eq", ir.width_ptr(), false), ir.op_if(0),
+    ir.op_load_local(0), ir.op_return(), ir.op_end(),
+    ir.op_load_local(1), ir.op_const_i32(2), ir.op_bin("and", 0, false), ir.op_if(0),
+    ir.op_load_local(0), ir.op_load_local(1), ir.op_const_i32(0 - 2), ir.op_raw_addr(),
+    ir.op_crc32_cksum(), ir.op_return(), ir.op_end(),
+    ir.op_load_local(0), ir.op_load_local(1), ir.packed(ir.op_crc32_cksum_array()), ir.op_return(),
+  ]);
+}
+
+pub function sum_name(): string {
+  return "__sem_byte_view_sum";
+}
+
+pub function bsd_name(): string {
+  return "__sem_byte_view_bsd";
+}
+
+function sum(): irtables.LowerResult {
+  return reader(sum_name(), [ir.op_sum_bytes()], [ir.packed(ir.op_sum_bytes_array())], 1);
+}
+
+function bsd(): irtables.LowerResult {
+  return reader(bsd_name(), [ir.op_load_local(1), ir.op_bsd_sum()], [ir.op_load_local(1), ir.packed(ir.op_bsd_sum_bytes())], 2);
+}
+
+// The returned string owns a copy of the borrowed bytes.
+// A frame view can lose its storage even if its descriptor remains.
+pub function string_name(): string {
+  return "__sem_byte_view_string";
+}
+
+function string_copy(): irtables.LowerResult {
+  return reader(string_name(), [ir.op_const_str(""), ir.op_str_concat()], [ir.packed(ir.op_str_from_bytes())], 1);
+}
+
 pub function helpers(): irtables.LowerResult[] {
-  return [length(), data(), slice(), release()];
+  return [length(), data(), slice(), release(), crc32(), sum(), bsd(), string_copy()];
 }

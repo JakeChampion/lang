@@ -3358,7 +3358,7 @@ func (p *parser) isNestedPatternStart() bool {
 	}
 	if t.Kind == lexer.Ident && t.Text != "_" {
 		n := p.peekAt(1)
-		if n.Kind == lexer.Punct && (n.Text == "(" || n.Text == "{" || n.Text == ".") {
+		if n.Kind == lexer.Punct && (n.Text == "(" || n.Text == "{" || n.Text == "." || n.Text == "@") {
 			return true
 		}
 	}
@@ -3901,8 +3901,9 @@ func (p *parser) parseLet(captureRest bool) (ast.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The else keyword marks the end of the complete initializer expression.
 	prevNS := p.noStructLit
-	p.noStructLit = !qualifiedRecord || prevNS
+	p.noStructLit = false
 	src, err := p.parseExpr()
 	p.noStructLit = prevNS
 	if err != nil {

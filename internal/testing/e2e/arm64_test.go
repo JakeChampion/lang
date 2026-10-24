@@ -6613,10 +6613,10 @@ import "std/csv";
 import "std/http";
 function main(): i32 {
     // center
-    if ("hi".center(6, "-") != "--hi--") { return 1; }
-    if ("hi".center(7, "-") != "--hi---") { return 2; }   // odd → right
-    if ("hi".center(2, "-") != "hi") { return 3; }
-    if ("hello".center(3, "-") != "hello") { return 4; }
+    if ("hi".center(6, '-') != "--hi--") { return 1; }
+    if ("hi".center(7, '-') != "--hi---") { return 2; }   // odd → right
+    if ("hi".center(2, '-') != "hi") { return 3; }
+    if ("hello".center(3, '-') != "hello") { return 4; }
 
     // reverse_words
     if ("one two three".reverse_words() != "three two one") { return 5; }
@@ -6843,9 +6843,9 @@ function main(): i32 {
     // Log helpers — sanity-check they don't crash; output
     // goes to stderr so the e2e harness exit-code check still
     // sees the program's intended return value.
-    log.log_info("test info");
-    log.log_warn("test warn");
-    log.log_error("test error");
+    log.info("test info");
+    log.warn("test warn");
+    log.error("test error");
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -7093,9 +7093,9 @@ function main(): i32 {
 
     // repeated chars via pad_start (repeat_char dropped: std/string
     // free fns are uncallable under no-prelude — qualifier is a keyword)
-    if ("".pad_start(4, "x") != "xxxx") { return 18; }
-    if ("".pad_start(5, "-") != "-----") { return 19; }
-    if ("".pad_start(0, "x") != "") { return 20; }
+    if ("".pad_start(4, 'x') != "xxxx") { return 18; }
+    if ("".pad_start(5, '-') != "-----") { return 19; }
+    if ("".pad_start(0, 'x') != "") { return 20; }
 
     // http_status_text
     if (http.http_status_text(200) != "OK") { return 21; }
@@ -7378,11 +7378,11 @@ func TestArm64StdlibBundle(t *testing.T) {
 import "std/string";
 function main(): i32 {
     // pad_start / pad_end
-    if ("42".pad_start(5, "0") != "00042") { return 1; }
-    if ("42".pad_end(5, " ") != "42   ") { return 2; }
-    if ("longer".pad_start(3, "0") != "longer") { return 3; }
-    if ("x".pad_start(3, "") != "x") { return 4; }       // empty ch → no-op
-    if ("".pad_start(3, "ab") != "aaa") { return 5; }    // only first byte of ch
+    if ("42".pad_start(5, '0') != "00042") { return 1; }
+    if ("42".pad_end(5, ' ') != "42   ") { return 2; }
+    if ("longer".pad_start(3, '0') != "longer") { return 3; }
+    if ("x".pad_start(2, 'é') != "x") { return 4; }       // no whole fill character fits
+    if ("".pad_start(3, 'a') != "aaa") { return 5; }    // repeat one fill character
 
     // split_once — first match wins, empty sep / no-match → None
     match ("key=value".split_once("=")) {
@@ -7438,42 +7438,42 @@ func TestArm64Paths(t *testing.T) {
 	src := `
 import "std/path";
 function main(): i32 {
-    // path_join — simple, leading/trailing slashes, empty parts.
-    if (path.path_join(["a", "b", "c"]) != "a/b/c") { return 1; }
-    if (path.path_join(["/usr", "local", "bin"]) != "/usr/local/bin") { return 2; }
-    if (path.path_join(["a", "", "b"]) != "a/b") { return 3; }
-    if (path.path_join(["a/", "b"]) != "a/b") { return 4; }
-    if (path.path_join(["a/", "/b"]) != "a/b") { return 5; }
-    if (path.path_join(["a", "/b"]) != "a/b") { return 6; }
-    if (path.path_join(["/", "a"]) != "/a") { return 7; }
-    if (path.path_join(["solo"]) != "solo") { return 8; }
+    // path.join — simple, leading/trailing slashes, empty parts.
+    if (path.join(["a", "b", "c"]) != "a/b/c") { return 1; }
+    if (path.join(["/usr", "local", "bin"]) != "/usr/local/bin") { return 2; }
+    if (path.join(["a", "", "b"]) != "a/b") { return 3; }
+    if (path.join(["a/", "b"]) != "a/b") { return 4; }
+    if (path.join(["a/", "/b"]) != "a/b") { return 5; }
+    if (path.join(["a", "/b"]) != "a/b") { return 6; }
+    if (path.join(["/", "a"]) != "/a") { return 7; }
+    if (path.join(["solo"]) != "solo") { return 8; }
     let empty: string[] = [];
-    if (path.path_join(empty) != "") { return 9; }
+    if (path.join(empty) != "") { return 9; }
 
-    // path_parent — handle root and trailing-slash cases.
-    if (path.path_parent("/a/b/c") != "/a/b") { return 10; }
-    if (path.path_parent("a/b") != "a") { return 11; }
-    if (path.path_parent("a") != "") { return 12; }
-    if (path.path_parent("/") != "/") { return 13; }
-    if (path.path_parent("") != "") { return 14; }
-    if (path.path_parent("/a") != "/") { return 15; }
-    if (path.path_parent("/a/b/") != "/a") { return 16; }
+    // path.parent — handle root and trailing-slash cases.
+    if (path.parent("/a/b/c") != "/a/b") { return 10; }
+    if (path.parent("a/b") != "a") { return 11; }
+    if (path.parent("a") != "") { return 12; }
+    if (path.parent("/") != "/") { return 13; }
+    if (path.parent("") != "") { return 14; }
+    if (path.parent("/a") != "/") { return 15; }
+    if (path.parent("/a/b/") != "/a") { return 16; }
 
-    // path_file_name — last component.
-    if (path.path_file_name("/a/b/c.txt") != "c.txt") { return 17; }
-    if (path.path_file_name("file") != "file") { return 18; }
-    if (path.path_file_name("/") != "") { return 19; }
-    if (path.path_file_name("") != "") { return 20; }
-    if (path.path_file_name("a/b/") != "b") { return 21; }
+    // path.file_name — last component.
+    if (path.file_name("/a/b/c.txt") != "c.txt") { return 17; }
+    if (path.file_name("file") != "file") { return 18; }
+    if (path.file_name("/") != "") { return 19; }
+    if (path.file_name("") != "") { return 20; }
+    if (path.file_name("a/b/") != "b") { return 21; }
 
-    // path_extension — last .X suffix on the last component.
-    if (path.path_extension("a.txt") != "txt") { return 22; }
-    if (path.path_extension("/path/to/file.log") != "log") { return 23; }
-    if (path.path_extension("multi.dot.tar.gz") != "gz") { return 24; }
-    if (path.path_extension("noext") != "") { return 25; }
-    if (path.path_extension(".hidden") != "") { return 26; }    // leading-dot file
-    if (path.path_extension("a.b/.hidden") != "") { return 27; }
-    if (path.path_extension("") != "") { return 28; }
+    // path.extension — last .X suffix on the last component.
+    if (path.extension("a.txt") != "txt") { return 22; }
+    if (path.extension("/path/to/file.log") != "log") { return 23; }
+    if (path.extension("multi.dot.tar.gz") != "gz") { return 24; }
+    if (path.extension("noext") != "") { return 25; }
+    if (path.extension(".hidden") != "") { return 26; }    // leading-dot file
+    if (path.extension("a.b/.hidden") != "") { return 27; }
+    if (path.extension("") != "") { return 28; }
 
     return 0;
 }`

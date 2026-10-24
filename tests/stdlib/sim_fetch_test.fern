@@ -330,7 +330,7 @@ function __gzip_stored(body: string): u8[] {
   for b in body.bytes() {
     out = out.append(b);
   }
-  let crc: u32 = hash.crc32_of(body);
+  let crc: u32 = hash.crc32_of(body.as_bytes());
   let i: i32 = 0;
   while (i < 4) {
     out = out.append((crc >> (8 * i) as u32 & 255 as u32) as u8);
@@ -892,6 +892,13 @@ function test_cassette_https_and_refusal(): test.TestOutcome {
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(replayed, fetch.get("http://api.test/x"), __public());
   if (__message(got) != "status 201" || __body(got) != "made") {
     return test.fail(__message(got) + " " + __body(got));
+  }
+  let bad_hex: string = "{\"method\":\"GET\",\"url\":\"http://api.test/x\",\"status\":200,\"body_hex\":\"0g\"}\n";
+  match (sim_fetch.net(d).replay(bad_hex)) {
+    Ok(_) => {
+      return test.fail("invalid body hex is not an exchange");
+    },
+    Err(_) => {}
   }
   match (sim_fetch.net(d).replay(cassette + "[1,2]\n")) {
     Ok(_) => {

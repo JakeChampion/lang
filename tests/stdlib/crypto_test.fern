@@ -1,42 +1,43 @@
 import "std/test";
 import "std/crypto" as crypto;
 import "std/hex";
+import "std/codec";
 import "std/string";
 
 function test_sha256_empty(): test.TestOutcome {
   return test.assert_eq(
-    crypto.sha256_hex(""),
+    crypto.sha256_hex("".as_bytes()),
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   );
 }
 
 function test_sha256_abc(): test.TestOutcome {
   return test.assert_eq(
-    crypto.sha256_hex("abc"),
+    crypto.sha256_hex("abc".as_bytes()),
     "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
   );
 }
 
 function test_sha256_pangram(): test.TestOutcome {
   return test.assert_eq(
-    crypto.sha256_hex("The quick brown fox jumps over the lazy dog"),
+    crypto.sha256_hex("The quick brown fox jumps over the lazy dog".as_bytes()),
     "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592",
   );
 }
 
 function test_sha256_bytes_len(): test.TestOutcome {
-  return test.assert_eq(crypto.sha256_bytes("abc").len(), 32);
+  return test.assert_eq(crypto.sha256_bytes("abc".as_bytes()).len(), 32);
 }
 
 function test_hmac_sha256(): test.TestOutcome {
   return test.assert_eq(
-    crypto.hmac_sha256_hex("key".bytes(), "The quick brown fox jumps over the lazy dog"),
+    crypto.hmac_sha256_hex("key".bytes(), "The quick brown fox jumps over the lazy dog".as_bytes()),
     "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8",
   );
 }
 
 function test_hmac_bytes_len(): test.TestOutcome {
-  return test.assert_eq(crypto.hmac_sha256_bytes("key".bytes(), "msg").len(), 32);
+  return test.assert_eq(crypto.hmac_sha256("key".as_bytes(), "msg".as_bytes()).len(), 32);
 }
 
 function test_consteq(): test.TestOutcome {
@@ -50,20 +51,20 @@ function test_consteq(): test.TestOutcome {
 }
 
 function test_hmac_verify(): test.TestOutcome {
-  let mac: u8[] = crypto.hmac_sha256_bytes("key".bytes(), "The quick brown fox jumps over the lazy dog");
+  let mac: u8[] = crypto.hmac_sha256("key".as_bytes(), "The quick brown fox jumps over the lazy dog".as_bytes());
   return test.assert_true(
-    crypto.hmac_verify("key".bytes(), "The quick brown fox jumps over the lazy dog", mac)
-      && !crypto.hmac_verify("wrongkey".bytes(), "The quick brown fox jumps over the lazy dog", mac),
+    crypto.hmac_verify("key".bytes(), "The quick brown fox jumps over the lazy dog".as_bytes(), mac)
+      && !crypto.hmac_verify("wrongkey".bytes(), "The quick brown fox jumps over the lazy dog".as_bytes(), mac),
   );
 }
 
 function test_hmac_verify_hex(): test.TestOutcome {
   return test.assert_true(
     crypto.hmac_verify_hex(
-      "key".bytes(), "The quick brown fox jumps over the lazy dog",
+      "key".bytes(), "The quick brown fox jumps over the lazy dog".as_bytes(),
       "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8",
     ) && !crypto.hmac_verify_hex(
-      "key".bytes(), "The quick brown fox jumps over the lazy dog",
+      "key".bytes(), "The quick brown fox jumps over the lazy dog".as_bytes(),
       "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd9",
     ),
   );
@@ -71,35 +72,35 @@ function test_hmac_verify_hex(): test.TestOutcome {
 
 function test_pbkdf2_c1(): test.TestOutcome {
   return test.assert_eq(
-    crypto.pbkdf2_sha256_hex("password", "salt".bytes(), 1, 32),
+    crypto.pbkdf2_sha256_hex("password".as_bytes(), "salt".bytes(), 1, 32),
     "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b",
   );
 }
 
 function test_pbkdf2_c2(): test.TestOutcome {
   return test.assert_eq(
-    crypto.pbkdf2_sha256_hex("password", "salt".bytes(), 2, 32),
+    crypto.pbkdf2_sha256_hex("password".as_bytes(), "salt".bytes(), 2, 32),
     "ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43",
   );
 }
 
 function test_pbkdf2_truncated(): test.TestOutcome {
   return test.assert_eq(
-    crypto.pbkdf2_sha256_hex("password", "salt".bytes(), 1, 16),
+    crypto.pbkdf2_sha256_hex("password".as_bytes(), "salt".bytes(), 1, 16),
     "120fb6cffcf8b32c43e7225256c4f837",
   );
 }
 
 function test_pbkdf2_verify(): test.TestOutcome {
   let stored: string = "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b";
-  if (!crypto.pbkdf2_verify_hex("password", "salt".bytes(), 1, stored)) {
+  if (!crypto.pbkdf2_verify_hex("password".as_bytes(), "salt".bytes(), 1, stored)) {
     return test.fail("should accept");
   }
-  if (crypto.pbkdf2_verify_hex("wrongpw", "salt".bytes(), 1, stored)) {
+  if (crypto.pbkdf2_verify_hex("wrongpw".as_bytes(), "salt".bytes(), 1, stored)) {
     return test.fail("wrong password accepted");
   }
   let tampered: string = "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17a";
-  return test.assert_false(crypto.pbkdf2_verify_hex("password", "salt".bytes(), 1, tampered));
+  return test.assert_false(crypto.pbkdf2_verify_hex("password".as_bytes(), "salt".bytes(), 1, tampered));
 }
 
 function __hkdf_byte_rep(b: i32, n: i32): u8[] {
@@ -149,42 +150,42 @@ function test_hkdf_expand_matches_oneshot(): test.TestOutcome {
 }
 
 function test_hmac_sha384_rfc4231(): test.TestOutcome {
-  if (hex.hex_encode(crypto.hmac_sha384(__hkdf_byte_rep(0x0b, 20), "Hi There".bytes())) != "afd03944d84895626b0825f4ab46907f15f9dadbe4101ec682aa034c7cebc59cfaea9ea9076ede7f4af152e8b2fa9cb6") {
+  if (hex.encode(crypto.hmac_sha384(__hkdf_byte_rep(0x0b, 20), "Hi There".bytes())) != "afd03944d84895626b0825f4ab46907f15f9dadbe4101ec682aa034c7cebc59cfaea9ea9076ede7f4af152e8b2fa9cb6") {
     return test.fail("test case 1");
   }
-  if (hex.hex_encode(crypto.hmac_sha384("Jefe".bytes(), "what do ya want for nothing?".bytes())) != "af45d2e376484031617f78d2b58a6b1b9c7ef464f5a01b47e42ec3736322445e8e2240ca5e69e2c78b3239ecfab21649") {
+  if (hex.encode(crypto.hmac_sha384("Jefe".bytes(), "what do ya want for nothing?".bytes())) != "af45d2e376484031617f78d2b58a6b1b9c7ef464f5a01b47e42ec3736322445e8e2240ca5e69e2c78b3239ecfab21649") {
     return test.fail("test case 2");
   }
   return test.assert_eq(
-    hex.hex_encode(crypto.hmac_sha384(__hkdf_byte_rep(0xaa, 131), "Test Using Larger Than Block-Size Key - Hash Key First".bytes())),
+    hex.encode(crypto.hmac_sha384(__hkdf_byte_rep(0xaa, 131), "Test Using Larger Than Block-Size Key - Hash Key First".bytes())),
     "4ece084485813e9088d2c63a041bc5b44f9ef1012a2b588f3cd11f05033ac4c60c2ef6ab4030fe8296248df163f44952",
   );
 }
 
 function test_hmac_sha256_bytes_message(): test.TestOutcome {
   return test.assert_eq(
-    hex.hex_encode(crypto.hmac_sha256(__hkdf_byte_rep(0x0b, 20), "Hi There".bytes())),
+    hex.encode(crypto.hmac_sha256(__hkdf_byte_rep(0x0b, 20), "Hi There".bytes())),
     "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7",
   );
 }
 
 function test_hkdf_sha384(): test.TestOutcome {
   let ikm: u8[] = __hkdf_byte_rep(11, 22);
-  let salt: u8[] = hex.hex_decode("000102030405060708090a0b0c");
-  let info: u8[] = hex.hex_decode("f0f1f2f3f4f5f6f7f8f9");
+  let salt: u8[] = __codec_bytes(hex.decode("000102030405060708090a0b0c"));
+  let info: u8[] = __codec_bytes(hex.decode("f0f1f2f3f4f5f6f7f8f9"));
   let prk: u8[] = crypto.hkdf_sha384_extract(salt, ikm);
-  if (hex.hex_encode(prk) != "704b39990779ce1dc548052c7dc39f303570dd13fb39f7acc564680bef80e8dec70ee9a7e1f3e293ef68eceb072a5ade") {
+  if (hex.encode(prk) != "704b39990779ce1dc548052c7dc39f303570dd13fb39f7acc564680bef80e8dec70ee9a7e1f3e293ef68eceb072a5ade") {
     return test.fail("extract");
   }
-  if (hex.hex_encode(crypto.hkdf_sha384(salt, ikm, info, 42)) != "9b5097a86038b805309076a44b3a9f38063e25b516dcbf369f394cfab43685f748b6457763e4f0204fc5") {
+  if (hex.encode(crypto.hkdf_sha384(salt, ikm, info, 42)) != "9b5097a86038b805309076a44b3a9f38063e25b516dcbf369f394cfab43685f748b6457763e4f0204fc5") {
     return test.fail("42 bytes");
   }
   let e: u8[] = [];
-  if (hex.hex_encode(crypto.hkdf_sha384_extract(e, ikm)) != "10e40cf072a4c5626e43dd22c1cf727d4bb140975c9ad0cbc8e45b40068f8f0ba57cdb598af9dfa6963a96899af047e5") {
+  if (hex.encode(crypto.hkdf_sha384_extract(e, ikm)) != "10e40cf072a4c5626e43dd22c1cf727d4bb140975c9ad0cbc8e45b40068f8f0ba57cdb598af9dfa6963a96899af047e5") {
     return test.fail("empty salt");
   }
   return test.assert_eq(
-    hex.hex_encode(crypto.hkdf_sha384_expand(prk, info, 100)),
+    hex.encode(crypto.hkdf_sha384_expand(prk, info, 100)),
     "9b5097a86038b805309076a44b3a9f38063e25b516dcbf369f394cfab43685f748b6457763e4f0204fc5d95d1da3e62587b22eb8943d0fab6bb631a2fe9df1a68c6ce5d56116a52005b3f122b88b39b7251fcd6c44d3ef25f20ed96802bf1b2c1d98bf74",
   );
 }
@@ -194,12 +195,12 @@ function __a3x200(): u8[] {
 }
 
 function __sha3_256_of(b: u8[]): string {
-  return crypto.sha3_256_new().update_bytes(b).final_hex();
+  return crypto.sha3_256_new().update(b).final_hex();
 }
 
 function test_shake128_empty(): test.TestOutcome {
   let e: u8[] = [];
-  if (hex.hex_encode(crypto.shake128(e, 32)) != "7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26") {
+  if (hex.encode(crypto.shake128(e, 32)) != "7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26") {
     return test.fail("32 bytes");
   }
   if (__sha3_256_of(crypto.shake128(e, 200)) != "0d8eb608fbb0c0196e2bb58ecd41e47aac9fbfbc2334e02e5d5a5767bf0a4d88") {
@@ -209,7 +210,7 @@ function test_shake128_empty(): test.TestOutcome {
 }
 
 function test_shake128_a3(): test.TestOutcome {
-  if (hex.hex_encode(crypto.shake128(__a3x200(), 32)) != "131ab8d2b594946b9c81333f9bb6e0ce75c3b93104fa3469d3917457385da037") {
+  if (hex.encode(crypto.shake128(__a3x200(), 32)) != "131ab8d2b594946b9c81333f9bb6e0ce75c3b93104fa3469d3917457385da037") {
     return test.fail("32 bytes");
   }
   if (__sha3_256_of(crypto.shake128(__a3x200(), 200)) != "74aa9a100299230f02a2a0a01e12f18b58f324e3decca4468d4c684201085f4d") {
@@ -220,7 +221,7 @@ function test_shake128_a3(): test.TestOutcome {
 
 function test_shake256_empty(): test.TestOutcome {
   let e: u8[] = [];
-  if (hex.hex_encode(crypto.shake256(e, 64)) != "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762fd75dc4ddd8c0f200cb05019d67b592f6fc821c49479ab48640292eacb3b7c4be") {
+  if (hex.encode(crypto.shake256(e, 64)) != "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762fd75dc4ddd8c0f200cb05019d67b592f6fc821c49479ab48640292eacb3b7c4be") {
     return test.fail("64 bytes");
   }
   if (__sha3_256_of(crypto.shake256(e, 200)) != "8f3e5ca710dda92d2d0dbfa8ee2d796ffdfca88bc43b97e1860e9ae24773ea03") {
@@ -230,7 +231,7 @@ function test_shake256_empty(): test.TestOutcome {
 }
 
 function test_shake256_a3(): test.TestOutcome {
-  if (hex.hex_encode(crypto.shake256(__a3x200(), 32)) != "cd8a920ed141aa0407a22d59288652e9d9f1a7ee0c1e7c1ca699424da84a904d") {
+  if (hex.encode(crypto.shake256(__a3x200(), 32)) != "cd8a920ed141aa0407a22d59288652e9d9f1a7ee0c1e7c1ca699424da84a904d") {
     return test.fail("32 bytes");
   }
   if (__sha3_256_of(crypto.shake256(__a3x200(), 200)) != "efbb3e2319365b90f450f45a67944e009e2e0b629cf2a017cbf6c2ecdf225572") {
@@ -241,7 +242,7 @@ function test_shake256_a3(): test.TestOutcome {
 
 function test_shake_streaming(): test.TestOutcome {
   let msg: u8[] = __a3x200();
-  let r: crypto.ShakeReader = crypto.shake128_new().update_bytes(msg[0:77]).update_bytes(msg[77:200]).reader();
+  let r: crypto.ShakeReader = crypto.shake128_new().update(msg[0:77]).update(msg[77:200]).reader();
   let out: u8[] = [];
   let sizes: i32[] = [1, 167, 1, 200, 143];
   let i: i32 = 0;
@@ -251,7 +252,7 @@ function test_shake_streaming(): test.TestOutcome {
     r = next.1;
     i = i + 1;
   }
-  return test.assert_eq(hex.hex_encode(out), hex.hex_encode(crypto.shake128(msg, 512)));
+  return test.assert_eq(hex.encode(out), hex.encode(crypto.shake128(msg, 512)));
 }
 
 function test_totp_rfc6238(): test.TestOutcome {
@@ -305,4 +306,17 @@ function main(): i32 {
   r = r.it("shake256 0xa3 x 200", test_shake256_a3);
   r = r.it("shake streaming", test_shake_streaming);
   return r.finish();
+}
+
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

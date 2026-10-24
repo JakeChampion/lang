@@ -1,5 +1,4 @@
 // This module constructs and combines asynchronous byte streams.
-
 import "std/string";
 import "std/utf8" as utf8;
 import "core/int";
@@ -95,12 +94,12 @@ pub function (s: Stream) read_all_string(): (Option[string], Stream) {
   return (utf8.from_bytes(bytes), s2);
 }
 
-pub function (s: Stream) read_byte(): (Option[i32], Stream) {
+pub function (s: Stream) read_byte(): (Option[u8], Stream) {
   let cur: Stream = __fill(s);
   if (cur.pos >= cur.data.len()) {
     return (None, cur);
   }
-  let b: i32 = cur.data[cur.pos] as i32;
+  let b: u8 = cur.data[cur.pos];
   return (Some(b), Stream { ...cur, pos: cur.pos + 1 });
 }
 

@@ -91,7 +91,7 @@ function plus_one(v: json.JsonValue): json.JsonValue {
 }
 
 function ab(): json.JsonObject {
-  return json.object().insert("a", json.JNumber("1")).insert("b", json.JNumber("2"));
+  return json.from([("a", json.JNumber("1")), ("b", json.JNumber("2"))]);
 }
 
 function test_json_object(): test.TestOutcome {

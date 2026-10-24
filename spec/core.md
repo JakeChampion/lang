@@ -495,6 +495,7 @@ is the number of slots it leaves.
 | `vstore` | 476 | 2 | 0 |
 | `vget` | 477 | 2 | 1 |
 | `vset` | 478 | 3 | 0 |
+| `vbitmask` | 479 | 1 | 1 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true

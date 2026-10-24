@@ -2,142 +2,142 @@ import "std/test";
 import "std/path" as path;
 
 function test_join(): test.TestOutcome {
-  return test.assert_eq(path.path_join(["a", "b", "c"]), "a/b/c");
+  return test.assert_eq(path.join(["a", "b", "c"]), "a/b/c");
 }
 
 function test_join_collapses(): test.TestOutcome {
-  return test.assert_eq(path.path_join(["a/", "/b"]), "a/b");
+  return test.assert_eq(path.join(["a/", "/b"]), "a/b");
 }
 
 function test_join_root(): test.TestOutcome {
-  return test.assert_eq(path.path_join(["/", "etc", "hosts"]), "/etc/hosts");
+  return test.assert_eq(path.join(["/", "etc", "hosts"]), "/etc/hosts");
 }
 
 function test_join_empty_parts(): test.TestOutcome {
-  return test.assert_eq(path.path_join(["", "b"]), "b");
+  return test.assert_eq(path.join(["", "b"]), "b");
 }
 
 function test_join_none(): test.TestOutcome {
-  return test.assert_eq(path.path_join([]), "");
+  return test.assert_eq(path.join([]), "");
 }
 
 function test_parent(): test.TestOutcome {
-  return test.assert_eq(path.path_parent("/a/b/c").to_owned(), "/a/b");
+  return test.assert_eq(path.parent("/a/b/c").to_owned(), "/a/b");
 }
 
 function test_parent_relative(): test.TestOutcome {
-  return test.assert_eq(path.path_parent("a/b").to_owned(), "a");
+  return test.assert_eq(path.parent("a/b").to_owned(), "a");
 }
 
 function test_parent_no_sep(): test.TestOutcome {
-  return test.assert_eq(path.path_parent("foo").to_owned(), "");
+  return test.assert_eq(path.parent("foo").to_owned(), "");
 }
 
 function test_parent_root(): test.TestOutcome {
-  return test.assert_eq(path.path_parent("/").to_owned(), "/");
+  return test.assert_eq(path.parent("/").to_owned(), "/");
 }
 
 function test_parent_top(): test.TestOutcome {
-  return test.assert_eq(path.path_parent("/a").to_owned(), "/");
+  return test.assert_eq(path.parent("/a").to_owned(), "/");
 }
 
 function test_file_name(): test.TestOutcome {
-  return test.assert_eq(path.path_file_name("/a/b/c").to_owned(), "c");
+  return test.assert_eq(path.file_name("/a/b/c").to_owned(), "c");
 }
 
 function test_file_name_trailing(): test.TestOutcome {
-  return test.assert_eq(path.path_file_name("a/b/").to_owned(), "b");
+  return test.assert_eq(path.file_name("a/b/").to_owned(), "b");
 }
 
 function test_file_name_bare(): test.TestOutcome {
-  return test.assert_eq(path.path_file_name("foo").to_owned(), "foo");
+  return test.assert_eq(path.file_name("foo").to_owned(), "foo");
 }
 
 function test_extension(): test.TestOutcome {
-  return test.assert_eq(path.path_extension("a/b/file.txt").to_owned(), "txt");
+  return test.assert_eq(path.extension("a/b/file.txt").to_owned(), "txt");
 }
 
 function test_extension_last_dot(): test.TestOutcome {
-  return test.assert_eq(path.path_extension("archive.tar.gz").to_owned(), "gz");
+  return test.assert_eq(path.extension("archive.tar.gz").to_owned(), "gz");
 }
 
 function test_extension_hidden(): test.TestOutcome {
-  return test.assert_eq(path.path_extension(".bashrc").to_owned(), "");
+  return test.assert_eq(path.extension(".bashrc").to_owned(), "");
 }
 
 function test_extension_none(): test.TestOutcome {
-  return test.assert_eq(path.path_extension("noext").to_owned(), "");
+  return test.assert_eq(path.extension("noext").to_owned(), "");
 }
 
 function test_clean_dots(): test.TestOutcome {
-  return test.assert_eq(path.path_clean("a/./b//c"), "a/b/c");
+  return test.assert_eq(path.clean("a/./b//c"), "a/b/c");
 }
 
 function test_clean_dotdot(): test.TestOutcome {
-  return test.assert_eq(path.path_clean("a/b/../c"), "a/c");
+  return test.assert_eq(path.clean("a/b/../c"), "a/c");
 }
 
 function test_clean_rooted_above_root(): test.TestOutcome {
-  return test.assert_eq(path.path_clean("/../a"), "/a");
+  return test.assert_eq(path.clean("/../a"), "/a");
 }
 
 function test_clean_relative_climb(): test.TestOutcome {
-  return test.assert_eq(path.path_clean("foo/../../bar"), "../bar");
+  return test.assert_eq(path.clean("foo/../../bar"), "../bar");
 }
 
 function test_clean_empty(): test.TestOutcome {
-  return test.assert_eq(path.path_clean(""), ".");
+  return test.assert_eq(path.clean(""), ".");
 }
 
 function test_clean_to_dot(): test.TestOutcome {
-  return test.assert_eq(path.path_clean("a/.."), ".");
+  return test.assert_eq(path.clean("a/.."), ".");
 }
 
 function test_clean_root(): test.TestOutcome {
-  return test.assert_eq(path.path_clean("///"), "/");
+  return test.assert_eq(path.clean("///"), "/");
 }
 
 function test_clean_trailing_slash(): test.TestOutcome {
-  return test.assert_eq(path.path_clean("/a/b/"), "/a/b");
+  return test.assert_eq(path.clean("/a/b/"), "/a/b");
 }
 
 function test_is_absolute(): test.TestOutcome {
-  if (!path.path_is_absolute("/etc/hosts")) {
+  if (!path.is_absolute("/etc/hosts")) {
     return test.fail("rooted");
   }
-  if (path.path_is_absolute("etc/hosts")) {
+  if (path.is_absolute("etc/hosts")) {
     return test.fail("relative");
   }
-  if (path.path_is_absolute("")) {
+  if (path.is_absolute("")) {
     return test.fail("empty");
   }
-  return test.assert_false(path.path_is_absolute("./x"));
+  return test.assert_false(path.is_absolute("./x"));
 }
 
 function test_stem(): test.TestOutcome {
-  if (path.path_stem("a/b/foo.txt").to_owned() != "foo") {
+  if (path.stem("a/b/foo.txt").to_owned() != "foo") {
     return test.fail("simple");
   }
-  if (path.path_stem("archive.tar.gz").to_owned() != "archive.tar") {
+  if (path.stem("archive.tar.gz").to_owned() != "archive.tar") {
     return test.fail("multi ext");
   }
-  if (path.path_stem(".bashrc").to_owned() != ".bashrc") {
+  if (path.stem(".bashrc").to_owned() != ".bashrc") {
     return test.fail("hidden");
   }
-  return test.assert_eq(path.path_stem("foo").to_owned(), "foo");
+  return test.assert_eq(path.stem("foo").to_owned(), "foo");
 }
 
 function test_with_extension(): test.TestOutcome {
-  if (path.path_with_extension("a/b/foo.txt", "md") != "a/b/foo.md") {
+  if (path.with_extension("a/b/foo.txt", "md") != "a/b/foo.md") {
     return test.fail("replace");
   }
-  if (path.path_with_extension("foo", "md") != "foo.md") {
+  if (path.with_extension("foo", "md") != "foo.md") {
     return test.fail("append");
   }
-  if (path.path_with_extension("archive.tar.gz", "") != "archive.tar") {
+  if (path.with_extension("archive.tar.gz", "") != "archive.tar") {
     return test.fail("drop");
   }
-  return test.assert_eq(path.path_with_extension(".bashrc", "txt"), ".bashrc.txt");
+  return test.assert_eq(path.with_extension(".bashrc", "txt"), ".bashrc.txt");
 }
 
 function main(): i32 {

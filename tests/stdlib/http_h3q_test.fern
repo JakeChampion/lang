@@ -9,6 +9,7 @@ import "std/tls/identity";
 import "std/tls/verify";
 import "std/headers";
 import "std/hex";
+import "std/codec";
 import "std/string";
 import "std/option";
 import "std/result";
@@ -29,7 +30,7 @@ const WALL_MS: i64 = 1700000000000;
 function server_config(): conn.Config {
   match (identity.private_key_from_pem(ED_PKCS8)) {
     Ok(k) => {
-      match (identity.pair([hex.hex_decode(ED_LEAF)], k)) {
+      match (identity.pair([__codec_bytes(hex.decode(ED_LEAF))], k)) {
         Ok(id) => {
           return h3q.transport(conn.config([]).server_side(id));
         },
@@ -42,7 +43,7 @@ function server_config(): conn.Config {
 }
 
 function client_config(): conn.Config {
-  return h3q.transport(conn.config([]).client_side("tls.example", verify.roots([hex.hex_decode(ROOT)])));
+  return h3q.transport(conn.config([]).client_side("tls.example", verify.roots([__codec_bytes(hex.decode(ROOT))])));
 }
 
 function entropy(seed: i32, n: i32): u8[] {
@@ -455,13 +456,13 @@ function test_blocked_backpressure(): test.TestOutcome {
     return test.fail("no stream");
   };
   let (q, id) = opened;
-  let section: u8[] = hex.hex_decode("0200" + "80" + "c1" + "d7" + "500b746c732e6578616d706c65");
+  let section: u8[] = __codec_bytes(hex.decode("0200" + "80" + "c1" + "d7" + "500b746c732e6578616d706c65"));
   let request: u8[] = frames.put_varint(frames.put_varint([], 1 as i64), section.len() as i64).concat(section);
   request = frames.put_varint(frames.put_varint(request, 0 as i64), 49152 as i64).concat(big(49152));
   e = settled(Ends { ...e, client: h3q.Conn { ...e.client, quic: q.written(id, request, true) } }, 20);
   let held: i64 = e.client.quic.buffered(id);
   let before: string = e.log;
-  let insert: u8[] = hex.hex_decode("3fe11f" + "d4" + "04504f5354");
+  let insert: u8[] = __codec_bytes(hex.decode("3fe11f" + "d4" + "04504f5354"));
   e = settled(Ends { ...e, client: h3q.Conn { ...e.client, quic: e.client.quic.written(6 as i64, insert, false) } }, 20);
   return test.assert_eq(before + e.log + "held " + (held >= 32768 as i64).to_string() + ", then " + e.client.quic.buffered(id).to_string(), "server request 0 POST / 49152b host=tls.example; held true, then 0");
 }
@@ -477,4 +478,17 @@ function main(): i32 {
   r = r.it("shutdown refuses an in-flight request above its boundary", test_shutdown_late);
   r = r.it("a stream waiting on QPACK is left unread, so its window holds its body back", test_blocked_backpressure);
   return r.finish();
+}
+
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }
