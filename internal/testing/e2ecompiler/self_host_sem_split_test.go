@@ -161,10 +161,9 @@ func TestSelfHostSemanticSplitOff(t *testing.T) {
 		semInlineWants("150150\n2600250\n5150200\n5150200\n5150200\n102002\n250100\n10100350\n"))
 }
 
-// A function spliced into its one caller leaves no body behind, on any
-// target, and the program still answers 51. A method is named outside the
-// bodies (dispatch, drop), so one called once keeps its body and stays a call
-// rather than being emitted twice.
+// A function spliced into its caller leaves no body behind on either target.
+// A small record method also leaves no body after its fields reach the caller.
+// With FERN_SEM_INLINE off, both bodies and the method call remain.
 const semSplicedProgram = `struct Acc { n: i32 }
 function (self: Acc) bump(k: i32): Acc { return Acc { n: self.n + runtime(k) * 3 + 1 }; }
 @noinline function runtime(n: i32): i32 { return n; }
@@ -205,13 +204,16 @@ func TestSelfHostSemanticSplicedBodies(t *testing.T) {
 				if got := strings.Contains(asm, tc.scaled); got != off {
 					t.Errorf("FERN_SEM_INLINE off=%v: body of scaled emitted=%v, want %v", off, got, off)
 				}
-				if !strings.Contains(asm, tc.bump) || !strings.Contains(asm, tc.call) {
-					t.Errorf("FERN_SEM_INLINE off=%v: Acc.bump is not a body called by main", off)
+				if got := strings.Contains(asm, tc.bump); got != off {
+					t.Errorf("FERN_SEM_INLINE off=%v: body of Acc.bump emitted=%v, want %v", off, got, off)
+				}
+				if got := strings.Contains(asm, tc.call); got != off {
+					t.Errorf("FERN_SEM_INLINE off=%v: call to Acc.bump emitted=%v, want %v", off, got, off)
+				}
+				if stderr, code := cli.exitOf(t, semSplicedProgram, tc.target, env...); code != 51 {
+					t.Errorf("FERN_SEM_INLINE off=%v: exited %d, want 51\n%s", off, code, stderr)
 				}
 			}
 		})
-	}
-	if stderr, code := cli.exitOf(t, semSplicedProgram, "x86-64-linux"); code != 51 {
-		t.Errorf("exited %d, want 51\n%s", code, stderr)
 	}
 }

@@ -1,0 +1,108 @@
+{
+  "source_commit": "f8d9c01df947b4e859e84d13b011638550b02014",
+  "public_base": "42766d1f00cc4daeb155273747a1df561e1c44e7",
+  "native_checkpoint": "e0d6b682597eb5628439dd40bbf95ae2de000d85",
+  "native_source_sha256": "d360061df17c0a5618102e7c97787de4a4619c483a3a64231d8b6c9979e16829",
+  "native_compiler_sha256": "d294ee4d34be58c3f2cd8335c0ba382d39f4732ed99bef46624554038044fb24",
+  "production_source_unchanged": true,
+  "tests": 59,
+  "failures": 0,
+  "skips": 0,
+  "ci_failure_jobs": [
+    120842545474,
+    120842545396,
+    120842545392
+  ],
+  "files": [
+    {
+      "path": "targeted-tests-final.jsonl.gz",
+      "bytes": 3685,
+      "sha256": "156568ae43870fc04b1071d2c6fcfbbbab2e4a12b99e3d565cb8ef474a167906"
+    },
+    {
+      "path": "matrix.json.gz",
+      "bytes": 576,
+      "sha256": "a60e6ac75b54c57be920f12bb85628bd6e49bd420849b00d1ea20b9c6cb5630f"
+    },
+    {
+      "path": "matrix.py.gz",
+      "bytes": 1118,
+      "sha256": "415b78afbdd4645c0b085e4520245ec90e3705a29bd27adccad61ac6c0be4312"
+    },
+    {
+      "path": "matrix.log.gz",
+      "bytes": 54,
+      "sha256": "385dcc1f7b91303a8e678012bb30dc83f49d46d010875d374b5d16d1a4ce8e9f"
+    },
+    {
+      "path": "alias-struct.fern.gz",
+      "bytes": 358,
+      "sha256": "ba0ab0293cbdf0755bdaaf69ee6f8ac10932a263e0e13385cc37232525838748"
+    },
+    {
+      "path": "arm64-linux-build.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "arm64-linux.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "wasm32-wasi-build.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "wasm32-wasi.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "x86-64-linux-build.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "x86-64-linux.stdout.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "arm64-linux-build.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "arm64-linux.stderr.gz",
+      "bytes": 57,
+      "sha256": "92404388cd758cf3bc39487bc291cfc81afe99dd9c1908939699d50dd916624e"
+    },
+    {
+      "path": "wasm32-wasi-build.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "wasm32-wasi.stderr.gz",
+      "bytes": 57,
+      "sha256": "92404388cd758cf3bc39487bc291cfc81afe99dd9c1908939699d50dd916624e"
+    },
+    {
+      "path": "x86-64-linux-build.stderr.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "x86-64-linux.stderr.gz",
+      "bytes": 57,
+      "sha256": "92404388cd758cf3bc39487bc291cfc81afe99dd9c1908939699d50dd916624e"
+    },
+    {
+      "path": "change.patch.gz",
+      "bytes": 1145,
+      "sha256": "1243213afbb409de854f648cae8aa9c1e5b4ea308b48c9f618caef932d8bad34"
+    }
+  ]
+}
