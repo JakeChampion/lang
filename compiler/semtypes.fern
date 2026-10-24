@@ -332,35 +332,6 @@ pub function is_fd_handle(t: typeinfo.Type): boolean {
   return false;
 }
 
-pub function is_map_iter(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeStruct(s) = t {
-    return s.name == "MapIter" && s.args.len() == 2;
-  }
-  return false;
-}
-
-pub function map_iter_key(t: typeinfo.Type): typeinfo.Type {
-  if let typeinfo.TypeStruct(s) = t {
-    if (s.args.len() == 2) {
-      return s.args[0];
-    }
-  }
-  return typeinfo.unchecked();
-}
-
-pub function map_iter_map(t: typeinfo.Type): typeinfo.Type {
-  return typeinfo.TypeMap { key: map_iter_key(t), value: map_iter_value(t) };
-}
-
-pub function map_iter_value(t: typeinfo.Type): typeinfo.Type {
-  if let typeinfo.TypeStruct(s) = t {
-    if (s.args.len() == 2) {
-      return s.args[1];
-    }
-  }
-  return typeinfo.unchecked();
-}
-
 function concrete_struct(s: typeinfo.TypeStruct): boolean {
   if (s.name == "Cell") {
     return s.args.len() == 1 && concrete(s.args[0], false);

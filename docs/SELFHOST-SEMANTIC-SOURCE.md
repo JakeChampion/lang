@@ -2262,13 +2262,13 @@ What the typed path produced whole, 2026-09-24:
 |---|---|
 | `conformance/cases/` | all 540 cases that compile, once a variant literal settles an unsuffixed float payload (`f64_tryop_widen`'s `Some(3.14)?`). `diag_e068` expects a lowering error. |
 | the compiler compiling itself | every declaration |
-| `examples/` outside the compiler | every program, once `word_freq` copies what it stores (`rc-log/2026-09-24-g-…`) |
+| `examples/` outside the compiler | every program, once `word_freq` copies what it stores (`rc-log/2026-09-24-g-a-str-is-not-lent-to-a-storing-builtin.md`) |
 | `coreutils/` | all 106 programs |
 | e2ecompiler with refusals fatal, 2026-09-25 | 2737 tests, the one failure #10291 (since fixed); a later sweep ran into the local 3 h timeout with no refusal |
 
 `TestSelfHostOverReleaseReportArm64`'s `__rc_dec` produces now
-(`rc-log/2026-09-24-i-…`), and so does `TestSelfHostStrEqSymbolTypeChecks`
-(`rc-log/2026-09-25-t-…`).
+(`rc-log/2026-09-24-i-the-raw-floor-is-typed.md`), and so does `TestSelfHostStrEqSymbolTypeChecks`
+(`rc-log/2026-09-25-t-fern-rows-typed.md`).
 
 ### The runtime helpers
 
@@ -2334,7 +2334,7 @@ What is left, in order:
    outside their own source (`open_with` calls `__fern_open_res`, `read_file`
    calls `__fern_utf8_valid`), so they fail when checked alone and check inside
    the bundle.
-2. Done: a refusal is the error by default (`rc-log/2026-10-01-b-…`), and
+2. Done: a refusal is the error by default (`rc-log/2026-10-01-b-a-typed-lowering-refusal-is-a-compile-error.md`), and
    `FERN_SEM_IR_STRICT` is gone. The CLI, the four asm drivers and the wasm
    drivers build a typed-path substitution for what they emit; the rest of
    the drivers never reach the typed path (see below). The semantic

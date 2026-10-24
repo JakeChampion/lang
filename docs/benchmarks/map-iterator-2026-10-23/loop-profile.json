@@ -1,0 +1,52 @@
+[
+  {
+    "target": "x86-64-linux",
+    "compile_arguments": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/argument-diags-loop-profile-x86-64-linux",
+      "/workspace/scratch/lang-map-iterator/direct-loop-profile.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "compiler_sha256": "74ce4a8e132ca6fbcf1c0f3a39ca742382cc8094013d0dedfd1de416d0d40ebb",
+    "stdout": "60000\n|\n420000\n",
+    "stderr": "leakcheck: allocs=480006 frees=480006 live_bytes=0\n",
+    "exit": 0
+  },
+  {
+    "target": "arm64-linux",
+    "compile_arguments": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/argument-diags-loop-profile-arm64-linux",
+      "/workspace/scratch/lang-map-iterator/direct-loop-profile.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "compiler_sha256": "74ce4a8e132ca6fbcf1c0f3a39ca742382cc8094013d0dedfd1de416d0d40ebb",
+    "stdout": "60000\n|\n420000\n",
+    "stderr": "leakcheck: allocs=480006 frees=480006 live_bytes=0\n",
+    "exit": 0
+  },
+  {
+    "target": "wasm32-wasi",
+    "compile_arguments": [
+      "/workspace/scratch/lang-map-iterator/argument-diags-validation/bootstrap/stage3",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/scratch/lang-map-iterator/argument-diags-loop-profile-wasm32-wasi",
+      "-emit",
+      "command-module",
+      "/workspace/scratch/lang-map-iterator/direct-loop-profile.fern",
+      "/workspace/lang-map-iterator-current/internal/stdlib"
+    ],
+    "compiler_sha256": "74ce4a8e132ca6fbcf1c0f3a39ca742382cc8094013d0dedfd1de416d0d40ebb",
+    "stdout": "60000\n|\n420000\n",
+    "stderr": "leakcheck: allocs=480006 frees=480006 live_bytes=0\n",
+    "exit": 0
+  }
+]

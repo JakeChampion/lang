@@ -2,6 +2,8 @@
 
 Status: [record] plan for the Go native backends, which were deleted in 2026-10 (`NATIVE-RETIREMENT.md`).
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 Tracking: #4112 (child of the binary-size epic #4109).
 
 ## Why

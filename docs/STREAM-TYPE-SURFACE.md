@@ -1,6 +1,12 @@
 # `Stream[T]` (and why not `future[T]`) in the Fern language surface
 
-Status: [record] decision shipped: `stream[T]` is in the self-host surface (#11530) and `future[T]` stays internal.
+Status: [record] decision shipped: `Stream[T]` is in the self-host surface (#11530) and `future[T]` stays internal.
+
+`Stream[T]` names the generic async channel.
+`ByteStream` names the byte reader from `std/stream`.
+The byte reader retains its own cursor and source.
+
+This record cites historical source paths. Some files no longer exist in the current tree.
 
 The WASI Preview-3 async **channels** are complete at the composer/ABI level
 (`docs/WASI-PREVIEW3-ASYNC-PLAN.md`): byte-verified `future`/`stream` canon

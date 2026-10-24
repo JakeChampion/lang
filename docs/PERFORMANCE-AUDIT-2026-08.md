@@ -2,6 +2,8 @@
 
 Status: [record] measurement snapshot (2026-08) of the self-host compiler's compile-time gap against the Go native compiler, since deleted; tracked in #6888.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 Measured on a 4-core x86-64 container, commit `64213fe`, against `bin/fern`
 (Go) and `bin/fern-selfhost` built by it. Every figure here is reproducible
 from the commands given; nothing is an estimate. Tracking issue: #6888.

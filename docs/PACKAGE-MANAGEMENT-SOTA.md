@@ -2,6 +2,8 @@
 
 Status: [research] 2026 survey of package-management techniques; what shipped is described in `PACKAGES.md`.
 
+This study names historical or proposed source paths. The reference documentation identifies current files.
+
 Companion to `MODULE-PACKAGES-RESEARCH.md` (the 2026-06 survey of
 Cargo, Deno/jsr, Go modules, npm, Hex, Nix flakes, Swift PM, Bazel,
 dune). That doc's framing, constraints, and recommendations §1–§12

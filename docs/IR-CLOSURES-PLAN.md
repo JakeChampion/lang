@@ -2,6 +2,8 @@
 
 Status: [record] shipped; closures lower through the IR, and the AST backends it routed around are deleted.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 ## Why this doc exists
 
 Goal 1 of the project roadmap is "a full IR implementation for the

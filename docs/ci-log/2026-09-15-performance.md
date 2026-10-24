@@ -1,5 +1,10 @@
 # CI performance investigation
 
+Status: [record] historical source record.
+
+This record cites historical source paths. Some files no longer exist in the current tree.
+
+
 ## Baseline: September 15, 2026
 
 The first bottleneck is stale main validation waiting behind older commits.

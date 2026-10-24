@@ -5,6 +5,8 @@ Convergence-debt tracker: #4451 (this is a refactor of existing
 native surface, not new native-only surface, but it reshapes the
 exact layer goal 2 ports — keep it visible there).
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 ## Why
 
 Native RC is woven through the ~20k-line `internal/oracle/ir/ir.go`

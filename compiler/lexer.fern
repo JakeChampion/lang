@@ -528,9 +528,6 @@ pub function string_tok(value: string, line: i32, col: i32): Token {
 }
 
 pub function ident_tok(name: string, line: i32, col: i32): Token {
-  if (name == "ByteStream") {
-    return TokIdent { name: "Stream", line: line, col: col };
-  }
   return TokIdent { name: name, line: line, col: col };
 }
 

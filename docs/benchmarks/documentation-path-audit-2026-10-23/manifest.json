@@ -1,0 +1,97 @@
+{
+  "base": "8547531b2a3464b0e086527d76668a47e468f948",
+  "implementation": "442df72470491be0614ca8ff2f6378547cf3dfe0",
+  "compiler_stdlib_changed": false,
+  "proofs": [
+    {
+      "path": "README.md",
+      "bytes": 1901,
+      "sha256": "c325d7d9bf4173e8dc5b8b4cf204265546be2864c69cac0e0b9a59365fc75269"
+    },
+    {
+      "path": "audit-summary.json.gz",
+      "bytes": 208,
+      "sha256": "4e2a7bc89707cdd9a0c814ab2d7d41d0181670f24d93fbeb171c1ce7b04e6e78"
+    },
+    {
+      "path": "audit.json.gz",
+      "bytes": 22734,
+      "sha256": "fcae5dda04b48dacd4f756f84586d7a9b8f07f55640b7850b78a228b0d070d1b"
+    },
+    {
+      "path": "audit.py",
+      "bytes": 3094,
+      "sha256": "2960af26d44e8feddab206393696c6c3afcc7350200f1ef7f7d0ea8e2fd2e06d"
+    },
+    {
+      "path": "cli-checks.json.gz",
+      "bytes": 405,
+      "sha256": "d48b55fa3c4b56c85c4c7f659eef389df443485ff2692374add5f380f0169e0c"
+    },
+    {
+      "path": "comment-only-files.json.gz",
+      "bytes": 107,
+      "sha256": "87e716f41f09c0f090d6a41febff34c140a9a3d485cc2d31d83d6d6b20361e99"
+    },
+    {
+      "path": "comments-ste-final.log",
+      "bytes": 165,
+      "sha256": "9103ca54349262fc43f5505b05ce1b4783c76b95abf9962e8b96fb4aaeeabf04"
+    },
+    {
+      "path": "explanation-and-archive.json.gz",
+      "bytes": 191,
+      "sha256": "fd79a7cc1acce25f7cb2d323f1d2cb515272d029b11a729dd6b787442704877f"
+    },
+    {
+      "path": "explanations.log",
+      "bytes": 62,
+      "sha256": "d281605e5bcf2cbb474f2b08e6a0676f2f7ab10d7f0b4c050b640a8abc2273f2"
+    },
+    {
+      "path": "go-E044.txt.gz",
+      "bytes": 496,
+      "sha256": "e4a6ec99e2e984faf53aab5c889e43910f0f0b37b0c36c1eed92870d26910d58"
+    },
+    {
+      "path": "new-prose-ste-final.log",
+      "bytes": 165,
+      "sha256": "9103ca54349262fc43f5505b05ce1b4783c76b95abf9962e8b96fb4aaeeabf04"
+    },
+    {
+      "path": "proof-readme-ste.log",
+      "bytes": 165,
+      "sha256": "9103ca54349262fc43f5505b05ce1b4783c76b95abf9962e8b96fb4aaeeabf04"
+    },
+    {
+      "path": "self-E044.txt.gz",
+      "bytes": 496,
+      "sha256": "e4a6ec99e2e984faf53aab5c889e43910f0f0b37b0c36c1eed92870d26910d58"
+    },
+    {
+      "path": "self-committed-build.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "source-files.json.gz",
+      "bytes": 6839,
+      "sha256": "1bd82f7db31c0cb24f012321b3a1179abb4cd4b6bbddfb1875bae33cb9ca5d93"
+    },
+    {
+      "path": "source.patch.gz",
+      "bytes": 45820,
+      "sha256": "ad4aaac796a75b9e86d22b45d6fa0e6c8973f80b101db1548e985e151404bf0a"
+    },
+    {
+      "path": "sourcelint-full-final.log",
+      "bytes": 70,
+      "sha256": "54b11567458cc06aecdc4d5272c44885f5cc353498286660e7cfb0418f64e5cd"
+    },
+    {
+      "path": "vet-final.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

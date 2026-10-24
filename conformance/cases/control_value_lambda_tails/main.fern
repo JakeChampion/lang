@@ -1,0 +1,15 @@
+function main(): i32 {
+  let read: (i32) => i32 = (n: i32): i32 => {
+    match (n) { 0 => { 1 }, _ => { 2 } }
+  };
+  if (read(0) != 1 || read(1) != 2) { return 1; }
+  let observed: i32 = 0;
+  let mark: (i32) => void = (n: i32): void => {
+    match (n) { 0 => { observed = 1; }, _ => { observed = 2; } }
+  };
+  mark(0);
+  if (observed != 1) { return 2; }
+  mark(1);
+  if (observed != 2) { return 3; }
+  return 0;
+}

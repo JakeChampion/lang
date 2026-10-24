@@ -3,9 +3,8 @@
 Status: [reference] the targets, CPU baselines, syscall floor and per-backend
 support as they stand today.
 
-The Go compiler generates no code: its emitters, the stack-machine
-`internal/codegen/{arm64,x86_64,wasmbin}` and the register-allocating
-`arm64ssa` / `x86_64ssa`, were deleted in step 5 of
+The Go oracle generates no code. Step 5 of the retirement removed its
+stack-machine and register emitters. The history is in
 `docs/NATIVE-RETIREMENT.md`. Every `-target` compile runs the self-host
 compiler: its register path (`-backend ssa`, `docs/SELFHOST-SSA-BACKEND.md`)
 on the native ISAs, its stack machine (`-backend flat`) on wasm. Background:

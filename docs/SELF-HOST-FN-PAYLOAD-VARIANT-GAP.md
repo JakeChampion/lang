@@ -2,6 +2,8 @@
 
 Status: [record] resolved on the IR path, x86-64 (#4364) and wasm (#4722).
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 > The analysis below was written against the legacy **SSA / AST emitter** path
 > (`asm_run.fern`). The production path is now the **IR path**
 > (`irlower.fern` → `asm_ir` / `wasm_ir`, `use_ir` default-true), and it

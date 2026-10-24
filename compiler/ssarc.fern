@@ -183,9 +183,7 @@ function nominal_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boole
   if (semtypes.is_cell(t)) {
     return walk_shape(semtypes.cell_elem(t), f, lookup);
   }
-  if (semtypes.is_map_iter(t)) {
-    return walk_shape(semtypes.map_iter_key(t), f, lookup) && walk_shape(semtypes.map_iter_value(t), f, lookup);
-  }
+
   if let typeinfo.TypeStruct(_) = t {
     return ssaunits.nominal(t, f, lookup);
   }
@@ -291,14 +289,12 @@ function release_name(t: typeinfo.Type, f: ssasem.Func): string {
   if (ssasem.is_map(t)) {
     return "__map_drop_impl";
   }
-  if (semtypes.is_map_iter(t)) {
-    return "__mapiter_drop_impl";
-  }
+
   return "__fern_rc_dec";
 }
 
 function unlinked_map(t: typeinfo.Type, f: ssasem.Func): boolean {
-  return (ssasem.is_map(t) || semtypes.is_map_iter(t)) && !f.map_module;
+  return ssasem.is_map(t) && !f.map_module;
 }
 
 function release(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerResult {
@@ -606,9 +602,7 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
   if (semtypes.is_handle(t)) {
     return false;
   }
-  if (semtypes.is_map_iter(t)) {
-    return true;
-  }
+
   if let typeinfo.TypeFunc(_) = t {
     return env_records(f, t).len() > 0;
   }
@@ -769,9 +763,7 @@ function drop_children(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type,
   if (unlinked_map(t, f)) {
     return r;
   }
-  if (semtypes.is_map_iter(t)) {
-    return drop_cursor_map(r, slot, t, scratch, f);
-  }
+
   if let typeinfo.TypeFunc(_) = t {
     r = drop_captures(r, slot, t, f);
   }
@@ -793,15 +785,6 @@ function drop_children(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type,
   return r;
 }
 
-function drop_cursor_map(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
-  let m: typeinfo.Type = semtypes.map_iter_map(t);
-  r = reserve(r, scratch + 1);
-  r = emit(r, ir.op_load_local(slot));
-  r = emit(r, ir.op_call_direct("__mapiter_map_impl", 1));
-  r = emit(r, ir.op_store_local(scratch));
-  return drop_value(r, scratch, m, scratch + 1, f);
-}
-
 function drop_value(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
   if (outlined_release(t, f)) {
     return helper(r, slot, release_helper_name(t));
@@ -810,7 +793,7 @@ function drop_value(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, sc
 }
 
 function outlined_release(t: typeinfo.Type, f: ssasem.Func): boolean {
-  return named(t) != "" && !semtypes.is_map_iter(t) && has_children(t, f);
+  return named(t) != "" && has_children(t, f);
 }
 
 function drop_value_inline(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
@@ -2126,7 +2109,7 @@ function identity_op(k: i32): boolean {
 }
 
 function supported_op(k: i32): boolean {
-  return value_op(k) || container_op(k) || ssasem.is_map_op(k) || ssasem.is_map_iter_op(k);
+  return value_op(k) || container_op(k) || ssasem.is_map_op(k);
 }
 
 function result_kind(t: typeinfo.Type): i32 {
@@ -2779,9 +2762,7 @@ function routed_map_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.S
   if (k == ssasem.map_insert()) {
     return routed_insert(r, f, ins);
   }
-  if (ssasem.is_map_iter_op(k)) {
-    return routed_cursor(r, f, ins);
-  }
+
   let t: typeinfo.Type = f.values[ins.args[0]];
   if (k == ssasem.map_len()) {
     r = emit(r, ir.op_load_local(ins.args[0]));
@@ -2954,41 +2935,6 @@ function routed_column_read(own r: irtables.LowerResult, elem: typeinfo.Type, of
     return emit(r, ir.op_call_direct("__map_box_column", 3));
   }
   return emit(r, ir.op_call_direct("__map_i32_column", 2));
-}
-
-function cursor_in_range(own r: irtables.LowerResult, cursor: i32): irtables.LowerResult {
-  r = emit(r, ir.op_load_local(cursor));
-  r = emit(r, ir.op_call_direct("__mapiter_has_next_impl", 1));
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_bin("eq", 0, false));
-  r = emit(r, ir.op_if(0));
-  r = emit(r, ir.op_call_direct("__fern_oob_abort", 0));
-  r = emit(r, ir.op_drop());
-  return emit(r, ir.op_end());
-}
-
-function routed_cursor(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
-  let k: i32 = ins.kind_tag;
-  if (k == ssasem.mapiter_key() || k == ssasem.mapiter_value()) {
-    r = cursor_in_range(r, ins.args[0]);
-  }
-  r = emit(r, ir.op_load_local(ins.args[0]));
-  if (k == ssasem.map_iter()) {
-    return emit(r, ir.op_call_direct("__map_iter_impl", 1));
-  }
-  if (k == ssasem.mapiter_has_next()) {
-    return emit(r, ir.op_call_direct("__mapiter_has_next_impl", 1));
-  }
-  if (k == ssasem.mapiter_advance()) {
-    return emit(r, ir.op_call_direct("__mapiter_advance_impl", 1));
-  }
-  let t: typeinfo.Type = f.values[ins.args[0]];
-  if (k == ssasem.mapiter_key()) {
-    r = emit(r, ir.op_call_direct("__mapiter_key_impl", 1));
-    return routed_from_slot(r, semtypes.map_iter_key(t));
-  }
-  r = emit(r, ir.op_call_direct("__mapiter_value_lent", 1));
-  return routed_from_slot(r, semtypes.map_iter_value(t));
 }
 
 function routed_insert(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
@@ -3412,7 +3358,7 @@ function instruction_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssauni
   if (ssasem.is_hole_op(ins.kind_tag)) {
     return hole_site(r, ins);
   }
-  if (ssasem.is_map_op(ins.kind_tag) || ssasem.is_map_iter_op(ins.kind_tag)) {
+  if (ssasem.is_map_op(ins.kind_tag)) {
     r = routed_map_site(r, f, ins);
     return emit(r, ir.op_store_local(ins.result));
   }

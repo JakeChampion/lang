@@ -1,0 +1,7 @@
+function f(value: i64): i32 {
+  return value;
+}
+
+function main(): i32 {
+  return 0;
+}

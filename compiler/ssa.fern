@@ -232,18 +232,28 @@ function prod_kind_name(id: i32): string {
   return names[id - 40];
 }
 
-function semantic_kind_name(id: i32): string {
-  let names: string[] = [
+// run from -1 downward. Retired slots name invalid. The index is -id - 1.
+// An id outside the table is invalid.
+function semantic_kind_names(): string[] {
+  return [
     "array_new", "tuple_new", "array_get", "tuple_get",
     "record_new", "record_get", "call", "variant_new", "variant_is",
     "variant_get", "variant_up", "variant_as", "length", "append", "slice",
     "str_index", "cast", "str_as", "with", "closure_new", "call_value", "cell_new", "cell_get", "cell_set",
     "map_new", "map_insert", "map_has", "map_get_or", "map_len", "map_get",
     "map_keys", "map_values", "map_delete", "map_cleared", "zero", "str_bytes",
-    "arr_join", "arr_slice", "map_iter", "mapiter_has_next",
-    "mapiter_key", "mapiter_value", "mapiter_advance", "dyn_up", "dyn_box",
+    "arr_join", "arr_slice", "invalid", "invalid",
+    "invalid", "invalid", "invalid", "dyn_up", "dyn_box",
     "dyn_is", "dyn_as", "hole_at", "hole_fill", "array_lend", "str_byte_view", "append_range",
   ];
+}
+
+pub function semantic_kind_count(): i32 {
+  return semantic_kind_names().len();
+}
+
+function semantic_kind_name(id: i32): string {
+  let names: string[] = semantic_kind_names();
   let at: i32 = 0 - id - 1;
   if (at < 0 || at >= names.len()) {
     return "invalid";

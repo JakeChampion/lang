@@ -1,0 +1,80 @@
+{
+  "source_commit": "f6de48388f5afd9bcd01403ad424465b98de91e1",
+  "artifacts": [
+    {
+      "path": "identity-certificate.json",
+      "bytes": 1835,
+      "sha256": "b6a63df600ca94cb5ef9be689627eb9e28e51436b4a82d5e60fb8d1d036b4163"
+    },
+    {
+      "path": "source-files.json.gz",
+      "bytes": 25651,
+      "sha256": "7e86875937e8af552dc6c8964eea63542bb89fc58fe65357e3211a682a3839f3"
+    },
+    {
+      "path": "parser-helper.patch.gz",
+      "bytes": 497,
+      "sha256": "329965bf6c8ed0594a3dc1025b5d2fef3a72ff96057d06d4ff78aba3935d3f78"
+    },
+    {
+      "path": "bootstrap/bootstrap.json.gz",
+      "bytes": 397,
+      "sha256": "c75ef52a80d22ae6118b37313d0ef7d7e96c9285f308db2fcc003be995d6bafa"
+    },
+    {
+      "path": "bootstrap/stage1.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap/stage2.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap/stage3.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "source-guards.jsonl.gz",
+      "bytes": 1048,
+      "sha256": "e6d09dfb12ef712a98efbe3d4e305271dae345abeb74fa0a2b2cf4e54163e65e"
+    },
+    {
+      "path": "sourcelint-final.jsonl.gz",
+      "bytes": 13469,
+      "sha256": "d053272a8e86b3d8e127cf6c032a38e362a677a28b984d4147476b1deeaa746b"
+    },
+    {
+      "path": "driver-builds.json.gz",
+      "bytes": 1027,
+      "sha256": "5cee93a64a272f367737076e9c4c02fd10877f42ee444f4f17e4527867092882"
+    },
+    {
+      "path": "driver-sizes.txt.gz",
+      "bytes": 169,
+      "sha256": "e3a1438a9961db8bac45caa128887b7c720d2d4cbdda7df8b01b945610af622f"
+    },
+    {
+      "path": "driver-gate.log.gz",
+      "bytes": 347,
+      "sha256": "e6386664dd86e851e58452a2c12e827228d4ef5eeae6f0af0b7726a9bb3ca782"
+    },
+    {
+      "path": "check-sizes.py.gz",
+      "bytes": 882,
+      "sha256": "e9d88bf740baebd8ec77ac8b1e5553881d05c35cfa8eeae532f27c03d3c6addd"
+    },
+    {
+      "path": "format.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "record-proofs.py.gz",
+      "bytes": 1936,
+      "sha256": "31f7b51847319138debe66178be5f26243aa7f0c041a6c7dd0483f6702f9f8ca"
+    }
+  ]
+}

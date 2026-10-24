@@ -2,6 +2,8 @@
 
 Status: [record] done; the Go native backends were deleted by 2026-10-05 and `cmd/fern` execs the self-host compiler for every `-target` compile.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 The measured state of `internal/testing/e2e` against the self-host compiler, the
 disposition of every test that reaches a Go backend, and the order the
 deletion PRs go in. `docs/NATIVE-CONVERGENCE.md §3a` is the policy; this is

@@ -2,6 +2,8 @@
 
 Status: [record] review snapshot at commit 577e2c8 (2026-07); the native compiler it reviews is since retired.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 The syntax examples below record that version.
 Current code uses typed arrow lambdas such as `(x: i32) => x + 1`.
 Anonymous `function` expressions and untyped lambda parameters are parse errors.

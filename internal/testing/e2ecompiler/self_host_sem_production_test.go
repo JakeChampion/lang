@@ -1030,26 +1030,26 @@ function main(): i32 {
     print(s.twice() + " " + "xy".twice() + "\n");
     return s.twice().len();
 }`},
-	{name: "a-map-cursor-reads-the-columns-it-points-at", atLeast: 6, want: "181|", wasm: "out-of-range|", src: `
-import "core/map";
+	{name: "a-map-iterator-reads-its-snapshot", atLeast: 6, want: "181|", wasm: "181|", src: `
+import "core/map"; import "core/iter";
 
 function sum_values(m: Map[string, i32]): i32 {
     let total: i32 = 0;
-    let it: MapIter[string, i32] = m.iter();
-    while (it.has_next()) {
-        total = total + it.value() + it.key().len();
-        it.advance();
+    let it: iter.ArrayIter[(string, i32)] = m.iter();
+    for (__mapkey_it, __mapvalue_it) in it {
+        total = total + __mapvalue_it + __mapkey_it.len();
+
     }
     return total;
 }
 
 function longest(m: Map[string, string]): i32 {
     let best: i32 = 0;
-    let it: MapIter[string, string] = m.iter();
-    while (it.has_next()) {
-        let v: string = it.value();
+    let it: iter.ArrayIter[(string, string)] = m.iter();
+    for (__mapkey_it, __mapvalue_it) in it {
+        let v: string = __mapvalue_it;
         if (v.len() > best) { best = v.len(); }
-        it.advance();
+
     }
     return best;
 }
@@ -1058,8 +1058,8 @@ function rounds(m: Map[string, i32], n: i32): i32 {
     let out: i32 = 0;
     let i: i32 = 0;
     while (i < n) {
-        let it: MapIter[string, i32] = m.iter();
-        while (it.has_next()) { out = out + it.value(); it.advance(); }
+        let it: iter.ArrayIter[(string, i32)] = m.iter();
+        for (__mapkey_it, __mapvalue_it) in it { out = out + __mapvalue_it;  }
         i = i + 1;
     }
     return out;
@@ -1067,15 +1067,15 @@ function rounds(m: Map[string, i32], n: i32): i32 {
 
 function narrow_keys(m: Map[i32, i32]): i32 {
     let total: i32 = 0;
-    let it: MapIter[i32, i32] = m.iter();
-    while (it.has_next()) { total = total + it.key() * it.value(); it.advance(); }
+    let it: iter.ArrayIter[(i32, i32)] = m.iter();
+    for (__mapkey_it, __mapvalue_it) in it { total = total + __mapkey_it * __mapvalue_it;  }
     return total;
 }
 
 function narrow_key_str_value(m: Map[i32, string]): i32 {
     let total: i32 = 0;
-    let it: MapIter[i32, string] = m.iter();
-    while (it.has_next()) { total = total + it.key() + it.value().len(); it.advance(); }
+    let it: iter.ArrayIter[(i32, string)] = m.iter();
+    for (__mapkey_it, __mapvalue_it) in it { total = total + __mapkey_it + __mapvalue_it.len();  }
     return total;
 }
 

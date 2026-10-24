@@ -1,0 +1,9 @@
+function source(): i32 {
+  print("read");
+  return 3;
+}
+
+function main(): i32 {
+  let n = if let 1 | 2 | 3 = source() { 5 } else { 0 };
+  return n - 5;
+}

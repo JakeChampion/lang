@@ -9,6 +9,8 @@ being re-derived and mis-scoped — CLAUDE.md's "VERIFY tracker state against th
 code first; #3457's blockers have repeatedly lagged reality" warning applies
 especially here. Everything below was verified against the code (2026-07-26).
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 **Update 2026-07-26 — #3425 is closed.** The large-tier freelist port
 predicted below LANDED on both native backends (x86 `asm_ir.fern` #5609, arm64
 `asm_arm64.fern` #5614), and the direct proof it was meant to unblock now

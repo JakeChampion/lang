@@ -1,0 +1,28 @@
+enum E { A(i32), B(i32), C }
+
+struct Point { x: i32, y: i32 }
+
+function get(): E {
+  return E.A(5);
+}
+
+function sink(n: i32): i32 {
+  return n;
+}
+
+function main(): i32 {
+  let n = if let E.A(v) | E.B(v) = get() { let k = v + 1; k } else { 0 };
+  let point = Point { x: 2, y: 3 };
+  let s = if let Point { x, y } = point { x + y } else { 0 };
+  let t = if let (1, x) = (1, 4) { x } else { 0 };
+  let l = if let 1 | 2 = 2 { 3 } else { 0 };
+  match (n) {
+    6 => {
+      sink(1);
+    },
+    _ => {
+      sink(0);
+    }
+  }
+  return n + s + t + l - 18;
+}

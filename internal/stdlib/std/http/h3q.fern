@@ -291,7 +291,7 @@ function __request(p: Partial): HttpRequest {
   if (authority.len() > 0 && !hs.has("host")) {
     hs = hs.append("host", authority);
   }
-  return HttpRequest { method: method, path: path, body: Stream { data: p.body, pos: 0, source: None }, headers: hs, trailers: __map(p.trailers) };
+  return HttpRequest { method: method, path: path, body: ByteStream { data: p.body, pos: 0, source: None }, headers: hs, trailers: __map(p.trailers) };
 }
 
 function __response(p: Partial): HttpResponse {

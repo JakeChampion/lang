@@ -3,6 +3,8 @@
 Date: 2026-06-07.
 Status: [record] shipped; E055, the renamed value-returning methods and the `Array.build` builder are in both compilers.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 ## Purpose
 
 `docs/IMMUTABILITY-MIGRATION-PLAN.md` froze the two *shared-value*

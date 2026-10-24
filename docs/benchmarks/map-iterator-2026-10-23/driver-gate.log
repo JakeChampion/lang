@@ -1,0 +1,16 @@
+### self-host driver sizes
+| driver | linked | baseline | delta |
+| --- | --- | --- | --- |
+| fern.fern/stage2 (tracked artifact) | 14.2 MB | 14.0 MB | +1.3% |
+| fern.fern | 13.5 MB | 13.3 MB | +1.3% |
+| drivers/asm_load_run.fern | 10.6 MB | 10.4 MB | +1.2% |
+| drivers/asm_modload_run.fern | 9.2 MB | 9.1 MB | +1.3% |
+| drivers/asm_ir_run.fern | 8.8 MB | 8.7 MB | +1.2% |
+| drivers/asm_run.fern | 8.0 MB | 7.9 MB | +1.5% |
+| drivers/wasm_ir_run.fern | 8.0 MB | 7.9 MB | +1.3% |
+| drivers/wasm_run.fern | 8.0 MB | 7.9 MB | +1.3% |
+| drivers/wasm_runio_run.fern | 8.0 MB | 7.9 MB | +1.3% |
+| drivers/asm_pathprobe_run.fern | 5.1 MB | 5.1 MB | +1.2% |
+| drivers/checker_modload_run.fern | 3.0 MB | 3.0 MB | +2.0% |
+Coverage: 11 of 11 baselined drivers measured — this report is the union of every job's, so it is meant to name them all.
+Every driver measured here is within 5% of its baseline.

@@ -37,13 +37,14 @@ func TestSaturatingOperatorTyping(t *testing.T) {
 		`requires an integer type`)
 	mustErr(`function main(): i32 { let a: f64 = 1.0; let b: f64 = 2.0; let c: f64 = a *| b; return 0; }`,
 		`requires an integer type`)
-	mustErr(`function main(): i32 { let a: i32 = 1; let b: u32 = 2; return a +| b; }`,
+	// These ranges have no lossless common integer type.
+	mustErr(`function main(): i32 { let a: i32 = 1; let b: u64 = 2; return a +| b; }`,
 		`share an integer type`)
 	mustErr(`function main(): i32 { let a: usize = 1; let b: usize = 2; return (a +| b) as i32; }`,
 		"not supported on `usize`")
 	mustErr(`function main(): i32 { let a: f64 = 1.0; let b: f64 = 2.0; let c: f64 = a <<| b; return 0; }`,
 		`requires an integer type`)
-	mustErr(`function main(): i32 { let a: i32 = 1; let b: u32 = 2; return a <<| b; }`,
+	mustErr(`function main(): i32 { let a: i32 = 1; let b: u64 = 2; return a <<| b; }`,
 		`share an integer type`)
 	mustErr(`function main(): i32 { let a: usize = 1; let b: usize = 2; return (a <<| b) as i32; }`,
 		"not supported on `usize`")

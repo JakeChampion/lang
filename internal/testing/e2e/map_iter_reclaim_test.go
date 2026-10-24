@@ -12,24 +12,24 @@ var mapIterReclaimCases = []struct {
 	want int
 }{
 	{"local", `let it = m.iter();
-        while (it.has_next()) { total = total + it.value(); it.advance(); }`, 24},
+        for (__mapkey_it, __mapvalue_it) in it { total = total + __mapvalue_it;  }`, 24},
 	{"for-in", `for (k, v) in m { total = total + v + k.len(); }`, 48},
 	{"fresh-argument", `total = total + drain(m.iter());`, 24},
 	{"alias", `let it = m.iter();
         let alias = it;
         total = total + drain(alias);`, 24},
 	{"returned-over-a-param", `let o = over(m);
-        if (o.has_next()) { total = total + o.value(); }`, 8},
+        if let Some(__mapstep_o) = o.next() { let __mapkey_o = __mapstep_o.0.0; let __mapvalue_o = __mapstep_o.0.1; total = total + __mapvalue_o; }`, 8},
 }
 
 func mapIterReclaimSrc(body string) string {
-	return `import "core/map";
-function drain(it: MapIter[string, i32]): i32 {
+	return `import "core/map"; import "core/iter";
+function drain(it: iter.ArrayIter[(string, i32)]): i32 {
     let t: i32 = 0;
-    while (it.has_next()) { t = t + it.value(); it.advance(); }
+    for (__mapkey_it, __mapvalue_it) in it { t = t + __mapvalue_it;  }
     return t;
 }
-function over(m: Map[string, i32]): MapIter[string, i32] { return m.iter(); }
+function over(m: Map[string, i32]): iter.ArrayIter[(string, i32)] { return m.iter(); }
 function main(): i32 {
     let m: Map[string, i32] = map_new(4);
     m = m.insert("a", 1);
@@ -44,7 +44,7 @@ function main(): i32 {
 }`
 }
 
-func TestMapIterCursorIsReclaimed(t *testing.T) {
+func TestMapIteratorIsReclaimed(t *testing.T) {
 	for _, tc := range mapIterReclaimCases {
 		src := mapIterReclaimSrc(tc.body)
 		t.Run(tc.name+"/x86-64", func(t *testing.T) {

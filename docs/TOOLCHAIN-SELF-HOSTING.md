@@ -2,6 +2,8 @@
 
 Status: [record] complete: every target builds with no external toolchain on `$PATH`.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 > **Update — the SELF-HOST compiler now matches on Linux.** Everything
 > below describes the *native* (Go) compiler, which reached the
 > no-binary-on-`$PATH` property in 2026-05. The self-hosted compiler had

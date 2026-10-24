@@ -13,7 +13,7 @@ field in place.
 - `std/json.fern` — a parser struct `{ s, pos, error }` threaded through
   eight mutually-recursive functions, with 32 `p.pos = …` / `p.error = …`
   mutations.
-- `std/stream.fern` — `Stream { data, pos }`; `read_byte` / `read_n` /
+- `std/stream.fern` — `ByteStream { data, pos }`; `read_byte` / `read_n` /
   `read_line` return a value and bump `s.pos`.
 
 Under immutable data structures a void/in-place mutator can't exist, and
@@ -31,17 +31,17 @@ shape two different ways would itself be incorrect.
 
 ```fern
 // before (mutable):
-//   function (s: Stream) read_byte(): Option[i32] {
+//   function (s: ByteStream) read_byte(): Option[i32] {
 //       if (s.pos >= s.data.len()) { return None; }
 //       let b = s.data[s.pos]; s.pos = s.pos + 1; return Some(b);
 //   }
 //   let b = s.read_byte();           // mutates s
 
 // after (cursor idiom):
-function stream_read_byte(s: Stream): (Option[i32], Stream) {
+function stream_read_byte(s: ByteStream): (Option[i32], ByteStream) {
     if (s.pos >= s.data.len()) { return (None, s); }
     let b: i32 = s.data[s.pos] as i32;
-    return (Some(b), Stream { ...s, pos: s.pos + 1 });
+    return (Some(b), ByteStream { ...s, pos: s.pos + 1 });
 }
 //   let (b, s) = stream_read_byte(s);   // rebinds s
 ```
@@ -78,7 +78,7 @@ as stream.fern's does, keeps the idiom above.
 
 ## Gating
 
-- `json.fern` is **self-compiled** (`internal/testing/e2e/self_host_json_test.go`)
+- `json.fern` is **self-compiled** (`internal/testing/e2ecompiler/self_host_json_test.go`)
   → the byte-identical self-host fixpoint gate must stay green.
 - json + stream have wasm e2e + interp + rc-correctness coverage →
   run under wasmtime locally (`/tmp/wt`, `FERN_WASI_ADAPTER`), not just

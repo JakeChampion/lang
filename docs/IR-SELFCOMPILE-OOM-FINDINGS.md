@@ -3,6 +3,8 @@
 Date: 2026-06-20.
 Status: [record] investigation complete; the fixes it scoped were tracked in #4394.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 > **CORRECTION (2026-06-21) — see "Finding 2 RE-MEASURED" below.** Direct
 > measurement with `cmd/fern`-compiled microbenchmarks contradicts this
 > document's central Finding-2 claim that the 45-field `LowerState`

@@ -2,6 +2,8 @@
 
 Status: [record] done; the browser playground has run on the self-host compiler since 2026-09-28.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 Measured 2026-09-01, on x86-64 Linux (4 cores, 15 GiB), wasmtime 46.0.1.
 Answers `NATIVE-CONVERGENCE.md §3a` precondition 4 (#6643): the playground is
 built on native codegen, and retiring the native backends needs it rebuilt on

@@ -103,7 +103,7 @@ turns those rebuilds into in-place writes exactly when it can prove them safe.
 fresh bytes over the whole loop: `std/ordmap` 48 B, `std/pmap` 0 B,
 `std/pvec` 0 B over 5,000 `.with` (#8056 — before it, 224 B and 1.2 KB of
 forced path-array copies recycled by the freelist, and one allocation per
-level for the copies themselves: `bench/pvec_with` went from
+level for the copies themselves: `bench/pvec_with.fern` went from
 1,118,676 allocations to 642,593, `pmap_insert` from 693,584 to 438,649,
 retired instructions −47% and −57%). With a snapshot held first, the same
 loops allocate exactly the copied nodes and nothing else, and `-sanitize`
@@ -136,11 +136,9 @@ at their source with tests:
    with no retain, so the array sat at the box's own rc==1 and the cow write
    rewrote the payload of a node a snapshot still held; the old box's drop
    then released the stored element (use-after-free under `-sanitize`). The
-   array-write guard (`computeArraySetIncs`) now treats bindings of a
-   non-consuming match as borrows, exactly like borrowed parameters.
-   `internal/oracle/ir/rc_analysis.go`; pinned by
-   `TestArraySetOnBorrowedMatchBindingForcesCopy` and the
-   `with_on_match_binding_of_borrowed_enum` rc-correctness corpus case.
+   retired Go array-write guard (`computeArraySetIncs`) treated these
+   match bindings as borrows, like borrowed parameters. The regression
+   remains in `conformance/cases/rc_corpus_with_on_match_binding_of_borrowed_enum`.
 5. **Checker: a cast retargeted a pinned generic call** —
    `v.get_or(i, 0) as i64` with `v: PVec[i32]` re-instantiated `get_or` at
    i64 and monomorph rejected its own clone. The destination-driven restamp

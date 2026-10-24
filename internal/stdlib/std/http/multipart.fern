@@ -110,7 +110,7 @@ function __status(e: MultipartError): i32 {
 
 pub struct Part { name: string, filename: string, content_type: string, headers: HeaderMap }
 
-pub struct Reader { s: Stream, delim: u8[], carry: u8[], eof: boolean, limits: Limits, parts: i32, total: i32, part_total: i32, in_part: boolean, after_delim: boolean }
+pub struct Reader { s: ByteStream, delim: u8[], carry: u8[], eof: boolean, limits: Limits, parts: i32, total: i32, part_total: i32, in_part: boolean, after_delim: boolean }
 
 pub enum Step {
   NextPart(Part, Reader),
@@ -431,7 +431,7 @@ function __need(r: Reader, n: i32): Result[Reader, MultipartError] {
 }
 
 function __pull(r: Reader): Result[Reader, MultipartError] {
-  let got: (u8[], Stream) = r.s.read_n(4096);
+  let got: (u8[], ByteStream) = r.s.read_n(4096);
   if (got.0.len() == 0) {
     if (got.1.fault() != 0) {
       return Err(MultipartBody(http.EndedEarly(got.1.fault())));

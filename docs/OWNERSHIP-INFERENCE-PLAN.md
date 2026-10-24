@@ -2,6 +2,8 @@
 
 Status: [record] design done; Slice 0 (inference foundation) landed (2026-06-05) in the Go compiler, since deleted. Ownership inference now lives in the self-host's `ownership.fern` (`RC-DESIGN.md`).
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 This document captures (1) where Fern's reference-counting / Perceus
 implementation actually stands, (2) how it compares to the three
 reference implementations (Koka, Lean 4, Roc), and (3) the plan to

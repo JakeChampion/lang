@@ -1,0 +1,9 @@
+PASS map_iter_struct_value
+PASS map_iter_unannotated
+PASS map_str_iter
+PASS map_struct_value_field
+PASS rc_corpus_map_iter_escape_churn_free
+PASS rc_corpus_map_iter_string_kv_retain_churn_free
+PASS map_iterator_protocol
+PASS iterator_nested_tuple_adapter
+All migrated fixture checks pass: 80

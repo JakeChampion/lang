@@ -2118,26 +2118,26 @@ function main(): i32 {
 
 func TestWASMMapIter(t *testing.T) {
 	src := `
-import "core/map";
+import "core/map"; import "core/iter";
 function main(): i32 {
     let m: Map[i32, i32] = Map { 10: 100, 20: 200, 30: 300, 40: 400 };
     let sum_keys: i32 = 0;
     let sum_vals: i32 = 0;
     let count: i32 = 0;
-    let it: MapIter[i32, i32] = m.iter();
-    while (it.has_next()) {
-        sum_keys = sum_keys + it.key();
-        sum_vals = sum_vals + it.value();
+    let it: iter.ArrayIter[(i32, i32)] = m.iter();
+    for (__mapkey_it, __mapvalue_it) in it {
+        sum_keys = sum_keys + __mapkey_it;
+        sum_vals = sum_vals + __mapvalue_it;
         count = count + 1;
-        it.advance();
+
     }
     if (count != 4) { return 1; }
     if (sum_keys != 100) { return 2; }   // 10+20+30+40
     if (sum_vals != 1000) { return 3; }  // 100+200+300+400
     // Iteration over an empty map yields zero steps.
     let empty: Map[i32, i32] = map_new(4);
-    let it2: MapIter[i32, i32] = empty.iter();
-    if (it2.has_next()) { return 4; }
+    let it2: iter.ArrayIter[(i32, i32)] = empty.iter();
+    if let Some(__mapstep_it2) = it2.next() { let __mapkey_it2 = __mapstep_it2.0.0; let __mapvalue_it2 = __mapstep_it2.0.1; return 4; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -2270,14 +2270,14 @@ function main(): i32 {
 
 func TestWASMMapIterValueWide(t *testing.T) {
 	src := `
-import "core/map";
+import "core/map"; import "core/iter";
 function main(): i32 {
     let m: Map[i32, i64] = Map { 1: 4294967296 as i64, 2: 8589934592 as i64 };
     let sum: i64 = 0 as i64;
-    let it: MapIter[i32, i64] = m.iter();
-    while (it.has_next()) {
-        sum = sum + it.value();
-        it.advance();
+    let it: iter.ArrayIter[(i32, i64)] = m.iter();
+    for (__mapkey_it, __mapvalue_it) in it {
+        sum = sum + __mapvalue_it;
+
     }
     if (sum == (12884901888 as i64)) { return 0; }
     return 1;
@@ -2289,16 +2289,16 @@ function main(): i32 {
 
 func TestWASMMapIterStringKeys(t *testing.T) {
 	src := `
-import "core/map";
+import "core/map"; import "core/iter";
 function main(): i32 {
     let m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
     let concat: string = "";
     let sum: i32 = 0;
-    let it: MapIter[string, i32] = m.iter();
-    while (it.has_next()) {
-        concat = concat + it.key();
-        sum = sum + it.value();
-        it.advance();
+    let it: iter.ArrayIter[(string, i32)] = m.iter();
+    for (__mapkey_it, __mapvalue_it) in it {
+        concat = concat + __mapkey_it;
+        sum = sum + __mapvalue_it;
+
     }
     if (concat != "abc") { return 1; }
     if (sum != 6) { return 2; }

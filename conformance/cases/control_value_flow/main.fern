@@ -1,0 +1,10 @@
+function main(): i32 {
+  let i = 0;
+  let sum = 0;
+  outer: while (i < 4) {
+    i = i + 1;
+    let n = if let 1 = i { continue outer; } else { if let 3 = i { break outer; } else { i } };
+    sum = sum + n;
+  }
+  return sum - 2;
+}

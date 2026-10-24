@@ -2209,7 +2209,9 @@ index saved the base on the operand stack while the index was loaded,
 copied to `rcx` and zero-extended, then restored it — six instructions
 where two loads do.
 
-The condition is now lowered in `internal/oracle/ir`, so every backend gets it:
+The September implementation lowered conditions in the retired Go IR.
+The current shared implementation is in `compiler/semsource.fern`.
+The old pass used this rule:
 `if`, `while` and `for` conditions go through `condBr`, which turns `&&`,
 `||` and `!` into a chain of `br_if`s (a block where the operator's own
 value is what is branched on), and each backend already fuses a comparison
@@ -2467,8 +2469,8 @@ were `a = a.with(i, v)` asking on every iteration whether `a` is its own
 that answer cannot change after the first write: the copy arm leaves the
 local holding a fresh buffer, and a body that only reads the array's
 elements, takes its length and writes back through the same sites never
-gives it a second owner. `HoistUniquenessGuards` (`internal/oracle/ir`) now
-moves the whole guard to just before the `loop` when every iteration
+gives it a second owner. `HoistUniquenessGuards` in the retired Go IR
+moved the whole guard to just before the `loop` when every iteration
 reaches the write, and where a write sits under a condition or past the
 loop's exit test (a rotated `while`), keeps the guard at the site behind
 a flag: cleared before the loop, set by the first write that runs the
@@ -3082,11 +3084,9 @@ without a count: x's next write would free the box v still reads.
 | uniq -c over 4M lines | 1.31 G | 1.28 G |
 | uniq -f1 over 4M lines | 2.28 G | 2.25 G |
 
-These moves are native-only (#4451), and the self-host compiler needs
-none. For every shape in `internal/oracle/ir/overwrite_move_test.go` it emits
-no retain wherever native now moves the source. Its string copies
-retain only a source credited `STRALIASSRC:`, and its IR optimizer
-cancels the array retain against the next release.
+These measurements predate the Go backend retirement (#4451).
+The retired overwrite-move tests covered the shapes above.
+The current ownership analysis is in `compiler/ssaunits.fern`.
 
 ### uniq -f's field skip by scan, 2026-09-23 (GNU coreutils 9.12)
 

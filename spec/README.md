@@ -89,7 +89,6 @@ unreadable. The known cases:
 | The grammar derives | The parser rejects it as |
 | --- | --- |
 | `1 = 2` — any expression as an assignment target | `P003`, left-hand side is not assignable |
-| A match arm with no separating comma after a struct-pattern arm | `P001` — the arm body's `{` and the pattern's `{` are ambiguous, so the comma is required there |
 | `'string' '.' IDENT` in any expression, including where no such module is imported | `E001`, unknown module |
 | `own R` / `borrow R` where `R` is not a declared `resource` | `E021`, not a resource |
 | `own` or `borrow` alone as a type name, `let x: own = …` | `P001`, a resource name must follow |
@@ -166,7 +165,7 @@ the whole suite runs in ~5 seconds.
    `internal/syntax/parser` accepts, the grammar must derive: the conformance
    corpus, the examples, the stdlib, and the self-host compiler's own
    sources, which at 7000+ lines a file are the most adversarial input
-   available. Currently **736 of 736**. There is deliberately no
+   available. There is deliberately no
    known-gaps list: if the grammar stops deriving something, the answer
    is to fix the grammar.
 
@@ -181,7 +180,8 @@ the whole suite runs in ~5 seconds.
      replaced by plain library functions over `Future[T]`. The parser
      rejects both.
    - `resource Foo { … }` — assembled from a keyword in the parser's
-     top-level dispatch. No spelling of it parses.
+     top-level dispatch. A resource declaration has no body: the supported
+     form is `resource Foo;`.
    - `use x = e;` — a guess. The real form is `use x <- e;`.
    - a bare `x => e` lambda — the parameter list is always
      parenthesized. This one was not merely inert: it made

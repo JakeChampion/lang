@@ -13,7 +13,7 @@ struct ChunkProducer { next: (i32) => Option[u8[]], idle_ms: i32, filler: u8[], 
 enum Body {
   BodyText(string),
   BodyBytes(u8[]),
-  BodyStream(Stream),
+  BodyStream(ByteStream),
   BodyFile(string),
   BodyChunks(ChunkProducer),
   BodyFileRanges(string, i64[], u8[][]),
@@ -27,10 +27,12 @@ struct ProcessResult { stdout: string, stderr: string, exit_code: i32 }
 
 struct HeaderMap { names: string[], values: string[] }
 
+// BodySource — what a lazy ByteStream pulls from: `next` answers the next
 struct BodySource { next: () => Option[u8[]], fault: Cell[i32], send: (u8[]) => i32 }
 
-struct Stream { data: u8[], pos: i32, source: Option[BodySource] }
+// ByteStream — std/stream's byte-stream value, and the type of
+struct ByteStream { data: u8[], pos: i32, source: Option[BodySource] }
 
-struct HttpRequest { method: string, path: string, body: Stream, headers: HeaderMap, trailers: HeaderMap }
+struct HttpRequest { method: string, path: string, body: ByteStream, headers: HeaderMap, trailers: HeaderMap }
 
 struct HttpResponse { status: i32, body: Body, headers: HeaderMap, trailers: HeaderMap, background: Option[() => void] }

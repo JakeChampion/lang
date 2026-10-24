@@ -8,6 +8,8 @@ the interpreter does rc-based COW matching every backend (see
 `internal/testing/e2e/feature_differential_test.go`). The fixed findings below are
 retained as bug-fix history.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 A whole-codebase adversarial review of the Fern compiler. The goal was
 to **break the code**: find real correctness bugs, type-system
 soundness holes, backend-parity divergences, and reference-oracle

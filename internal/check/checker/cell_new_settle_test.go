@@ -23,8 +23,8 @@ function main(): i32 { return mk().get() as i32; }`},
 		}
 	}
 	bad := []struct{ name, src, want string }{
-		{"typed local", `function main(): i32 { let x: i32 = 4; let c: Cell[i64] = cell_new(x); return 0; }`,
-			"expected Cell[i64], got Cell[i32]"},
+		{"typed local narrowing", `function main(): i32 { let x: i64 = 4; let c: Cell[i32] = cell_new(x); return 0; }`,
+			"expected Cell[i32], got Cell[i64]"},
 		{"not a number", `function main(): i32 { let c: Cell[string] = cell_new(1); return 0; }`,
 			"expected Cell[string], got Cell[i32]"},
 		{"float into int", `function main(): i32 { let c: Cell[i64] = cell_new(1.5); return 0; }`,

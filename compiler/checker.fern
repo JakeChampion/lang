@@ -200,7 +200,7 @@ function float_label(t: typeinfo.TypeFloat): string {
 }
 
 function float_operands_agree(a: typeinfo.Type, b: typeinfo.Type): boolean {
-  return is_float(a) && is_float(b) && (type_eq(a, b) || is_poly_float(a) || is_poly_float(b));
+  return is_float(a) && is_float(b);
 }
 
 function settled_operands(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type): (typeinfo.Type, typeinfo.Type) {
@@ -217,7 +217,7 @@ function float_result(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type {
   if (!float_operands_agree(a, b)) {
     return t_unknown("float operands have incompatible widths");
   }
-  if (is_poly_float(a)) {
+  if (is_poly_float(a) || typeinfo.lossless_widen(a, b)) {
     return b;
   }
   return a;
@@ -255,7 +255,7 @@ function join_result_types(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type {
       return join_enum_arguments(au, bu);
     }
   }
-  if (is_float(a) && is_float(b)) {
+  if (is_float(a) && is_float(b) && (type_eq(a, b) || is_poly_float(a) || is_poly_float(b))) {
     return float_result(a, b);
   }
   if let typeinfo.TypeTuple(at) = a {
@@ -520,10 +520,6 @@ function is_cell_ref(r: parser.TypeRef): boolean {
 
 function is_map_ref(r: parser.TypeRef): boolean {
   return r.base == "Map" && r.args.len() == 2;
-}
-
-function is_map_iter_ref(r: parser.TypeRef): boolean {
-  return r.base == "MapIter" && r.args.len() == 2;
 }
 
 function is_wide_map_ref(r: parser.TypeRef): boolean {
@@ -1227,7 +1223,7 @@ function int_operands_agree(lt: typeinfo.Type, rt: typeinfo.Type, le: ast.Expr, 
   if (is_usize(lt) || is_usize(rt)) {
     return true;
   }
-  return int_is_unsigned(lt) == int_is_unsigned(rt);
+  return int_is_unsigned(lt) == int_is_unsigned(rt) || !is_unknown(typeinfo.mixed_integer_join(lt, rt));
 }
 
 function int_is_unsigned(t: typeinfo.Type): boolean {
@@ -1279,6 +1275,10 @@ function int_result(lt: typeinfo.Type, rt: typeinfo.Type, le: ast.Expr, re: ast.
 }
 
 function wider_int(lt: typeinfo.Type, rt: typeinfo.Type): typeinfo.Type {
+  let mixed: typeinfo.Type = typeinfo.mixed_integer_join(lt, rt);
+  if (!is_unknown(mixed)) {
+    return mixed;
+  }
   if (is_usize(lt)) {
     return lt;
   }
@@ -3400,6 +3400,12 @@ function (s: Scope) receives(ms: MethodSig, recv_type: string): boolean {
 }
 
 function (s: Scope) lookup_method(name: string, recv_type: string): MethodSig {
+  if (name == "iter" && recv_type == "Map") {
+    let provider: MethodSig = s.lookup_method("__iterator", recv_type);
+    if (provider.name.len() > 0) {
+      return provider;
+    }
+  }
   let i: i32 = s.methods.head[sig_name_bucket(name)];
   while (i >= 0) {
     if (s.methods.methods[i].name != name) {
@@ -3467,14 +3473,6 @@ function (s: Scope) has_method(name: string, recv_type: string): boolean {
 
 function (s: Scope) has_sig(name: string): boolean {
   return s.sig_at(name) >= 0;
-}
-
-function is_map_iter_method(name: string): boolean {
-  return util.has_str(map_iter_methods(), name);
-}
-
-function map_iter_methods(): string[] {
-  return ["advance", "has_next", "key", "value"];
 }
 
 function retired_collection_spelling(ns: string, method: string): string {
@@ -3545,10 +3543,7 @@ function preregistered_methods(ns: string): string[] {
     return ["as_bytes", "len"];
   }
   if (ns == "Map") {
-    return ["cleared", "contains", "get", "get_or", "insert", "iter", "keys", "len", "remove", "values"];
-  }
-  if (ns == "MapIter") {
-    return ["advance", "has_next", "key", "value"];
+    return ["cleared", "contains", "get", "get_or", "insert", "keys", "len", "remove", "values"];
   }
   if (ns == "Cell") {
     return ["get", "set"];
@@ -4852,6 +4847,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     }
   }
   if (is_method) {
+    let source_recv_ty: typeinfo.Type = recv_ty;
     recv_ty = map_method_receiver(c, recv_ty);
     match (recv_ty) {
       typeinfo.TypeMap(mt) => {
@@ -4894,9 +4890,6 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
         if (name == "values") {
           return t_array(mt.value);
         }
-        if (name == "iter" && c.args.len() == 0) {
-          return t_struct_g("MapIter", [mt.key, mt.value]);
-        }
         if (name == "cleared") {
           if (c.args.len() != 0) {
             return t_unknown("map.cleared: 0 args");
@@ -4904,25 +4897,12 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
           return recv_ty;
         }
       },
-      typeinfo.TypeStruct(it) => {
-        if (it.name == "MapIter" && it.args.len() == 2 && c.args.len() == 0 && is_map_iter_method(name)) {
-          if (name == "has_next") {
-            return t_bool();
-          }
-          if (name == "key") {
-            return it.args[0];
-          }
-          if (name == "value") {
-            return it.args[1];
-          }
-          if (name == "advance") {
-            return t_void();
-          }
-        }
-      },
       _ => {}
     }
     let msig: MethodSig = s.lookup_method(name, recv_type_name);
+    if (map_source_receiver_missing(source_recv_ty, msig)) {
+      return t_unknown("method receiver lacks map columns");
+    }
     if (msig.name.len() == 0) {
       if let typeinfo.TypeFunc(bm) = builtin_method_sig(recv_type_name, name) {
         if (bm.param_types.len() == c.args.len()) {
@@ -6144,29 +6124,30 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
   let first: typeinfo.Type = check_expr(a.elements[0], s);
   let first_lit: i32 = numeric_literal_kind(a.elements[0]);
   let first_expr: ast.Expr = a.elements[0];
-  let i: i32 = 1;
-  while (i < a.elements.len()) {
+  for i in 1..a.elements.len() {
     let et: typeinfo.Type = check_expr(a.elements[i], s);
     if (unbound_enum_argument(et)) {
-      i = i + 1;
       continue;
     }
     if (unbound_enum_argument(first)) {
       first = et;
       first_lit = numeric_literal_kind(a.elements[i]);
       first_expr = a.elements[i];
-      i = i + 1;
+      continue;
+    }
+    let scalar: typeinfo.Type = scalar_numeric_join(first, et);
+    if (!is_unknown(scalar) && !int_literal_tree(first_expr) && !int_literal_tree(a.elements[i])) {
+      first = scalar;
+      first_lit = 0;
+      first_expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
       continue;
     }
     let lit: i32 = numeric_literal_kind(a.elements[i]);
-    if (!vaguer_than(et, first) && !literal_gives_way(lit, first) && !struct_lit_gives_way(a.elements[i], et, first, s)
-      && (same_element_type(et, first) || literal_gives_way(first_lit, et))
-      || struct_lit_gives_way(first_expr, first, et, s)) {
+    if (array_element_preferred(a.elements[i], et, lit, first_expr, first, first_lit, s)) {
       first = et;
       first_lit = lit;
       first_expr = a.elements[i];
     }
-    i = i + 1;
   }
   return t_array(first);
 }
@@ -7111,8 +7092,6 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
     return t_map(type_from_ref_names(r.args[0], tn), type_from_ref_names(r.args[1], tn));
   } else if (is_cell_ref(r)) {
     return t_struct_g("Cell", [type_from_ref_names(r.args[0], tn)]);
-  } else if (is_map_iter_ref(r)) {
-    return t_struct_g("MapIter", [type_from_ref_names(r.args[0], tn), type_from_ref_names(r.args[1], tn)]);
   } else if (is_wide_map_ref(r)) {
     let v_name: string = parser.render_type_ref(r.args[1]);
     let vk: i32 = 2;
@@ -9256,7 +9235,7 @@ function mx_arm_compatible(a: VbStore, b: VbStore, elem: boolean, assigns: boole
     return true;
   }
   if (is_float(a.t) && is_float(b.t) && (!elem || assigns)) {
-    return float_operands_agree(a.t, b.t);
+    return type_eq(a.t, b.t) || is_poly_float(a.t) || is_poly_float(b.t);
   }
   if let typeinfo.TypeUnion(ua) = a.t {
     if let typeinfo.TypeUnion(ub) = b.t {
@@ -9500,6 +9479,12 @@ function mx_fold_arms(types: typeinfo.Type[], exprs: ast.Expr[], unions: UnionSi
   let j: i32 = 1;
   while (j < types.len()) {
     let arm: VbStore = VbStore { t: types[j], e: exprs[j] };
+    let scalar: typeinfo.Type = scalar_numeric_join(acc.t, arm.t);
+    if (!is_unknown(scalar) && scalar_arms_settled(acc, arm)) {
+      acc = VbStore { t: scalar, e: none };
+      j = j + 1;
+      continue;
+    }
     if (!mx_arm_compatible(acc, arm, false, assigns, unions, enums) || if_form && is_dyn_slot(acc.t) != is_dyn_slot(arm.t)) {
       return MxFold { ok: false, acc: acc, bad: arm.t, bad_index: j };
     }
@@ -9730,6 +9715,17 @@ function mx_expr(e: ast.Expr, s: Scope, unions: UnionSig[], enums: parser.EnumDe
       if (c.args.len() == 0) {
         match (c.callee) {
           ast.ExprLambda(lm) => {
+            let local: string = vb_local_name(lm.body);
+            if (lm.params.len() == 0 && parser.is_iflet_value_local(local)) {
+              let stores: VbStore[] = vb_value_stores(lm.body, local, s);
+              let types: typeinfo.Type[] = [];
+              let exprs: ast.Expr[] = [];
+              for store in stores {
+                types = types.append(store.t);
+                exprs = exprs.append(store.e);
+              }
+              out = util.append_diags(out, mx_e031(types, exprs, unions, enums, false, true, c.line, c.col));
+            }
             if (lm.params.len() == 0 && lm.body.len() == 1) {
               let arms: ast.Expr[] = mx_body_result_exprs(lm.body);
               match (lm.body[0]) {
@@ -11231,6 +11227,9 @@ function int_dest_range_diags(e: ast.Expr, want: typeinfo.Type): util.Diag[] {
 }
 
 function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
+  if (scalar_value_widens(e, want, s)) {
+    return true;
+  }
   if let ast.ExprCall(vc) = e {
     if (parser.is_value_block(vc)) {
       let body: ast.Stmt[] = parser.vb_body(vc);
@@ -11428,21 +11427,7 @@ function ctor_payload_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boole
     if (c.args.len() != 1 || at >= wa.len()) {
       return false;
     }
-    return settles_to(c.args[0], wa[at], s) || result_payload_widens(c.args[0], wa[at], want, s);
-  }
-  return false;
-}
-
-function result_payload_widens(payload: ast.Expr, slot: typeinfo.Type, want: typeinfo.Type, s: Scope): boolean {
-  if let typeinfo.TypeUnion(u) = want {
-    if (u.name == "Result") {
-      if let typeinfo.TypeI32(from) = check_expr(payload, s) {
-        if let typeinfo.TypeI32(to) = slot {
-          return !from.is_char && !to.is_char && from.unsigned == to.unsigned
-            && from.width > 0 && from.width < to.width;
-        }
-      }
-    }
+    return settles_to(c.args[0], wa[at], s);
   }
   return false;
 }
@@ -12405,6 +12390,16 @@ function map_method_receiver(c: ast.ExprCall, recv_ty: typeinfo.Type): typeinfo.
   return recv_ty;
 }
 
+function map_source_receiver_missing(recv: typeinfo.Type, msig: MethodSig): boolean {
+  if (parser.parse_type_ref(msig.receiver_type).args.len() == 0) {
+    return false;
+  }
+  if let typeinfo.TypeMap(mt) = recv {
+    return unbound_column(mt.key, MAP_NEW_KEY) || unbound_column(mt.value, MAP_NEW_VALUE);
+  }
+  return false;
+}
+
 function map_method_takes_key(method: string): boolean {
   return method == "insert" || method == "get_or" || method == "get" || method == "contains" || method == "remove";
 }
@@ -12425,6 +12420,22 @@ function unbound_map_arg_diags(c: ast.ExprCall, method: string, mt: typeinfo.Typ
 
 function map_arg_diags(c: ast.ExprCall, method: string, mt: typeinfo.TypeMap, s: Scope, out: util.Diag[]): util.Diag[] {
   let want: i32 = map_builtin_arity(method);
+  if (want < 0) {
+    let msig: MethodSig = s.lookup_method(method, "Map");
+    if (msig.name.len() == 0) {
+      return out;
+    }
+    let recv: typeinfo.Type = mt;
+    if (map_source_receiver_missing(recv, msig)) {
+      return out.append(dg_at("E043", "no method \"" + method + "\" on Map — \"" + method + "\" is declared for " + msig.receiver_type, c.line, c.col));
+    }
+    if (c.args.len() != msig.param_types.len()) {
+      return out.append(dg_at("E004", util.arity_message("method \"" + method + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
+    }
+    out = util.append_diags(out, method_arg_diags(c, method, msig, recv, s));
+    out = util.append_diags(out, method_type_arg_diags(c, method, msig, recv, s));
+    return util.append_diags(out, uninferred_method_diags(c, "Map", method, msig, s));
+  }
   if (want >= 0 && c.args.len() != want) {
     return out.append(dg_at("E004", util.arity_message("method \"" + method + "\"", want, c.args.len(), "argument"), c.line, c.col));
   }
@@ -12457,7 +12468,7 @@ function map_builtin_arity(method: string): i32 {
   if (method == "get" || method == "contains" || method == "remove") {
     return 1;
   }
-  if (method == "len" || method == "cleared" || method == "keys" || method == "values" || method == "iter") {
+  if (method == "len" || method == "cleared" || method == "keys" || method == "values") {
     return 0;
   }
   return 0 - 1;
@@ -12768,8 +12779,6 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
               let fsig: StructSig = s.lookup_struct(sn.name);
               if (!is_unknown(bms)) {
                 out = util.append_diags(out, callable_arg_diags(c, bms, s));
-              } else if (sn.name == "MapIter" && !is_map_iter_method(mfa.field)) {
-                out = out.append(access_fix(dg_at("E043", "struct MapIter has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col), mfa, map_iter_methods()));
               } else if (fsig.name.len() > 0) {
                 let fldi: i32 = field_index(fsig, mfa.field);
                 if (fldi < 0) {
@@ -13311,6 +13320,13 @@ function array_mix_diags(a: ast.ExprArray, s: Scope, out: util.Diag[]): util.Dia
       let flagged: boolean = false;
       while (k < a.elements.len() && !flagged) {
         let etk: typeinfo.Type = check_expr(a.elements[k], s);
+        let scalar: typeinfo.Type = scalar_numeric_join(anchor, etk);
+        if (!is_unknown(scalar) && anchor_lit == 0 && lit_kind_settled(a.elements[k])) {
+          anchor = scalar;
+          anchor_lit = 0;
+          k = k + 1;
+          continue;
+        }
         let lit: i32 = numeric_literal_kind(a.elements[k]);
         if (!type_contains_unknown(etk) && !literal_gives_way(lit, anchor)) {
           if (same_element_type(etk, anchor) || literal_gives_way(anchor_lit, etk)) {
@@ -13605,9 +13621,6 @@ function type_holds_view(t: typeinfo.Type, s: Scope, seen: string[]): (boolean, 
     return any_holds_view([m.key, m.value], s, seen);
   }
   if let typeinfo.TypeStruct(st) = t {
-    if (st.name == "MapIter") {
-      return (true, seen);
-    }
     if (util.has_str(seen, st.name)) {
       return (false, seen);
     }
@@ -15126,7 +15139,7 @@ function assign_diags(a: ast.StmtAssign, cur: Scope, unions: UnionSig[]): util.D
     let abound: util.Diag[] = dest_bound_diags(a.value, tt, cur);
     out = util.append_diags(out, abound);
     let misfit: boolean = !settles_to(a.value, tt, cur) && !(type_assignable(vt, tt, unions) && dyn_conforms(vt, tt, cur));
-    if (abound.len() == 0 && !is_unknown(tt) && !is_unknown(vt) && (misfit || fills_unsettled_argument(vt, tt))) {
+    if (!parser.is_iflet_value_local(a.target) && abound.len() == 0 && !is_unknown(tt) && !is_unknown(vt) && (misfit || fills_unsettled_argument(vt, tt))) {
       out = out.append(dg_at("E003", "variable \"" + a.target + "\": expected " + type_label(tt) + ", got " + type_label(vt) + str_copy_hint(vt, tt), a.line, a.col));
     }
   }
@@ -15710,6 +15723,9 @@ function redeclares_preregistered(f2: parser.FuncDecl): boolean {
 }
 
 function decl_key(fd: parser.FuncDecl): string {
+  if (parser.receiver_namespace(fd.receiver_type) == "Map" && fd.name == "__iterator") {
+    return "iter";
+  }
   if (fd.receiver_type.len() == 0) {
     return fd.name;
   }
@@ -19040,7 +19056,7 @@ function cell_payload_risk(t: typeinfo.Type, s: Scope, own: string[], seen: stri
       return cell_payload_risks([m.key, m.value], s, own, seen);
     },
     typeinfo.TypeStruct(st) => {
-      if (st.name == "Cell" || st.name == "MapIter") {
+      if (st.name == "Cell") {
         return type_label(t);
       }
       let ar: string = cell_payload_risks(st.args, s, own, seen);
@@ -19904,110 +19920,6 @@ function e065_diags(efn: parser.FuncDecl, str_ret_names: string[], sums: ViewSum
   let params: string[] = view_positions(efn);
   let none: string[] = [];
   return e065_stmts(efn.body, efn.name, params, str_ret_names, none, sums, vix, s, efn.ret_type == "str");
-}
-
-struct CursorScan { params: string[], fname: string, var_names: string[], var_inits: ast.Expr[], diags: util.Diag[] }
-
-function e065_cursor_diags(efn: parser.FuncDecl): util.Diag[] {
-  let none: util.Diag[] = [];
-  if (!util.contains(efn.ret_type, "MapIter[")) {
-    return none;
-  }
-  let params: string[] = [];
-  for p in efn.params {
-    params = params.append(p.name);
-  }
-  let no_inits: ast.Expr[] = [];
-  let sc: CursorScan = CursorScan { params: params, fname: efn.name, var_names: [], var_inits: no_inits, diags: none };
-  for st in efn.body {
-    sc = astwalk.fold_stmt_spine(st, sc, cursor_source_stmt);
-  }
-  for st in efn.body {
-    sc = astwalk.fold_stmt_spine(st, sc, cursor_return_stmt);
-  }
-  return sc.diags;
-}
-
-function cursor_source_stmt(st: ast.Stmt, own sc: CursorScan): CursorScan {
-  match (st) {
-    ast.StmtVar(v) => {
-      return CursorScan { ...sc, var_names: sc.var_names.append(v.name), var_inits: sc.var_inits.append(v.init) };
-    },
-    ast.StmtAssign(a) => {
-      return CursorScan { ...sc, var_names: sc.var_names.append(a.target), var_inits: sc.var_inits.append(a.value) };
-    },
-    _ => {}
-  }
-  return sc;
-}
-
-function cursor_return_stmt(st: ast.Stmt, own sc: CursorScan): CursorScan {
-  if let ast.StmtReturn(r) = st {
-    if (cursor_over_local(r.value, sc, 0)) {
-      return CursorScan { ...sc, diags: sc.diags.append(dg_at("E065", "returning a `MapIter` over a function-local map: the map is reclaimed when \"" + sc.fname + "\" returns, leaving the cursor reading freed storage — return the map and iterate it in the caller, or iterate a map the caller passed in", r.line, r.col)) };
-    }
-  }
-  return sc;
-}
-
-function cursor_over_local(e: ast.Expr, sc: CursorScan, depth: i32): boolean {
-  if (depth > 8) {
-    return false;
-  }
-  match (e) {
-    ast.ExprCall(c) => {
-      match (c.callee) {
-        ast.ExprFieldAccess(fa) => {
-          return fa.field == "iter" && c.args.len() == 0 && !lent_place(fa.obj, sc.params);
-        },
-        _ => {}
-      }
-    },
-    ast.ExprIdent(id) => {
-      return cursor_source_over_local(id.name, sc, depth + 1);
-    },
-    ast.ExprArray(al) => {
-      return any_cursor_over_local(al.elements, sc, depth + 1);
-    },
-    ast.ExprTuple(tl) => {
-      return any_cursor_over_local(tl.elements, sc, depth + 1);
-    },
-    _ => {}
-  }
-  return false;
-}
-
-function cursor_source_over_local(name: string, sc: CursorScan, depth: i32): boolean {
-  let i: i32 = 0;
-  while (i < sc.var_names.len()) {
-    if (sc.var_names[i] == name && cursor_over_local(sc.var_inits[i], sc, depth)) {
-      return true;
-    }
-    i = i + 1;
-  }
-  return false;
-}
-
-function any_cursor_over_local(es: ast.Expr[], sc: CursorScan, depth: i32): boolean {
-  for e in es {
-    if (cursor_over_local(e, sc, depth)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function lent_place(e: ast.Expr, params: string[]): boolean {
-  match (e) {
-    ast.ExprFieldAccess(fa) => {
-      return lent_place(fa.obj, params);
-    },
-    ast.ExprIdent(id) => {
-      return util.index_of_str(params, id.name) >= 0;
-    },
-    _ => {}
-  }
-  return false;
 }
 
 function e032_call_check(c: ast.ExprCall, cur: Scope): util.Diag[] {
@@ -21685,7 +21597,6 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     if (xfn.ret_type == "str") {
       body_diags = util.append_diags(body_diags, e065_diags(xfn, str_ret_names, e065_sums, e065_ix, xsc).diags);
     }
-    body_diags = util.append_diags(body_diags, e065_cursor_diags(xfn));
   }
   let fld_scope: Scope = new_scope_full(st, stt, ut, methods, imports, call_impls, mod.trait_reqs);
   for esd in mod.structs {
@@ -23032,6 +22943,9 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
           right = settle_int_tree(right, type_to_irtag(lt));
         }
       }
+      let common: typeinfo.Type = binary_numeric_join(b, lt, rt);
+      left = widen_binary_operand(left, lt, common, b.line, b.col);
+      right = widen_binary_operand(right, rt, common, b.line, b.col);
       let bt: typeinfo.Type = rt;
       if (b.op != "__named_arg") {
         bt = binary_result_type(b, lt, rt, s);
@@ -23061,7 +22975,13 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
       if (vqu.len() == 0) {
         ft = field_access_result_type(fa, typed_type(oa, fa.obj, s), s);
       }
-      return Typed { e: ast.ExprFieldAccess { ...fa, obj: oa.e, ty: type_to_irtag(ft) }, ty: ft, known: true };
+      let member: string = fa.field;
+      if (member == "iter" && s.lookup_method("__iterator", "Map").name.len() > 0) {
+        if let typeinfo.TypeMap(_) = typed_type(oa, fa.obj, s) {
+          member = "__iterator";
+        }
+      }
+      return Typed { e: ast.ExprFieldAccess { ...fa, obj: oa.e, field: member, ty: type_to_irtag(ft) }, ty: ft, known: true };
     },
     ast.ExprIndex(x) => {
       let aa: Typed = annotate_typed(x.array, s);
@@ -23809,6 +23729,10 @@ function vb_pinned_ranges(ts: typeinfo.Type[], es: ast.Expr[]): util.Diag[] {
 }
 
 function vb_join(a: VbStore, b: VbStore): VbStore {
+  let scalar: typeinfo.Type = scalar_numeric_join(a.t, b.t);
+  if (scalar_vb_joinable(a, b, scalar)) {
+    return VbStore { t: scalar, e: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
+  }
   let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
   if let typeinfo.TypeTuple(at) = a.t {
     if let typeinfo.TypeTuple(bt) = b.t {
@@ -23933,6 +23857,10 @@ function vb_unified(ts: typeinfo.Type[]): typeinfo.Type {
 }
 
 function vb_store_type(body: ast.Stmt[], name: string, s: Scope): typeinfo.Type {
+  return vb_stores_unified(vb_value_stores(body, name, s));
+}
+
+function vb_value_stores(body: ast.Stmt[], name: string, s: Scope): VbStore[] {
   let chain: ast.Stmt[] = [];
   let i: i32 = 1;
   while (i < body.len() - 1) {
@@ -23940,7 +23868,7 @@ function vb_store_type(body: ast.Stmt[], name: string, s: Scope): typeinfo.Type 
     i = i + 1;
   }
   let none: VbStore[] = [];
-  return vb_stores_unified(vb_assigned_stores(chain, name, bind_stmt(body[0], s), none));
+  return vb_assigned_stores(chain, name, bind_stmt(body[0], s), none);
 }
 
 function vb_local_tag(t: typeinfo.Type): string {
@@ -26430,4 +26358,57 @@ function settle_literal_locals_in(mod: parser.Module, env: ModuleEnv, focus: Foc
     ntop = settle_lit_body(mod.top_stmts, new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs));
   }
   return parser.Module { ...mod, funcs: nfuncs, top_stmts: ntop };
+}
+
+function scalar_numeric_join(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type {
+  if (typeinfo.lossless_widen(a, b)) {
+    return b;
+  }
+  if (typeinfo.lossless_widen(b, a)) {
+    return a;
+  }
+  return typeinfo.mixed_integer_join(a, b);
+}
+
+function unknown_arm_expr(e: ast.Expr): boolean {
+  if let ast.ExprUnknown(_) = e {
+    return true;
+  }
+  return false;
+}
+
+function lit_kind_settled(e: ast.Expr): boolean {
+  return numeric_literal_kind(e) == 0;
+}
+
+function array_element_preferred(e: ast.Expr, t: typeinfo.Type, lit: i32, first_expr: ast.Expr, first: typeinfo.Type, first_lit: i32, s: Scope): boolean {
+  return !vaguer_than(t, first) && !literal_gives_way(lit, first) && !struct_lit_gives_way(e, t, first, s)
+    && (same_element_type(t, first) || literal_gives_way(first_lit, t))
+    || struct_lit_gives_way(first_expr, first, t, s);
+}
+
+function binary_numeric_join(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type): typeinfo.Type {
+  if (is_integer(lt) && is_integer(rt) && (int_literal_tree(b.left) || int_literal_tree(b.right))) {
+    return int_result(lt, rt, b.left, b.right);
+  }
+  return scalar_numeric_join(lt, rt);
+}
+
+function widen_binary_operand(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type, line: i32, col: i32): ast.Expr {
+  if (!is_unknown(to) && typeinfo.lossless_widen(from, to)) {
+    return ast.ExprUnary { op: "as_" + typeinfo.spelling(to), operand: e, line: line, col: col, ty: type_to_irtag(to) };
+  }
+  return e;
+}
+
+function scalar_vb_joinable(a: VbStore, b: VbStore, scalar: typeinfo.Type): boolean {
+  return !is_unknown(scalar) && scalar_arms_settled(a, b) && (!unknown_arm_expr(a.e) || !unknown_arm_expr(b.e));
+}
+
+function scalar_value_widens(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
+  return (is_integer(want) || is_float(want)) && typeinfo.lossless_widen(check_expr(e, s), want);
+}
+
+function scalar_arms_settled(a: VbStore, b: VbStore): boolean {
+  return !arm_unsettled(a) && !arm_unsettled(b);
 }

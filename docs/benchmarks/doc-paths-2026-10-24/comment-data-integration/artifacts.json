@@ -1,0 +1,74 @@
+{
+  "checks": {
+    "source_commit": "814e894c1bc25c71fa22255560fbffa8c1cc1952",
+    "dependency_base": "7b9bcc9a3e9aba8ffbd25020e13a0f27795aa45b",
+    "compiler_stdlib_changed": false,
+    "production_go_changed": false,
+    "macos_workflow_only_comments_changed": true,
+    "original_strategy_exact_quoted_bytes": 6687,
+    "quote_sha256": "163eb97a58a96c4c0a64516be40122974a627a2031d0501990a420f18a499ea7",
+    "canonical_E044_sha256": "65afc7849253f145470975dd7f02ab7f17c3b1cae03496babf3851d7f8091d3c",
+    "go_self_output_equal": true,
+    "native_reads_current_library_explanations": true,
+    "source_sha256": "b4ef466ebb79f81f80fa5c999bfcb2235dcb22ae86e429c90e8da0bec9db01bc",
+    "native_sha256": "489e47e90393b87a746fd6d685f778cd258d65a3fa85e974eaa139e3e59841b4",
+    "go_oracle_sha256": "2d517892c3f37bc46ef194224e73c04e4a9fb1fd0028b7033637b71ab9ac9c4d",
+    "tests": 238,
+    "failures": 0,
+    "skips": 0,
+    "historical_or_proposed_paths": 560,
+    "missing_living_paths": 0
+  },
+  "artifacts": [
+    {
+      "path": "record-proofs.py.gz",
+      "bytes": 2359,
+      "sha256": "b34227d1cae2389408ae5c7c60ad19b31edca97563a7404cdcb917ac428d58be"
+    },
+    {
+      "path": "tests.jsonl.gz",
+      "bytes": 16227,
+      "sha256": "a8d30559e58268f4592459a4de19c06bbd3991ec37b4357d4109dbc4fc2472d5"
+    },
+    {
+      "path": "audit.json.gz",
+      "bytes": 22734,
+      "sha256": "fcae5dda04b48dacd4f756f84586d7a9b8f07f55640b7850b78a228b0d070d1b"
+    },
+    {
+      "path": "audit.py.gz",
+      "bytes": 1457,
+      "sha256": "c142ab8d958b4b3de1ed2ae6f00b6dbbf1cc5860a0d257549c2996b7cd8693aa"
+    },
+    {
+      "path": "audit.log.gz",
+      "bytes": 126,
+      "sha256": "d4f16c0c60ec18b0c2c80069e95e7e2ad6e2656b3958c34b48809b803d23897f"
+    },
+    {
+      "path": "go-E044.txt.gz",
+      "bytes": 496,
+      "sha256": "e4a6ec99e2e984faf53aab5c889e43910f0f0b37b0c36c1eed92870d26910d58"
+    },
+    {
+      "path": "self-E044.txt.gz",
+      "bytes": 496,
+      "sha256": "e4a6ec99e2e984faf53aab5c889e43910f0f0b37b0c36c1eed92870d26910d58"
+    },
+    {
+      "path": "oracle-version.txt.gz",
+      "bytes": 373,
+      "sha256": "21865713e9b2f280982937cdbeda1f460eb1e409c99fbda27ea8ac9aeeab413f"
+    },
+    {
+      "path": "source-and-explanation-checks.json.gz",
+      "bytes": 567,
+      "sha256": "1ba45339f8668629da90b77e4b0cf8c3e9b8f6b71b50daa7587698db63f58519"
+    },
+    {
+      "path": "change.patch.gz",
+      "bytes": 133175,
+      "sha256": "39690d2ff1ebe0bc225f050dd275b024eb168b3a3f0f0910f0e93be1662a6994"
+    }
+  ]
+}

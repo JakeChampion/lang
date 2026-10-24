@@ -1,5 +1,10 @@
 # Nominal record values in typed ownership IR
 
+Status: [record] historical source record.
+
+This record cites historical source paths. Some files no longer exist in the current tree.
+
+
 Historical slice: the subsequent [recursive-record change](2026-09-09-recursive-records.md)
 admits recursive type graphs and execution independently of optional return-flow
 analysis. The original source/verification gate described below is now confined

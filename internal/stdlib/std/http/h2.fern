@@ -905,7 +905,7 @@ function __streamed(r: __Run, at: i32): __Run {
     fields = fields.append("host", s.authority);
   }
   let empty: u8[] = [];
-  let req: HttpRequest = HttpRequest { method: s.method, path: s.path, body: Stream { data: empty, pos: 0, source: None }, headers: fields, trailers: headers.header_map_new() };
+  let req: HttpRequest = HttpRequest { method: s.method, path: s.path, body: ByteStream { data: empty, pos: 0, source: None }, headers: fields, trailers: headers.header_map_new() };
   let handed: __Stream = __Stream { ...s, handling: true, streaming: true };
   let next: Conn = Conn { ...c, streams: c.streams.with(at, handed), handling: c.handling + 1 };
   return __Run { ...r, conn: next, events: r.events.append(Streamed(s.id, req)) };
@@ -963,7 +963,7 @@ function __finished_at_headers(r: __Run, s: __Stream): __Run {
 }
 
 function __request_of(s: __Stream, trailers: HeaderMap): HttpRequest {
-  return HttpRequest { method: s.method, path: s.path, body: Stream { data: s.body, pos: 0, source: None }, headers: s.fields, trailers: trailers };
+  return HttpRequest { method: s.method, path: s.path, body: ByteStream { data: s.body, pos: 0, source: None }, headers: s.fields, trailers: trailers };
 }
 
 function __settings(r: __Run, ack: boolean, settings: frame.Setting[]): __Run {

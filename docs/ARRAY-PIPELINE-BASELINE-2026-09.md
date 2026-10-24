@@ -3,6 +3,8 @@
 Status: [record] measurement snapshot of the array pipelines taken before array
 fusion (#9731) landed, with a summary of what fusion changed.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 What #9728 asked, measured. The programs are `examples/array_pipeline/*.fern`,
 the measurement is `scripts/array-pipeline-baseline`, and
 `internal/testing/e2e/array_pipeline_baseline_test.go` keeps the claims below from

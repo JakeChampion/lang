@@ -6,6 +6,8 @@ pollables, and `std/task`, `std/reactor` and `std/wasm_reactor` are deleted,
 leaving `std/async` the single reactor. This doc decided *how* to finish the
 job and deliberately picked the **lighter** of two architectures.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 ## What's still split
 
 After PR4 the surface is unified (`Future[T]` everywhere), but the

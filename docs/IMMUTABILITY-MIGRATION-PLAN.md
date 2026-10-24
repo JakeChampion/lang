@@ -13,6 +13,8 @@ sanctioned mutable escape hatch is `Cell[T]` (see `docs/CELL-TYPE-PLAN.md`).
 `checker.fern` enforces `E057` too. The self-host parity notes below were
 written while the Go checker was the reference compiler.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 ## Purpose
 
 `docs/CYCLE-COLLECTION-ANALYSIS.md` recorded the decision (2026-06-01):

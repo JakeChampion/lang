@@ -1,0 +1,2492 @@
+[
+  {
+    "path": "compiler/aborts.fern",
+    "bytes": 681,
+    "sha256": "6cf48a834e3ff0932461bdfc88ab60d8f7b76f74c541028dff52edd106cdc97b"
+  },
+  {
+    "path": "compiler/aesref.fern",
+    "bytes": 6600,
+    "sha256": "456b29a0f4c580c5ff426cb4792606de0c7397dbbae2a675d02dd250f4eeb8db"
+  },
+  {
+    "path": "compiler/ambient.fern",
+    "bytes": 5790,
+    "sha256": "a234f1add9e96647f161814efa47e9f6a79420465b3806ab22b58c7ad9c1240f"
+  },
+  {
+    "path": "compiler/arm64_native.fern",
+    "bytes": 283961,
+    "sha256": "1565d8713c07ea9fa095372fffc788d5493188957c07ad4e0cf3993590ca5112"
+  },
+  {
+    "path": "compiler/asm_arm64_ir.fern",
+    "bytes": 439860,
+    "sha256": "51bdc5c0c360e5c0a7134a8d44be0bcc1a090196803199da627f5e5b7b770d18"
+  },
+  {
+    "path": "compiler/asm_ir.fern",
+    "bytes": 430693,
+    "sha256": "7ed69904b1b2e7cfe06740f0fe06ea8b97b1702895d4dc8b3a34cd629c0d9da9"
+  },
+  {
+    "path": "compiler/asmcore.fern",
+    "bytes": 376632,
+    "sha256": "f2950599866a602e657dd86bd4c739cbc7f918bd4af1f4029a9a26b84af096ae"
+  },
+  {
+    "path": "compiler/ast.fern",
+    "bytes": 10080,
+    "sha256": "0a5260dc3dee11b94194c30a0c61d1f66dd2a91580738ef8d92daddab828987e"
+  },
+  {
+    "path": "compiler/astwalk.fern",
+    "bytes": 40141,
+    "sha256": "c593cbb8ac98c828adf8408671004c2bcb4daf546e7f906c38d3e39bdcff3242"
+  },
+  {
+    "path": "compiler/builtins.fern",
+    "bytes": 1300,
+    "sha256": "35d1ca077086df45b692123d363550dd72e8796671b4c919082d9acb7e2534a8"
+  },
+  {
+    "path": "compiler/byteconst.fern",
+    "bytes": 3145,
+    "sha256": "a395976f92f1b0da9131f20f8f8e51c4e9ba6dc95de083f00e59ed75bc55343b"
+  },
+  {
+    "path": "compiler/callsubst.fern",
+    "bytes": 4983,
+    "sha256": "36c236b42627bd6b5d022edc97d73198c2acbfb7ccd6052cf229b0b996368744"
+  },
+  {
+    "path": "compiler/caps.fern",
+    "bytes": 18353,
+    "sha256": "b46aea07216c7755e825205ee78ef9ddc9044ef4c5947e347a85ade716760504"
+  },
+  {
+    "path": "compiler/capturebox.fern",
+    "bytes": 10170,
+    "sha256": "cc8e2f80cf0fa64d2f09581090c45e35602049196fd5650c1f1638bfbe185742"
+  },
+  {
+    "path": "compiler/captureflow.fern",
+    "bytes": 2685,
+    "sha256": "f7d47dda5ee5ad724d2e6dde8055007b71fcf8092a0924b54bb0ecff378fb789"
+  },
+  {
+    "path": "compiler/capvocab.fern",
+    "bytes": 105,
+    "sha256": "5eb8573abc32a1ba36b1828ece2c1a22f230172d1231163d8f7b4caa74a1357e"
+  },
+  {
+    "path": "compiler/checker.fern",
+    "bytes": 853898,
+    "sha256": "6bc50272d86962b4f0a359024cd88376b9b651d112d94bf6e5b1577b8e6b8f41"
+  },
+  {
+    "path": "compiler/constfold.fern",
+    "bytes": 21396,
+    "sha256": "2d0bf6b3995ca08ac75184a1f1c12b23230a9ec90e9cbfa09c99fa8d8c0aeb31"
+  },
+  {
+    "path": "compiler/cover.fern",
+    "bytes": 12512,
+    "sha256": "0d8a865e21bdfbb7655e3759bbb6dd906a64838fd2dea38447436fd1c6e18466"
+  },
+  {
+    "path": "compiler/coverreport.fern",
+    "bytes": 11143,
+    "sha256": "572008777d674cbf9fc9d657355af7abf7d4c24a4d2542194ba28f0246210c04"
+  },
+  {
+    "path": "compiler/decltypes.fern",
+    "bytes": 3891,
+    "sha256": "d67b14fae5979ded9fb47071c4e1af25c408ffdcd65181f522c40c2c8d0239b8"
+  },
+  {
+    "path": "compiler/docprintable.fern",
+    "bytes": 9111,
+    "sha256": "25e8a17f09176506d60a12ba4bd83f6d9ec85be9167f3b4111b1ddfb513e5592"
+  },
+  {
+    "path": "compiler/docsummary.fern",
+    "bytes": 3815,
+    "sha256": "dfd804c22d342ba6546d5d43d3c38541098037afb4281d502e4e2efad0f52fa6"
+  },
+  {
+    "path": "compiler/drivers/arm64_asm_bench_run.fern",
+    "bytes": 2914,
+    "sha256": "f86de3b79dd43803d989fab67a19eb30dde9d724ad3687ccfe1a2c000403885f"
+  },
+  {
+    "path": "compiler/drivers/asm_ir_run.fern",
+    "bytes": 4824,
+    "sha256": "e337355e7074b5bce375cfc71a8e7fc60b4f256d3af17c4df12739bde282e76e"
+  },
+  {
+    "path": "compiler/drivers/asm_load_run.fern",
+    "bytes": 8786,
+    "sha256": "6eda347f8161f540933cf75fc95872e30fc12c92ae6af60a9cf0e2245677bc72"
+  },
+  {
+    "path": "compiler/drivers/asm_modload_run.fern",
+    "bytes": 26714,
+    "sha256": "7678240ffae868aa1669329c19c6bbdf95e9d7a3fc9fe383fb65c88433bf8d6a"
+  },
+  {
+    "path": "compiler/drivers/asm_pathprobe_run.fern",
+    "bytes": 281,
+    "sha256": "560b98a2992c056970d4f9912bc1bd26955c07223c3743474e39d5a32f960d87"
+  },
+  {
+    "path": "compiler/drivers/asm_run.fern",
+    "bytes": 452,
+    "sha256": "8c5e070e590b5d49c991312f773d85a68b12370994d09426cdfe96417668eabe"
+  },
+  {
+    "path": "compiler/drivers/bind_stmt_parity_run.fern",
+    "bytes": 4237,
+    "sha256": "d61126a4aed59334f623e42104ee3be873d5af7811af56d8c06f1229423c1d4b"
+  },
+  {
+    "path": "compiler/drivers/callable_types_run.fern",
+    "bytes": 1843,
+    "sha256": "56256555620908496c25462b57f3a1ed937ba0cdbfc4dfa5cf188ad8be7d7ed4"
+  },
+  {
+    "path": "compiler/drivers/caps_run.fern",
+    "bytes": 6426,
+    "sha256": "61cb60f2e5d266a99abae923a79481fd907a30780df7168761b583c1389c6636"
+  },
+  {
+    "path": "compiler/drivers/checker_codes_run.fern",
+    "bytes": 422,
+    "sha256": "ddb9b9b8b741b0cdf1b9921fcc4c6c843cc9d59a50f9a83a0a6c17733fd0178a"
+  },
+  {
+    "path": "compiler/drivers/checker_modload_run.fern",
+    "bytes": 1207,
+    "sha256": "7401e76468d8d60daf96f326312c661162626144972858aa652968183987c317"
+  },
+  {
+    "path": "compiler/drivers/checker_run.fern",
+    "bytes": 346,
+    "sha256": "07ab6400b887da97da00998b69e832b327669f70dcbc0b582f1e4287afdc4e9c"
+  },
+  {
+    "path": "compiler/drivers/count_type_args_run.fern",
+    "bytes": 632,
+    "sha256": "b15ad265106c8b5fd80a405faebf28165df497678f17cae9b9d99173e1c578af"
+  },
+  {
+    "path": "compiler/drivers/elf_syms_run.fern",
+    "bytes": 5317,
+    "sha256": "acdb817804dd1a517351182de6c5fbf628d8479f961600e05422d0db94f8675e"
+  },
+  {
+    "path": "compiler/drivers/embed_run.fern",
+    "bytes": 9974,
+    "sha256": "8c14e0620c6c6b2990a1e7a507bb9f3bbf2f68b830b992981f09b20b14cd11ae"
+  },
+  {
+    "path": "compiler/drivers/ferndoc_run.fern",
+    "bytes": 6468,
+    "sha256": "41dcd63cafcb1ed0fcea0a72644037cc5ef8852da9a4b774080fda09b39d9c75"
+  },
+  {
+    "path": "compiler/drivers/float_types_run.fern",
+    "bytes": 1872,
+    "sha256": "fac9c759b63d26360fd7efc977eb2dbec724e32e65de74b4c2c8f8d3cac1005e"
+  },
+  {
+    "path": "compiler/drivers/impl_bounds_run.fern",
+    "bytes": 935,
+    "sha256": "7c6d463af527bcda7eabed47cfd7611719445f520fbb1372f6b3cf1d6bdef754"
+  },
+  {
+    "path": "compiler/drivers/interp_run.fern",
+    "bytes": 300,
+    "sha256": "a91c58402a6c1e09ed39bdfd60b8b35c47f976a619136bf433cf21fd81e547a0"
+  },
+  {
+    "path": "compiler/drivers/ir_const_numeric_run.fern",
+    "bytes": 2870,
+    "sha256": "fc0ab6a6753f246f41792098d9a12db96d73ffee6609a3003b6a586cdbc18206"
+  },
+  {
+    "path": "compiler/drivers/ir_effects_run.fern",
+    "bytes": 858,
+    "sha256": "cbaf0ed8920ee40a6ad31ec8374943d984505a57a934944345106ce80d802d2c"
+  },
+  {
+    "path": "compiler/drivers/ir_kind_run.fern",
+    "bytes": 16945,
+    "sha256": "d80fcef0d271b79a3063a957cc8854d23979347c1ca433ae959f8986b139bc8a"
+  },
+  {
+    "path": "compiler/drivers/ir_licm_run.fern",
+    "bytes": 6300,
+    "sha256": "217fe36fa881a925fb8941236ab72eff7be6e7738933682239e776e5b46c2b66"
+  },
+  {
+    "path": "compiler/drivers/ir_strength_run.fern",
+    "bytes": 28695,
+    "sha256": "08f575cbe94a6742a6b0494e5443f5810004fd86ba22b78ea84abc6762877b3c"
+  },
+  {
+    "path": "compiler/drivers/irverify_run.fern",
+    "bytes": 34742,
+    "sha256": "08523fbca295a78ff0836c9834adbd1076922bb2fd2ca05dcc8dc9094a7190cc"
+  },
+  {
+    "path": "compiler/drivers/irverifyprovided.fern",
+    "bytes": 3050,
+    "sha256": "b802fdd4a9939eb8487ab849f6fd9e8c376f57ed57b507b4ccc3246c45fb0812"
+  },
+  {
+    "path": "compiler/drivers/lint_ratchet_run.fern",
+    "bytes": 2162,
+    "sha256": "fdf43e6b28ced4c64d9027fa3119ee984d4a99764524961e0924945b7bbf240d"
+  },
+  {
+    "path": "compiler/drivers/manifest_parse_run.fern",
+    "bytes": 564,
+    "sha256": "9a8eca7d317422a82dac0948359f326bb6668d36d976c0aa514a86fdaaa82947"
+  },
+  {
+    "path": "compiler/drivers/mvs_run.fern",
+    "bytes": 11120,
+    "sha256": "6b1e75b3f0457d967ad94ef43078954a49e8d079a6303a1eb68b65ee453507a0"
+  },
+  {
+    "path": "compiler/drivers/nth_tuple_elem_run.fern",
+    "bytes": 785,
+    "sha256": "fd9325c8e8d4f7a1e5c823ca1eb54da9f99a1f692b9483df2c3196873bd2fc99"
+  },
+  {
+    "path": "compiler/drivers/physical_contracts_run.fern",
+    "bytes": 3042,
+    "sha256": "0e99aa866bc028e6cc1ec13ae2c41a0241d921fc0374c5901af1338afcbe58a2"
+  },
+  {
+    "path": "compiler/drivers/pipeline.fern",
+    "bytes": 2347,
+    "sha256": "501e5175f48ae096cb6e09695d4f88a140143f2327086eeb29989c37f8d7ebfb"
+  },
+  {
+    "path": "compiler/drivers/platforms_reach_run.fern",
+    "bytes": 1095,
+    "sha256": "c6d8849b76797628cb72545f0c3d08aa70db846c5d7a54b68c4160ddd679a850"
+  },
+  {
+    "path": "compiler/drivers/platforms_run.fern",
+    "bytes": 7443,
+    "sha256": "0b386e830aaa76cb85ffb96df2fb71e094e1d451ef70532c4f3e4bf73d92be83"
+  },
+  {
+    "path": "compiler/drivers/rundriver.fern",
+    "bytes": 551,
+    "sha256": "0111e0170b29b442b4a95f71b6c9348dfd1cf574591a004814d8a368809685ac"
+  },
+  {
+    "path": "compiler/drivers/runtime_run.fern",
+    "bytes": 79,
+    "sha256": "25f7f26380c8e4ef26428d44403e0b721c8ad47cf73cc6fe46a43003be4d87aa"
+  },
+  {
+    "path": "compiler/drivers/semsource_census_run.fern",
+    "bytes": 7312,
+    "sha256": "22c2ee8a8daf3f2f701a75eef95dcaac0472aacceb3878dc9036afc8755018f4"
+  },
+  {
+    "path": "compiler/drivers/ssa_abi_eviction_run.fern",
+    "bytes": 1453,
+    "sha256": "51ac24642ed39675cba3c4aaa0a6eb152f21628f2aaf9b61eb8c58d955eb44d5"
+  },
+  {
+    "path": "compiler/drivers/ssa_cold_calls_run.fern",
+    "bytes": 4037,
+    "sha256": "21e5ea4d7087a3628c7df84c5f6535caf9307e64d99b38c4d337b8cdf3fbb0a9"
+  },
+  {
+    "path": "compiler/drivers/ssa_kind_run.fern",
+    "bytes": 2784,
+    "sha256": "751c0f28faa0eca6efff754b27f2dae551763069d85bfcf8edd22ff668f762aa"
+  },
+  {
+    "path": "compiler/drivers/ssa_lift_admits_run.fern",
+    "bytes": 943,
+    "sha256": "59d8bb912879a655a30cf22e2119bb6a8463138775942de869308b6c14135a88"
+  },
+  {
+    "path": "compiler/drivers/ssa_spill_cost_run.fern",
+    "bytes": 1305,
+    "sha256": "4cc20b57c51169fa236dc5b4f6dd5fd185052d51fa50afc3539a129ba42924fb"
+  },
+  {
+    "path": "compiler/drivers/ssaallocationchains.fern",
+    "bytes": 4739,
+    "sha256": "584699d3f0fd22607e39356e826f0461a099ded758c1f724a4f075039b8cbb1e"
+  },
+  {
+    "path": "compiler/drivers/ssaallocatorfirstmachines.fern",
+    "bytes": 6287,
+    "sha256": "b4f007f39156fd44bae7cf94f36a4f14df6734f5185acd6f3e9ea5b8e78b79b7"
+  },
+  {
+    "path": "compiler/drivers/ssaallocatorinitisas.fern",
+    "bytes": 5565,
+    "sha256": "df11e2671ac32662849e22aa3146d703e602a79560c13cd85422ffcf403c7a95"
+  },
+  {
+    "path": "compiler/drivers/ssaallocatorisas.fern",
+    "bytes": 10083,
+    "sha256": "89641a9a8201d154d9e9730caa6928f6b8d7f97e40e84594c0a8521eb6308492"
+  },
+  {
+    "path": "compiler/drivers/ssaallocatormachines.fern",
+    "bytes": 8591,
+    "sha256": "a96a26977459c0af5ddc8da386511a21d1e156f3ea8d7e4aeafa3d9a122e9a18"
+  },
+  {
+    "path": "compiler/drivers/ssaallocatorstorage.fern",
+    "bytes": 5387,
+    "sha256": "a7cd0b09fd9e7f9c66875a77ba3d0cc76dc7a9501062304567a468879973175b"
+  },
+  {
+    "path": "compiler/drivers/ssaarrayboxmachines.fern",
+    "bytes": 8136,
+    "sha256": "42d38e5733556658171e4d3bf1b6b26620809e6b522b4e1146e17552c60d4085"
+  },
+  {
+    "path": "compiler/drivers/ssaarrayreleaseisas.fern",
+    "bytes": 7489,
+    "sha256": "779074ddbead03a638f5172174280e5be0474d32eb33367827e288ae02b69719"
+  },
+  {
+    "path": "compiler/drivers/ssaarrayreleases.fern",
+    "bytes": 3652,
+    "sha256": "ac2771ecf18fae5ebbeb881f93cb79466ba937ed86e9e3ae028092d33e743a38"
+  },
+  {
+    "path": "compiler/drivers/ssaboxstringmachines.fern",
+    "bytes": 7060,
+    "sha256": "a7ceaa02d6131beecd7dac94106f44bc1d157d3ad814dd4cb1d1b9c2658595d0"
+  },
+  {
+    "path": "compiler/drivers/ssacapacityisas.fern",
+    "bytes": 6733,
+    "sha256": "c62801275cf7d227dd0c230c003f4e0f4a0551ad9fe0713a9b55de410b37f5b8"
+  },
+  {
+    "path": "compiler/drivers/ssacapacitymachines.fern",
+    "bytes": 5617,
+    "sha256": "fa8cd683c84535127d90c3e2fae37d98fbea1d644576a4888280adf40e122d7e"
+  },
+  {
+    "path": "compiler/drivers/ssacapacityvalues.fern",
+    "bytes": 7534,
+    "sha256": "331332652efd965fb7f1fb90297cb784b4c17da82ebd181cdbeba02d8d52b62a"
+  },
+  {
+    "path": "compiler/drivers/ssaconstructorbounds.fern",
+    "bytes": 8945,
+    "sha256": "b09e3873304f7b3a51b4d540a0963c6767c44b419bd6fafa38375829ada2215a"
+  },
+  {
+    "path": "compiler/drivers/ssaconstructorisas.fern",
+    "bytes": 7644,
+    "sha256": "6dfe1af0559444eb116262938a0f5be3c813d9a4889cc27518989ed205254aa0"
+  },
+  {
+    "path": "compiler/drivers/ssaconstructormachines.fern",
+    "bytes": 9083,
+    "sha256": "11a05e174120e9e4bf3ab22b25ab775b375c42b44f8cbdcedf607ea0f2811c92"
+  },
+  {
+    "path": "compiler/drivers/ssacredit_run.fern",
+    "bytes": 13202,
+    "sha256": "b2b7a8d13e002769415096592c8af4b2085c51c7cbacf445636cd4affb957bdf"
+  },
+  {
+    "path": "compiler/drivers/ssacreditabi_run.fern",
+    "bytes": 49059,
+    "sha256": "cade6cbe6bdd61a55f3ef9e0a1b4ccc6b5aa318f548bb72f2ef24ea779c4f2ca"
+  },
+  {
+    "path": "compiler/drivers/ssacreditcontinuation_run.fern",
+    "bytes": 10216,
+    "sha256": "19e721feb6cc9aed312e3e4e74a595ac5b4eb0234ea8a6d04cede344f03388fe"
+  },
+  {
+    "path": "compiler/drivers/ssacreditcontinuationabi_run.fern",
+    "bytes": 10495,
+    "sha256": "eb880ad3e207ad056e627201073bbf2c91aa8d9245939147952c99774e416f23"
+  },
+  {
+    "path": "compiler/drivers/ssacreditconverged.fern",
+    "bytes": 6850,
+    "sha256": "df6ea8759222621cb6f7c423ab32a0a7c03381011f483580be0a24b24f850815"
+  },
+  {
+    "path": "compiler/drivers/ssacreditenums.fern",
+    "bytes": 5469,
+    "sha256": "0c653e486d716698e2252801925d42e4f471c9a2a407ece82e5afc3d68fe1110"
+  },
+  {
+    "path": "compiler/drivers/ssacreditextract_run.fern",
+    "bytes": 13995,
+    "sha256": "de7fbb5956fe694d1448e08d1a8d3a23851203e25790b992790e4484c8e64641"
+  },
+  {
+    "path": "compiler/drivers/ssacreditfinal.fern",
+    "bytes": 6706,
+    "sha256": "c32792b340dbef7f346da924b7a078dcb127ceea3dc2f32ac5aad9fc251d8cd7"
+  },
+  {
+    "path": "compiler/drivers/ssacreditguard_run.fern",
+    "bytes": 6271,
+    "sha256": "a2d2ec46455a179c311ac9ec88a8fd66b7e5c2c2870d3f2e179216471d4670d7"
+  },
+  {
+    "path": "compiler/drivers/ssacredithelper_run.fern",
+    "bytes": 15872,
+    "sha256": "5ac13b9d41e73ea134d3ce57027799302a91c50015b72a5126ca714ca16673d0"
+  },
+  {
+    "path": "compiler/drivers/ssacredithelperorigins.fern",
+    "bytes": 5020,
+    "sha256": "aeede50dafa7c6d1c07327bc2f2c26bd542af79c77acba749cad86cae1bed80c"
+  },
+  {
+    "path": "compiler/drivers/ssacredithelpertypes.fern",
+    "bytes": 4040,
+    "sha256": "64e9b890a2c1a663079785ac542c259fa1793dc883c9f59bdb7b0528d10d92ff"
+  },
+  {
+    "path": "compiler/drivers/ssacreditincoming_run.fern",
+    "bytes": 9189,
+    "sha256": "468e5e1cb56a90c1570f038f69a085e4c369595ba902422efc4659d1c5f5ddda"
+  },
+  {
+    "path": "compiler/drivers/ssacreditincomingabi_run.fern",
+    "bytes": 11725,
+    "sha256": "6ebfd552aee1547e1d55c1da42066e17edca32a9c86337eccd7a7f217e68158c"
+  },
+  {
+    "path": "compiler/drivers/ssacreditorigin_run.fern",
+    "bytes": 9187,
+    "sha256": "81fe551faeddc1076776a68f24ae8845177b18ebcfbdd34acb5a8110aa603e02"
+  },
+  {
+    "path": "compiler/drivers/ssacreditoriginflow_run.fern",
+    "bytes": 11322,
+    "sha256": "6206f9d1dfc595af38bdd78bc9eb7072a4d3caf0dadcd12307dcb21eb40a9bfb"
+  },
+  {
+    "path": "compiler/drivers/ssacreditorigins.fern",
+    "bytes": 4193,
+    "sha256": "f74cd70dc8e379b8b862879ea177ef9bb41e9c9d68e3fdebe7f7c5886b1610c1"
+  },
+  {
+    "path": "compiler/drivers/ssacreditphi_run.fern",
+    "bytes": 14199,
+    "sha256": "6ea71b776f17e6e2282ab729ad36a48eb291a9880e31158faef59c494fbb3082"
+  },
+  {
+    "path": "compiler/drivers/ssacreditprepare.fern",
+    "bytes": 3952,
+    "sha256": "621934a69b7a5aa9758440ea77932719509b52551015fdc4f57afe067b877ec2"
+  },
+  {
+    "path": "compiler/drivers/ssacreditprovenance.fern",
+    "bytes": 7046,
+    "sha256": "5e3cc26abbbda7cbc761e82ee24fc1b4562779f37f5117a1074f9f7f265c1b1d"
+  },
+  {
+    "path": "compiler/drivers/ssacreditreplace_run.fern",
+    "bytes": 7332,
+    "sha256": "d78500695030bcd070454af84031db52e9a8542e092a3f59f514dd1ceda1c9ab"
+  },
+  {
+    "path": "compiler/drivers/ssacreditreuse_run.fern",
+    "bytes": 32942,
+    "sha256": "b304fa41736010bd74fd94a6d00ead80bf7cf0a184889761f2de295e656e763e"
+  },
+  {
+    "path": "compiler/drivers/ssacreditruntime.fern",
+    "bytes": 4892,
+    "sha256": "1aa209d7b6c9545fbd987f9aa878e94dec3101e0cdbcda2e7bbdb751fc4dc285"
+  },
+  {
+    "path": "compiler/drivers/ssacreditscalar_run.fern",
+    "bytes": 13850,
+    "sha256": "35a3356d512134582ae1fb723f6415797a23c7451fef09bedc68d1c9a5d399fe"
+  },
+  {
+    "path": "compiler/drivers/ssacreditsparse.fern",
+    "bytes": 1816,
+    "sha256": "341e91e383048c48186f72a648a68c6f881063232a5798a9d061e6b507ffe963"
+  },
+  {
+    "path": "compiler/drivers/ssacreditstorage_run.fern",
+    "bytes": 10505,
+    "sha256": "2404a259aea26dd7ee6c86c4f79977d199ec49c0b23c58a0199e6f7b5991ccd7"
+  },
+  {
+    "path": "compiler/drivers/ssacreditstorageabi_run.fern",
+    "bytes": 8511,
+    "sha256": "58d37dcb0abbb2732d01cd1ed97c5770f9c4b535d7991e8d90aabf7f17750fee"
+  },
+  {
+    "path": "compiler/drivers/ssacreditunits.fern",
+    "bytes": 4359,
+    "sha256": "d1f37c6a396e6812ef423c9ae59abcc279e36db2bcfc2f0f0932f1f3cf53303c"
+  },
+  {
+    "path": "compiler/drivers/ssadecrementcounts.fern",
+    "bytes": 2884,
+    "sha256": "caeb4669ffc41afaff2d1df5ca9e9bd1613887fbbbc855b800fee13098a2f9e3"
+  },
+  {
+    "path": "compiler/drivers/ssadecrementdata.fern",
+    "bytes": 3154,
+    "sha256": "1ddb82aeef5c2fc91129d379ee169374b9a5d4e4be1e07f744b8efe115054450"
+  },
+  {
+    "path": "compiler/drivers/ssadecrementdependencies.fern",
+    "bytes": 3640,
+    "sha256": "cd107f1aadbc2a5f61c259bad41cfcf1e4d40ce4199487d9b9e344f9eb8ddd24"
+  },
+  {
+    "path": "compiler/drivers/ssadecrementguardcases.fern",
+    "bytes": 4478,
+    "sha256": "0f9f1f9716ff1c91171250f98b48ddcc680c26416a1ce0023bc63cfd47b995d5"
+  },
+  {
+    "path": "compiler/drivers/ssadecrementisas.fern",
+    "bytes": 5401,
+    "sha256": "1581b6536f34573cc4516cc2b614c14bdddfec6d9e86f63e44baf4dd7091ef77"
+  },
+  {
+    "path": "compiler/drivers/ssadecrementmachines.fern",
+    "bytes": 5194,
+    "sha256": "dbb6615e270309e260830d8ce4c36b383cf6664ec5d1c678813c5143c779b0b4"
+  },
+  {
+    "path": "compiler/drivers/ssadecrementmemories.fern",
+    "bytes": 2700,
+    "sha256": "c0b47404639b2531e73d3ee4b8fed7ae6a2fdca3c592bfb9b6576fa215cd382e"
+  },
+  {
+    "path": "compiler/drivers/ssadecrementtexts.fern",
+    "bytes": 5385,
+    "sha256": "5cb6d62c0c7399d4720aaec7a57043bffdb688c6c8e28f6bbd8103ce9ef46b8e"
+  },
+  {
+    "path": "compiler/drivers/ssadecrementzeros.fern",
+    "bytes": 5340,
+    "sha256": "bc8be7d6fd4bee15b35f5b3d81016c009a8c8caf71bb81aa398a1b6a1838000c"
+  },
+  {
+    "path": "compiler/drivers/ssafusedstringmachines.fern",
+    "bytes": 7217,
+    "sha256": "49a0254e79f319f1b3d7415c19c6f8382a62c8c5adc1e195ad57dcbba5c8324b"
+  },
+  {
+    "path": "compiler/drivers/ssalargearraymachines.fern",
+    "bytes": 5247,
+    "sha256": "2055171d865757c435bcc69a73f20ccdaf268a6215d4c741e8f546aa29d8a63c"
+  },
+  {
+    "path": "compiler/drivers/ssalargearrayvalues.fern",
+    "bytes": 7975,
+    "sha256": "cbe4c4c97ec9fe7b43f31743c1562bac7e0a206bdfe37296a8d5d23a16b44c51"
+  },
+  {
+    "path": "compiler/drivers/ssalargepushisas.fern",
+    "bytes": 7073,
+    "sha256": "609044ce61b8d960c10da597e730884567e54b0a48d557abd652472de590cabb"
+  },
+  {
+    "path": "compiler/drivers/ssalargepushmachines.fern",
+    "bytes": 5975,
+    "sha256": "dbdffb26523a9e0a333028827b53b6c8566171a1f9f0e5ec7faf014b40bea229"
+  },
+  {
+    "path": "compiler/drivers/ssalargepushpartitions.fern",
+    "bytes": 3660,
+    "sha256": "42a84c4feeca11072d97d24607319af228560c122eb3b9763a9274626861daef"
+  },
+  {
+    "path": "compiler/drivers/ssalargepushvalues.fern",
+    "bytes": 6282,
+    "sha256": "9bc4c14304982176b465ac159f2e90994448f57880523b99fb2f5d2154715e01"
+  },
+  {
+    "path": "compiler/drivers/ssareleasestorage.fern",
+    "bytes": 4886,
+    "sha256": "29d907262c646c48e6dc58184da528aeaa810c50ca1e01f54c685f93b07ee3c0"
+  },
+  {
+    "path": "compiler/drivers/ssaretained_run.fern",
+    "bytes": 9679,
+    "sha256": "275a04e1ba88e8244746d5c80f6cc5c961b933552ba1b8224e7f6388a34a2dd7"
+  },
+  {
+    "path": "compiler/drivers/ssaretainedalignment.fern",
+    "bytes": 12307,
+    "sha256": "88b01aaae6886cc477ad467ec55fa7cc4a823b75c84c2108060b099f5eb191db"
+  },
+  {
+    "path": "compiler/drivers/ssaretainedallocation.fern",
+    "bytes": 12933,
+    "sha256": "3285994dc3a854ae4636ad7b75d06b9bfee99016539a9ecc7c1bf6ab59a06c60"
+  },
+  {
+    "path": "compiler/drivers/ssaretainedentry.fern",
+    "bytes": 5330,
+    "sha256": "7ac9c604e394e03bd4aa06822dc85a3dd90322a6b16c3a030db862dcfd049ff3"
+  },
+  {
+    "path": "compiler/drivers/ssaretainedinline.fern",
+    "bytes": 9315,
+    "sha256": "23029ee8da85d8be7c86ef6c27cf716b32626c89c58a827698018868404f5faf"
+  },
+  {
+    "path": "compiler/drivers/ssaretainedmachines_run.fern",
+    "bytes": 2266,
+    "sha256": "33969eb235269f2d5cb2d9e7d1ee94b3793f39aed4ceea8657353f9069dfc697"
+  },
+  {
+    "path": "compiler/drivers/ssaretainedmutations.fern",
+    "bytes": 2644,
+    "sha256": "c6dd211e9de7d372d66fb290fb5fae5c74c6ad3af8c1286b145fdc525a169a68"
+  },
+  {
+    "path": "compiler/drivers/ssaretainednativewrapper.fern",
+    "bytes": 5618,
+    "sha256": "604956c8a9b353922d766d65e3d1e9c63e4e4aae5d707a9216e59a1a0917a924"
+  },
+  {
+    "path": "compiler/drivers/ssaretainedprogram.fern",
+    "bytes": 1552,
+    "sha256": "d24ff147a508e5a445c47ec396a82a4570e9db8e84d1fa94ac07f59cf9f3c1ef"
+  },
+  {
+    "path": "compiler/drivers/ssaretainedproof.fern",
+    "bytes": 7805,
+    "sha256": "7c2d8421738e8b07a9c28c2433a59f0fa3edf50e8f640b8e2887ef3c9ce09bf9"
+  },
+  {
+    "path": "compiler/drivers/ssaretainedrecursive.fern",
+    "bytes": 4145,
+    "sha256": "99224b652f0c2cba39efd8a1254d770c8ff1c72f0a7ac603ac332a79790abb35"
+  },
+  {
+    "path": "compiler/drivers/ssaretainedrelease.fern",
+    "bytes": 5856,
+    "sha256": "0bdcc2e8d36f3ae3e8a7f2575461278d98394f2e6c39fa197e9464ea030bc1f0"
+  },
+  {
+    "path": "compiler/drivers/ssaretainedreleaseresults.fern",
+    "bytes": 2687,
+    "sha256": "399b6ea0dd081dcc49e3481c2776956a6dee529ca784e592f55ec83900193864"
+  },
+  {
+    "path": "compiler/drivers/ssaretainedruntime.fern",
+    "bytes": 6348,
+    "sha256": "1ebf7c2cf603ba51aeef3c2fb05fbc94371f01e5559ccbea2ebc16562be00c5c"
+  },
+  {
+    "path": "compiler/drivers/ssaretainedselectedrelease.fern",
+    "bytes": 4274,
+    "sha256": "12c456ea0778ce466f549fc9ece23eebdd7eebabdccaec5353a9a623a49254cd"
+  },
+  {
+    "path": "compiler/drivers/ssaretainedsites.fern",
+    "bytes": 4102,
+    "sha256": "5264db5c9a8efd40bfd559251fc1e5e0d552d43dc942578a24d05e9ebdad53c8"
+  },
+  {
+    "path": "compiler/drivers/ssaretainedtext.fern",
+    "bytes": 5701,
+    "sha256": "44430b33333bd0c4fc79447ac921365da664450554708bf7f3a24654e8eb43a4"
+  },
+  {
+    "path": "compiler/drivers/ssaretainedwrapper.fern",
+    "bytes": 8960,
+    "sha256": "8b815e4aa22968a70cf9d7f5427c2f55823d314d9b8630990e61e9d3e573aaa6"
+  },
+  {
+    "path": "compiler/drivers/ssaseparatestringmachines.fern",
+    "bytes": 8819,
+    "sha256": "30710b30ccd25238358651a882672648926cee972c6aba17d83750fd22640a19"
+  },
+  {
+    "path": "compiler/drivers/ssasmallarraymachines.fern",
+    "bytes": 6712,
+    "sha256": "7c7ae36f90c8a529eadf214efa3b603a1af29ca34d473ddf433501fe55402ec2"
+  },
+  {
+    "path": "compiler/drivers/ssasmallcallerflows.fern",
+    "bytes": 11100,
+    "sha256": "1031c9535b51a4e1476600d6f642e5337590048ef5ee2910551acc78ac4dc4c3"
+  },
+  {
+    "path": "compiler/drivers/ssasmallcallerisas.fern",
+    "bytes": 5902,
+    "sha256": "ed3e6050c1cc1a0abd0e2fe32bb8eb9b9bd7a2bffda3b0c7f5029716dbb67c52"
+  },
+  {
+    "path": "compiler/drivers/ssasmallcallermachines.fern",
+    "bytes": 8308,
+    "sha256": "7637a9dea3ce0ceb51b201bbcbdd245f0b50bb7280fb22898bd7cc97dd8506d4"
+  },
+  {
+    "path": "compiler/drivers/ssasmallheaps.fern",
+    "bytes": 8281,
+    "sha256": "ebc5bd3635ed5b80646bdb2334a7af8eee79ebdd789fda47135e6491b1fa90e5"
+  },
+  {
+    "path": "compiler/drivers/ssastaticshapes.fern",
+    "bytes": 4537,
+    "sha256": "16b29012770006174540ac1f3a284d3dba22447fe60d539d996c5798ca5441d4"
+  },
+  {
+    "path": "compiler/drivers/ssastringreleaseisas.fern",
+    "bytes": 8080,
+    "sha256": "8309e505e28cd8cb67878b33912910912426e4c0c3a5d5cc2a9422d35b417c90"
+  },
+  {
+    "path": "compiler/drivers/ssastringreleases.fern",
+    "bytes": 3229,
+    "sha256": "3a92edba906a576c78f16a7f587fc2189d46500dc02d97f1a2949817e8a8f9a3"
+  },
+  {
+    "path": "compiler/drivers/ssastringvalues.fern",
+    "bytes": 6906,
+    "sha256": "1c6de928aa804eaea75ea71167d98ed0ebb23d420474d4fcdebb76132848b840"
+  },
+  {
+    "path": "compiler/drivers/ssauniquecaller.fern",
+    "bytes": 6844,
+    "sha256": "76c9143e66ea5a25a615c1298569c7e5a08215df6a8069f799a1b804d9f34faf"
+  },
+  {
+    "path": "compiler/drivers/ssauniquecollection.fern",
+    "bytes": 5289,
+    "sha256": "7a9344489ffed95b39e8ed1fa2465eacc3788e8af722b4cad03057707aea91f0"
+  },
+  {
+    "path": "compiler/drivers/ssauniquephi.fern",
+    "bytes": 11345,
+    "sha256": "5ee670b9e2cc9cb6aa728ff2969708ff6f5eba880636abbb719f68be12318f6c"
+  },
+  {
+    "path": "compiler/drivers/ssauniqueselectedunit.fern",
+    "bytes": 8440,
+    "sha256": "e4308cba5ad701ad1ac62d8b9da2902c09a3afc664e0cb607c93d28f712917ef"
+  },
+  {
+    "path": "compiler/drivers/ssauniqueunion.fern",
+    "bytes": 5440,
+    "sha256": "b4c57f9cc61020f798b25f11bca959583cbda5555209b82d33fa295ee687ed75"
+  },
+  {
+    "path": "compiler/drivers/ssauniqueunit.fern",
+    "bytes": 1617,
+    "sha256": "09ab52b1d002cf8f91cc9f85c65a566b96dc41991e864440a92488c8d2f392ae"
+  },
+  {
+    "path": "compiler/drivers/toml_crlf_run.fern",
+    "bytes": 2328,
+    "sha256": "2ad047773c72fee0b9d9cf740b5b412a965218f6b2af1500be4d7d50f0a29ed0"
+  },
+  {
+    "path": "compiler/drivers/tuple_elem_tag_run.fern",
+    "bytes": 2043,
+    "sha256": "5bd412226ea2c7e4137d59a5b3488fa827a4640dc56700f2f5a6ae659b0987af"
+  },
+  {
+    "path": "compiler/drivers/tuple_tags_run.fern",
+    "bytes": 1400,
+    "sha256": "891f576cf7fd74058e881de867164212b0160c34b7f2aec10767e465692db058"
+  },
+  {
+    "path": "compiler/drivers/ty_from_ref_run.fern",
+    "bytes": 1021,
+    "sha256": "f6b1bb492af54b222f030cf78c7dfe9e177e57c42b6a2a9d7eb911f8124cecdf"
+  },
+  {
+    "path": "compiler/drivers/type_resolve_run.fern",
+    "bytes": 2290,
+    "sha256": "be38265f98d057f500d9b7b9987c58da06db4fa2e9146cfab9dc55be815c3e4d"
+  },
+  {
+    "path": "compiler/drivers/type_resolve_simple_run.fern",
+    "bytes": 1511,
+    "sha256": "d51b747da9a6b418226166b6c3f44bf3c7fe4fb7d43987c4b68ad1284d54f1f5"
+  },
+  {
+    "path": "compiler/drivers/typeref_run.fern",
+    "bytes": 6767,
+    "sha256": "c7ff637847d836871b795f8fac2e0cd0b44e47531bdda59a3f3616b61627a228"
+  },
+  {
+    "path": "compiler/drivers/wasm_extern_sum_run.fern",
+    "bytes": 2510,
+    "sha256": "085391e16ea4473f26e7bd7d53332da3503e05ea5e406f8ad703bfc0bdb28cac"
+  },
+  {
+    "path": "compiler/drivers/wasm_ir_run.fern",
+    "bytes": 1110,
+    "sha256": "ab412ef2a31f5f9a037e5d88aed6649731824f68b5f31f4f7fdd02899ad50f04"
+  },
+  {
+    "path": "compiler/drivers/wasm_locals_run.fern",
+    "bytes": 2992,
+    "sha256": "f75e561e98a064f38926493a97dbbc771f0524828884f7a4d2d1a11522961414"
+  },
+  {
+    "path": "compiler/drivers/wasm_modload_run.fern",
+    "bytes": 12685,
+    "sha256": "dcfbd6295bab4082e07fca2f0715b91777ccc0197f7e34540709dc9ca003f5e3"
+  },
+  {
+    "path": "compiler/drivers/wasm_objfile.fern",
+    "bytes": 2419,
+    "sha256": "b3b5a4378116c291fe85d6aa6714530901eea08f9c64304b1af01daa70c9e6ca"
+  },
+  {
+    "path": "compiler/drivers/wasm_option_payload_run.fern",
+    "bytes": 893,
+    "sha256": "dd403a55b84096864114992b5946733d3ec923e10ebe62d15ad36b5d21aa4f1d"
+  },
+  {
+    "path": "compiler/drivers/wasm_run.fern",
+    "bytes": 1482,
+    "sha256": "5ee68266ecd016ee6a84b800fc7dc4dc8482bd34f98942fb0173dbe614daccc3"
+  },
+  {
+    "path": "compiler/drivers/wasm_runio_run.fern",
+    "bytes": 986,
+    "sha256": "319885f111af8482f6f9205afdcaa149198f0cae0c553fdb852c944121e42bf0"
+  },
+  {
+    "path": "compiler/drivers/wasm_units_probe.fern",
+    "bytes": 3550,
+    "sha256": "29315ab0b2a834fd4d799e3a069ae3cd0615910050d20e8286334029566f1107"
+  },
+  {
+    "path": "compiler/drivers/x86_asm_bench_run.fern",
+    "bytes": 1799,
+    "sha256": "13f110b9cbf3149fb79dfe183cd15b9ec8f2d090bbbf993becc4059767b02450"
+  },
+  {
+    "path": "compiler/effects.fern",
+    "bytes": 16969,
+    "sha256": "d98d4eee71a28c7ad2f2fb69240e5fe907491ef4f3d6ca0fd5df0d375760a802"
+  },
+  {
+    "path": "compiler/elf.fern",
+    "bytes": 47793,
+    "sha256": "066fca1982adb49f46e7f9839fbf12a317f0e12be472cfa5edde163ccbbcb205"
+  },
+  {
+    "path": "compiler/embed.fern",
+    "bytes": 10050,
+    "sha256": "3d23f71402c2669d165a39b053b703e46b65efe723841f542041860960d41f9e"
+  },
+  {
+    "path": "compiler/emitforms.fern",
+    "bytes": 10845,
+    "sha256": "94f2afc214ac4bac2b1bd9da5f68732a2e6bf0784260ba6b32e72c2059590df0"
+  },
+  {
+    "path": "compiler/fern.fern",
+    "bytes": 172803,
+    "sha256": "f6d3b1236687f9d12ac003c8f8eea6ca51c243b121553aa01d4b98158d79c991"
+  },
+  {
+    "path": "compiler/fern_main.fern",
+    "bytes": 1951,
+    "sha256": "d8ac38be3cf67f77800284cb116b60a37eba46401756a9ee96d4d0a3c5c59fa0"
+  },
+  {
+    "path": "compiler/fern_toml.fern",
+    "bytes": 21533,
+    "sha256": "7219074d2ca6976bb1d78126329829c98400d4b55617c00c619f8584b2d3058e"
+  },
+  {
+    "path": "compiler/ferndoc.fern",
+    "bytes": 14273,
+    "sha256": "f8c2b4f90a515f66cf3557efba26d5fd77a1a1e64bfc5ff07a6e15409f4156da"
+  },
+  {
+    "path": "compiler/flatten.fern",
+    "bytes": 80463,
+    "sha256": "a1ebfc639cdf37a39619017a7abd8ea386daa13829c16301c38557977a9ac525"
+  },
+  {
+    "path": "compiler/funcdecl_bounds_parity_test.go",
+    "bytes": 3054,
+    "sha256": "d5cfc5ef7c6356d73b270d2399ee845a3fc578433271033d215c67cfda864bd0"
+  },
+  {
+    "path": "compiler/interp.fern",
+    "bytes": 248261,
+    "sha256": "cd7fd597b031428eb204538b85f7357ce1f4c3c4362a93bade1e44431153ea1d"
+  },
+  {
+    "path": "compiler/ir.fern",
+    "bytes": 145535,
+    "sha256": "a81fa573e039b9764dd2725ff2717b764906ee174becdc08052280f4f29fa382"
+  },
+  {
+    "path": "compiler/ircore.fern",
+    "bytes": 36109,
+    "sha256": "75badf58a51f7317d901e0da2d506102bc3dfb30b363be4bb48877c9cac537e1"
+  },
+  {
+    "path": "compiler/irfipverify.fern",
+    "bytes": 4249,
+    "sha256": "7ae8da54ccbbcd707b331322beb43dd60871b1722c9892b1ebc8213ac2bb121a"
+  },
+  {
+    "path": "compiler/irtables.fern",
+    "bytes": 30710,
+    "sha256": "eb8ce8a2f4295a91f033affe034884eda5955621a99410f0579dcb6b9b45fc40"
+  },
+  {
+    "path": "compiler/irverify.fern",
+    "bytes": 6771,
+    "sha256": "a7680740fbb61a76f665d7fd1a7ffda68d11b57b251d152b6248bdf3a3e29aeb"
+  },
+  {
+    "path": "compiler/irverifygate.fern",
+    "bytes": 6746,
+    "sha256": "34481694638a37b3d0557c326ac7f92f74c54b7ba02d761e026b499392808282"
+  },
+  {
+    "path": "compiler/irverifyrc.fern",
+    "bytes": 17174,
+    "sha256": "e7199bdb625c25223034e34e59a6e6c3138ae338effcc0a628e1cb7b4cc03c14"
+  },
+  {
+    "path": "compiler/irverifystack.fern",
+    "bytes": 6618,
+    "sha256": "e64f6d7c687f40e2dc80fe17915a882772870c5a0a99c7c7395d21428b36ab10"
+  },
+  {
+    "path": "compiler/lexer.fern",
+    "bytes": 62074,
+    "sha256": "1068a3da69f23a11dba5f2e6ae4ec75e18ce936c0eb067a6b499ffa65ba86065"
+  },
+  {
+    "path": "compiler/lexical.fern",
+    "bytes": 8436,
+    "sha256": "87222bb9c16a6c4c6b3df3f4a1966ff076d43f37409321bcf04627d14f172f47"
+  },
+  {
+    "path": "compiler/lift.fern",
+    "bytes": 146385,
+    "sha256": "391d54b74c90b5263a5e6ef184bca7bc9b3e0ed92db0b7cc1805d6607b127e45"
+  },
+  {
+    "path": "compiler/lint.fern",
+    "bytes": 18432,
+    "sha256": "0be2353a32ec0ff5bc97e136794fdeaa4ee1ffd978d76e785d51e7fc1479fec1"
+  },
+  {
+    "path": "compiler/literate.fern",
+    "bytes": 28751,
+    "sha256": "7ed387e2a86c229991e2e02da51e3c661592311ef8415734a30ae3e5e9ff2007"
+  },
+  {
+    "path": "compiler/lsp.fern",
+    "bytes": 18084,
+    "sha256": "3b3f74d9c18d6fdc2e4a301fec4ad357ca7876cd58c078c4d0cb8a974cd7497a"
+  },
+  {
+    "path": "compiler/lspassist.fern",
+    "bytes": 24264,
+    "sha256": "588ffcfc8c7c51231eafcb37f348bc3030dfd486375843f22d338a2d722dae60"
+  },
+  {
+    "path": "compiler/lspquery.fern",
+    "bytes": 32524,
+    "sha256": "5ae18cfd2684c8d8fd1b71d1d60b79968f01b44802eaeb02d9c24708d1387007"
+  },
+  {
+    "path": "compiler/lsprefs.fern",
+    "bytes": 21206,
+    "sha256": "1f7010ca385d89cb98c0276fc33cff6ef66dbf716b08bc6c5f08d69d916c1ac9"
+  },
+  {
+    "path": "compiler/lsptokens.fern",
+    "bytes": 10088,
+    "sha256": "085593321c1fd675f0730796020932e73b7fd03a5696daaabe6fdbdf0682ae2d"
+  },
+  {
+    "path": "compiler/modloader.fern",
+    "bytes": 25078,
+    "sha256": "cba843f86ddeeda2d2fa5e20510f0ec19d1345d50c541b4cafa5a4a89aa3e7ca"
+  },
+  {
+    "path": "compiler/mvs.fern",
+    "bytes": 16578,
+    "sha256": "d8a4751de012f7df86619a72fac9380e31c85bf8541ea4138e512c7711f005d4"
+  },
+  {
+    "path": "compiler/optbisect.fern",
+    "bytes": 1096,
+    "sha256": "32fac81cc3d35f9e600ae039c2f312bb16258e6976407cf218e1b9d6696cb1b1"
+  },
+  {
+    "path": "compiler/ownership.fern",
+    "bytes": 11668,
+    "sha256": "60b872bfe56cf962970836389edde091dca9cef215a5cd16b162e2a378ea076d"
+  },
+  {
+    "path": "compiler/parser.fern",
+    "bytes": 872453,
+    "sha256": "8cf817dd2bb63b2e8c46ef0dc1cc518993892e26561f3f75c8740a00fbd15903"
+  },
+  {
+    "path": "compiler/physicalbody.fern",
+    "bytes": 4355,
+    "sha256": "2616720810fc34d1f29e9915c221ff7d4e37c54a50caa9043bf23ec5eb07fcf0"
+  },
+  {
+    "path": "compiler/pkgfetch.fern",
+    "bytes": 8392,
+    "sha256": "c267b2e06e1f992410aa93624b90cb387b2bd60b23ef98cf311afe99bce2baa1"
+  },
+  {
+    "path": "compiler/pkggrants.fern",
+    "bytes": 6223,
+    "sha256": "baccad834c1fbcebd9d1bed9903151d4c2844d0677dd71a112ea03823e06e6ca"
+  },
+  {
+    "path": "compiler/platforms.fern",
+    "bytes": 21547,
+    "sha256": "49181b4f18998fd1cc2950abb6d3b020b770d1d4970ee9ed5450941c67e18e30"
+  },
+  {
+    "path": "compiler/playground_run.fern",
+    "bytes": 8355,
+    "sha256": "0b15ec19ae4d2b2575d9bed06c7588ec5f05a5ca4c1dc81bf7263b6e5edf7e52"
+  },
+  {
+    "path": "compiler/printer.fern",
+    "bytes": 137893,
+    "sha256": "49bedc8da49bac26684441baa7503be6fce3ded6cd98997a608dbc850868b820"
+  },
+  {
+    "path": "compiler/rcccompact.fern",
+    "bytes": 3021,
+    "sha256": "fc7fabb021459b0585f7275e743b46c5338740470bb19b50160b93a100576653"
+  },
+  {
+    "path": "compiler/rccertify.fern",
+    "bytes": 114074,
+    "sha256": "6d1194180eedf8e1dae0a717ea25f75d78724c1d9bd6e7cc557302539cf3ee04"
+  },
+  {
+    "path": "compiler/rcmemo.fern",
+    "bytes": 4079,
+    "sha256": "ceb1fb9f14032841293e774277aaa0a44ac5fdce0b13d418f3cc3692660a332d"
+  },
+  {
+    "path": "compiler/rcsigs.fern",
+    "bytes": 8856,
+    "sha256": "736039e7949f277693992fa2cdb12e51737613c20b11ec0ad6e0de7053b874ad"
+  },
+  {
+    "path": "compiler/rtbytecopy.fern",
+    "bytes": 6363,
+    "sha256": "33aa0fa45ea97159fd3b03b62e00a046d2db49773afbab1ba90354d18fa94d54"
+  },
+  {
+    "path": "compiler/rtprofile.fern",
+    "bytes": 19784,
+    "sha256": "d0bb5a92e571c1e349575486aa317fe6e02a2fde82a22cbae4071f4b3fb22880"
+  },
+  {
+    "path": "compiler/rtprofilemacho.fern",
+    "bytes": 5521,
+    "sha256": "dd9b9fac7ff2bc297abde32238d11491db33a07bd7ae6932edf691aec1c5b348"
+  },
+  {
+    "path": "compiler/runtime_need_roots_parity_test.go",
+    "bytes": 2222,
+    "sha256": "abd463307f83df40f560569bfaa4a325ce1a5634142bdc73d5a8b5dfd6916a50"
+  },
+  {
+    "path": "compiler/semarrayreport.fern",
+    "bytes": 6551,
+    "sha256": "86b3644f85558d94e55721a01a98a8075c88d7e699fe452027154f869b89e119"
+  },
+  {
+    "path": "compiler/sembytecopy.fern",
+    "bytes": 11723,
+    "sha256": "3a20e88fea0389add19115edd637504827bd5abf587bc4ae5975af4a52b85b67"
+  },
+  {
+    "path": "compiler/semcse.fern",
+    "bytes": 3962,
+    "sha256": "68ad064e4a46bcd076016c9aa9e1957eefd37cdef31bfa6ae3b866e6c058e8e1"
+  },
+  {
+    "path": "compiler/semdead.fern",
+    "bytes": 3506,
+    "sha256": "8e2997e691de4efec717b27ae1808d0098c0f54056e75938ee99507dbf596264"
+  },
+  {
+    "path": "compiler/semfuse.fern",
+    "bytes": 40045,
+    "sha256": "feaa6e43e373f50bf3972f43eba44c237e1253bc0fbfe84d196152969663d911"
+  },
+  {
+    "path": "compiler/semhoist.fern",
+    "bytes": 3087,
+    "sha256": "c7b19ac5b0da1eac1047b045f882563d29654025a9abbe4f74debc2dc0a927ea"
+  },
+  {
+    "path": "compiler/seminline.fern",
+    "bytes": 60308,
+    "sha256": "feff5d6638edba36e0ff18e355c253dd9b3e276cfed695889ff4f33eb0bffe31"
+  },
+  {
+    "path": "compiler/semlower.fern",
+    "bytes": 36226,
+    "sha256": "11ff9e321b473d80b971558850234cb6e9e4861b549084a2d47f4daa13ace222"
+  },
+  {
+    "path": "compiler/semndarray.fern",
+    "bytes": 22288,
+    "sha256": "c536bdb17c81ec1ec7e8ae617c98e1686d392f219dc419a310bbcf4960c47ed8"
+  },
+  {
+    "path": "compiler/semndlayout.fern",
+    "bytes": 6915,
+    "sha256": "58ceb635b91dbbd89c42d9c51672a739541d6051eda0851b66ee5882b48b6234"
+  },
+  {
+    "path": "compiler/semndprune.fern",
+    "bytes": 3966,
+    "sha256": "c09285ebad8fd65f810ae6fe13914bd6baee867d2fc8f3ced2d57588e2cc8b3e"
+  },
+  {
+    "path": "compiler/semoption.fern",
+    "bytes": 5797,
+    "sha256": "290cf5dc2f9ad443ed8173be598fb3a9128d7015ef011e6cddc42de49ec860cd"
+  },
+  {
+    "path": "compiler/sempair.fern",
+    "bytes": 27322,
+    "sha256": "1aff8eb5a3469f965a3307f8fb578b413a41b3b84f653d05e281acdd20759cd3"
+  },
+  {
+    "path": "compiler/semreach.fern",
+    "bytes": 26263,
+    "sha256": "b86db920ca8a154d052b8c16389eefd631ca97a8b8848b622d34b5eeb6b3a2a3"
+  },
+  {
+    "path": "compiler/semrecords.fern",
+    "bytes": 9416,
+    "sha256": "105b11a712c6fbb31b0a3b829f123e67c2c05a3920329888c0189d94e52bf61f"
+  },
+  {
+    "path": "compiler/semscalarreturn.fern",
+    "bytes": 10802,
+    "sha256": "2c0bcb2144fd9c9d691fd67627616d8ccb1db4c2d7a92f7d21e7ec3c97c6ed80"
+  },
+  {
+    "path": "compiler/semsink.fern",
+    "bytes": 16923,
+    "sha256": "a36458406389c8c4cfe03f70409cbb886cf7b47a7cbc75cf901fca97f00c35bf"
+  },
+  {
+    "path": "compiler/semsource.fern",
+    "bytes": 298186,
+    "sha256": "6b87a17c1dfbfbf0f41df92d3272cfd89a73cebdf7ca49728f9b4ff5d6fc3f94"
+  },
+  {
+    "path": "compiler/semthread.fern",
+    "bytes": 11671,
+    "sha256": "75776daba95969f9d9090a6eb117e0f59b2e9ccdd49f1a21346058df5c102506"
+  },
+  {
+    "path": "compiler/semtypes.fern",
+    "bytes": 9895,
+    "sha256": "24983423960ba50af11e27f710cd717027503abd2f5b97c7a044785f57bbf897"
+  },
+  {
+    "path": "compiler/sourcepos.fern",
+    "bytes": 1973,
+    "sha256": "abe62f55d517dff0d0826ae1feaca2b296fac5c42c4948668ee4acf471b32020"
+  },
+  {
+    "path": "compiler/sources.go",
+    "bytes": 73,
+    "sha256": "cbf5b946efe3fc1f6f128b4a6bd9dd956f45ecf883e0670e7ef469ec335d2560"
+  },
+  {
+    "path": "compiler/sources_test.go",
+    "bytes": 517,
+    "sha256": "6c8883b5cd3bd71adbd3f22af9ce95cb2d03880730ac7bc1cb064e7ea5776191"
+  },
+  {
+    "path": "compiler/ssa.fern",
+    "bytes": 140889,
+    "sha256": "403bedaf375e88347d604d839f75daad563b2e8092c63cff9d825680bd150cab"
+  },
+  {
+    "path": "compiler/ssa_lift.fern",
+    "bytes": 65225,
+    "sha256": "bd091f0f13242b8cad1e5917b3b6d60ec190d2cc53ae99e6e2d0bd851b7fcbd1"
+  },
+  {
+    "path": "compiler/ssaallocationchain.fern",
+    "bytes": 560,
+    "sha256": "f323abd804ab48497b03d751c8c43730ad546efbbe58b8adfe4646a95815957e"
+  },
+  {
+    "path": "compiler/ssaallocatorfirstmachine.fern",
+    "bytes": 18650,
+    "sha256": "9bc56e29c6ab7a9a6a838f723e1cfb490dcd74aff341c6f79efa9e9fb507d5be"
+  },
+  {
+    "path": "compiler/ssaallocatorinitisa.fern",
+    "bytes": 2133,
+    "sha256": "bc173fb24f08c5362697dff0167664fb1c324bdc537475acdf141f805e4814ac"
+  },
+  {
+    "path": "compiler/ssaallocatormachine.fern",
+    "bytes": 16344,
+    "sha256": "f6f4198dec7d9e3f8066b55705cbe60b5435d3d22a704797e43a9ee22e09b8be"
+  },
+  {
+    "path": "compiler/ssaarrayboxmachine.fern",
+    "bytes": 14105,
+    "sha256": "2f10ccb6a64312278116eafa5023f35e0d5a68542a26281ac4612c57e4ca4b97"
+  },
+  {
+    "path": "compiler/ssaarrayrelease.fern",
+    "bytes": 497,
+    "sha256": "7ce3a8f45c04d39a048a8713cf3c385e01e2f9f0d4c61d9e973ea537c3726924"
+  },
+  {
+    "path": "compiler/ssabounds.fern",
+    "bytes": 35368,
+    "sha256": "a4deaaaaefe89bb07163ecd4e1231d4504cd0b89c922dc4115abfb79ad69abba"
+  },
+  {
+    "path": "compiler/ssaboxstringmachine.fern",
+    "bytes": 12737,
+    "sha256": "b493cbd3a4ca0651dff6943a2c2a0eecd063f1cf81825e6c99b4f0ee3913feee"
+  },
+  {
+    "path": "compiler/ssabytes.fern",
+    "bytes": 9935,
+    "sha256": "fc82b169b3b3439b2138523a78063cc3bbca7e030cfc02f2d7f8c1912e78ddbb"
+  },
+  {
+    "path": "compiler/ssacapacityisa.fern",
+    "bytes": 25132,
+    "sha256": "74226da8c87f88232fe35bb9513c87add6021fe0316e2ef533e7d87b320fd204"
+  },
+  {
+    "path": "compiler/ssacapacitymachine.fern",
+    "bytes": 11305,
+    "sha256": "15b2c822ea1ebc263577ca5c83093908e59fd2be59ae68646e1b3cc34d56b525"
+  },
+  {
+    "path": "compiler/ssacapacityvalue.fern",
+    "bytes": 4361,
+    "sha256": "28e16aefde526b130020f02b3a9d9811a655f0bc7363426de6042846c1670800"
+  },
+  {
+    "path": "compiler/ssaconstructorbound.fern",
+    "bytes": 4196,
+    "sha256": "4f8aab74d7647869a0132517c120e57edada3e3286eb6c3d2480d007702a9c6c"
+  },
+  {
+    "path": "compiler/ssaconstructormachine.fern",
+    "bytes": 11657,
+    "sha256": "72569145ee172dead61bbe39cc3ee5d52a5edeeb2bce46f348d8493b5fea7a15"
+  },
+  {
+    "path": "compiler/ssacredit.fern",
+    "bytes": 15065,
+    "sha256": "1d53611cce83333a40fa34816dd5481e92f0751c067ac07a4d7ae27a1c381e64"
+  },
+  {
+    "path": "compiler/ssacreditabi.fern",
+    "bytes": 34931,
+    "sha256": "8695132e00308813d26c5e1ae41496973348f5eea4a8786f22dd5391c4e29aca"
+  },
+  {
+    "path": "compiler/ssacreditbound.fern",
+    "bytes": 4500,
+    "sha256": "97ecb65e5187aeed19383f53429d4a70d8f96a08d0a6f61953196cb7a37c1547"
+  },
+  {
+    "path": "compiler/ssacreditcontinuation.fern",
+    "bytes": 4896,
+    "sha256": "44877140175e49356abd508644a8a76c7a253d89dd8825c8e0ecfc73f4ab7026"
+  },
+  {
+    "path": "compiler/ssacreditemitted.fern",
+    "bytes": 7250,
+    "sha256": "cefd411148d3b30b010f3c303949f11cd4564fa4019842d5208a1100a6d14085"
+  },
+  {
+    "path": "compiler/ssacreditextract.fern",
+    "bytes": 17828,
+    "sha256": "1f8dcd2be8a580660a8b93dd589b8a18d51907a425f1250ed8eced6822236dc7"
+  },
+  {
+    "path": "compiler/ssacreditflowgraph.fern",
+    "bytes": 6355,
+    "sha256": "b091759a50eea3a05e0ea972524dfa4d9bc5fffa6d92b5da2a47982e03da7df1"
+  },
+  {
+    "path": "compiler/ssacreditguard.fern",
+    "bytes": 5190,
+    "sha256": "6e75d2b059835c9eaf53f91f50e6869266a6b61112de48cdfa656ae60a7f23aa"
+  },
+  {
+    "path": "compiler/ssacredithelper.fern",
+    "bytes": 6183,
+    "sha256": "4225cf33b513409e943cc121fbff645352a97acca4ee6dae645b5edac444cad0"
+  },
+  {
+    "path": "compiler/ssacreditincoming.fern",
+    "bytes": 6959,
+    "sha256": "a08f9e71e421b7f1add35feac029c9c7d0a6a22bcd7aae6523c380e5da2eaaf4"
+  },
+  {
+    "path": "compiler/ssacreditorigin.fern",
+    "bytes": 4448,
+    "sha256": "19e7eead4bc686fcdf58c2ca040978c761990e2cace079b5a668c3aeaffd6a6b"
+  },
+  {
+    "path": "compiler/ssacreditoriginflow.fern",
+    "bytes": 5114,
+    "sha256": "6825c6c7ffa62254d3796f44c813e5197c80c68c9c311a4644ae9672a32bac98"
+  },
+  {
+    "path": "compiler/ssacreditphi.fern",
+    "bytes": 6914,
+    "sha256": "9449475a76eeb878eb60d339111f856b084573ac0b43eacf4f5b69b0c3c753e3"
+  },
+  {
+    "path": "compiler/ssacreditreplace.fern",
+    "bytes": 4574,
+    "sha256": "13294f22c505033a7cd918a82675774bb4c2f4d44a28e1ce6d95d27dcd6fd48e"
+  },
+  {
+    "path": "compiler/ssacreditreuse.fern",
+    "bytes": 34164,
+    "sha256": "51982708dc8bb5373a9480431f37ff795a83fd2b86050dd18d6283feabf5dc76"
+  },
+  {
+    "path": "compiler/ssacreditscalar.fern",
+    "bytes": 10388,
+    "sha256": "09dad961600832226e037879dd29bcdb5ebe08df8afdcb06b6b8b02fbed549e1"
+  },
+  {
+    "path": "compiler/ssacreditselected.fern",
+    "bytes": 5899,
+    "sha256": "a24ca9ba4839ec68e1829e2de7f1d08736d3c2106ac381b3fb95247305ec0def"
+  },
+  {
+    "path": "compiler/ssacredittext.fern",
+    "bytes": 1941,
+    "sha256": "6e5c48b14db9b4dccad6f6e2ad72e3f3de31f76c3dd238df4be93e35b6e16aff"
+  },
+  {
+    "path": "compiler/ssadecrementcount.fern",
+    "bytes": 2890,
+    "sha256": "765c64f591db71d5c9a7129c065b7b0a606be1c97b0519520bb6c9f2e401721c"
+  },
+  {
+    "path": "compiler/ssadecrementguards.fern",
+    "bytes": 7187,
+    "sha256": "28fa3af594225a01ed435d5c88b517990f0c202fb9b5814a44c589874e9a581a"
+  },
+  {
+    "path": "compiler/ssadecrementisa.fern",
+    "bytes": 5336,
+    "sha256": "d75a8a098aac797dc57d39ea7bf3f743096b8f1f517e91b5d243f24198990382"
+  },
+  {
+    "path": "compiler/ssadecrementmachine.fern",
+    "bytes": 8730,
+    "sha256": "a7ba96285710b480a8ceb3b2881e8b7d3a3daa9c8e7de3f7b11516c14948b0f5"
+  },
+  {
+    "path": "compiler/ssadecrementmemory.fern",
+    "bytes": 1108,
+    "sha256": "f46f64e4c227fdda3ac7b6fee1961ba4c8ae0a1579c8327f588e727cbe8f96db"
+  },
+  {
+    "path": "compiler/ssadecrementtext.fern",
+    "bytes": 20482,
+    "sha256": "0010ebb17a0bd9cc8987e4c876b2a978af3edda5ea05809725f2206b71345d6e"
+  },
+  {
+    "path": "compiler/ssadeps.fern",
+    "bytes": 9749,
+    "sha256": "6615d3c98b8d4dc4c473c83e945c83641e9b683d5e98882c3bb72473a341a1b0"
+  },
+  {
+    "path": "compiler/ssafixed.fern",
+    "bytes": 1664,
+    "sha256": "8a47cd4e18c7523b82a49120f44b55cdc09fc6912a8935ec3a10b82dd48590a8"
+  },
+  {
+    "path": "compiler/ssafusedstringmachine.fern",
+    "bytes": 21727,
+    "sha256": "e76f821aa3790bc5a5e1439dc8bd8a9abe39eefa265322580853eda7f2e25ed6"
+  },
+  {
+    "path": "compiler/ssainlineunique.fern",
+    "bytes": 4147,
+    "sha256": "523b6f04bb3937ee47933d9db72dd1f156f24086fd539edd70322d17ce160f9c"
+  },
+  {
+    "path": "compiler/ssainlineuniqueflow.fern",
+    "bytes": 4588,
+    "sha256": "a8871117cea44d783fbe5bfee5cc9a5a2331d286ab082e27aeb66aa7932d2e00"
+  },
+  {
+    "path": "compiler/ssainlineuniqueisa.fern",
+    "bytes": 7360,
+    "sha256": "0f6c8603b7b91a4193ced5c6a909f8501a7c5590113cc1883cca5ef86948c6ef"
+  },
+  {
+    "path": "compiler/ssalargearraymachine.fern",
+    "bytes": 15607,
+    "sha256": "2623c843ed0e018f07ec7b2a5c77c1eea47797d623dd743c7cbf2652e5e5d24d"
+  },
+  {
+    "path": "compiler/ssalargearrayvalue.fern",
+    "bytes": 3941,
+    "sha256": "a8fda4ca9ae517cd62c703bdb4bbead61d3c76f90e58a92864d8db1c636d151f"
+  },
+  {
+    "path": "compiler/ssalargepushmachine.fern",
+    "bytes": 12912,
+    "sha256": "6347d59cf071c55ab6cd241089bf72bdff58e5be22a7297e1030066cb48bab1c"
+  },
+  {
+    "path": "compiler/ssalargepushranges.fern",
+    "bytes": 2021,
+    "sha256": "bb62b48044043f347ec2ee549e3e7bffed748bf62958471913d177ea3d960feb"
+  },
+  {
+    "path": "compiler/ssalargepushvalue.fern",
+    "bytes": 3302,
+    "sha256": "59b53d3c3a2d1f72cd41583c4625941e53dc394042a86cff5441386b5f1a3890"
+  },
+  {
+    "path": "compiler/ssalayout.fern",
+    "bytes": 8171,
+    "sha256": "e547c8656b0899deca8959c3c152184d3aac99f9c4abcf883a4037bfd8afa64c"
+  },
+  {
+    "path": "compiler/ssalive.fern",
+    "bytes": 12526,
+    "sha256": "400b0dec02ae6b3e23fecc3beed7b5d0f8dd313237a6389757b87a36844784ca"
+  },
+  {
+    "path": "compiler/ssaprepare.fern",
+    "bytes": 4817,
+    "sha256": "8171c841b395562562b682949c5d440e01c5053cb0c3d7f8ea9186a8640fb391"
+  },
+  {
+    "path": "compiler/ssaproofnames.fern",
+    "bytes": 2700,
+    "sha256": "4758875d8a629d33351c71c0abe22073e0798fe9eab1498f1fb895386d4f7d7a"
+  },
+  {
+    "path": "compiler/ssaquotient.fern",
+    "bytes": 6233,
+    "sha256": "50ac0e4ecdbeafdf370747bde08a0220ef002d11312003fe94429d49aa070c5a"
+  },
+  {
+    "path": "compiler/ssarc.fern",
+    "bytes": 204779,
+    "sha256": "f9f3907fc7c47b2c0e2186ad86a5fa0def1d9d984cf8944ba1dc91c4d77c8ec9"
+  },
+  {
+    "path": "compiler/ssaruntimeunique.fern",
+    "bytes": 4274,
+    "sha256": "692d05ac1de727cbe9c4ecf93255afbc3b8ceed1ae5d81acdbff037d211eb0e1"
+  },
+  {
+    "path": "compiler/ssaruntimeuniqueflow.fern",
+    "bytes": 4093,
+    "sha256": "246e4de1484cd4d2c9fcb2110efbf4248c80a7f8f79946707da7841d08e48e0d"
+  },
+  {
+    "path": "compiler/ssasem.fern",
+    "bytes": 136119,
+    "sha256": "9a3faaed8f0438a100d13c5ac7cad7c9f5d5dbe880e4d3c1082287fe76ba709a"
+  },
+  {
+    "path": "compiler/ssaseparatestringmachine.fern",
+    "bytes": 24839,
+    "sha256": "7ba208f4ccae4c901f48dc0dde2967bcb13d3e661005f0991a7939a009b67855"
+  },
+  {
+    "path": "compiler/ssasmallarraymachine.fern",
+    "bytes": 17048,
+    "sha256": "e05a894344c26198d492f6992790d504ba0da0d94190d72248b1d7ec4b7ee080"
+  },
+  {
+    "path": "compiler/ssasmallcallerflow.fern",
+    "bytes": 7069,
+    "sha256": "fcb92b31e4dd51a3b51168421ff469176c35aa7b1955f8ab64c71c49b80cd368"
+  },
+  {
+    "path": "compiler/ssasmallcallermachine.fern",
+    "bytes": 15945,
+    "sha256": "080fb1ce790c7bb1698bd3ee8c722ea64e119a56356960294740c78cbcb07684"
+  },
+  {
+    "path": "compiler/ssasmallheap.fern",
+    "bytes": 5822,
+    "sha256": "165ca9e87d48380371e99cb3858e89736e2716677512b418b88168ec5362b08e"
+  },
+  {
+    "path": "compiler/ssastringrelease.fern",
+    "bytes": 577,
+    "sha256": "4be32c329598f6228ede710823a2cbafd0c08e02c71869e45fc5ec4ab5458a3a"
+  },
+  {
+    "path": "compiler/ssastringvalue.fern",
+    "bytes": 7116,
+    "sha256": "bb74e0f95963c68a5a9a71fa8e16af1477196b55a5ebb2f06e6914f66be83cc2"
+  },
+  {
+    "path": "compiler/ssauniquecaller.fern",
+    "bytes": 13452,
+    "sha256": "0d5f62d4031cbf0114bf8dbf071107da4500ea3c60e5456b23ed1c9c32d1c7c6"
+  },
+  {
+    "path": "compiler/ssauniquemeaning.fern",
+    "bytes": 10280,
+    "sha256": "dc4600d45b1c0aa7826b2f6214df28612f62882b7d4eeba7ba2bde6fe6007ad5"
+  },
+  {
+    "path": "compiler/ssauniqueunit.fern",
+    "bytes": 4749,
+    "sha256": "f4e2779f3a04e7b180822043ab71c657c9b461f1c1e63332a57e417194e71b1e"
+  },
+  {
+    "path": "compiler/ssaunits.fern",
+    "bytes": 155807,
+    "sha256": "ce9193928fa39fc3506b11de2b423e77f16afc8ff8b06e5279b29e96516a0c3f"
+  },
+  {
+    "path": "compiler/stdlib_methods.fern",
+    "bytes": 18660,
+    "sha256": "bda226865dae314c7c036e176bc6cdb8cfc6cdb265c0ba49c0c53d17c782aa4d"
+  },
+  {
+    "path": "compiler/suspend.fern",
+    "bytes": 26612,
+    "sha256": "6fd79cef400ceca1acc46924f9307907ebb70138e4e3d9ba74338db8967d6573"
+  },
+  {
+    "path": "compiler/treeshake.fern",
+    "bytes": 22108,
+    "sha256": "ff2f9ba0708c996e3fa3a0a049dc818a2c1b1c59460dab3427ccb4feef4d41c9"
+  },
+  {
+    "path": "compiler/typeinfo.fern",
+    "bytes": 9898,
+    "sha256": "11d55b420d84c78257497f5437bd591ea43ffe2a53ddd9e15e60ffc0f002f00f"
+  },
+  {
+    "path": "compiler/util.fern",
+    "bytes": 35567,
+    "sha256": "06234ea8217f2716d3d5d8d2a7e5d4f8d33b31d7f7ee6d3ef992041455eb28d0"
+  },
+  {
+    "path": "compiler/visibility.fern",
+    "bytes": 14633,
+    "sha256": "fb7765d5970b25f73e983b9209293ff174c3db42868c6612d296c798e1ecbeb9"
+  },
+  {
+    "path": "compiler/wasm_abort.fern",
+    "bytes": 1190,
+    "sha256": "61f20c632e4067424d813b5083dc135402aa8e39049a96d4c613f396c069307e"
+  },
+  {
+    "path": "compiler/wasm_aes.fern",
+    "bytes": 30565,
+    "sha256": "3758028d78e267fbf7fc727a6bd53b6b52298f4d106330be8cda195041eeb0af"
+  },
+  {
+    "path": "compiler/wasm_ir.fern",
+    "bytes": 666566,
+    "sha256": "56d0572e1a88ea8dd1efbefb61bbc706fc6a227e86b236de49caa5b6b6f92311"
+  },
+  {
+    "path": "compiler/wasmlocals.fern",
+    "bytes": 7939,
+    "sha256": "e73fedeffcf55f9e8dc427df93a0cb4fb0cf25eb8f0049bb0ee321a361e1b319"
+  },
+  {
+    "path": "compiler/watbin.fern",
+    "bytes": 93244,
+    "sha256": "8887932e4b874946f2eff26dbf3691d2027048e1d7cb8a89827daa596380cd52"
+  },
+  {
+    "path": "compiler/weave.fern",
+    "bytes": 23677,
+    "sha256": "778e00e50bd715eb3aa784b772a744111c0b78ddbb5d64c4a147e2cd26d01f48"
+  },
+  {
+    "path": "compiler/wit_compose.fern",
+    "bytes": 10926,
+    "sha256": "e5221d9fd851bdddf103a16b67270506bc3b270054eee8f4017c53925e913ddb"
+  },
+  {
+    "path": "compiler/wit_decode.fern",
+    "bytes": 47760,
+    "sha256": "7410612b272323503790f15e368398d981ebeb54c5683e9b866a249544f8dc66"
+  },
+  {
+    "path": "compiler/wit_fern_world.fern",
+    "bytes": 15782,
+    "sha256": "1cce494e4aaa02723ed1cfd653736b5264c6bf9e384bb79b8e09f6f411588ef7"
+  },
+  {
+    "path": "compiler/wit_proxy_world.fern",
+    "bytes": 14157,
+    "sha256": "8a0114d62d0e86251d8d194f8615e06792c47986a6176302bd0db6367414f085"
+  },
+  {
+    "path": "compiler/x86_native.fern",
+    "bytes": 200479,
+    "sha256": "998a133bc46cfe69c0238a4ff25a153d19da5defb2e921b0f507d474f5f90d65"
+  },
+  {
+    "path": "internal/stdlib/core/_test_empty.fern",
+    "bytes": 80,
+    "sha256": "516cc80cf6a235647bf2da7ab78d8cbce5396b036d960fb627229e83d057be9e"
+  },
+  {
+    "path": "internal/stdlib/core/bigint.fern",
+    "bytes": 15621,
+    "sha256": "4efddeb047bd3ea4c22fa6fd50bc8a9c5c541065a7f1d95ffbc1e2b4bc562da3"
+  },
+  {
+    "path": "internal/stdlib/core/cmp.fern",
+    "bytes": 21248,
+    "sha256": "6010c5d13673ccf6c74f8e685a728a26abe2d6c64dfcf3ebfdccf110789e1357"
+  },
+  {
+    "path": "internal/stdlib/core/int.fern",
+    "bytes": 5384,
+    "sha256": "fcbc5caeca8d2043c5d4db30d45d80c4e4ad052dfde1d8cc582897567d6b9786"
+  },
+  {
+    "path": "internal/stdlib/core/iter.fern",
+    "bytes": 10865,
+    "sha256": "39f37fe7a780fe25e9538d6c80c93122e995b1aa41715db828638a0af064a6e3"
+  },
+  {
+    "path": "internal/stdlib/core/map.fern",
+    "bytes": 35357,
+    "sha256": "55aaeeb460507ff1a157c20d89b7a74e8513855fccbdbf8e9bc10a972a75f496"
+  },
+  {
+    "path": "internal/stdlib/core/mem.fern",
+    "bytes": 96,
+    "sha256": "0d3da0179bd08ab90f92277e95bb15149fb2a2e146d4f6888c055143ebe17529"
+  },
+  {
+    "path": "internal/stdlib/literate_test.go",
+    "bytes": 3323,
+    "sha256": "67c91c69219fe1dd48775ccd17596688a01ae81cdea4802a6d95b4113c8a7ab9"
+  },
+  {
+    "path": "internal/stdlib/net_errno_test.go",
+    "bytes": 3516,
+    "sha256": "39a063c85216cf913f6fb0428d427539e80a8b89b6251c378ef25bb95dd4668d"
+  },
+  {
+    "path": "internal/stdlib/std/_test_empty.fern",
+    "bytes": 84,
+    "sha256": "ed96a4ccd0a30a9cebe9c1a384074817a4273901524e818e443f6e54d12a3cc3"
+  },
+  {
+    "path": "internal/stdlib/std/ansi.fern",
+    "bytes": 3287,
+    "sha256": "4767233e242d985403fa378c28032d264e723a61f514f5117604bae2d6c2774f"
+  },
+  {
+    "path": "internal/stdlib/std/array.fern",
+    "bytes": 28000,
+    "sha256": "b1967c94d961c44537965207f59822bc587b07fb7ee9c3507ed3889bfc999a51"
+  },
+  {
+    "path": "internal/stdlib/std/async.fern",
+    "bytes": 24835,
+    "sha256": "03d97e5a51492f8fe5785980af4b3f96b3bf3674c70d05844b32c3937be311a9"
+  },
+  {
+    "path": "internal/stdlib/std/base32.fern",
+    "bytes": 1992,
+    "sha256": "b6ad7b09a0dc64cd836a5b3e5975b9cb803c6c330d81c03e7f380a76619cd97e"
+  },
+  {
+    "path": "internal/stdlib/std/base64.fern",
+    "bytes": 3797,
+    "sha256": "dec6c671075c77c284c6ced08b46b1bcd02e577e7c2b97124a0f7b81e12e0b02"
+  },
+  {
+    "path": "internal/stdlib/std/bench.fern",
+    "bytes": 8423,
+    "sha256": "9ca4abfd41efeff53b34c13cd07bc180624336e0b0d12ac5bca05eb21c0568bd"
+  },
+  {
+    "path": "internal/stdlib/std/binary.fern",
+    "bytes": 1695,
+    "sha256": "394e8f69bc4dab782cc42e6261aead8da6ca1b233f7285478ff80ebef9cf6595"
+  },
+  {
+    "path": "internal/stdlib/std/brotli.fern",
+    "bytes": 32492,
+    "sha256": "c1bdcb0a08edf99217c7b6038031dc5e6456fa08ed79eb6bf6f23aa5eb89804d"
+  },
+  {
+    "path": "internal/stdlib/std/brotli/dictionary.fern",
+    "bytes": 164219,
+    "sha256": "ff50f821bf1bfa5eb1d7f601510d47366c7fa8ce3d8136f52fa179669bb5405a"
+  },
+  {
+    "path": "internal/stdlib/std/cli.fern",
+    "bytes": 17981,
+    "sha256": "faf2e715c40c990625000ad87542490fc7dd6af78c45578401381ed4371ca66b"
+  },
+  {
+    "path": "internal/stdlib/std/codec.fern",
+    "bytes": 1899,
+    "sha256": "2af90ee06e767880e0930d5ebf6c770dd6b2f4627abf9cc216968cb78ee9eaa5"
+  },
+  {
+    "path": "internal/stdlib/std/constmap.fern",
+    "bytes": 10468,
+    "sha256": "92fd28d213b8b154c39086326edd4af707660376146ad2c9f2cacbf57fef5de9"
+  },
+  {
+    "path": "internal/stdlib/std/convert.fern",
+    "bytes": 574,
+    "sha256": "80d18f49edb12108fcac3b627b6e8b9b94221750d25cce21dbc6e6945595a663"
+  },
+  {
+    "path": "internal/stdlib/std/crypto.fern",
+    "bytes": 255330,
+    "sha256": "b388aca3d74977baadb82c3f32334957d989c87765d395f5d6fe437275b9e1c7"
+  },
+  {
+    "path": "internal/stdlib/std/crypto/aead.fern",
+    "bytes": 739,
+    "sha256": "0a1863682403f4ee4da598ad0bc7ee8dc2fd909b409209d4323ca7af3b57a327"
+  },
+  {
+    "path": "internal/stdlib/std/crypto/aes_gcm.fern",
+    "bytes": 1907,
+    "sha256": "663ac0140e991b0c3571c43c4fe9c6de9aaf296c90a726dd0323edf1c9572060"
+  },
+  {
+    "path": "internal/stdlib/std/crypto/chacha20poly1305.fern",
+    "bytes": 12794,
+    "sha256": "88cd321aeb8e06a8d55dbf33d7f247f778c67cfd5a994c545ab62ff4b47b8fde"
+  },
+  {
+    "path": "internal/stdlib/std/crypto/ecdsa.fern",
+    "bytes": 20107,
+    "sha256": "f3e94defc2d52f73728ac05f617f3f500816ab481f0c9ebc050c8090a4bfa569"
+  },
+  {
+    "path": "internal/stdlib/std/crypto/ed25519.fern",
+    "bytes": 83488,
+    "sha256": "ab9eba408f0b40fa2d2914e28f2fd0eec72324ddac7996b919f2a88934492883"
+  },
+  {
+    "path": "internal/stdlib/std/crypto/field25519.fern",
+    "bytes": 19411,
+    "sha256": "bc6fa61b6bdab7b5473aeb2d4feac119cead7753c5549a83fc609278d1d1a901"
+  },
+  {
+    "path": "internal/stdlib/std/crypto/mlkem768.fern",
+    "bytes": 12752,
+    "sha256": "ab72539abc26f323abb3c1ccb4184a1b6c5dfae491a97b4b117f51b991a6341b"
+  },
+  {
+    "path": "internal/stdlib/std/crypto/montgomery.fern",
+    "bytes": 5398,
+    "sha256": "6c5492627339931a6b457cda4d6421d0d75811fc3808cc0cb897181618b9da7d"
+  },
+  {
+    "path": "internal/stdlib/std/crypto/p256.fern",
+    "bytes": 218236,
+    "sha256": "95d472726d1df9b3d294af3a88c147ca8961ba1f4461088d5ae5a1a5c9599e66"
+  },
+  {
+    "path": "internal/stdlib/std/crypto/rsa.fern",
+    "bytes": 7353,
+    "sha256": "b0596220b438db7b478d78b184d53f12175f56d1fd2cb1cf0b8e365561e96116"
+  },
+  {
+    "path": "internal/stdlib/std/crypto/sha2.fern",
+    "bytes": 663,
+    "sha256": "62f56d31d67322de90ce5a8de8917a8a7b835b6f674db3b3136ecdfcbd124156"
+  },
+  {
+    "path": "internal/stdlib/std/crypto/x25519.fern",
+    "bytes": 3013,
+    "sha256": "02feec8906073a5abbc13f6358ca4788f3af058ec981a971c47703dcd4b0512c"
+  },
+  {
+    "path": "internal/stdlib/std/csv.fern.md",
+    "bytes": 7776,
+    "sha256": "efb400d3197d4bb4e2b8fb0bfa7c5dead1f024e811cc2de1936955fbdcdbe0ba"
+  },
+  {
+    "path": "internal/stdlib/std/deflate.fern",
+    "bytes": 36523,
+    "sha256": "c767104ee6786eee4864c544327c5193210fe839e081b6a8d640c3ba463482b2"
+  },
+  {
+    "path": "internal/stdlib/std/dns.fern",
+    "bytes": 54715,
+    "sha256": "625182839355feb1d81800b12f5d119ab5b9800654cec6c62508f24a5d253bd3"
+  },
+  {
+    "path": "internal/stdlib/std/dotenv.fern",
+    "bytes": 2484,
+    "sha256": "1b7a5a017325c431edbc5bf909814ade78021a1f73085409269abb00fc3dca97"
+  },
+  {
+    "path": "internal/stdlib/std/envflag.fern",
+    "bytes": 939,
+    "sha256": "7108d1668c0f42b6ae7262d577923cbd082cbf5a66499fffbd653a494fbab884"
+  },
+  {
+    "path": "internal/stdlib/std/errno.fern",
+    "bytes": 4201,
+    "sha256": "1f7a39dab277827d9665af100341df8b3f85905b2eb41a507102ada17d085da8"
+  },
+  {
+    "path": "internal/stdlib/std/error.fern",
+    "bytes": 712,
+    "sha256": "9379ca13a74e56d71e6e52559f18f286edfb8e10da07665a06994475cf2d7acb"
+  },
+  {
+    "path": "internal/stdlib/std/f64.fern",
+    "bytes": 98022,
+    "sha256": "d0c34e0ac1c552429130eb829208bf19f81fac90f36817fe5e543c12892d0fd0"
+  },
+  {
+    "path": "internal/stdlib/std/fetch.fern",
+    "bytes": 84815,
+    "sha256": "0505417d1166bf5ed360f9f04b8d68ed612a952f35e91779fdad638c32d61e93"
+  },
+  {
+    "path": "internal/stdlib/std/format.fern",
+    "bytes": 9794,
+    "sha256": "e8b05c758abc5847445b4a5e4539517abef0a2efba5f58761fbe199ff5c0a80f"
+  },
+  {
+    "path": "internal/stdlib/std/fuzz.fern",
+    "bytes": 10429,
+    "sha256": "db903a8f9579acd9c43d2c4c1d60c4508f19e37256ee3bc2a83dc9bee24a206d"
+  },
+  {
+    "path": "internal/stdlib/std/glob.fern",
+    "bytes": 2459,
+    "sha256": "a642b7f319781e58be7666b95369a7ab7673edb769cb1e471513a563d2bbfb1c"
+  },
+  {
+    "path": "internal/stdlib/std/hash.fern",
+    "bytes": 6240,
+    "sha256": "c2b50b4dd25221da09592ed577d3bc71e6c3ef82c06ce815a3b112425166b408"
+  },
+  {
+    "path": "internal/stdlib/std/headers.fern",
+    "bytes": 5921,
+    "sha256": "d78a0270b5513789654768347983754d2c2a6fa09a2a07868b23a56a8be5b1f2"
+  },
+  {
+    "path": "internal/stdlib/std/hex.fern",
+    "bytes": 1922,
+    "sha256": "860b3a919580b06fa90cf61cb78fb3c89d1fffa02ad687a8ecef5b8788f63cad"
+  },
+  {
+    "path": "internal/stdlib/std/http.fern",
+    "bytes": 76536,
+    "sha256": "d79fa46b1b5c3b1e4a6a95837b6c9cc227f14b5f91c1c31241a50574d785691b"
+  },
+  {
+    "path": "internal/stdlib/std/http/accesslog.fern",
+    "bytes": 2835,
+    "sha256": "d2444670db81b4f9b251386d726432921b5043a735be3a4b2ccace82ee9f22b0"
+  },
+  {
+    "path": "internal/stdlib/std/http/auth.fern",
+    "bytes": 4435,
+    "sha256": "d78e6d54599a23b500d5df08919904ba6622612ab8016d03fc3b070b2df8cb88"
+  },
+  {
+    "path": "internal/stdlib/std/http/cache.fern",
+    "bytes": 14573,
+    "sha256": "f57c5075aea1859df62f060cf67806b12833dfe5d6078b001992afc778998780"
+  },
+  {
+    "path": "internal/stdlib/std/http/compress.fern",
+    "bytes": 3778,
+    "sha256": "cde088159beccb3fe6362f01bc1a4e488d7770fbef382371bcad99c449a512b3"
+  },
+  {
+    "path": "internal/stdlib/std/http/cookie.fern",
+    "bytes": 23452,
+    "sha256": "3502d2dd4c59de659148447cf51eec5f824484d02fad29f794758604f47ed778"
+  },
+  {
+    "path": "internal/stdlib/std/http/cors.fern",
+    "bytes": 4967,
+    "sha256": "52c1dd6e9b3c2d7d3041573b863b319bbf73f6d28548ca5857b7b0618d6738b5"
+  },
+  {
+    "path": "internal/stdlib/std/http/form.fern",
+    "bytes": 2575,
+    "sha256": "d08ae6ba4063a5c3a6cdbdfdfe69f5acaf79baa6f9437bda2a46b14bd2c55555"
+  },
+  {
+    "path": "internal/stdlib/std/http/forwarded.fern",
+    "bytes": 14853,
+    "sha256": "20d6633731a4cdcc428b6b4938af7a778e6c6848018c7f4a00a9a7c3b88c9abc"
+  },
+  {
+    "path": "internal/stdlib/std/http/grpc.fern",
+    "bytes": 4492,
+    "sha256": "dada8c997a7327fb5164253a5803543f0865d411ec2aec7d54e6409d74f7e147"
+  },
+  {
+    "path": "internal/stdlib/std/http/h2.fern",
+    "bytes": 49713,
+    "sha256": "9f4c651e9ebd951bd8577e0dec8b17161acd71059510a1bd2859ecf7b0f97bf5"
+  },
+  {
+    "path": "internal/stdlib/std/http/h2/frame.fern",
+    "bytes": 16759,
+    "sha256": "ca9d43267d38f09507f230d04072bb376d5af98f1febfd5a0ec65a3410f0d8d7"
+  },
+  {
+    "path": "internal/stdlib/std/http/h3.fern",
+    "bytes": 28477,
+    "sha256": "a10bda8b32d6dd9929327af0c26e6ea0de8fcb643fbf9d913a1b914417274830"
+  },
+  {
+    "path": "internal/stdlib/std/http/h3q.fern",
+    "bytes": 13454,
+    "sha256": "ea4fb47896526e7a681a6a7bb116f3bcb6cbf39cbf783287def9f0a9bf4a0432"
+  },
+  {
+    "path": "internal/stdlib/std/http/hpack.fern",
+    "bytes": 15551,
+    "sha256": "ac100524eb81951ad56bdeb6052917ca667733a1f7b18e4b4f04075140b47144"
+  },
+  {
+    "path": "internal/stdlib/std/http/huffman.fern",
+    "bytes": 36993,
+    "sha256": "211319ec685d1e1e8d104ae43d9b604222b3841d373bd546449eefb56edbd5f1"
+  },
+  {
+    "path": "internal/stdlib/std/http/multipart.fern",
+    "bytes": 14610,
+    "sha256": "5f5156255df2077fb71824822ed94635929db7ca687e95f5ab606f03083ae585"
+  },
+  {
+    "path": "internal/stdlib/std/http/qpack.fern",
+    "bytes": 23557,
+    "sha256": "8e1ead35ea0b9add403922474755a1b67c8e0c74fd423c6cd7d777ded7973d01"
+  },
+  {
+    "path": "internal/stdlib/std/http/requestid.fern",
+    "bytes": 1666,
+    "sha256": "ca31080767ef0a45d360b09e8e1df39e2b7d1f0c711dd59ec3ba2d47e8befa2f"
+  },
+  {
+    "path": "internal/stdlib/std/http/router.fern",
+    "bytes": 15678,
+    "sha256": "b0f22875f762d1d858ddecd60c481b65a7c0d82a805750ee63e8bb95b59d1443"
+  },
+  {
+    "path": "internal/stdlib/std/http/sse.fern",
+    "bytes": 5636,
+    "sha256": "9637c04a533992c06ffc7a993905ca6136536a1af3da07c134ca03b870f13304"
+  },
+  {
+    "path": "internal/stdlib/std/http/static.fern",
+    "bytes": 12610,
+    "sha256": "65e4834d876cda00e04836442a24e11becae94ce256ab6063482e42a549fd831"
+  },
+  {
+    "path": "internal/stdlib/std/http/trace.fern",
+    "bytes": 5302,
+    "sha256": "f5b1e3c795ed64ae6d280ce9aef85889ec91480cc79542469e637384275c1b5f"
+  },
+  {
+    "path": "internal/stdlib/std/http/websocket.fern",
+    "bytes": 19826,
+    "sha256": "a323fd2f44ed0dab114230bbb95031faeb8657583e46f07f9996f3a0eac25041"
+  },
+  {
+    "path": "internal/stdlib/std/i32.fern",
+    "bytes": 19135,
+    "sha256": "55d18eba47371221b2c84bd1715ee3b5cb15c33a45c2b13f8396c2b07b0727c3"
+  },
+  {
+    "path": "internal/stdlib/std/i64.fern",
+    "bytes": 14449,
+    "sha256": "f5c21b78235abb8d574e32219b2949c9d12abeab3d7b44ad16dceae2889e68b7"
+  },
+  {
+    "path": "internal/stdlib/std/io.fern",
+    "bytes": 2929,
+    "sha256": "285a41ca0a733690cf24067da3935dc238548a5f82c79e68e121ecbd3845efcd"
+  },
+  {
+    "path": "internal/stdlib/std/io_buffered.fern",
+    "bytes": 13602,
+    "sha256": "d9d73467f7ea0a9b1a2f17edc8f44058475f855a0146473b2e4a2f03af08e28d"
+  },
+  {
+    "path": "internal/stdlib/std/io_outcome.fern",
+    "bytes": 280,
+    "sha256": "f25a370d3253b7e3f7cd511a30cba7bd8bfdff9d2e19a148022d6135b2a2dead"
+  },
+  {
+    "path": "internal/stdlib/std/jni.fern",
+    "bytes": 10143,
+    "sha256": "5855f3052b70957d97a4dd42d7b2d2b03400fef723baf8ce76f1a699c0e04371"
+  },
+  {
+    "path": "internal/stdlib/std/json.fern",
+    "bytes": 55687,
+    "sha256": "b0e667872fa0bc5cb297243154b2d65c870c7296b28f03b66d6181994d57dc34"
+  },
+  {
+    "path": "internal/stdlib/std/log.fern",
+    "bytes": 3422,
+    "sha256": "3967d0ee01168a0f34dfef9dc372b75c9d1b18e30e0491a197316b627a3e7a79"
+  },
+  {
+    "path": "internal/stdlib/std/math.fern",
+    "bytes": 3251,
+    "sha256": "9bbb509d94ee1562d645c05ca04afce71370223129a4089a85dce7710ef29a67"
+  },
+  {
+    "path": "internal/stdlib/std/metrics.fern",
+    "bytes": 16712,
+    "sha256": "7499c096c1a2d6a8f040f04e98418801e733ee5d305c41976c953e4beaf82b78"
+  },
+  {
+    "path": "internal/stdlib/std/mock_platform.fern",
+    "bytes": 10965,
+    "sha256": "9554be820ae1524cf162fc11cb17140876f8f9762cc060bfe750d7b2fa58d49a"
+  },
+  {
+    "path": "internal/stdlib/std/ndarray.fern",
+    "bytes": 18682,
+    "sha256": "6e95d2bbd47407e743ce3a468cf303141cdaf3c83edc710b611091989c3c6053"
+  },
+  {
+    "path": "internal/stdlib/std/net.fern",
+    "bytes": 28674,
+    "sha256": "856bd0f10f90ec63b8fdd9494f816c5afc97c23048947a4ae386739ec596522f"
+  },
+  {
+    "path": "internal/stdlib/std/num.fern",
+    "bytes": 6251,
+    "sha256": "f63097f199403b44c51d368974e515dd0a15bbbace8c8868d1affcbaf5c3146e"
+  },
+  {
+    "path": "internal/stdlib/std/option.fern.md",
+    "bytes": 8490,
+    "sha256": "338a426a08ad7e8982781c74ae25285b6f5f94610770baa3bb682e2a70e75832"
+  },
+  {
+    "path": "internal/stdlib/std/ordmap.fern",
+    "bytes": 19255,
+    "sha256": "fea25094faf201619495c9b1201883e11816e327fcbe4f56df103677cd24a69b"
+  },
+  {
+    "path": "internal/stdlib/std/ordset.fern",
+    "bytes": 3069,
+    "sha256": "d486e8892765af812150192e4ef9fa8d9b8be4f4cdb18b0e1aa7d91a10c0ac88"
+  },
+  {
+    "path": "internal/stdlib/std/parse.fern",
+    "bytes": 1544,
+    "sha256": "b363ea714b2ea34e0a648f4994a52e37ed4bd8cfbc7663935856986c3f1721e6"
+  },
+  {
+    "path": "internal/stdlib/std/path.fern",
+    "bytes": 4166,
+    "sha256": "9c5328c2a1550a36201898fe50a08548afb806e6301df939091b850c971ddede"
+  },
+  {
+    "path": "internal/stdlib/std/peg.fern",
+    "bytes": 9232,
+    "sha256": "557905687d4d67c6a835cb56b00ccea26bcd06083784401c80f953079b68719d"
+  },
+  {
+    "path": "internal/stdlib/std/platform.fern",
+    "bytes": 4057,
+    "sha256": "ce1d70da3fa24b94a09777951b6fd63a88ce13fa486f6299c52d22e230c3fb68"
+  },
+  {
+    "path": "internal/stdlib/std/pmap.fern",
+    "bytes": 16733,
+    "sha256": "3da1c0f53339a66b77d8b43b173e1f4c582b2e4d38768a5b6d58cb03b524de11"
+  },
+  {
+    "path": "internal/stdlib/std/png.fern",
+    "bytes": 6043,
+    "sha256": "9cd55a1c732109e15aaadae3a6a8d07d634a55eeb60814cbf4220aedb3c42f40"
+  },
+  {
+    "path": "internal/stdlib/std/protobuf.fern",
+    "bytes": 5099,
+    "sha256": "59b99f6f325e9cfc6b09a1a2b49681e96af738c52f8a1d7042e96c8b35420142"
+  },
+  {
+    "path": "internal/stdlib/std/pset.fern",
+    "bytes": 3550,
+    "sha256": "07cf3647e6f4e3f1095c6a16b2f4a1c9c56071209012fedf848a72a9b2cd49e7"
+  },
+  {
+    "path": "internal/stdlib/std/publicsuffix.fern",
+    "bytes": 86592,
+    "sha256": "ec1d84e7ef6d159535c21ec125f590f8e744b98a88f1918dd5756150b9e94481"
+  },
+  {
+    "path": "internal/stdlib/std/pvec.fern",
+    "bytes": 11943,
+    "sha256": "324b3be6c456d755b73d2f487050a52c5dc3b04889da6a1a18a96defa0844877"
+  },
+  {
+    "path": "internal/stdlib/std/quic/conn.fern",
+    "bytes": 52115,
+    "sha256": "817a28f8c230f7151d62cb39061bf39b760380f351ac26d2730065024e6177e5"
+  },
+  {
+    "path": "internal/stdlib/std/quic/frames.fern",
+    "bytes": 20549,
+    "sha256": "45e633db299cb34f7ea2bceb5892677f9445e8c14e418c9b407d45ab16842758"
+  },
+  {
+    "path": "internal/stdlib/std/quic/packet.fern",
+    "bytes": 16044,
+    "sha256": "c4ba414f6351d0c0e1f06b8f0a9f38dab59d6bf63e6ed2a7ed7186270aebf95e"
+  },
+  {
+    "path": "internal/stdlib/std/quic/params.fern",
+    "bytes": 10127,
+    "sha256": "6a02887892a6082d070702b8662a99effa5db40e4c5df83bd3138a73f2a18582"
+  },
+  {
+    "path": "internal/stdlib/std/quic/recovery.fern",
+    "bytes": 10856,
+    "sha256": "1d15c9cbee48b547dce2ec366fd60d990cba1503678f4c5ef4e447e3f2470ed2"
+  },
+  {
+    "path": "internal/stdlib/std/quic/streams.fern",
+    "bytes": 33465,
+    "sha256": "6e3e0dd0bba942a26a2f2da3ee2af1ad58c912296e78baec3fb0baea7aef4e6a"
+  },
+  {
+    "path": "internal/stdlib/std/rand.fern",
+    "bytes": 4902,
+    "sha256": "cd0a1dc1ab4b0151538465be1aad09fd63acef3eea7133e756364cbd30c876be"
+  },
+  {
+    "path": "internal/stdlib/std/regex.fern",
+    "bytes": 31070,
+    "sha256": "b6d79b1559ee3595e14618b8f573cea021e9fdc2c75e45b58169859fc7ae481b"
+  },
+  {
+    "path": "internal/stdlib/std/result.fern.md",
+    "bytes": 7348,
+    "sha256": "3139ac5cf4b35dc662baac545edb8a09a9ad4d2bf063b100b04ad538bfcfca80"
+  },
+  {
+    "path": "internal/stdlib/std/semver.fern",
+    "bytes": 7118,
+    "sha256": "59f06ced6bbb2a750a73a0d808725443f67c19355cbb260b6b2158d33250d05b"
+  },
+  {
+    "path": "internal/stdlib/std/serve.fern",
+    "bytes": 173037,
+    "sha256": "843ebaafecbe3bf400f419ffb967e9ee3235a14a49b7e96d4e7a739fabb9d605"
+  },
+  {
+    "path": "internal/stdlib/std/set.fern",
+    "bytes": 3910,
+    "sha256": "ed61b09bc5e6180115d6d01437802b08401d286c652294c4223c708dccfdb757"
+  },
+  {
+    "path": "internal/stdlib/std/signal.fern",
+    "bytes": 1297,
+    "sha256": "c40a8e071854817b7bd44afe5880691b12fc64c21b87c572425e9e28d4484e0b"
+  },
+  {
+    "path": "internal/stdlib/std/sim.fern",
+    "bytes": 15361,
+    "sha256": "a62fd9a3102e08fd96452a7b05fdf883415a5ae3a9a57f1dd740de9a968aa637"
+  },
+  {
+    "path": "internal/stdlib/std/sim_fetch.fern",
+    "bytes": 22035,
+    "sha256": "c671a407a4f2d732548f0c776596144bccf82230de82408f550d36231a849b3d"
+  },
+  {
+    "path": "internal/stdlib/std/sim_platform.fern",
+    "bytes": 4607,
+    "sha256": "3609b969def804cb2fabef51b8f0c43c1139abad55890677f4b2d752cefe3db1"
+  },
+  {
+    "path": "internal/stdlib/std/simd.fern",
+    "bytes": 23577,
+    "sha256": "47e368f9076b0cd8a1e7b3eb6d14669500ec8e2953f8c02aa0e02b80523609ac"
+  },
+  {
+    "path": "internal/stdlib/std/strdist.fern",
+    "bytes": 1319,
+    "sha256": "cab9c84b778c8949cc6c9c94f4e0b65d9e05d42a9fa732d768e1b074f0b9fb4e"
+  },
+  {
+    "path": "internal/stdlib/std/stream.fern",
+    "bytes": 4138,
+    "sha256": "cbeda163b25ca9fe32852b42613d2df9bfb9ff40fbf4c316e7fafa0ab9735983"
+  },
+  {
+    "path": "internal/stdlib/std/string.fern",
+    "bytes": 101008,
+    "sha256": "7a845a4af92e3b9182c69b48e990945bcd3b63298cae806a2fcd8f13201ff7bf"
+  },
+  {
+    "path": "internal/stdlib/std/table.fern",
+    "bytes": 2527,
+    "sha256": "a6b1bc3f9f1bbbb05e49c03cc60105b108ab8a38e9b6e5bd6635f047c2d82281"
+  },
+  {
+    "path": "internal/stdlib/std/test.fern",
+    "bytes": 74155,
+    "sha256": "c399fe013d72e500887adbc46660e58f769274f22fdbbb49d1ee9d13bca906ad"
+  },
+  {
+    "path": "internal/stdlib/std/textwrap.fern",
+    "bytes": 1297,
+    "sha256": "244c594b9ded9ed0df0ea22a6234452c0c49de2c5db4ab15834a298a046bfab9"
+  },
+  {
+    "path": "internal/stdlib/std/time.fern",
+    "bytes": 24737,
+    "sha256": "35da2fd565008f4ac6dc69e6f31454227709fbe9ac14bf4dfca2ac6d7b8737c5"
+  },
+  {
+    "path": "internal/stdlib/std/tls.fern",
+    "bytes": 2669,
+    "sha256": "23df7f4c943505a5b10526705b49a22ca99d244630d3ff4aa8d1c0caf1ec60c3"
+  },
+  {
+    "path": "internal/stdlib/std/tls/client.fern",
+    "bytes": 20947,
+    "sha256": "1e06b0a279eb6b34143ccde29168e2d3d59857ba89a0625f3097ffc76b86302f"
+  },
+  {
+    "path": "internal/stdlib/std/tls/der.fern",
+    "bytes": 10109,
+    "sha256": "92699f0c2474e2ab46cb86398b2e6637dc88eeb5cdca48477f3308e73c704495"
+  },
+  {
+    "path": "internal/stdlib/std/tls/handshake.fern",
+    "bytes": 78096,
+    "sha256": "48250ce374b8d7233fcde2954bfb22b5156f503d15b8c8157893aaaad415af5e"
+  },
+  {
+    "path": "internal/stdlib/std/tls/identity.fern",
+    "bytes": 9738,
+    "sha256": "7dcd983005561910d7a9a1b74dff423bec31ce9134e27ab94d78fa2937cb4683"
+  },
+  {
+    "path": "internal/stdlib/std/tls/keyschedule.fern",
+    "bytes": 6721,
+    "sha256": "3119fecffa651caf127d0095fcb28713e1019055e4bad91f954b3164df091645"
+  },
+  {
+    "path": "internal/stdlib/std/tls/keyshare.fern",
+    "bytes": 11674,
+    "sha256": "695f8a1010c002d35df221fd6ce9df7d3a94d1310ad4c66249d64ea4dc7d03ab"
+  },
+  {
+    "path": "internal/stdlib/std/tls/ktls.fern",
+    "bytes": 3157,
+    "sha256": "2f16686f28c899b2edfc9030c9b94faf7e09c5edae7a675a3bc483eae1ca18c2"
+  },
+  {
+    "path": "internal/stdlib/std/tls/message.fern",
+    "bytes": 23938,
+    "sha256": "c4cddf68cdf45186910dab05f519b04cb1fc98e1c9e209e639559d6634fcfa86"
+  },
+  {
+    "path": "internal/stdlib/std/tls/mozilla.fern",
+    "bytes": 187838,
+    "sha256": "e2600dc5588379819f61cf16e70ead1f7aba47154a1d227f8b10b9230f1bc059"
+  },
+  {
+    "path": "internal/stdlib/std/tls/pem.fern",
+    "bytes": 2792,
+    "sha256": "9827d6873f4c8cf7a990e6c485144945110de5d4bc73bf464873b4d14e741a13"
+  },
+  {
+    "path": "internal/stdlib/std/tls/record.fern",
+    "bytes": 10395,
+    "sha256": "90e105f4ee24fd3ba65512056b88e932f14b9cd16895f56507097c3651963c40"
+  },
+  {
+    "path": "internal/stdlib/std/tls/server.fern",
+    "bytes": 21757,
+    "sha256": "61dc62925433c9227e28f4b948d368f911536ca6a6fbf90b2777a7c11abc919f"
+  },
+  {
+    "path": "internal/stdlib/std/tls/verify.fern",
+    "bytes": 17537,
+    "sha256": "3a8d9bfde580488f929c427f245106d82ef71c559919c1aa72aeb2a350988728"
+  },
+  {
+    "path": "internal/stdlib/std/tls/x509.fern",
+    "bytes": 17615,
+    "sha256": "eb94a2688235fcc88aedeeab71f7d3ae0e1b83db4da241e37f14404855121611"
+  },
+  {
+    "path": "internal/stdlib/std/tz.fern",
+    "bytes": 117267,
+    "sha256": "fc6b08f2186967971be3306706e2fe3e7945d0dd292f90ddba9572fb47951980"
+  },
+  {
+    "path": "internal/stdlib/std/u32.fern",
+    "bytes": 7500,
+    "sha256": "3ed7fde0b2af1ba60c36d7ded11e87a013ad4b9b9a3fcce97fb154db638668d2"
+  },
+  {
+    "path": "internal/stdlib/std/u64.fern",
+    "bytes": 7850,
+    "sha256": "f71637013106580562b168fc91c0a7f8aa1ad5b27c02d94cb0db18e8e5a3ca93"
+  },
+  {
+    "path": "internal/stdlib/std/unicode.fern",
+    "bytes": 154908,
+    "sha256": "765ee32c7c844ca511aa859cd0a4364b51ed9064f1d5c25aca1cde05634a886e"
+  },
+  {
+    "path": "internal/stdlib/std/url.fern",
+    "bytes": 16718,
+    "sha256": "503e724f9369d1625a8814c170e84a80743fb21d2a0a5c3b8ab1a57defcd2f6f"
+  },
+  {
+    "path": "internal/stdlib/std/utf8.fern",
+    "bytes": 7274,
+    "sha256": "4402b535ca987b38c3db51ff899c8341cabe0cbe90b758b6e8cb10f96e51549d"
+  },
+  {
+    "path": "internal/stdlib/std/uuid.fern",
+    "bytes": 3023,
+    "sha256": "27fe3ddbefc67460b83ec3af0aed65161f7a0d10c9af84704da9bb570d5f556d"
+  },
+  {
+    "path": "internal/stdlib/std/wasi_http.fern",
+    "bytes": 21417,
+    "sha256": "e3f329d01e302f9f4ebd2d2a9418498d16ac1f6e9b747527b6e1e7d46db7e3d1"
+  },
+  {
+    "path": "internal/stdlib/std/wasm/component.fern",
+    "bytes": 28796,
+    "sha256": "e225c2e98869bd740e8e6c5138d981110f3ef7584b79ce94d26de9141909e2fc"
+  },
+  {
+    "path": "internal/stdlib/std/wasm/convert.fern",
+    "bytes": 2603,
+    "sha256": "559f70caff8e15d1b2a9881a0bb2f349e50ee9c9dd837aa3ff26be67e741499a"
+  },
+  {
+    "path": "internal/stdlib/std/wasm/encode.fern",
+    "bytes": 2368,
+    "sha256": "ad4660f33b6c083c5bee69e8ad69374a3526f12cf116bac49f33928f05a3990c"
+  },
+  {
+    "path": "internal/stdlib/std/wasm/imports.fern",
+    "bytes": 2388,
+    "sha256": "e97e51f9d7d6c365166d13ab777d81caea5dcd34b6230c268e5dd79465cc0b02"
+  },
+  {
+    "path": "internal/stdlib/std/wasm/inst.fern",
+    "bytes": 4482,
+    "sha256": "c0777083c66a1a0629a335029d14065fcd9aecbad5679f107cb0e22cd55e5c97"
+  },
+  {
+    "path": "internal/stdlib/std/wasm/leb128.fern",
+    "bytes": 1942,
+    "sha256": "a8973a4c058f7313d691cd150c31fabec319ce5d3e3fb0c80c99283c3df99f31"
+  },
+  {
+    "path": "internal/stdlib/std/wasm/memory.fern",
+    "bytes": 3872,
+    "sha256": "2d7f515367014b229a5e0799162f6be5d0f36077125e5fb20d9560cc6d52bd56"
+  },
+  {
+    "path": "internal/stdlib/std/wasm/module.fern",
+    "bytes": 4663,
+    "sha256": "c2ee0780da552bd70200b8a2f52305ec3eaa189b9ebe506126035cc0c4468aac"
+  },
+  {
+    "path": "internal/stdlib/std/wasm/numeric.fern",
+    "bytes": 7536,
+    "sha256": "4f5a9bf3b7d356d6145c4478d7a9742c7879ae49dd982aa4fa473e148821f67b"
+  },
+  {
+    "path": "internal/stdlib/std/wasm/sections.fern",
+    "bytes": 4293,
+    "sha256": "16b613c675432b7f0b270c1e3847c436ec883003233de461a7fa1e149c3deaf7"
+  },
+  {
+    "path": "internal/stdlib/std/zstd.fern",
+    "bytes": 46249,
+    "sha256": "fdc5d20edc5221b07cc132e7194d3a0a4d6996a6dfe46d8f790f1a229b48ec22"
+  },
+  {
+    "path": "internal/stdlib/stdlib.go",
+    "bytes": 2508,
+    "sha256": "9912df943bf1d93494d7c2ad76062cd6ec97601eca094718df05ba5aae5d4c7c"
+  },
+  {
+    "path": "internal/stdlib/stdlib_test.go",
+    "bytes": 1831,
+    "sha256": "c5b2ee1971d492e03868be77cb02e40e87f0819e17a12ed8e544312be14223bc"
+  }
+]

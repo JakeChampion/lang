@@ -12,6 +12,8 @@ threaded** (rc≥2) — a per-site one-line hoist, not a reason to move
 execute this plan; the real cost is a linear per-allocation leak plus a
 localized keep-alive (see the findings doc). Kept for history.
 
+This record cites historical source paths. Some files no longer exist in the current tree.
+
 The measurement that originally motivated it is in
 `docs/IR-SELFCOMPILE-OOM-FINDINGS.md` (Finding 2 + the quantified
 breakdown).

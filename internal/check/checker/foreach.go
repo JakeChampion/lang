@@ -29,13 +29,7 @@ func (c *checker) checkForEach(fe *ast.ForEach, parent *scope) ast.Stmt {
 				"iterating a Map binds the key and the value separately, so there is no whole value for %q to name — drop the `@` binding", fe.Var)
 			return &ast.Block{P: fe.P, Stmts: nil, Sugar: fe}
 		}
-		recv := fe.Iter
-		if _, named := fe.Iter.(*ast.Ident); !named {
-			mapName := iterName + "_map"
-			stmts = append(stmts, &ast.Var{P: fe.P, Name: mapName, Init: fe.Iter})
-			recv = &ast.Ident{P: fe.P, Name: mapName}
-		}
-		declIter := &ast.Var{P: fe.P, Name: iterName, Init: callAt(recv, "iter", fe.P)}
+		declIter := &ast.Var{P: fe.P, Name: iterName, Init: fe.Iter}
 		stmts = append(stmts, declIter)
 		stmts = append(stmts, ast.ForEachMapLoop(fe, iterName)...)
 	case indexIterable(iterT):

@@ -1,0 +1,10 @@
+enum E { A(i32), B }
+
+function f(e: E): i32 {
+  let n = if let E.A(v) = e { return v; } else { 4 };
+  return n + 10;
+}
+
+function main(): i32 {
+  return f(E.A(7)) + f(E.B) - 21;
+}

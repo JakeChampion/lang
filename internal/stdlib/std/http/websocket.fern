@@ -111,7 +111,7 @@ pub function accept(req: HttpRequest, opts: Options, h: Handlers): Result[HttpRe
   let protocol: string = __protocol(req, opts);
   let deflated: (i32, string) = __negotiated(req, opts);
   let conn: Conn = __conn(req, protocol, deflated.0, opts);
-  let body: Stream = req.body;
+  let body: ByteStream = req.body;
   let resp: HttpResponse = http.chunks(101, (i: i32): Option[u8[]] => __run(i, conn, body, h));
   resp = resp.with_header("Upgrade", "websocket").with_header("Sec-WebSocket-Accept", accept_key(key));
   if (protocol.len() > 0) {
@@ -368,7 +368,7 @@ struct __Frame { fin: boolean, opcode: i32, rsv1: boolean, payload: u8[] }
 
 enum __Read { FrameRead(__Frame), BytesEnded, Violation(i32) }
 
-function __run(i: i32, c: Conn, body: Stream, h: Handlers): Option[u8[]] {
+function __run(i: i32, c: Conn, body: ByteStream, h: Handlers): Option[u8[]] {
   if (i > 0) {
     return None;
   }
@@ -376,10 +376,10 @@ function __run(i: i32, c: Conn, body: Stream, h: Handlers): Option[u8[]] {
   open(c);
   let none: u8[] = [];
   let r: __Reading = __Reading { opcode: 0, parts: buf_new(1024), compressed: false, need: 0, lo: 128, hi: 191, history: none, peer_closed: false, code: 1006, reason: "" };
-  let s: Stream = body;
+  let s: ByteStream = body;
   let going: boolean = __flush(c, h);
   while (going) {
-    let step: (__Reading, Stream, boolean) = __step(c, h, r, s);
+    let step: (__Reading, ByteStream, boolean) = __step(c, h, r, s);
     r = step.0;
     s = step.1;
     going = step.2;
@@ -410,8 +410,8 @@ function __final_reason(c: Conn, r: __Reading): string {
   return "";
 }
 
-function __step(c: Conn, h: Handlers, r: __Reading, s: Stream): (__Reading, Stream, boolean) {
-  let read: (__Read, Stream) = __read_frame(s, c.opts.max_message, c.window > 0);
+function __step(c: Conn, h: Handlers, r: __Reading, s: ByteStream): (__Reading, ByteStream, boolean) {
+  let read: (__Read, ByteStream) = __read_frame(s, c.opts.max_message, c.window > 0);
   s = read.1;
   match (read.0) {
     FrameRead(f) => {
@@ -664,8 +664,8 @@ function __utf8_hi(v: i32, lead: i32, lowered: i32): i32 {
   return 191;
 }
 
-function __read_frame(s: Stream, max: i32, compressing: boolean): (__Read, Stream) {
-  let head: (u8[], Stream) = s.read_n(2);
+function __read_frame(s: ByteStream, max: i32, compressing: boolean): (__Read, ByteStream) {
+  let head: (u8[], ByteStream) = s.read_n(2);
   s = head.1;
   if (head.0.len() < 2) {
     return (BytesEnded, s);
@@ -677,7 +677,7 @@ function __read_frame(s: Stream, max: i32, compressing: boolean): (__Read, Strea
   if (!__head_ok(b0, b1, compressing)) {
     return (Violation(1002), s);
   }
-  let len: (i32, Stream, i32) = __read_length(s, b1 & 127, max);
+  let len: (i32, ByteStream, i32) = __read_length(s, b1 & 127, max);
   s = len.1;
   if (len.2 != 0) {
     return (Violation(len.2), s);
@@ -688,7 +688,7 @@ function __read_frame(s: Stream, max: i32, compressing: boolean): (__Read, Strea
   if (opcode >= 8 && (len.0 > 125 || !fin)) {
     return (Violation(1002), s);
   }
-  let rest: (u8[], Stream) = s.read_n(4 + len.0);
+  let rest: (u8[], ByteStream) = s.read_n(4 + len.0);
   s = rest.1;
   if (rest.0.len() < 4 + len.0) {
     return (BytesEnded, s);
@@ -707,7 +707,7 @@ function __head_ok(b0: i32, b1: i32, compressing: boolean): boolean {
   return opcode <= 2 || opcode >= 8 && opcode <= 10;
 }
 
-function __read_length(s: Stream, len7: i32, max: i32): (i32, Stream, i32) {
+function __read_length(s: ByteStream, len7: i32, max: i32): (i32, ByteStream, i32) {
   if (len7 < 126) {
     return (len7, s, 0);
   }
@@ -715,7 +715,7 @@ function __read_length(s: Stream, len7: i32, max: i32): (i32, Stream, i32) {
   if (len7 == 127) {
     width = 8;
   }
-  let ext: (u8[], Stream) = s.read_n(width);
+  let ext: (u8[], ByteStream) = s.read_n(width);
   if (ext.0.len() < width) {
     return (0 - 1, ext.1, 0);
   }

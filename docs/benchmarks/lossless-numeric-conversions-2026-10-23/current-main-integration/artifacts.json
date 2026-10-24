@@ -1,0 +1,198 @@
+{
+  "source_commit": "e94ac0fd7861a66c9904b6fc042aff2be894fc27",
+  "compiled_source": "ea25564792a15bd72354c56093dd320d1c7947f0",
+  "dependency_base": "54d1f20270779e0d880310949ad585b60580098e",
+  "suites": [
+    {
+      "suite": "go-regressions-final",
+      "cases": 2436,
+      "skips": 3,
+      "packages": 3
+    },
+    {
+      "suite": "numeric-properties-range-fixed",
+      "cases": 1023,
+      "skips": 0,
+      "packages": 1
+    },
+    {
+      "suite": "guards-range-fixed",
+      "cases": 4,
+      "skips": 0,
+      "packages": 1
+    }
+  ],
+  "matrix_commands": 158,
+  "balanced_matrix_executions": 24,
+  "checker_cases_per_frontend": 43,
+  "backend_property_comparisons": 765,
+  "pointer_census_runs": 4,
+  "native_sha256": "7d8c54ca815ab8be6b217c34aae334d8124142c56843fa9de155555277c7c818",
+  "artifacts": [
+    {
+      "path": "source-files.json",
+      "bytes": 78238,
+      "sha256": "dfd5fb3830d8216803c13886f683a7da273be3c3e628c99e4c1d51fa83e58a69"
+    },
+    {
+      "path": "source-identity.json",
+      "bytes": 464,
+      "sha256": "690aefd69d49df80a348f9260e0181f6b228b4137ee1f2b6d014f4b1babf2079"
+    },
+    {
+      "path": "change.patch.gz",
+      "bytes": 62415,
+      "sha256": "642072c30dc89734e51f79b970dd4937a1afc22e78474f389af3487d244d13a5"
+    },
+    {
+      "path": "record-current-proofs.py.gz",
+      "bytes": 3181,
+      "sha256": "80aec51d8efdae9ceb351505e0d096343afc4d4fa11495d99dc75968d7b62158"
+    },
+    {
+      "path": "bootstrap-range-fixed-bootstrap.json.gz",
+      "bytes": 399,
+      "sha256": "1cdd15a2dfc355eb122da23996f3dc3ee94836e148b92a9302af2ade5ca3fe4d"
+    },
+    {
+      "path": "bootstrap-range-fixed-stage1.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap-range-fixed-stage2.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "bootstrap-range-fixed-stage3.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "go-regressions-final.jsonl.gz",
+      "bytes": 145710,
+      "sha256": "5adce41f8f0fe5d38681f090261fe071115a4d1e3c8d537f7ed882abbbaac8a9"
+    },
+    {
+      "path": "numeric-properties-range-fixed.jsonl.gz",
+      "bytes": 51009,
+      "sha256": "aa4cb51058a951aeaad9a28b0dc474b028016b52d7759ce0b37202df0f3bfaf8"
+    },
+    {
+      "path": "guards-range-fixed.jsonl.gz",
+      "bytes": 1048,
+      "sha256": "5da0a3291b516c346940d9af376f66cf337c496a6b018c76dda5ed625ef5deb7"
+    },
+    {
+      "path": "oracle-range-fixed-version.txt.gz",
+      "bytes": 387,
+      "sha256": "6cca2f780da638bcee51ba97c3f04b104735f4222d24c4adc6ffab4009d002ff"
+    },
+    {
+      "path": "committed-matrix-results.json.gz",
+      "bytes": 5864,
+      "sha256": "2ed09dcd2bd7e3b7fec49b5960241c03f0cf7cb37fc4d2c8c720f1e4f1f50ae8"
+    },
+    {
+      "path": "matrix.py.gz",
+      "bytes": 1617,
+      "sha256": "5196cedb9831371ae278d5f48aed70c4216d25720370476506f6f75f354253e3"
+    },
+    {
+      "path": "matrix.log.gz",
+      "bytes": 177,
+      "sha256": "ec29a70c9bc08c56b0247206301409f7761b3b4732636c0fd8e468be21665544"
+    },
+    {
+      "path": "check-matrix.py.gz",
+      "bytes": 776,
+      "sha256": "bf7b72866de10268da670ba3ee1cad53a22a726bcb6060aba20558e6384df015"
+    },
+    {
+      "path": "go-checks.json.gz",
+      "bytes": 911,
+      "sha256": "86d18d51a8b33fa85c1f1ce727127d0991d1591c6549414c653bc74ce009f6be"
+    },
+    {
+      "path": "self-checks.json.gz",
+      "bytes": 911,
+      "sha256": "86d18d51a8b33fa85c1f1ce727127d0991d1591c6549414c653bc74ce009f6be"
+    },
+    {
+      "path": "go-checks.log.gz",
+      "bytes": 32,
+      "sha256": "cac3682b4d938747e829632f423a50f95e573b51626599b2a244cdaaacbc80fb"
+    },
+    {
+      "path": "self-checks.log.gz",
+      "bytes": 32,
+      "sha256": "cac3682b4d938747e829632f423a50f95e573b51626599b2a244cdaaacbc80fb"
+    },
+    {
+      "path": "driver-builds.json.gz",
+      "bytes": 1045,
+      "sha256": "a09d448641b7c650e277fcd95d16ae3e5f5efcd45e7f7134c0c2a264d8d4da9d"
+    },
+    {
+      "path": "driver-sizes.txt.gz",
+      "bytes": 169,
+      "sha256": "aa5936a18cb1b6807e11d418894942dbdd6a740bddd651e80174ba4f98f56113"
+    },
+    {
+      "path": "driver-gate.log.gz",
+      "bytes": 346,
+      "sha256": "ce98a496573bdbfe1804c6f3494e3512e66c172b6eacfa2f5386d5963f4a9c02"
+    },
+    {
+      "path": "check-sizes.py.gz",
+      "bytes": 899,
+      "sha256": "8658199cd35d30c4ce3795e50f54895b0d1ccd12bf09f5b9e1d799558ec6e72d"
+    },
+    {
+      "path": "format.json.gz",
+      "bytes": 44,
+      "sha256": "c675550f01633288d99c131b2f991303d9ba3b572a47ad68bc25bbdc17c3f2cd"
+    },
+    {
+      "path": "format.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "gofmt.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "vet-final.log.gz",
+      "bytes": 20,
+      "sha256": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec"
+    },
+    {
+      "path": "predecessor-baseline.json.gz",
+      "bytes": 787,
+      "sha256": "39fae443899e84c0f2434ffe29e110d7fa5724b4aa6308a1ee8e93a30641e426"
+    },
+    {
+      "path": "fixture-census.py.gz",
+      "bytes": 1379,
+      "sha256": "aa7692c0940012f2a2c4bd6246d2dbda83ecf037c70781edf150dbe350cb04de"
+    },
+    {
+      "path": "fixture-census.log.gz",
+      "bytes": 130,
+      "sha256": "dadc68d0af995cb28f73caf415275085b98447d26b3836b4e52814c760167f35"
+    },
+    {
+      "path": "fixture-census-report.json.gz",
+      "bytes": 697,
+      "sha256": "d27fb334cd2be05626603682019f12a11e1e824060477493c31fe018aebb6fde"
+    },
+    {
+      "path": "fixture-pointer-trace-logs.tar.gz",
+      "bytes": 547,
+      "sha256": "c623c18fea74889c22d6079383b12941578bfc254fb8d32c369d7b70900fa1ce"
+    }
+  ]
+}

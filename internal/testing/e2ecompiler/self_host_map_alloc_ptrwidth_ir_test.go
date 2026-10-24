@@ -39,8 +39,8 @@ func TestSelfHostMapAllocPtrWidthIRProbeX86_64(t *testing.T) {
 		"__map_get_or_impl",
 		"__map_set_impl",
 		"__map_clone",
+		"__map_keys_impl",
 		"__map_values_impl",
-		"__map_iter_impl",
 	}
 	for _, fn := range mustIR {
 		if !strings.Contains(report, fn+": ir") {

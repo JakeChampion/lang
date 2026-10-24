@@ -1,0 +1,130 @@
+=== RUN   TestFernFixturesSelfHostWasm
+=== RUN   TestFernFixturesSelfHostWasm/array_literal_takes_its_sibling_float_width
+=== RUN   TestFernFixturesSelfHostWasm/audit_numeric_types
+=== RUN   TestFernFixturesSelfHostWasm/char_byte_literals
+=== RUN   TestFernFixturesSelfHostWasm/float_width_conversion
+=== RUN   TestFernFixturesSelfHostWasm/literal_local_read_at_two_widths
+=== RUN   TestFernFixturesSelfHostWasm/numeric_lossless_widening
+=== NAME  TestFernFixturesSelfHostWasm
+    fixture_selfhost_test.go:59: self-host wasm leg: 1025 fixtures run (0 of them known divergences), 162 skipped (compile-error / wasm-excluded / stdin)
+--- PASS: TestFernFixturesSelfHostWasm (2.76s)
+    --- PASS: TestFernFixturesSelfHostWasm/array_literal_takes_its_sibling_float_width (0.01s)
+    --- PASS: TestFernFixturesSelfHostWasm/audit_numeric_types (0.02s)
+    --- PASS: TestFernFixturesSelfHostWasm/char_byte_literals (0.03s)
+    --- PASS: TestFernFixturesSelfHostWasm/float_width_conversion (0.20s)
+    --- PASS: TestFernFixturesSelfHostWasm/literal_local_read_at_two_widths (0.01s)
+    --- PASS: TestFernFixturesSelfHostWasm/numeric_lossless_widening (0.03s)
+=== RUN   TestFernFixturesSelfHostX86_64
+=== RUN   TestFernFixturesSelfHostX86_64/array_literal_takes_its_sibling_float_width
+=== RUN   TestFernFixturesSelfHostX86_64/audit_numeric_types
+=== RUN   TestFernFixturesSelfHostX86_64/char_byte_literals
+=== RUN   TestFernFixturesSelfHostX86_64/float_width_conversion
+=== RUN   TestFernFixturesSelfHostX86_64/literal_local_read_at_two_widths
+=== RUN   TestFernFixturesSelfHostX86_64/numeric_lossless_widening
+=== NAME  TestFernFixturesSelfHostX86_64
+    fixture_selfhost_test.go:135: self-host x86_64 leg: 1043 fixtures run (0 of them known divergences), 144 skipped (compile-error / x86_64-excluded)
+--- PASS: TestFernFixturesSelfHostX86_64 (2.53s)
+    --- PASS: TestFernFixturesSelfHostX86_64/array_literal_takes_its_sibling_float_width (0.01s)
+    --- PASS: TestFernFixturesSelfHostX86_64/audit_numeric_types (0.01s)
+    --- PASS: TestFernFixturesSelfHostX86_64/char_byte_literals (0.04s)
+    --- PASS: TestFernFixturesSelfHostX86_64/float_width_conversion (0.22s)
+    --- PASS: TestFernFixturesSelfHostX86_64/literal_local_read_at_two_widths (0.01s)
+    --- PASS: TestFernFixturesSelfHostX86_64/numeric_lossless_widening (0.02s)
+=== RUN   TestFernFixturesSelfHostX86_64Quarantine
+=== RUN   TestFernFixturesSelfHostX86_64Quarantine/array_literal_takes_its_sibling_float_width
+=== RUN   TestFernFixturesSelfHostX86_64Quarantine/audit_numeric_types
+=== RUN   TestFernFixturesSelfHostX86_64Quarantine/char_byte_literals
+=== RUN   TestFernFixturesSelfHostX86_64Quarantine/float_width_conversion
+=== RUN   TestFernFixturesSelfHostX86_64Quarantine/literal_local_read_at_two_widths
+=== RUN   TestFernFixturesSelfHostX86_64Quarantine/numeric_lossless_widening
+=== NAME  TestFernFixturesSelfHostX86_64Quarantine
+    fixture_selfhost_test.go:135: self-host x86_64 leg: 1043 fixtures run (0 of them known divergences), 144 skipped (compile-error / x86_64-excluded)
+--- PASS: TestFernFixturesSelfHostX86_64Quarantine (2.74s)
+    --- PASS: TestFernFixturesSelfHostX86_64Quarantine/array_literal_takes_its_sibling_float_width (0.02s)
+    --- PASS: TestFernFixturesSelfHostX86_64Quarantine/audit_numeric_types (0.02s)
+    --- PASS: TestFernFixturesSelfHostX86_64Quarantine/char_byte_literals (0.04s)
+    --- PASS: TestFernFixturesSelfHostX86_64Quarantine/float_width_conversion (0.25s)
+    --- PASS: TestFernFixturesSelfHostX86_64Quarantine/literal_local_read_at_two_widths (0.01s)
+    --- PASS: TestFernFixturesSelfHostX86_64Quarantine/numeric_lossless_widening (0.02s)
+=== RUN   TestFernFixturesSelfHostArm64
+=== RUN   TestFernFixturesSelfHostArm64/array_literal_takes_its_sibling_float_width
+=== RUN   TestFernFixturesSelfHostArm64/audit_numeric_types
+=== RUN   TestFernFixturesSelfHostArm64/char_byte_literals
+=== RUN   TestFernFixturesSelfHostArm64/float_width_conversion
+=== RUN   TestFernFixturesSelfHostArm64/literal_local_read_at_two_widths
+=== RUN   TestFernFixturesSelfHostArm64/numeric_lossless_widening
+=== NAME  TestFernFixturesSelfHostArm64
+    fixture_selfhost_test.go:189: self-host arm64 leg: 1043 fixtures run (0 of them known divergences), 144 skipped (compile-error / arm64-excluded)
+--- PASS: TestFernFixturesSelfHostArm64 (2.68s)
+    --- PASS: TestFernFixturesSelfHostArm64/array_literal_takes_its_sibling_float_width (0.02s)
+    --- PASS: TestFernFixturesSelfHostArm64/audit_numeric_types (0.02s)
+    --- PASS: TestFernFixturesSelfHostArm64/char_byte_literals (0.03s)
+    --- PASS: TestFernFixturesSelfHostArm64/float_width_conversion (0.23s)
+    --- PASS: TestFernFixturesSelfHostArm64/literal_local_read_at_two_widths (0.01s)
+    --- PASS: TestFernFixturesSelfHostArm64/numeric_lossless_widening (0.03s)
+=== RUN   TestFernFixturesSelfHostInterp
+=== RUN   TestFernFixturesSelfHostInterp/array_literal_takes_its_sibling_float_width
+=== RUN   TestFernFixturesSelfHostInterp/audit_numeric_types
+=== RUN   TestFernFixturesSelfHostInterp/char_byte_literals
+=== RUN   TestFernFixturesSelfHostInterp/float_width_conversion
+=== RUN   TestFernFixturesSelfHostInterp/literal_local_read_at_two_widths
+=== RUN   TestFernFixturesSelfHostInterp/numeric_lossless_widening
+=== NAME  TestFernFixturesSelfHostInterp
+    fixture_selfhost_test.go:223: self-host interp leg: 1022 fixtures run (0 of them known divergences), 165 skipped (compile-error / interp-excluded)
+--- PASS: TestFernFixturesSelfHostInterp (63.48s)
+    --- PASS: TestFernFixturesSelfHostInterp/array_literal_takes_its_sibling_float_width (0.03s)
+    --- PASS: TestFernFixturesSelfHostInterp/audit_numeric_types (0.02s)
+    --- PASS: TestFernFixturesSelfHostInterp/char_byte_literals (0.02s)
+    --- PASS: TestFernFixturesSelfHostInterp/float_width_conversion (0.26s)
+    --- PASS: TestFernFixturesSelfHostInterp/literal_local_read_at_two_widths (0.03s)
+    --- PASS: TestFernFixturesSelfHostInterp/numeric_lossless_widening (0.02s)
+=== RUN   TestFernFixturesSelfHostCheck
+=== RUN   TestFernFixturesSelfHostCheck/numeric_widening_float_remainder
+=== RUN   TestFernFixturesSelfHostCheck/numeric_widening_rejects_narrowing
+=== RUN   TestFernFixturesSelfHostCheck/numeric_widening_rejects_stored_arrays
+=== NAME  TestFernFixturesSelfHostCheck
+    fixture_selfhost_test.go:243: self-host check leg: 139 fixtures run (0 of them known divergences), 1048 skipped (compile-error / check-excluded)
+--- PASS: TestFernFixturesSelfHostCheck (2.09s)
+    --- PASS: TestFernFixturesSelfHostCheck/numeric_widening_float_remainder (0.00s)
+    --- PASS: TestFernFixturesSelfHostCheck/numeric_widening_rejects_narrowing (0.00s)
+    --- PASS: TestFernFixturesSelfHostCheck/numeric_widening_rejects_stored_arrays (0.00s)
+=== RUN   TestFernFixtures
+=== RUN   TestFernFixtures/array_literal_takes_its_sibling_float_width
+=== RUN   TestFernFixtures/array_literal_takes_its_sibling_float_width/interp
+=== RUN   TestFernFixtures/audit_numeric_types
+=== RUN   TestFernFixtures/audit_numeric_types/interp
+=== RUN   TestFernFixtures/char_byte_literals
+=== RUN   TestFernFixtures/char_byte_literals/interp
+=== RUN   TestFernFixtures/float_width_conversion
+=== RUN   TestFernFixtures/float_width_conversion/interp
+=== RUN   TestFernFixtures/literal_local_read_at_two_widths
+=== RUN   TestFernFixtures/literal_local_read_at_two_widths/interp
+=== RUN   TestFernFixtures/numeric_lossless_widening
+=== RUN   TestFernFixtures/numeric_lossless_widening/interp
+=== RUN   TestFernFixtures/numeric_widening_float_remainder
+=== RUN   TestFernFixtures/numeric_widening_float_remainder/check
+=== RUN   TestFernFixtures/numeric_widening_rejects_narrowing
+=== RUN   TestFernFixtures/numeric_widening_rejects_narrowing/check
+=== RUN   TestFernFixtures/numeric_widening_rejects_stored_arrays
+=== RUN   TestFernFixtures/numeric_widening_rejects_stored_arrays/check
+--- PASS: TestFernFixtures (1.40s)
+    --- PASS: TestFernFixtures/array_literal_takes_its_sibling_float_width (0.98s)
+        --- PASS: TestFernFixtures/array_literal_takes_its_sibling_float_width/interp (0.98s)
+    --- PASS: TestFernFixtures/audit_numeric_types (0.01s)
+        --- PASS: TestFernFixtures/audit_numeric_types/interp (0.01s)
+    --- PASS: TestFernFixtures/char_byte_literals (0.01s)
+        --- PASS: TestFernFixtures/char_byte_literals/interp (0.01s)
+    --- PASS: TestFernFixtures/float_width_conversion (0.27s)
+        --- PASS: TestFernFixtures/float_width_conversion/interp (0.27s)
+    --- PASS: TestFernFixtures/literal_local_read_at_two_widths (0.01s)
+        --- PASS: TestFernFixtures/literal_local_read_at_two_widths/interp (0.01s)
+    --- PASS: TestFernFixtures/numeric_lossless_widening (0.01s)
+        --- PASS: TestFernFixtures/numeric_lossless_widening/interp (0.01s)
+    --- PASS: TestFernFixtures/numeric_widening_float_remainder (0.00s)
+        --- PASS: TestFernFixtures/numeric_widening_float_remainder/check (0.00s)
+    --- PASS: TestFernFixtures/numeric_widening_rejects_narrowing (0.00s)
+        --- PASS: TestFernFixtures/numeric_widening_rejects_narrowing/check (0.00s)
+    --- PASS: TestFernFixtures/numeric_widening_rejects_stored_arrays (0.00s)
+        --- PASS: TestFernFixtures/numeric_widening_rejects_stored_arrays/check (0.00s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2e	77.694s
