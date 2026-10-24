@@ -14,9 +14,13 @@ fern -doctest examples/literate/doctest_demo.fern.md
 ```fern
 <<clamp>>=
 pub function clamp(x: i32, lo: i32, hi: i32): i32 {
-    if (x < lo) { return lo; }
-    if (x > hi) { return hi; }
-    return x;
+  if (x < lo) {
+    return lo;
+  }
+  if (x > hi) {
+    return hi;
+  }
+  return x;
 }
 ```
 

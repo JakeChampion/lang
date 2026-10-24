@@ -169,6 +169,7 @@ def main():
     source.mkdir()
     inputs = sorted((root / "examples/fip").glob("kv_config*.fern")) + [root / "examples/fip/kv_workload.fern", Path(__file__).resolve(), root / "bootstrap/stage0.lock"]
     inputs += sorted((root / "internal/stdlib").rglob("*.fern"))
+    inputs += sorted((root / "internal/stdlib").rglob("*.fern.md"))
     hashes = {}
     for path in inputs:
         destination = source / path.relative_to(root)

@@ -21,8 +21,7 @@ from. It depends on a small math module:
 import "./mathx";
 
 function main(): i32 {
-
-    return mathx.sum_of_squares(3, 4);
+  return mathx.sum_of_squares(3, 4);
 }
 ```
 
@@ -42,7 +41,7 @@ Squaring is the primitive everything else builds on:
 ```fern
 <<square>>=
 pub function square(n: i32): i32 {
-    return n * n;
+  return n * n;
 }
 ```
 
@@ -53,7 +52,7 @@ document:
 ```fern
 <<sum of squares>>=
 pub function sum_of_squares(a: i32, b: i32): i32 {
-    return square(a) + square(b);
+  return square(a) + square(b);
 }
 ```
 

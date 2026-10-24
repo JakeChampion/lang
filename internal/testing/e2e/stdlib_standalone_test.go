@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,22 +13,7 @@ import (
 )
 
 func TestStdlibModulesImportStandalone(t *testing.T) {
-	var modules []string
-	err := fs.WalkDir(stdlib.FS(), ".", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() || !strings.HasSuffix(path, ".fern") {
-			return nil
-		}
-		mod := strings.TrimSuffix(path, ".fern")
-		base := filepath.Base(mod)
-		if strings.HasPrefix(base, "_test") {
-			return nil
-		}
-		modules = append(modules, mod)
-		return nil
-	})
+	modules, err := stdlib.Modules()
 	if err != nil {
 		t.Fatalf("walk stdlib FS: %v", err)
 	}
@@ -38,6 +22,9 @@ func TestStdlibModulesImportStandalone(t *testing.T) {
 	}
 
 	for _, mod := range modules {
+		if strings.HasPrefix(filepath.Base(mod), "_test") {
+			continue
+		}
 		t.Run(mod, func(t *testing.T) {
 			src := "import \"" + mod + "\";\n" +
 				"function main(): i32 { return 0; }\n"

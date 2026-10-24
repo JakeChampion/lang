@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/stdlib"
 )
 
 var stdlibGroupsRe = regexp.MustCompile(`(?s)const STDLIB_GROUPS = \[(.*?)\n\];`)
@@ -35,14 +37,14 @@ func TestEveryStdlibModuleHasASidebarGroup(t *testing.T) {
 			return err
 		}
 		name := d.Name()
-		if d.IsDir() || !strings.HasSuffix(name, ".fern") {
+		if d.IsDir() || stdlib.ModuleName(name) == "" {
 			return nil
 		}
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
 		}
-		slug := strings.ReplaceAll(strings.TrimSuffix(rel, ".fern"), string(filepath.Separator), "_")
+		slug := strings.ReplaceAll(stdlib.ModuleName(rel), string(filepath.Separator), "_")
 		if strings.HasPrefix(slug, "_") {
 			return nil
 		}

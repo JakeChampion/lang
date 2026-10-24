@@ -12,7 +12,7 @@ cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
 rm -rf "$out"
 mkdir -p "$out/explanations"
 out="$(cd "$out" && pwd)"
-(cd internal/stdlib && find . -name '*.fern' | LC_ALL=C sort | tar -cf - -T -) | (cd "$out" && tar -xf -)
+(cd internal/stdlib && find . \( -name '*.fern' -o -name '*.fern.md' \) | LC_ALL=C sort | tar -cf - -T -) | (cd "$out" && tar -xf -)
 cp internal/syntax/diag/explanations/*.md "$out/explanations/"
 version="$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
 if [ -n "$(git status --porcelain 2>/dev/null)" ]; then

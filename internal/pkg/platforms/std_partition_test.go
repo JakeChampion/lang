@@ -1,7 +1,6 @@
 package platforms
 
 import (
-	"io/fs"
 	"sort"
 	"strings"
 	"testing"
@@ -99,17 +98,15 @@ var stdModuleReach = map[string]string{
 }
 
 func TestStdPartitionIsDerivedNotAsserted(t *testing.T) {
-	ents, err := fs.ReadDir(stdlib.FS(), "std")
+	modules, err := stdlib.Modules()
 	if err != nil {
 		t.Fatalf("read embedded std/: %v", err)
 	}
 	found := map[string]bool{}
-	for _, e := range ents {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".fern") {
+	for _, mod := range modules {
+		if !strings.HasPrefix(mod, "std/") || strings.Count(mod, "/") != 1 {
 			continue
 		}
-		mod := "std/" + strings.TrimSuffix(name, ".fern")
 		found[mod] = true
 		t.Run(mod, func(t *testing.T) {
 			prog, err := modload.LoadStdlibFlat([]string{mod})
