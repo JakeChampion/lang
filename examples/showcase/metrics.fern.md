@@ -225,14 +225,7 @@ RSS includes resident process pages and can differ from both runtime counters.
 <<Expose application counters>>=
 pub function snapshot(state: State): Snapshot {
   let strokes: i64 = 0;
-  let peers: i64 = state.fractal.sockets.get();
-  for room in state.games.rooms.get() {
-    for seat in room.seats {
-      if (seat != "") {
-        peers = peers + 1;
-      }
-    }
-  }
+  let peers: i64 = state.fractal.sockets.get() + state.games.live.listeners.get().len() as i64 + state.canvases.live.listeners.get().len() as i64;
   for board in state.canvases.rooms.get() {
     strokes = strokes + board.revision;
   }

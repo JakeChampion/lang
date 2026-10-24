@@ -7,11 +7,13 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"image/png"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -71,7 +73,7 @@ func TestSelfHostShowcaseHTTP(t *testing.T) {
 		}
 		return response, data
 	}
-	for _, path := range []string{"/", "/fractal/", "/rally/", "/mosaic/", "/wave/", "/notes/", "/pulse/", "/_src/showcase/rally.fern"} {
+	for _, path := range []string{"/", "/fractal/", "/rally/", "/mosaic/", "/wave/", "/notes/", "/pulse/", "/swarm/", "/_src/showcase/rally.fern"} {
 		response, body := request("GET", path, "", nil)
 		if response.StatusCode != 200 || !bytes.Contains(body, []byte("<html")) {
 			t.Fatalf("%s: status %d, %s", path, response.StatusCode, body)
@@ -99,6 +101,31 @@ func TestSelfHostShowcaseHTTP(t *testing.T) {
 	if _, err := png.Decode(bytes.NewReader(body)); err != nil {
 		t.Fatal(err)
 	}
+
+	t.Run("websocket-push-and-cleanup", func(t *testing.T) {
+		node, err := exec.LookPath("node")
+		if err != nil {
+			t.Fatal(err)
+		}
+		descriptors := func() int {
+			files, err := os.ReadDir(fmt.Sprintf("/proc/%d/fd", cmd.Process.Pid))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return len(files)
+		}
+		before := descriptors()
+		if out, err := exec.Command(node, "../../../examples/showcase/tests/live.test.mjs", base).CombinedOutput(); err != nil {
+			t.Fatalf("live protocols: %v\n%s", err, out)
+		}
+		until := time.Now().Add(3 * time.Second)
+		for descriptors() > before && time.Now().Before(until) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if after := descriptors(); after > before {
+			t.Fatalf("live subscriptions leaked descriptors: %d -> %d", before, after)
+		}
+	})
 
 	t.Run("resumable-shared-canvas", func(t *testing.T) {
 		req, _ := http.NewRequest("GET", base+"/mosaic/events?room=http-test", nil)
@@ -227,7 +254,7 @@ func TestSelfHostShowcaseHTTP(t *testing.T) {
 		if err := json.Unmarshal(data, &snapshot); err != nil {
 			t.Fatal(err)
 		}
-		if snapshot.Requests < 10 || snapshot.Memory.RSS == nil || *snapshot.Memory.RSS <= 0 || snapshot.Memory.Threads == nil || snapshot.Strokes != 1 || snapshot.Rendered != 1 {
+		if snapshot.Requests < 10 || snapshot.Memory.RSS == nil || *snapshot.Memory.RSS <= 0 || snapshot.Memory.Threads == nil || snapshot.Strokes != 66 || snapshot.Rendered != 1 {
 			t.Fatalf("metrics do not describe actual work: %s", data)
 		}
 		_, data = request("GET", "/pulse/metrics", "", nil)

@@ -2,7 +2,7 @@
 
 This encoder writes RFC 7932 streams with LZ77 matches and canonical Huffman codes.
 It uses one literal context and a 64 KiB history window. Fixed prefix trees avoid a frequency pass.
-The match table has bounded size. Incompressible input uses stored meta-blocks.
+The match table uses a fixed amount of memory. Incompressible input uses stored meta-blocks.
 
 ```fern
 <<*>>=

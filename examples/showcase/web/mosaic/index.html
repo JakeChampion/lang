@@ -32,8 +32,8 @@
             and watch your strokes arrive.
           </p>
           <div class="tech-chips">
-            <span>HTTP mutations</span><span>Server-sent events</span
-            ><span>Resumable history</span>
+            <span>WebSocket</span><span>Immediate local paint</span
+            ><span>Revision journal</span>
           </div>
         </section>
         <div class="status" id="connection" role="status">
@@ -83,6 +83,10 @@
               >A fresh pattern, ready for your mark.</span
             >
           </div>
+          <div class="game-stats">
+            <span><b id="latency">—</b>ROUND TRIP / MS</span
+            ><span><b id="server-time">—</b>SERVER STEP / MS</span>
+          </div>
           <p class="mosaic-help">
             This room is shared by everyone with its link. The last write wins.
             Boards live in this server process and reset on restart.
@@ -92,15 +96,13 @@
       <details class="how-it-works">
         <summary>How Fern makes this work</summary>
         <p>
-          A brushstroke is a bounded JSON POST. Fern validates every pixel,
-          updates the board, and records a revision. An event stream carries
-          changes to other clients. Last-Event-ID resumes recent history after a
-          reconnect. Older clients receive a full snapshot. PNG export uses
+          The browser displays each stroke immediately and sends bounded JSON
+          over a WebSocket. Fern validates every pixel, updates the board, and
+          pushes revisions to the room. Several strokes can travel before a
+          reply arrives. A reconnect receives a full snapshot. PNG export uses
           Fern's own encoder.
         </p>
-        <a href="/_src/showcase/mosaic.fern"
-          >Read the collaboration server ↗</a
-        >
+        <a href="/_src/showcase/mosaic.fern">Read the collaboration server ↗</a>
       </details>
     </main>
     <footer class="app-footer">

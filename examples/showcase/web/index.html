@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta
       name="description"
-      content="Six working web applications. One native Fern server. Explore multiplayer games, live data, shared art, sound, and the hypertext web."
+      content="Seven working web applications. One native Fern server. Explore multiplayer games, live data, shared art, sound, and the hypertext web."
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Fern, in action — small binary, big possibilities</title>
@@ -33,7 +33,7 @@
           <div class="eyebrow">A language with places to go</div>
           <h1>Small binary.<br /><em>Big possibilities.</em></h1>
           <p>
-            Six working applications. One native Fern server. Come for the
+            Seven working applications. One native Fern server. Come for the
             fractals, stay for the multiplayer, shared canvases, and little
             musical accidents.
           </p>
@@ -46,7 +46,7 @@
         <div
           class="hero-art"
           role="img"
-          aria-label="One native Fern server connects six applications through HTTP, WebSocket, and server-sent events."
+          aria-label="One native Fern server connects seven applications through HTTP, WebSocket, and server-sent events."
         >
           <svg viewBox="0 0 500 410" aria-hidden="true">
             <path
@@ -145,7 +145,7 @@
           </svg>
           <div class="hero-art-caption">
             <span>ONE PROCESS. MANY POSSIBILITIES.</span
-            ><span>HTTP / WS / SSE</span>
+            ><span>HTTP / WS / SSE / WASM</span>
           </div>
         </div>
       </section>
@@ -153,7 +153,7 @@
         <span>Not mockups. <strong>Try the real thing.</strong></span>
         <div class="strip-values">
           <span><strong id="binary-size">Native</strong> binary</span
-          ><span><strong>06</strong> applications</span
+          ><span><strong>07</strong> applications</span
           ><span><strong>100%</strong> inspectable</span
           ><a href="/pulse/"
             >Server <strong id="instance">connecting</strong> ↗</a
@@ -165,7 +165,7 @@
           <h2 id="gallery-title">Choose your next rabbit hole.</h2>
           <div class="filter-tabs" aria-label="Filter examples">
             <button type="button" data-filter="all" aria-pressed="true">
-              All six</button
+              All seven</button
             ><button type="button" data-filter="live" aria-pressed="false">
               Live together</button
             ><button type="button" data-filter="media" aria-pressed="false">
@@ -246,7 +246,7 @@
                 through Fern to everyone else in the room.
               </p>
               <div class="example-tags">
-                <span>Server-sent events</span><span>Resumable updates</span
+                <span>WebSocket</span><span>Immediate room updates</span
                 ><span>PNG export</span>
               </div>
             </div></a
@@ -344,6 +344,32 @@
               </div>
             </div></a
           >
+          <a class="example swarm-card" href="/swarm/" data-categories="media">
+            <div class="example-preview swarm-preview" aria-hidden="true">
+              <div class="swarm-orbit orbit-one"></div>
+              <div class="swarm-orbit orbit-two"></div>
+              <div class="swarm-orbit orbit-three"></div>
+              <span class="preview-caption"
+                >A WHOLE ATMOSPHERE. RIGHT HERE.</span
+              >
+            </div>
+            <div class="example-body">
+              <div class="example-meta">
+                <span>07 / FERN IN YOUR BROWSER</span
+                ><span class="open-arrow" aria-hidden="true">↗</span>
+              </div>
+              <h3>Swarm</h3>
+              <p>
+                A particle field you can touch. An atmosphere you can hear. Fern
+                compiles to WebAssembly and runs every particle and audio sample
+                on your device.
+              </p>
+              <div class="example-tags">
+                <span>Fern → Wasm</span><span>WebGL</span
+                ><span>Web Audio + worker</span>
+              </div>
+            </div>
+          </a>
         </div>
         <p
           id="filter-result"

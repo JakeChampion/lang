@@ -61,6 +61,7 @@
             </div>
             <div class="game-stats">
               <span><b id="latency">—</b>ROUND TRIP / MS</span
+              ><span><b id="server-time">—</b>SERVER STEP / MS</span
               ><span><b id="seat">—</b>YOUR PADDLE</span>
             </div>
           </div>
@@ -106,9 +107,10 @@
         <p>
           The browser sends paddle targets through a WebSocket. Fern limits
           movement, advances the ball, checks collisions, and returns the shared
-          game state. Two players use the same room. A quiet room does no
-          simulation work. Rooms are held in this server process and reset on
-          restart.
+          game state. The browser predicts your paddle immediately and
+          reconciles each reply. Inputs never wait for a round trip. Two players
+          use the same room. A quiet room does no simulation work. Rooms are
+          held in this server process and reset on restart.
         </p>
         <a href="/_src/showcase/rally.fern">Read the game server ↗</a>
       </details>

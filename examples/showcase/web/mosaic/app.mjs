@@ -1,4 +1,4 @@
-import { $, status, toast, copy, json } from "/assets/ui.mjs";
+import { $, status, toast, copy } from "/assets/ui.mjs";
 
 const canvas = $("board"),
   context = canvas.getContext("2d"),
@@ -21,16 +21,20 @@ const names = [
 ];
 let board,
   selected = 1,
-  source,
+  socket,
+  reconnect,
+  pingTimer,
   drawing = false,
   lastPoint,
   sequence = 0,
-  sending = false,
+  sendQueued = false,
   cursor = { x: 32, y: 20 },
   drawQueued = false;
 const outbox = [],
   optimistic = new Map(),
-  awaiting = [];
+  awaiting = [],
+  pending = new Map(),
+  pings = new Map();
 $("room-label").textContent = `ROOM / ${room.toUpperCase()}`;
 $("export").href = `/mosaic/export.png?room=${room}`;
 function redraw() {
@@ -94,38 +98,40 @@ function settle() {
     awaiting.splice(i, 1);
   }
   $("sync").textContent =
-    outbox.length || sending || awaiting.length
+    outbox.length || pending.size || awaiting.length
       ? "Syncing your pixels…"
       : "All pixels in sync.";
   redraw();
 }
-async function send() {
-  if (sending || !outbox.length) return;
-  sending = true;
-  const item = outbox.shift();
-  try {
-    const result = await json(`/mosaic/paint?room=${room}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ color: item.color, points: item.points }),
-    });
-    awaiting.push({ ...item, revision: result.revision });
+function send() {
+  if (sendQueued) return;
+  sendQueued = true;
+  requestAnimationFrame(() => {
+    sendQueued = false;
+    if (socket?.readyState !== WebSocket.OPEN) return;
+    while (
+      outbox.length &&
+      socket.bufferedAmount < 16384 &&
+      pending.size < 128
+    ) {
+      const item = outbox.shift();
+      pending.set(item.sequence, { ...item, sentAt: performance.now() });
+      socket.send(
+        JSON.stringify({
+          kind: "paint",
+          seq: item.sequence,
+          color: item.color,
+          points: item.points,
+        }),
+      );
+    }
     settle();
-  } catch (error) {
-    for (const point of item.points)
-      if (optimistic.get(point)?.sequence === item.sequence)
-        optimistic.delete(point);
-    toast(`Stroke not saved: ${error.message}`);
-    redraw();
-  } finally {
-    sending = false;
-    settle();
-    send();
-  }
+    if (outbox.length) send();
+  });
 }
 function paint(points) {
-  if (!board) return;
-  if (outbox.length > 128) {
+  if (!board || socket?.readyState !== WebSocket.OPEN) return;
+  if (outbox.length + pending.size > 128) {
     toast("The canvas connection is slow. Let your strokes catch up.");
     return;
   }
@@ -207,8 +213,8 @@ $("share").onclick = () => copy(`${location.origin}/mosaic/?room=${room}`);
 $("new-room").onclick = () => {
   location.href = `/mosaic/?room=${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
 };
-async function start() {
-  board = await json(`/mosaic/state?room=${room}`);
+function palette() {
+  $("palette").replaceChildren();
   board.palette.forEach((color, i) => {
     const button = document.createElement("button");
     button.className = "swatch";
@@ -224,31 +230,92 @@ async function start() {
     $("palette").append(button);
   });
   redraw();
-  source = new EventSource(`/mosaic/events?room=${room}`);
-  source.onopen = () =>
-    status("connection", "Live · everyone sees the same canvas", true);
-  source.onerror = () =>
-    status("connection", "Reconnecting · your canvas stays here");
-  source.addEventListener("snapshot", (event) => {
-    const value = JSON.parse(event.data);
-    if (value.revision < board.revision) {
-      outbox.length = awaiting.length = 0;
-      optimistic.clear();
-      toast("This canvas started a new server session.");
-    }
-    board = value;
-    settle();
-  });
-  source.addEventListener("paint", (event) => {
-    const change = JSON.parse(event.data);
-    if (change.revision <= board.revision) return;
-    for (const point of change.points) board.pixels[point] = change.color;
-    board.revision = change.revision;
-    settle();
-  });
 }
-start().catch((error) => {
-  status("connection", error.message, false, true);
-  toast(error.message);
+function connect() {
+  const url = new URL(`/mosaic/ws?room=${room}`, location.origin);
+  url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  const current = new WebSocket(url);
+  socket = current;
+  current.onmessage = ({ data }) => {
+    if (socket !== current) return;
+    let message;
+    try {
+      message = JSON.parse(data);
+    } catch {
+      current.close();
+      return;
+    }
+    if (message.kind === "snapshot") {
+      board = message.data;
+      palette();
+      status("connection", "Live · WebSocket · immediate room updates", true);
+      settle();
+    } else if (message.kind === "paint") {
+      const change = message.data;
+      if (!board || change.revision <= board.revision) return;
+      for (const point of change.points) board.pixels[point] = change.color;
+      board.revision = change.revision;
+      settle();
+    } else if (message.kind === "ack") {
+      const item = pending.get(message.seq);
+      if (!item) return;
+      pending.delete(message.seq);
+      awaiting.push({ ...item, revision: message.revision });
+      $("latency").textContent = (performance.now() - item.sentAt).toFixed(1);
+      $("server-time").textContent = (message.server_us / 1000).toFixed(3);
+      settle();
+      send();
+    } else if (message.kind === "pong") {
+      const at = pings.get(message.seq);
+      if (at !== undefined)
+        $("latency").textContent = (performance.now() - at).toFixed(1);
+      pings.delete(message.seq);
+    } else if (message.kind === "error") {
+      const item = pending.get(message.seq);
+      if (item)
+        for (const point of item.points)
+          if (optimistic.get(point)?.sequence === item.sequence)
+            optimistic.delete(point);
+      pending.delete(message.seq);
+      toast(message.message);
+      settle();
+      send();
+    }
+  };
+  current.onclose = () => {
+    if (socket !== current) return;
+    const lost = pending.size + outbox.length;
+    outbox.length = awaiting.length = 0;
+    pending.clear();
+    pings.clear();
+    optimistic.clear();
+    if (lost)
+      toast(
+        "Connection lost. Some strokes have no confirmation. The next snapshot shows the saved board.",
+      );
+    redraw();
+    status("connection", "Reconnecting to the shared canvas");
+    reconnect = setTimeout(connect, 1000);
+  };
+  current.onerror = () => current.close();
+}
+connect();
+pingTimer = setInterval(() => {
+  if (document.hidden || socket?.readyState !== WebSocket.OPEN || !board)
+    return;
+  if (pings.size > 2) {
+    socket.close();
+    return;
+  }
+  const seq = ++sequence;
+  pings.set(seq, performance.now());
+  socket.send(JSON.stringify({ kind: "ping", seq, color: 0, points: [] }));
+}, 5000);
+addEventListener("pagehide", () => {
+  clearTimeout(reconnect);
+  clearInterval(pingTimer);
+  if (socket) {
+    socket.onclose = null;
+    socket.close();
+  }
 });
-addEventListener("pagehide", () => source?.close());

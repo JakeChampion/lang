@@ -1803,3 +1803,56 @@
     font-size: 24px;
   }
 }
+
+.swarm-card {
+  grid-column: 1/-1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+}
+.swarm-preview {
+  background: radial-gradient(ellipse at 45% 45%, #333062, #10152d 65%);
+  min-height: 310px;
+  position: relative;
+  overflow: hidden;
+}
+.swarm-orbit {
+  position: absolute;
+  left: 20%;
+  top: 13%;
+  width: 58%;
+  height: 72%;
+  border-radius: 50%;
+  border: 5px dotted #89bfdd;
+  box-shadow: 0 0 30px #6484ad44;
+  transform: rotate(-25deg);
+  opacity: 0.8;
+}
+.orbit-two {
+  transform: rotate(45deg);
+  border-color: #be8fd0;
+  width: 40%;
+  left: 29%;
+  border-width: 3px;
+}
+.orbit-three {
+  transform: rotate(110deg);
+  border-color: #83d3c8;
+  height: 50%;
+  top: 24%;
+  border-width: 2px;
+}
+.swarm-card .example-body {
+  padding: 30px 38px;
+}
+@media (max-width: 700px) {
+  .swarm-card {
+    display: block;
+  }
+  .swarm-card .example-body {
+    padding: 24px;
+  }
+  .swarm-preview {
+    min-height: 240px;
+  }
+}

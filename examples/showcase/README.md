@@ -1,13 +1,14 @@
 # Fern, in action
 
-Six web applications share one native Fern server. The homepage links each application and its source lesson.
+Seven web applications share one native Fern server. The homepage links each application and its source lesson.
 The application modules use literate Fern. Named sections explain the code that Fern compiles.
 
 | Application | URL | Server behavior |
 | --- | --- | --- |
 | Fractal explorer | `/fractal/` | Mandelbrot PNG tiles, perturbation, SIMD, HTTP and WebSocket delivery |
 | Rally | `/rally/` | Authoritative game physics, solo opponent, two-player WebSocket rooms |
-| Mosaic | `/mosaic/` | Shared pixel boards, atomic POST strokes, resumable SSE journal, PNG export |
+| Mosaic | `/mosaic/` | Shared pixel boards, atomic WebSocket strokes, immediate revision push, PNG export |
+| Swarm | `/swarm/` | Browser Wasm particle field and PCM synthesis, WebGL, Web Audio, worker |
 | Wave lab | `/wave/` | Sixteen-step sequencer, four oscillators, native PCM WAV synthesis |
 | Guestbook | `/notes/` | HTML forms without JavaScript, signed tokens, 303 redirects, Atom feed |
 | Pulse | `/pulse/` | Live process memory and CPU, request counters, SSE, Prometheus export |
@@ -19,6 +20,7 @@ Build the compiler from the repository root:
 ```sh
 make build
 bin/fern -target x86-64-linux -O -o build/showcase examples/showcase/server.fern.md
+bin/fern -target wasm32-wasi -emit core-module -O -o examples/showcase/web/swarm/kernel.wasm examples/showcase/swarm.fern.md
 ./build/showcase examples
 ```
 
@@ -75,6 +77,7 @@ Its build script compiles the showcase, prepares assets, and builds the containe
 ## State and measurements
 
 Each server process owns its rooms and notes. A restart clears them.
+
 Rally keeps at most 16 rooms. Mosaic keeps at most 32 boards and 256 changes per board.
 
 The guestbook keeps 80 notes. Request bodies have a 16 KiB limit.
@@ -109,3 +112,23 @@ It requires Playwright and a Chromium executable:
 PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs CHROMIUM=/usr/bin/chromium \
   node examples/showcase/tests/browser.mjs http://localhost:8080
 ```
+
+## Real-time latency
+
+Rally sends coalesced inputs every 16 milliseconds without a stop-and-wait exchange.
+The browser predicts its paddle each animation frame, replays unacknowledged input after a reply, and extrapolates the ball.
+The server owns physics and scores. It immediately pushes changes to the other player.
+
+Mosaic displays strokes locally and pipelines bounded WebSocket messages.
+The server wakes each room subscriber through a loopback datagram descriptor. Idle subscribers need no timer poll.
+Reconnects receive a full snapshot. The HTTP mutation and resumable SSE APIs remain available for other clients.
+
+Both applications report network round-trip time separately from server work. Network distance still contributes to round-trip time.
+
+## Browser Wasm
+
+Swarm uses two scalar Fern exports for particle coordinates and audio samples.
+These calls allocate no heap memory. The host reuses its graphics buffer and runs audio synthesis in a worker.
+The build compiles the core Wasm module before asset preparation and creates all three compressed variants.
+
+Pause and hidden tabs stop the animation loop. Reduced-motion preferences select pause by default.

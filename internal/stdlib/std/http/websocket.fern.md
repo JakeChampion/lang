@@ -8,6 +8,12 @@ A server session delivers text and binary messages through callbacks. A connecti
 
 ## Contracts
 
+A push producer can send events while the reader awaits client input. `flush` serializes concurrent writers.
+The application must cancel its push producer when the connection closes.
+
+`accept_with_push` attaches the producer as HTTP background work. The producer must await an open notification before its first flush.
+A long-lived producer needs a suitable `serve.Config.background_deadline`. A zero deadline permits the full connection lifetime.
+
 Message limits and output pressure have separate controls. Send results distinguish accepted data, backpressure, and dropped data. Upgrade errors retain their cause.
 
 ## Module assembly
@@ -180,7 +186,7 @@ pub function handlers(message: (Conn, Message) => void): Handlers {
 
 ```fern
 <<11 pub struct Conn>>=
-pub struct Conn { protocol: string, path: string, window: i32, opts: Options, out: Cell[u8[]], state: Cell[i32], code: Cell[i32], reason: Cell[string], pressured: Cell[i32], write: (u8[]) => i32 }
+pub struct Conn { protocol: string, path: string, window: i32, opts: Options, out: Cell[u8[]], state: Cell[i32], code: Cell[i32], reason: Cell[string], pressured: Cell[i32], writing: Cell[boolean], write: (u8[]) => i32 }
 ```
 
 ### `12 pub function (c: Conn) send_text(s: string): SendResult`
@@ -214,6 +220,14 @@ pub function (c: Conn) is_open(): boolean {
 }
 
 pub function accept(req: HttpRequest, opts: Options, h: Handlers): Result[HttpResponse, UpgradeError] {
+  return __accept(req, opts, h, None);
+}
+
+pub function accept_with_push(req: HttpRequest, opts: Options, h: Handlers, push: (Conn) => void): Result[HttpResponse, UpgradeError] {
+  return __accept(req, opts, h, Some(push));
+}
+
+function __accept(req: HttpRequest, opts: Options, h: Handlers, push: Option[(Conn) => void]): Result[HttpResponse, UpgradeError] {
   if (!__is_websocket(req)) {
     return Err(NotWebSocket);
   }
@@ -235,6 +249,9 @@ pub function accept(req: HttpRequest, opts: Options, h: Handlers): Result[HttpRe
   }
   if (deflated.1.len() > 0) {
     resp = resp.with_header("Sec-WebSocket-Extensions", deflated.1);
+  }
+  if let Some(produce) = push {
+    resp = resp.with_background((): void => produce(conn));
   }
   return Ok(resp);
 }
@@ -452,7 +469,7 @@ function __conn(req: HttpRequest, protocol: string, window: i32, opts: Options):
     },
     None => {}
   }
-  return Conn { protocol: protocol, path: req.path, window: window, opts: opts, out: cell_new(none), state: cell_new(0), code: cell_new(1005), reason: cell_new(""), pressured: cell_new(0), write: write };
+  return Conn { protocol: protocol, path: req.path, window: window, opts: opts, out: cell_new(none), state: cell_new(0), code: cell_new(1005), reason: cell_new(""), pressured: cell_new(0), writing: cell_new(false), write: write };
 }
 
 function __send(c: Conn, opcode: i32, payload: u8[]): SendResult {
@@ -472,17 +489,36 @@ function __send(c: Conn, opcode: i32, payload: u8[]): SendResult {
   return Sent;
 }
 
-function __flush(c: Conn, h: Handlers): boolean {
-  let out: u8[] = c.out.get();
-  if (out.len() == 0) {
-    return true;
+// Explicit flush supports writers that run while the reader awaits client input.
+// One writer owns the transport until its entire queue drains.
+pub function (c: Conn) flush(): SendResult {
+  if (c.writing.get()) {
+    return Backpressure;
   }
-  let none: u8[] = [];
-  c.out.set(none);
-  let f: (u8[]) => i32 = c.write;
-  let wrote: i32 = f(out);
-  if (wrote < 0) {
-    return false;
+  c.writing.set(true);
+  while (c.out.get().len() > 0) {
+    let bytes: u8[] = c.out.get();
+    c.out.set([] as u8[]);
+    let send: (u8[]) => i32 = c.write;
+    if (send(bytes) < 0) {
+      c.writing.set(false);
+      c.state.set(2);
+      return Dropped;
+    }
+  }
+  c.writing.set(false);
+  return Sent;
+}
+
+function __flush(c: Conn, h: Handlers): boolean {
+  match (c.flush()) {
+    Dropped => {
+      return false;
+    },
+    Backpressure => {
+      return true;
+    },
+    Sent => {}
   }
   if (c.pressured.get() == 1) {
     c.pressured.set(0);

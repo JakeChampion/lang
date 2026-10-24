@@ -1,18 +1,38 @@
 import { $, status, toast, copy } from "/assets/ui.mjs";
+import { paddle, reconcile, ball } from "./prediction.mjs";
 
 const canvas = $("court"),
   context = canvas.getContext("2d");
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 let socket,
   frame,
-  previous,
   receivedAt = 0,
-  sentAt = 0,
   target = 0.5,
-  inFlight = false,
-  pending = "tick",
+  localPaddle = 0.5,
+  sequence = 0,
+  rtt = 0,
+  lastSent = 0,
+  lastDraw = 0,
   mode = "solo",
   inviteAfterJoin = false;
+const sent = new Map(),
+  inputHistory = [];
+function transmit(kind, room = frame?.room || "") {
+  if (socket?.readyState !== WebSocket.OPEN || socket.bufferedAmount > 16384)
+    return;
+  const now = performance.now(),
+    seq = ++sequence;
+  sent.set(seq, now);
+  inputHistory.push({
+    seq,
+    y: target,
+    dt: Math.min(0.05, Math.max(0, (now - lastSent) / 1000)),
+  });
+  while (sent.size > 128) sent.delete(sent.keys().next().value);
+  if (inputHistory.length > 128) inputHistory.shift();
+  lastSent = now;
+  socket.send(JSON.stringify({ kind, room, mode, y: target, seq }));
+}
 const keys = new Set(),
   trail = [];
 function resize() {
@@ -29,9 +49,12 @@ function connect(room = "", newMode = "solo") {
     socket.close();
   }
   frame = null;
-  previous = null;
-  inFlight = false;
-  pending = "tick";
+  sent.clear();
+  inputHistory.length = 0;
+  localPaddle = 0.5;
+  rtt = 0;
+  sequence = 0;
+  lastSent = performance.now();
   target = 0.5;
   mode = newMode;
   status("connection", "Connecting to the court");
@@ -41,9 +64,7 @@ function connect(room = "", newMode = "solo") {
   socket = current;
   current.onopen = () => {
     if (socket !== current) return;
-    sentAt = performance.now();
-    inFlight = true;
-    current.send(JSON.stringify({ kind: "join", room, mode, y: target }));
+    transmit("join", room);
   };
   current.onmessage = ({ data }) => {
     if (socket !== current) return;
@@ -60,11 +81,23 @@ function connect(room = "", newMode = "solo") {
       toast(value.error);
       return;
     }
-    previous = frame?.game || value.game;
+    const now = performance.now();
+    if (sent.has(value.seq)) {
+      const sample = now - sent.get(value.seq);
+      rtt = rtt ? rtt * 0.8 + sample * 0.2 : sample;
+      $("latency").textContent = rtt.toFixed(1);
+      $("server-time").textContent = (value.server_us / 1000).toFixed(3);
+      for (const seq of sent.keys()) if (seq <= value.seq) sent.delete(seq);
+    }
+    localPaddle = reconcile(
+      value.game[value.seat === 0 ? "left" : "right"],
+      inputHistory,
+      value.seq,
+    );
+    while (inputHistory.length && inputHistory[0].seq <= value.seq)
+      inputHistory.shift();
     frame = value;
-    receivedAt = performance.now();
-    $("latency").textContent = (receivedAt - sentAt).toFixed(1);
-    inFlight = false;
+    receivedAt = now;
     $("seat").textContent = value.seat === 0 ? "LEFT" : "RIGHT";
     $("score-left").textContent = value.game.left_score;
     $("score-right").textContent = value.game.right_score;
@@ -106,7 +139,6 @@ function connect(room = "", newMode = "solo") {
   };
   current.onclose = () => {
     if (socket === current) {
-      inFlight = false;
       status(
         "connection",
         "Court disconnected · choose a new game",
@@ -123,7 +155,7 @@ function command(kind) {
     toast("Connect to a court first.");
     return;
   }
-  pending = kind;
+  transmit(kind);
 }
 $("start").onclick = () => command("start");
 $("pause").onclick = () => command("pause");
@@ -153,25 +185,25 @@ canvas.onpointerdown = (event) => {
 canvas.onpointermove = (event) => {
   if (event.buttons || event.pointerType === "mouse") point(event);
 };
+// Input is coalesced per frame. A slow reply never blocks the next input.
 const timer = setInterval(() => {
   if (document.hidden || !frame || socket?.readyState !== WebSocket.OPEN)
     return;
-  if (keys.has("ArrowUp") || keys.has("KeyW"))
-    target = Math.max(0, target - 0.04);
-  if (keys.has("ArrowDown") || keys.has("KeyS"))
-    target = Math.min(1, target + 0.04);
-  if (inFlight) {
-    if (performance.now() - sentAt > 5000) socket.close();
+  if (sent.size && performance.now() - sent.values().next().value > 5000) {
+    socket.close();
     return;
   }
-  inFlight = true;
-  sentAt = performance.now();
-  socket.send(
-    JSON.stringify({ kind: pending, room: frame.room, mode, y: target }),
-  );
-  pending = "tick";
-}, 33);
+  transmit("tick");
+}, 16);
 function draw(now) {
+  const dt = lastDraw ? Math.min(0.05, (now - lastDraw) / 1000) : 0;
+  lastDraw = now;
+  if (keys.has("ArrowUp") || keys.has("KeyW"))
+    target = Math.max(0, target - dt * 1.6);
+  if (keys.has("ArrowDown") || keys.has("KeyS"))
+    target = Math.min(1, target + dt * 1.6);
+  localPaddle = paddle(localPaddle, target, dt);
+  canvas.dataset.paddle = localPaddle.toFixed(4);
   context.setTransform(canvas.width / 960, 0, 0, canvas.height / 540, 0, 0);
   context.clearRect(0, 0, 960, 540);
   context.strokeStyle = "#abc79230";
@@ -196,15 +228,11 @@ function draw(now) {
     right: 0.5,
     running: false,
   };
-  const alpha = reducedMotion ? 1 : Math.min(1, (now - receivedAt) / 33);
-  const lerp = (key) => {
-    const old = previous?.[key] ?? game[key];
-    return Math.abs(game[key] - old) > 0.3
-      ? game[key]
-      : old + (game[key] - old) * alpha;
-  };
-  const x = lerp("x") * 960,
-    y = lerp("y") * 540;
+  const predicted = ball(game, (now - receivedAt + rtt / 2) / 1000);
+  const x = predicted.x * 960,
+    y = predicted.y * 540;
+  const left = frame?.seat === 0 ? localPaddle : game.left;
+  const right = frame?.seat === 1 ? localPaddle : game.right;
   if (!reducedMotion && game.running) {
     trail.push({ x, y });
     if (trail.length > 9) trail.shift();
@@ -217,8 +245,8 @@ function draw(now) {
   });
   context.fillStyle = "#dae8ac";
   context.beginPath();
-  context.roundRect(51, lerp("left") * 540 - 56, 10, 112, 5);
-  context.roundRect(899, lerp("right") * 540 - 56, 10, 112, 5);
+  context.roundRect(51, left * 540 - 56, 10, 112, 5);
+  context.roundRect(899, right * 540 - 56, 10, 112, 5);
   context.fill();
   context.fillStyle = "#f4f3d6";
   context.beginPath();

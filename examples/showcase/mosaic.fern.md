@@ -1,7 +1,8 @@
-# Mosaic: shared pixels and resumable events
+# Mosaic: shared pixels over WebSocket
 
-Mosaic combines ordinary POST requests with server-sent events.
-One connection can receive changes from every painter without a WebSocket protocol.
+Mosaic sends strokes and revision updates through a WebSocket.
+The browser displays a stroke immediately. The server validates it and pushes the change to every subscriber.
+A bounded revision journal also supports the HTTP mutation and resumable event APIs.
 
 This document is the source program. Fern expands the named sections in `<<*>>` before compilation.
 The HTML source view links each section and each local import.
@@ -12,6 +13,7 @@ The HTML source view links each section and each local import.
 <<Create a board>>
 <<Commit a stroke>>
 <<Resume the event log>>
+<<Push changes over WebSocket>>
 <<Export a real image>>
 ```
 
@@ -34,6 +36,8 @@ import "std/png";
 import "std/time";
 import "std/async";
 import "./common";
+import "./live";
+import "std/http/websocket";
 
 pub const WIDTH: i32 = 64;
 
@@ -54,7 +58,7 @@ pub struct Board { name: string, pixels: i32[], revision: i64, history: Change[]
 
 pub struct Room { state: State, at: i32 }
 
-pub struct State { rooms: Cell[Board[]] }
+pub struct State { rooms: Cell[Board[]], live: live.State }
 ```
 
 ## Create a board
@@ -65,7 +69,7 @@ Board indices remain stable because this example does not evict boards.
 ```fern
 <<Create a board>>=
 pub function state(): State {
-  return State { rooms: cell_new([] as Board[]) };
+  return State { rooms: cell_new([] as Board[]), live: live.state() };
 }
 
 pub function room(state: State, name: string): Result[Room, http.HttpError] {
@@ -135,6 +139,7 @@ pub function paint(room: Room, stroke: Stroke): Result[Change, http.HttpError] {
     history = history.drop(1);
   }
   room.state.rooms.set(room.state.rooms.get().with(room.at, Board { ...board, pixels: pixels, revision: change.revision, history: history }));
+  live.notify(room.state.live, board.name, "");
   return Ok(change);
 }
 ```
@@ -217,5 +222,104 @@ function main(): i32 {
   let Ok(change) = paint(board, Stroke { color: 3, points: [0] }) else { return 4; };
   if (change.revision != 1 || snapshot(board).pixels[0] != 3) { return 3; }
   return 0;
+}
+```
+
+## Push changes over WebSocket
+
+The reader accepts strokes and acknowledges each sequence number. It does not wait for earlier acknowledgements.
+A separate producer pushes journal changes as soon as a publication wakes its subscription.
+Both writers share the connection output queue. The WebSocket flush method serializes their writes.
+
+```fern
+<<Push changes over WebSocket>>=
+@derive(json.FromJson)
+struct Input { kind: string, seq: i64, color: i32, points: i32[] }
+
+@derive(json.Json)
+struct Ack { kind: string, seq: i64, revision: i64, server_us: i64 }
+
+@derive(json.Json)
+struct Failure { kind: string, seq: i64, message: string }
+
+function send_pending(room: Room, cursor: Cell[Option[i64]], connection: websocket.Conn): void {
+  while (true) {
+    let Some(event) = changes(room, cursor.get()) else {
+      return;
+    };
+    let sent = connection.send_text("{\"kind\":\"" + event.name + "\",\"data\":" + event.data + "}");
+    if let websocket.Dropped = sent {
+      connection.close(1013, "canvas receiver is too slow");
+      return;
+    }
+    cursor.set(parse.int64(event.id).ok());
+  }
+}
+
+pub function socket(state: State, req: HttpRequest): Result[HttpResponse, dyn http.ToResponse] {
+  let room: Room = room(state, common.query(req, "room", "commons"))?;
+  let subscription: live.Subscription = live.subscribe(state.live, state.rooms.get()[room.at].name)?;
+  let cursor: Cell[Option[i64]] = cell_new(None as Option[i64]);
+  let handlers: websocket.Handlers = websocket.Handlers {
+    open: (connection: websocket.Conn): void => {
+      send_pending(room, cursor, connection);
+      live.wake(subscription);
+    },
+    message: (connection: websocket.Conn, message: websocket.Message): void => {
+      let started: i64 = now_ns();
+      match (message) {
+        Text(text) => {
+          let Ok(input) = Input.from_json(text) else {
+            connection.close(1008, "invalid canvas input");
+            return;
+          };
+          if (input.seq < 0 || input.kind != "paint" && input.kind != "ping") {
+            connection.close(1008, "unknown canvas command");
+            return;
+          }
+          let kind: string = "pong";
+          if (input.kind == "paint") {
+            match (paint(room, Stroke { color: input.color, points: input.points })) {
+              Ok(_) => {
+                kind = "ack";
+              },
+              Err(error) => {
+                let sent = connection.send_text(Failure { kind: "error", seq: input.seq, message: error.detail }.to_json());
+                return;
+              }
+            }
+          }
+          let sent = connection.send_text(Ack { kind: kind, seq: input.seq, revision: snapshot(room).revision, server_us: (now_ns() - started) / 1000 }.to_json());
+          send_pending(room, cursor, connection);
+        },
+        Binary(_) => {
+          connection.close(1003, "send JSON canvas commands");
+        }
+      }
+    },
+    drain: (connection: websocket.Conn): void => {},
+    close: (connection: websocket.Conn, code: i32, reason: string): void => live.cancel(subscription),
+  };
+  let options: websocket.Options = websocket.Options { ...websocket.options(), max_message: 4096, backpressure: 32768, max_backpressure: 131072 };
+  match (websocket.accept_with_push(req, options, handlers, (connection: websocket.Conn): void => {
+    while (live.wait(subscription)) {
+      send_pending(room, cursor, connection);
+      match (connection.flush()) {
+        Dropped => {
+          break;
+        },
+        _ => {}
+      }
+    }
+    live.dispose(subscription);
+  })) {
+    Ok(response) => {
+      return Ok(response);
+    },
+    Err(error) => {
+      live.dispose(subscription);
+      return Err(error);
+    }
+  }
 }
 ```

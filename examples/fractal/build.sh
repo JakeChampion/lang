@@ -35,6 +35,8 @@ if [ -z "${FERN:-}" ]; then
 fi
 "$FERN" -target x86-64-linux -O -o server ../showcase/server.fern.md ../../internal/stdlib
 
+"$FERN" -target wasm32-wasi -emit core-module -O -o ../showcase/web/swarm/kernel.wasm ../showcase/swarm.fern.md ../../internal/stdlib
+
 # Weave source lessons with a host binary before asset compression.
 prepare_server="$PWD/server"
 if [ "$host_target" != x86-64-linux ]; then

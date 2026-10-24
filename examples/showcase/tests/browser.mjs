@@ -16,9 +16,9 @@ const a = await context.newPage(),
   b = await context.newPage();
 await a.goto(base + "/");
 await a.getByRole("button", { name: "Make something", exact: true }).click();
-assert.equal(await a.locator(".example:visible").count(), 3);
-await a.getByRole("button", { name: "All six", exact: true }).click();
-assert.equal(await a.locator(".example:visible").count(), 6);
+assert.equal(await a.locator(".example:visible").count(), 4);
+await a.getByRole("button", { name: "All seven", exact: true }).click();
+assert.equal(await a.locator(".example:visible").count(), 7);
 console.log("gallery filters OK");
 await a.goto(base + "/rally/");
 await a.waitForFunction(() =>
@@ -53,7 +53,7 @@ await a.keyboard.press("Space");
 await b.waitForFunction(
   () => !document.querySelector("#revision").textContent.endsWith("0"),
 );
-console.log("shared canvas + SSE OK");
+console.log("shared canvas + WebSocket OK");
 await a.goto(base + "/wave/");
 await a.locator("#play").click();
 await a.waitForFunction(() =>
@@ -68,6 +68,75 @@ await a.waitForFunction(
 console.log("RSS:", await a.locator("#rss").textContent());
 await a.locator("#pause").click();
 assert.match(await a.locator("#pause").textContent(), /Resume/);
+await a.goto(base + "/swarm/");
+await a.waitForFunction(() =>
+  document.querySelector("#connection").textContent.includes("Live"),
+);
+await a.locator("#pause").click();
+await a.waitForTimeout(80);
+const stopped = await a.locator("#field").getAttribute("data-frames");
+await a.waitForTimeout(120);
+assert.equal(await a.locator("#field").getAttribute("data-frames"), stopped);
+await a.locator("#pause").click();
+await a.locator("#audio").click();
+await a.waitForFunction(
+  () => document.querySelector("#field").dataset.audio === "playing",
+);
+await a.locator("#audio").click();
+console.log("browser Wasm, pause, and Fern worker audio OK");
+const delayed = await browser.newContext();
+await delayed.addInitScript(() => {
+  const Native = WebSocket;
+  window.__rallySent = 0;
+  window.WebSocket = class extends Native {
+    #receive;
+    constructor(...args) {
+      super(...args);
+      super.addEventListener("message", (event) =>
+        setTimeout(() => this.#receive?.(event), 60),
+      );
+    }
+    set onmessage(value) {
+      this.#receive = value;
+    }
+    get onmessage() {
+      return this.#receive;
+    }
+    send(value) {
+      window.__rallySent++;
+      setTimeout(() => {
+        if (this.readyState === Native.OPEN) super.send(value);
+      }, 60);
+    }
+  };
+});
+const lagged = await delayed.newPage();
+await lagged.goto(base + "/rally/");
+await lagged.waitForFunction(() =>
+  document.querySelector("#connection").textContent.includes("Live"),
+);
+const beforeInput = await lagged.evaluate(() => [
+  Number(document.querySelector("#court").dataset.paddle),
+  window.__rallySent,
+]);
+await lagged.keyboard.down("ArrowDown");
+await lagged.waitForTimeout(45);
+await lagged.keyboard.up("ArrowDown");
+const afterInput = await lagged.evaluate(() => [
+  Number(document.querySelector("#court").dataset.paddle),
+  window.__rallySent,
+]);
+assert.ok(
+  afterInput[0] > beforeInput[0] + 0.015,
+  "local paddle must move before the 120 ms reply",
+);
+await lagged.waitForTimeout(40);
+assert.ok(
+  (await lagged.evaluate(() => window.__rallySent)) >= beforeInput[1] + 4,
+  "input must not wait for round trips",
+);
+await delayed.close();
+console.log("paddle prediction and pipelined input at 120 ms simulated RTT OK");
 const nojs = await browser.newContext({ javaScriptEnabled: false });
 const form = await nojs.newPage();
 await form.goto(base + "/notes/");
@@ -91,6 +160,7 @@ for (const route of [
   "/wave/",
   "/notes/",
   "/pulse/",
+  "/swarm/",
   "/_src/showcase/mosaic.fern",
 ]) {
   const p = await mobile.newPage();

@@ -1,7 +1,7 @@
 # Rally: a game with server authority
 
 Two browsers share a Pong game over WebSocket. A solo game uses the same physics with a slow computer opponent.
-The browser sends commands and paddle positions. Only the server changes ball positions and scores.
+The browser sends commands and paddle positions. The server owns ball positions and scores. Visual prediction lets local controls respond before a reply arrives.
 
 This document is the source program. Fern expands the named sections in `<<*>>` before compilation.
 The HTML source view links each section and each local import.
@@ -32,6 +32,7 @@ import "std/http/websocket";
 import "std/json";
 import "std/f64";
 import "./common";
+import "./live";
 
 @derive(json.Json)
 pub struct Game {
@@ -48,16 +49,16 @@ pub struct Game {
 }
 
 @derive(json.Json, json.FromJson)
-pub struct Input { kind: string, room: string, mode: string, y: f64 }
+pub struct Input { kind: string, room: string, mode: string, y: f64, seq: i64 }
 
 @derive(json.Json)
-struct Frame { room: string, seat: i32, players: i32, game: Game, tick: i64 }
+struct Frame { room: string, seat: i32, players: i32, game: Game, tick: i64, seq: i64, server_us: i64 }
 
-pub struct Room { id: string, game: Game, seats: string[], clock: i64 }
+pub struct Room { id: string, game: Game, seats: string[], targets: f64[], clock: i64 }
 
-pub struct State { rooms: Cell[Room[]], messages: Cell[i64] }
+pub struct State { rooms: Cell[Room[]], messages: Cell[i64], live: live.State }
 
-struct Joined { id: string, seat: i32 }
+struct Joined { id: string, seat: i32, seq: i64 }
 ```
 
 ## Advance the simulation
@@ -69,7 +70,7 @@ Collision code reflects overshoot and changes the vertical velocity with the imp
 ```fern
 <<Advance the simulation>>=
 pub function state(): State {
-  return State { rooms: cell_new([] as Room[]), messages: cell_new(0 as i64) };
+  return State { rooms: cell_new([] as Room[]), messages: cell_new(0 as i64), live: live.state() };
 }
 
 pub function initial(solo: boolean): Game {
@@ -160,7 +161,7 @@ function join(state: State, input: Input, peer: string): Result[Joined, string] 
     if (rooms.len() >= 16) {
       return Err("all game rooms are in use");
     }
-    let created: Room = Room { id: common.token(), game: initial(input.mode != "duo"), seats: ["", ""], clock: now_ns() };
+    let created: Room = Room { id: common.token(), game: initial(input.mode != "duo"), seats: ["", ""], targets: [0.5, 0.5], clock: now_ns() };
     state.rooms.set(rooms.append(created));
     room = Some(created);
   }
@@ -177,7 +178,7 @@ function join(state: State, input: Input, peer: string): Result[Joined, string] 
         return Err("this room already has its players");
       }
       store(state, Room { ...found, seats: seats.with(seat, peer) });
-      return Ok(Joined { id: found.id, seat: seat });
+      return Ok(Joined { id: found.id, seat: seat, seq: input.seq });
     },
     None => {
       return Err("room creation failed");
@@ -210,26 +211,22 @@ function find(state: State, id: string): Option[Room] {
 ## Apply a command
 
 The monotonic clock supplies elapsed time. A client cannot submit a score or choose the elapsed time.
-Each accepted command returns a snapshot. Clients request snapshots at about 30 frames per second.
+Each room retains both paddle targets. Every simulation step advances both paddles, even when the other player supplies the input.
+Each accepted command returns a snapshot. Clients send coalesced inputs at about 60 frames per second without a stop-and-wait exchange.
+
 This request-driven model does no simulation work when no client sends input.
 
 ```fern
 <<Apply a command>>=
-function reply(state: State, joined: Joined, connection: websocket.Conn, input: Input): void {
+function reply(state: State, joined: Joined, connection: websocket.Conn, input: Input, started: i64): void {
   let Some(room) = find(state, joined.id) else {
     connection.close(1008, "room expired");
     return;
   };
   let game: Game = room.game;
   let now: i64 = now_ns();
-  let left: f64 = game.left;
-  let right: f64 = game.right;
-  if (joined.seat == 0) {
-    left = input.y;
-  } else {
-    right = input.y;
-  }
-  game = advance(game, left, right, (now - room.clock) as f64 / 1000000000.0);
+  let targets: f64[] = room.targets.with(joined.seat, input.y);
+  game = advance(game, targets[0], targets[1], (now - room.clock) as f64 / 1000000000.0);
   let seats: string[] = room.seats;
   let players: i32 = 0;
   if (seats[0] != "") {
@@ -247,9 +244,9 @@ function reply(state: State, joined: Joined, connection: websocket.Conn, input: 
   if (input.kind == "reset") {
     game = initial(game.solo);
   }
-  store(state, Room { ...room, game: game, clock: now });
+  store(state, Room { ...room, game: game, targets: targets, clock: now });
   state.messages.set(state.messages.get() + 1);
-  let frame: Frame = Frame { room: room.id, seat: joined.seat, players: players, game: game, tick: now / 1000000 };
+  let frame: Frame = Frame { room: room.id, seat: joined.seat, players: players, game: game, tick: now / 1000000, seq: input.seq, server_us: (now_ns() - started) / 1000 };
   let sent: websocket.SendResult = connection.send_text(frame.to_json());
 }
 ```
@@ -258,16 +255,20 @@ function reply(state: State, joined: Joined, connection: websocket.Conn, input: 
 
 A socket must join before it can send commands. Invalid JSON and oversized messages close the socket.
 Each connection stores its joined seat in an optional cell. Close releases that seat and pauses the game.
-The browser interpolates snapshots for smooth display without control of the authoritative state.
+
+The browser predicts its paddle, reconciles acknowledged inputs, and extrapolates the ball for at most 100 milliseconds.
+A room publication wakes the other player immediately. A background producer sends the shared state without a client poll.
 
 ```fern
 <<Manage connection lifetime>>=
-pub function socket(state: State, req: HttpRequest): HttpResponse {
+pub function socket(state: State, req: HttpRequest): Result[HttpResponse, dyn http.ToResponse] {
+  let subscription: live.Subscription = live.subscribe(state.live, "")?;
   let peer: string = common.token();
   let session: Cell[Option[Joined]] = cell_new(None as Option[Joined]);
   let handlers: websocket.Handlers = websocket.Handlers {
-    open: (connection: websocket.Conn): void => {},
+    open: (connection: websocket.Conn): void => live.wake(subscription),
     message: (connection: websocket.Conn, message: websocket.Message): void => {
+      let started: i64 = now_ns();
       match (message) {
         Text(text) => {
           if (text.len() > 512) {
@@ -276,7 +277,7 @@ pub function socket(state: State, req: HttpRequest): HttpResponse {
           }
           match (Input.from_json(text)) {
             Ok(input) => {
-              if (input.y != input.y || input.y < 0.0 || input.y > 1.0) {
+              if (input.y != input.y || input.y < 0.0 || input.y > 1.0 || input.seq < 0) {
                 connection.close(1008, "invalid paddle position");
                 return;
               }
@@ -286,7 +287,10 @@ pub function socket(state: State, req: HttpRequest): HttpResponse {
                     connection.close(1008, "unknown command");
                     return;
                   }
-                  reply(state, joined, connection, input);
+                  let updated: Joined = Joined { ...joined, seq: input.seq };
+                  session.set(Some(updated));
+                  reply(state, updated, connection, input, started);
+                  live.notify(state.live, joined.id, subscription.listener.id);
                 },
                 None => {
                   if (input.kind != "join") {
@@ -296,7 +300,9 @@ pub function socket(state: State, req: HttpRequest): HttpResponse {
                   match (join(state, input, peer)) {
                     Ok(joined) => {
                       session.set(Some(joined));
-                      reply(state, joined, connection, input);
+                      live.move(subscription, joined.id);
+                      reply(state, joined, connection, input, started);
+                      live.notify(state.live, joined.id, subscription.listener.id);
                     },
                     Err(message) => {
                       let sent: websocket.SendResult = connection.send_text("{\"error\":\"" + json.json_escape(message) + "\"}");
@@ -318,6 +324,7 @@ pub function socket(state: State, req: HttpRequest): HttpResponse {
     },
     drain: (connection: websocket.Conn): void => {},
     close: (connection: websocket.Conn, code: i32, reason: string): void => {
+      live.cancel(subscription);
       match (session.get()) {
         Some(joined) => {
           match (find(state, joined.id)) {
@@ -327,6 +334,7 @@ pub function socket(state: State, req: HttpRequest): HttpResponse {
                 seats = seats.with(joined.seat, "");
               }
               store(state, Room { ...room, seats: seats, game: Game { ...room.game, running: false } });
+              live.notify(state.live, room.id, subscription.listener.id);
             },
             None => {}
           }
@@ -335,7 +343,38 @@ pub function socket(state: State, req: HttpRequest): HttpResponse {
       }
     },
   };
-  return http.respond(websocket.accept(req, websocket.options(), handlers));
+  let options: websocket.Options = websocket.Options { ...websocket.options(), max_message: 1024, backpressure: 8192, max_backpressure: 65536 };
+  match (websocket.accept_with_push(req, options, handlers, (connection: websocket.Conn): void => {
+    while (live.wait(subscription)) {
+      if let Some(joined) = session.get() {
+        if let Some(room) = find(state, joined.id) {
+          let players: i32 = 0;
+          for seat in room.seats {
+            if (seat != "") {
+              players = players + 1;
+            }
+          }
+          let frame: Frame = Frame { room: room.id, seat: joined.seat, players: players, game: room.game, tick: room.clock / 1000000, seq: joined.seq, server_us: 0 };
+          let sent = connection.send_text(frame.to_json());
+          match (connection.flush()) {
+            Dropped => {
+              break;
+            },
+            _ => {}
+          }
+        }
+      }
+    }
+    live.dispose(subscription);
+  })) {
+    Ok(response) => {
+      return Ok(response);
+    },
+    Err(error) => {
+      live.dispose(subscription);
+      return Err(error);
+    }
+  }
 }
 ```
 

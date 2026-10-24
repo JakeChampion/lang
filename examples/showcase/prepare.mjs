@@ -37,7 +37,7 @@ export async function compressTree(root) {
       count += await compressTree(path);
     } else if (
       entry.isFile() &&
-      /\.(html|css|m?js|svg|xml|txt|json)$/.test(extname(path))
+      /\.(html|css|m?js|svg|xml|txt|json|wasm)$/.test(extname(path))
     ) {
       const bytes = await readFile(path);
       for (const [suffix, encode] of Object.entries(encoders)) {

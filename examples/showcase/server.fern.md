@@ -1,4 +1,4 @@
-# One native server, six web applications
+# One native server, seven web applications
 
 This is the entry point for the Fern web showcase. It mounts each application under a separate URL prefix.
 The homepage and browser modules are static files. Fern owns the live state, protocols, images, audio, and HTML forms.
@@ -29,6 +29,7 @@ import "std/http/router";
 import "std/http/static";
 import "std/http/compress";
 import "std/serve";
+import "std/time";
 import "std/platform";
 import "std/json";
 import "std/result";
@@ -73,9 +74,10 @@ pub function files(): string[] {
   return [
     "fractal/server.fern.md", "fractal/fractal.fern", "fractal/kernel.fern", "fractal/linear.fern", "fractal/series.fern", "fractal/source.fern",
     "fractal/web/app.js", "fractal/web/delivery.mjs", "fractal/web/style.css", "fractal/web/index.html",
-    "showcase/server.fern.md", "showcase/common.fern.md", "showcase/rally.fern.md", "showcase/mosaic.fern.md", "showcase/wave.fern.md", "showcase/notes.fern.md", "showcase/metrics.fern.md", "showcase/encoding.fern.md",
+    "showcase/server.fern.md", "showcase/common.fern.md", "showcase/rally.fern.md", "showcase/mosaic.fern.md", "showcase/wave.fern.md", "showcase/notes.fern.md", "showcase/metrics.fern.md", "showcase/encoding.fern.md", "showcase/live.fern.md", "showcase/swarm.fern.md",
     "showcase/web/index.html", "showcase/web/home.mjs", "showcase/web/shared/showcase.css", "showcase/web/shared/ui.mjs",
-    "showcase/web/rally/index.html", "showcase/web/rally/app.mjs", "showcase/web/mosaic/index.html", "showcase/web/mosaic/app.mjs",
+    "showcase/web/rally/index.html", "showcase/web/rally/app.mjs", "showcase/web/rally/prediction.mjs", "showcase/web/mosaic/index.html", "showcase/web/mosaic/app.mjs",
+    "showcase/web/swarm/index.html", "showcase/web/swarm/app.mjs", "showcase/web/swarm/kernel.mjs", "showcase/web/swarm/audio-worker.mjs", "showcase/web/swarm/style.css",
     "showcase/web/wave/index.html", "showcase/web/wave/app.mjs", "showcase/web/pulse/index.html", "showcase/web/pulse/app.mjs",
   ];
 }
@@ -108,11 +110,12 @@ pub function routes[P: platform.Platform](state: State, root: string, pages: sou
     return Ok(response);
   });
   app = app.get("/api/meta", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
-    let meta: Meta = Meta { apps: 6, instance: state.metrics.instance, binary_bytes: state.fractal.binary_bytes, uptime_ms: (now_ns() - state.metrics.started) / 1000000, requests: state.metrics.requests.get() };
+    let meta: Meta = Meta { apps: 7, instance: state.metrics.instance, binary_bytes: state.fractal.binary_bytes, uptime_ms: (now_ns() - state.metrics.started) / 1000000, requests: state.metrics.requests.get() };
     return Ok(http.json_of(meta).with_header("Cache-Control", "no-store"));
   });
   app = app.get("/healthz", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.ok("ok")));
-  app = app.get("/rally/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(rally.socket(state.games, req)));
+  app = app.get("/rally/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => rally.socket(state.games, req));
+  app = app.get("/mosaic/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => mosaic.socket(state.canvases, req));
   app = app.get("/mosaic/state", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
     let room: mosaic.Room = mosaic.room(state.canvases, common.query(req, "room", "commons"))?;
     return Ok(http.json_of(mosaic.snapshot(room)).with_header("Cache-Control", "no-store"));
@@ -154,7 +157,7 @@ pub function routes[P: platform.Platform](state: State, root: string, pages: sou
     }
     return Ok(source.serve(pages, name));
   });
-  for name in ["rally", "mosaic", "wave", "notes", "pulse"] {
+  for name in ["rally", "mosaic", "wave", "notes", "pulse", "swarm"] {
     let destination: string = "/" + name + "/";
     app = app.get("/" + name, (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.redirect(destination)));
   }
@@ -223,7 +226,7 @@ function main(): i32 {
       match (app.check()) {
         Ok(_) => {
           let config: serve.Config = serve.config();
-          config = serve.Config { ...config, limits: http.HttpLimits { ...config.limits, body: 16384 }, max_connections: 256, max_in_flight: 256 };
+          config = serve.Config { ...config, limits: http.HttpLimits { ...config.limits, body: 16384 }, max_connections: 256, max_in_flight: 256, background_deadline: time.duration_seconds(0) };
           return serve.run_shutdown(8080, config, app.handler(), (reason: string): void => eprint("showcase: " + reason));
         },
         Err(error) => {

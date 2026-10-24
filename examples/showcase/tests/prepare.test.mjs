@@ -18,13 +18,19 @@ test("asset variants round trip through independent platform decoders", async ()
     );
     await writeFile(join(root, "lesson.html"), bytes);
     await writeFile(join(root, "image.png"), bytes);
+    const wasm = Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]);
+    await writeFile(join(root, "kernel.wasm"), wasm);
     await symlink(join(root, "lesson.html"), join(root, "link.html"));
-    assert.equal(await compressTree(root), 1);
+    assert.equal(await compressTree(root), 2);
     for (const [suffix, decode] of Object.entries({
       br: brotliDecompressSync,
       gz: gunzipSync,
       zst: zstdDecompressSync,
     })) {
+      assert.deepEqual(
+        decode(await readFile(join(root, `kernel.wasm.${suffix}`))),
+        wasm,
+      );
       const encoded = await readFile(join(root, `lesson.html.${suffix}`));
       assert.ok(encoded.length < bytes.length / 4);
       assert.deepEqual(decode(encoded), bytes);
@@ -35,7 +41,7 @@ test("asset variants round trip through independent platform decoders", async ()
         code: "ENOENT",
       });
     }
-    assert.equal(await compressTree(root), 1);
+    assert.equal(await compressTree(root), 2);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
