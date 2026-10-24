@@ -101,13 +101,13 @@ function test_prefix(): test.TestOutcome {
 
 function test_invalid_tiles(): test.TestOutcome {
   match (fractal.render(-1, 0, 0)) {
-    Err(InvalidTile) => {},
+    Err(InvalidTile()) => {},
     _ => {
       return test.fail("invalid zoom was accepted");
     }
   }
   match (fractal.render_exact(42, 4398046511104, 0)) {
-    Err(InvalidTile) => {},
+    Err(InvalidTile()) => {},
     _ => {
       return test.fail("invalid coordinate was accepted");
     }
