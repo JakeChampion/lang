@@ -106,6 +106,24 @@ let image: Result[u8[], png.EncodeError] = png.encode_rgb8_with_options(width, h
 It retains the 32 KiB match window and omits the predecessor chain and lazy match search.
 The existing `deflate` function retains its balanced compression policy.
 
+## CSV and conversions
+
+`csv.parse(text)` returns `Result[string[][], csv.ParseError]`.
+`csv.parse_line(text)` returns `Result[string[], csv.ParseError]` for one record.
+Quoted fields can contain commas, quotes, and newlines.
+The document parser accepts LF, CRLF, and CR separators between records.
+The single-record parser rejects separators outside quoted fields.
+
+A CSV error contains a zero-based byte offset and a `ParseErrorKind`.
+The kinds distinguish misplaced quotes, bytes after a closing quote, unclosed quotes, and unexpected record separators.
+An unclosed quote reports the input length as its offset.
+CSV errors implement `error.Error` and `cmp.Display`.
+The parser permits different row widths and returns no partial result on error.
+
+`convert.TryFrom[T, E]` and `convert.TryInto[T, E]` preserve the concrete error type `E` in their results.
+Use an error type that implements `error.Error` and `cmp.Display`.
+The conversion traits do not convert errors to strings.
+
 ## Byte encodings
 
 `std/hex`, `std/base32`, and `std/base64` encode byte views as text.

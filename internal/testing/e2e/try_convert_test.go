@@ -9,23 +9,39 @@ import (
 )
 
 const tryConvertSrc = `import "std/convert" as convert;
+import "std/error";
+import "core/cmp";
+struct RangeError { value: i32 }
+impl error.Error for RangeError {}
+impl cmp.Display for RangeError {}
+function (e: RangeError) message(): string { return "out of range"; }
+function (e: RangeError) to_string(): string { return e.message(); }
 struct Small { v: i32 }
-impl convert.TryFrom[i32] for Small {
-    function try_from(v: i32): Result[Small, string] {
-        if (v < 0) { return Err("negative"); }
-        if (v > 255) { return Err("too big"); }
+impl convert.TryFrom[i32, RangeError] for Small {
+    function try_from(v: i32): Result[Small, RangeError] {
+        if (v < 0) { return Err(RangeError { value: v }); }
+        if (v > 255) { return Err(RangeError { value: v }); }
         return Ok(Small { v: v });
     }
 }
 struct Celsius { deg: i32 }
-impl convert.TryInto[Small] for Celsius {
-    function try_into(self: Self): Result[Small, string] {
+impl convert.TryInto[Small, RangeError] for Celsius {
+    function try_into(self: Self): Result[Small, RangeError] {
         return Small.try_from(self.deg);
     }
 }
+function checked[T: convert.TryFrom[i32, RangeError]](witness: T, v: i32): Result[T, RangeError] {
+    return T.try_from(v);
+}
+function error_text[E: error.Error + cmp.Display](e: E): string {
+    if (e.message() != e.to_string()) { return "mismatch"; }
+    return e.message();
+}
 function main(): i32 {
-    let a: i32 = match (Small.try_from(42)) { Ok(s) => s.v, Err(m) => 0 };
-    let b: i32 = match (Small.try_from(300)) { Ok(s) => 0, Err(m) => m.len() };
+    let Err(problem) = Small.try_from(-7) else { return 0; };
+    if (problem.value != -7 || error_text(problem) != "out of range") { return 0; }
+    let a: i32 = match (checked(Small { v: 0 }, 42)) { Ok(s) => s.v, Err(m) => 0 };
+    let b: i32 = match (Small.try_from(300)) { Ok(s) => 0, Err(e) => e.value - 293 };
     let c: Celsius = Celsius { deg: 100 };
     let d: i32 = match (c.try_into()) { Ok(s) => s.v, Err(m) => 0 };
     return a + b + d;

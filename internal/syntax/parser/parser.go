@@ -761,14 +761,14 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 			return nil, err
 		}
 	}
-	supertraits, err := p.parseOptBounds()
+	supertraits, supertraitArgs, err := p.parseOptBoundsWithArgs()
 	if err != nil {
 		return nil, err
 	}
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, err
 	}
-	td := &ast.TraitDecl{P: kw.Pos, Name: name.Text, NamePos: name.Pos, Supertraits: supertraits, TypeParams: typeParams}
+	td := &ast.TraitDecl{P: kw.Pos, Name: name.Text, NamePos: name.Pos, Supertraits: supertraits, SupertraitArgs: supertraitArgs, TypeParams: typeParams}
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
 		if p.match(lexer.Keyword, "type") {
 			p.advance()
@@ -1325,11 +1325,6 @@ func (p *parser) refuseConstParams(pos ast.Position) error {
 	name := p.constParams[0]
 	p.constParams = nil
 	return p.errorfCode(pos, "P001", "const parameter %s: only a function takes a const parameter", name)
-}
-
-func (p *parser) parseOptBounds() ([]string, error) {
-	bs, _, err := p.parseOptBoundsWithArgs()
-	return bs, err
 }
 
 func (p *parser) parseOptBoundsWithArgs() ([]string, [][]ast.Type, error) {

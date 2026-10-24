@@ -2627,9 +2627,17 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 
 	for _, td := range prog.Traits {
-		for _, sup := range td.Supertraits {
-			if _, ok := c.info.Traits[sup]; !ok {
+		for i, sup := range td.Supertraits {
+			if parent, ok := c.info.Traits[sup]; !ok {
 				c.errfCode(td.P, "E021", "unknown supertrait %q in trait %s", demangle(sup), demangle(td.Name))
+			} else {
+				var args []ast.Type
+				if i < len(td.SupertraitArgs) {
+					args = td.SupertraitArgs[i]
+				}
+				if len(args) != len(parent.TypeParams) {
+					c.errfCode(td.P, "E021", "supertrait %s expects %d type arguments, got %d", demangle(sup), len(parent.TypeParams), len(args))
+				}
 			}
 		}
 		if c.traitInItsOwnSupers(td.Name) {
@@ -2645,15 +2653,18 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		if !c.info.Impls[impl.Trait][typeName] {
 			continue
 		}
-		td, ok := c.info.Traits[impl.Trait]
+		_, ok = c.info.Traits[impl.Trait]
 		if !ok {
 			continue
 		}
-		for _, sup := range c.expandTraits(td.Supertraits) {
+		for _, requirement := range c.expandTraitRequirements([]string{impl.Trait}, [][]ast.Type{implTraitArgs(impl)}, impl.Type)[1:] {
+			sup := requirement.name
 			if !c.info.Impls[sup][typeName] {
 				c.errfCode(impl.P, "E021",
 					"impl %s for %s also requires `impl %s for %s` (supertrait of %s)",
 					demangle(impl.Trait), demangle(typeName), demangle(sup), demangle(typeName), demangle(impl.Trait))
+			} else if got := c.implTraitArgsFor(sup, typeName, impl.Type); !typeArgsEqual(got, requirement.args) {
+				c.errfCode(impl.P, "E021", "impl %s for %s requires supertrait %s%s, got %s%s", demangle(impl.Trait), demangle(typeName), demangle(sup), traitArgsStr(requirement.args), demangle(sup), traitArgsStr(got))
 			}
 		}
 	}
@@ -5034,23 +5045,16 @@ func (c *checker) resolveTraitMethodForParam(paramName, field string) (ast.Trait
 	if decl == nil {
 		return ast.TraitMethod{}, "", false
 	}
-	direct := decl.Bounds[paramName]
-	argsFor := map[string][]ast.Type{}
-	if ba := decl.BoundArgs[paramName]; len(ba) == len(direct) {
-		for i, tn := range direct {
-			if len(ba[i]) > 0 {
-				argsFor[tn] = ba[i]
-			}
-		}
-	}
-	for _, traitName := range c.expandTraits(direct) {
+	for _, requirement := range c.expandTraitRequirements(decl.Bounds[paramName], decl.BoundArgs[paramName], ast.ParamType{Name: paramName}) {
+		traitName := requirement.name
+		args := requirement.args
 		td, ok := c.info.Traits[traitName]
 		if !ok {
 			continue
 		}
 		for _, m := range td.Methods {
 			if m.Name == field {
-				if args := argsFor[traitName]; len(args) > 0 && len(td.TypeParams) == len(args) {
+				if len(args) > 0 && len(td.TypeParams) == len(args) {
 					sub := make(map[string]ast.Type, len(args))
 					for i, tp := range td.TypeParams {
 						sub[tp] = args[i]
@@ -5072,6 +5076,58 @@ func substTraitMethodTypeParams(m ast.TraitMethod, sub map[string]ast.Type) ast.
 		out.Params[i] = p
 	}
 	out.Result = substByName(m.Result, sub)
+	return out
+}
+
+type traitRequirement struct {
+	name string
+	args []ast.Type
+}
+
+// expandTraitRequirements substitutes arguments along each supertrait edge.
+func (c *checker) expandTraitRequirements(names []string, args [][]ast.Type, self ast.Type) []traitRequirement {
+	var out []traitRequirement
+	seen := map[string]bool{}
+	var visit func(string, []ast.Type, map[string]bool)
+	visit = func(name string, values []ast.Type, path map[string]bool) {
+		key := name + traitArgsStr(values)
+		if path[name] || seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, traitRequirement{name, values})
+		td := c.info.Traits[name]
+		if td == nil {
+			return
+		}
+		next := make(map[string]bool, len(path)+1)
+		for name := range path {
+			next[name] = true
+		}
+		next[name] = true
+		sub := map[string]ast.Type{}
+		for i, param := range td.TypeParams {
+			if i < len(values) {
+				sub[param] = values[i]
+			}
+		}
+		for i, parent := range td.Supertraits {
+			var parentArgs []ast.Type
+			if i < len(td.SupertraitArgs) {
+				for _, arg := range td.SupertraitArgs[i] {
+					parentArgs = append(parentArgs, ast.SubstSelf(substByName(arg, sub), self))
+				}
+			}
+			visit(parent, parentArgs, next)
+		}
+	}
+	for i, name := range names {
+		var values []ast.Type
+		if i < len(args) {
+			values = args[i]
+		}
+		visit(name, values, nil)
+	}
 	return out
 }
 

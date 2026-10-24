@@ -263,8 +263,7 @@ func stdlibMethodsFernSource(index, narrow map[string]map[string]string) string 
 		b.WriteString("  }\n")
 	}
 	b.WriteString("  return \"\";\n}\n\n")
-	b.WriteString(`
-pub function methods_on(receiver: string): string[] {
+	b.WriteString(`pub function methods_on(receiver: string): string[] {
   let out: string[] = [];
   let i: i32 = 0;
   while (i < METHODS.len()) {

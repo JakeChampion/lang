@@ -1602,3 +1602,14 @@ func TestFormatTraitDefaultOwnTypeParams(t *testing.T) {
 		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
 	}
 }
+
+func TestFormatGenericSupertraits(t *testing.T) {
+	src := `trait Child[U]: api.Parent[Option[U], (string, u8)] + Marker {}`
+	got := formatSrc(t, src)
+	if !strings.Contains(got, "Child[U]: api.Parent[Option[U], (string, u8)] + Marker") {
+		t.Fatal(got)
+	}
+	if again := formatSrc(t, got); again != got {
+		t.Fatalf("format changed on second pass:\n%s\n%s", got, again)
+	}
+}

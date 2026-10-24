@@ -552,7 +552,15 @@ func (f *formatter) formatTraitDecl(td *ast.TraitDecl) {
 	f.writeTypeParams(td.TypeParams, nil, nil, nil)
 	if len(td.Supertraits) > 0 {
 		f.b.WriteString(": ")
-		f.b.WriteString(strings.Join(td.Supertraits, " + "))
+		for i, name := range td.Supertraits {
+			if i > 0 {
+				f.b.WriteString(" + ")
+			}
+			f.b.WriteString(name)
+			if i < len(td.SupertraitArgs) {
+				f.writeTypeArgs(td.SupertraitArgs[i])
+			}
+		}
 	}
 	if len(td.AssocTypes) == 0 && len(td.Methods) == 0 {
 		f.b.WriteString(" {}\n")

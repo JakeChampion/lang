@@ -281,7 +281,7 @@ func TestRunnerCsvExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/csv", "# pass 19", "# fail 0", "1..19"} {
+	for _, w := range []string{"# Suite: std/csv", "# pass 23", "# fail 0", "1..23"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

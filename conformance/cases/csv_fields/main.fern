@@ -1,6 +1,9 @@
 import "std/csv";
 
+
 function main(): i32 {
-    let fields = csv.csv_parse_line("a,b,c,d,e");
-    return fields.len();
+  let Ok(fields) = csv.parse_line("a,b,c,d,e") else {
+    return 98;
+  };
+  return fields.len();
 }

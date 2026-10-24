@@ -31,6 +31,7 @@ function main(): i32 {
   return match (shapes.make()) { shapes.Open { n: k, .. } => k };
 }
 `},
+	{"generic-supertraits", `trait Child[U]: api.Parent[Option[U], (string, u8)] + Marker {}`},
 	{"nested-whole-struct-pattern", `struct P { x: i32 }
 enum H { S(P) }
 function f(h: H): i32 { return match (h) { S(w @ P { x }) => w.x + x }; }

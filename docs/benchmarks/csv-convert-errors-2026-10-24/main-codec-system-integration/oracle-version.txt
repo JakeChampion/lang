@@ -1,0 +1,18 @@
+/workspace/scratch/lang-csv-convert-errors-publish/main-codec-system-integration/oracle: go1.27.3
+	path	github.com/jakechampion/lang/cmd/fern
+	mod	github.com/jakechampion/lang	v0.0.0-20261024053505-618ad7990f97	
+	build	-buildmode=exe
+	build	-compiler=gc
+	build	DefaultGODEBUG=tracebacklabels=0,x509sslcertoverrideplatform=0
+	build	CGO_ENABLED=1
+	build	CGO_CFLAGS=
+	build	CGO_CPPFLAGS=
+	build	CGO_CXXFLAGS=
+	build	CGO_LDFLAGS=
+	build	GOARCH=amd64
+	build	GOOS=linux
+	build	GOAMD64=v1
+	build	vcs=git
+	build	vcs.revision=618ad7990f972c4b7f285cd28ad1a6183a49154d
+	build	vcs.time=2026-10-24T05:35:05Z
+	build	vcs.modified=false

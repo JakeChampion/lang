@@ -1,0 +1,6 @@
+/workspace/scratch/lang-generic-supertraits/inherited.fern:7:14: error[E038]: argument 1 to "echo": expected A, got string
+      if (T.echo("hello").len() != 5) { return 1; }
+                 ^
+/workspace/scratch/lang-generic-supertraits/inherited.fern:7:26: error[E021]: no method "len" on type parameter A; add a trait bound such as [A: SomeTrait] that provides it
+      if (T.echo("hello").len() != 5) { return 1; }
+                             ^

@@ -8,10 +8,14 @@ pub trait Into[T] {
   function into(self: Self): T;
 }
 
-pub trait TryFrom[T] {
-  function try_from(v: T): Result[Self, string];
+// TryFrom and TryInto supply conversions that can fail.
+// E is the concrete error type. It implements error.Error and cmp.Display.
+// Each implementation preserves its error data in Result.
+// A generic bound specifies both types: convert.TryFrom[string, ParseError].
+pub trait TryFrom[T, E] {
+  function try_from(v: T): Result[Self, E];
 }
 
-pub trait TryInto[T] {
-  function try_into(self: Self): Result[T, string];
+pub trait TryInto[T, E] {
+  function try_into(self: Self): Result[T, E];
 }

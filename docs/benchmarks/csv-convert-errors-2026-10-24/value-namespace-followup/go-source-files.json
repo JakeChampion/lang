@@ -1,0 +1,18 @@
+[
+  {
+    "path": "internal/pkg/modload/modload.go",
+    "sha256": "74664932ed09b4d86ab241ee4ae18de81f427783bf69df4adcc36527bf2975a1"
+  },
+  {
+    "path": "internal/check/constfold/constfold.go",
+    "sha256": "a845fdee19a0d0e09e5218244d6524b6c7ac6e616bb5ca2a2901a342eeac7c5a"
+  },
+  {
+    "path": "internal/check/constfold/trait_default_test.go",
+    "sha256": "9e2fe1aefd3324eb8e208f6d9ee56abce204bc6c3d62093e518434284d0c8eda"
+  },
+  {
+    "path": "internal/testing/e2ecompiler/self_host_generic_supertraits_test.go",
+    "sha256": "a6254960bd24f0a27252bd2aef6974f63e91ce6c9f07912dd9a162ee3b06cb68"
+  }
+]

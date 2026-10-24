@@ -1954,16 +1954,18 @@ type UnionDecl struct {
 }
 
 type TraitDecl struct {
-	P             Position
-	Name          string
-	NamePos       Position
-	Methods       []TraitMethod
-	TypeParams    []string
-	Supertraits   []string
-	AssocTypes    []string
-	Public        bool
-	PackageScoped bool
-	SourceModule  string
+	P           Position
+	Name        string
+	NamePos     Position
+	Methods     []TraitMethod
+	TypeParams  []string
+	Supertraits []string
+	// SupertraitArgs stores the type arguments for each parent in Supertraits order.
+	SupertraitArgs [][]Type
+	AssocTypes     []string
+	Public         bool
+	PackageScoped  bool
+	SourceModule   string
 }
 
 type TraitMethod struct {
