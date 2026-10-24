@@ -1,12 +1,12 @@
 pub function is_helper(name: string): boolean {
-  return name == "__fern_bytes_append_range" || name == "__fern_bytes_write_range";
+  return name == "__fern_bytes_append_range" || name == "__fern_bytes_write_range" || name == "__fern_bytes_append_back";
 }
 
 pub function native_source(reuse: boolean): string {
-  return native_helpers(reuse, true, true);
+  return native_helpers(reuse, true, true, true);
 }
 
-pub function native_helpers(reuse: boolean, append: boolean, write: boolean): string {
+pub function native_helpers(reuse: boolean, append: boolean, write: boolean, back: boolean): string {
   let unique = "false";
   if (reuse) {
     unique = "__load_i32(__raw_arr_ptr(a) - 8) == 1";
@@ -17,6 +17,9 @@ pub function native_helpers(reuse: boolean, append: boolean, write: boolean): st
   }
   if (write) {
     out = out + native_write(unique);
+  }
+  if (back) {
+    out = out + native_back(unique);
   }
   return out;
 }
@@ -31,6 +34,23 @@ function native_append(unique: string): string {
     + "while (words * 8i64 < total64) { words = words * 2i64; } "
     + "out = __fern_bytes_clone(out, words as i32); } "
     + "__memcpy(__raw_arr_ptr(out) + 8 + len, __raw_arr_ptr(src) + 8 + from, n); "
+    + "__store_i64(__raw_arr_ptr(out), total64); return out; } ";
+}
+
+// Each chunk reads only bytes that already hold their final value, so the
+// copy repeats the last dist bytes when dist < n, as the byte loop does.
+function native_back(unique: string): string {
+  return "function __fern_bytes_append_back(own a: i32[], dist: i32, n: i32): i32[] { "
+    + "if (n <= 0) { return a; } let len = a.len(); if (dist < 1 || dist > len) { __fern_oob_abort(); } "
+    + "let total64: i64 = (len as i64) + (n as i64); if (total64 > 2147483647i64) { return __raw_array(__raw_arr_box(0 - 1)); } "
+    + "let cap: i64 = __load_i64(__raw_arr_ptr(a) - 16); let reuse = " + unique + " && total64 <= cap * 8i64; "
+    + "let out = a; if (!reuse) { "
+    + "let words: i64 = cap; if (words < 4i64) { words = 4i64; } "
+    + "while (words * 8i64 < total64) { words = words * 2i64; } "
+    + "out = __fern_bytes_clone(out, words as i32); } "
+    + "let base: usize = __raw_arr_ptr(out) + 8; let from = len - dist; let at = len; let total = total64 as i32; "
+    + "while (at < total) { let chunk = at - from; if (chunk > total - at) { chunk = total - at; } "
+    + "__memcpy(base + at, base + from, chunk); at = at + chunk; } "
     + "__store_i64(__raw_arr_ptr(out), total64); return out; } ";
 }
 
@@ -52,7 +72,7 @@ function native_bounds(a: string, from: string): string {
   return "if ((" + from + " as u32) > (" + a + ".len() as u32) || n > " + a + ".len() - " + from + ") { __fern_oob_abort(); } ";
 }
 
-pub function wasm_source(append: boolean, write: boolean): string {
+pub function wasm_source(append: boolean, write: boolean, back: boolean): string {
   let out = "  (func $__fern_bytes_copy_bounds (param $a i32) (param $from i32) (param $n i32)\n"
     + "    (if (i32.or (i32.gt_u (local.get $from) (i32.load (local.get $a))) (i32.gt_s (local.get $n) (i32.sub (i32.load (local.get $a)) (local.get $from)))) (then (unreachable))))\n";
   if (append) {
@@ -60,6 +80,9 @@ pub function wasm_source(append: boolean, write: boolean): string {
   }
   if (write) {
     out = out + wasm_write();
+  }
+  if (back) {
+    out = out + wasm_back();
   }
   return out;
 }
@@ -70,7 +93,29 @@ function wasm_append(): string {
     + "    (if (i32.le_s (local.get $n) (i32.const 0)) (then (return (local.get $a))))\n"
     + "    (call $__fern_bytes_copy_bounds (local.get $src) (local.get $from) (local.get $n))\n"
     + "    (local.set $len (i32.load (local.get $a)))\n"
-    + "    (local.set $total (i64.add (i64.extend_i32_u (local.get $len)) (i64.extend_i32_u (local.get $n))))\n"
+    + wasm_grow()
+    + "    (memory.copy (i32.add (i32.add (local.get $r) (i32.const 8)) (local.get $len)) (i32.add (i32.add (local.get $src) (i32.const 8)) (local.get $from)) (local.get $n))\n"
+    + wasm_appended();
+}
+
+function wasm_back(): string {
+  return "  (func $__fern_bytes_append_back (param $n i32) (param $dist i32) (param $a i32) (result i32)\n"
+    + "    (local $len i32) (local $total i64) (local $cap i64) (local $r i32) (local $base i32) (local $at i32) (local $end i32) (local $chunk i32)\n"
+    + "    (if (i32.le_s (local.get $n) (i32.const 0)) (then (return (local.get $a))))\n"
+    + "    (local.set $len (i32.load (local.get $a)))\n"
+    + "    (if (i32.or (i32.lt_s (local.get $dist) (i32.const 1)) (i32.gt_s (local.get $dist) (local.get $len))) (then (unreachable)))\n"
+    + wasm_grow()
+    + "    (local.set $base (i32.add (local.get $r) (i32.const 8))) (local.set $at (local.get $len)) (local.set $end (i32.wrap_i64 (local.get $total)))\n"
+    + "    (block $done (loop $copy (br_if $done (i32.ge_s (local.get $at) (local.get $end)))\n"
+    + "      (local.set $chunk (local.get $dist))\n"
+    + "      (if (i32.gt_s (local.get $chunk) (i32.sub (local.get $end) (local.get $at))) (then (local.set $chunk (i32.sub (local.get $end) (local.get $at)))))\n"
+    + "      (memory.copy (i32.add (local.get $base) (local.get $at)) (i32.sub (i32.add (local.get $base) (local.get $at)) (local.get $dist)) (local.get $chunk))\n"
+    + "      (local.set $at (i32.add (local.get $at) (local.get $chunk))) (local.set $dist (i32.add (local.get $dist) (local.get $chunk))) (br $copy)))\n"
+    + wasm_appended();
+}
+
+function wasm_grow(): string {
+  return "    (local.set $total (i64.add (i64.extend_i32_u (local.get $len)) (i64.extend_i32_u (local.get $n))))\n"
     + "    (if (i64.gt_u (local.get $total) (i64.const 2147483647)) (then (unreachable)))\n"
     + "    (local.set $cap (i64.extend_i32_u (i32.load offset=4 (local.get $a))))\n"
     + "    (local.set $r (local.get $a))\n"
@@ -80,9 +125,11 @@ function wasm_append(): string {
     + "      (if (i64.gt_u (local.get $cap) (i64.const 2147483647)) (then (local.set $cap (local.get $total))))\n"
     + "      (local.set $r (call $__fern_arr_elems (i32.wrap_i64 (local.get $cap)) (i32.const 1)))\n"
     + "      (i32.store offset=4 (local.get $r) (i32.wrap_i64 (local.get $cap)))\n"
-    + "      (memory.copy (i32.add (local.get $r) (i32.const 8)) (i32.add (local.get $a) (i32.const 8)) (local.get $len))))\n"
-    + "    (memory.copy (i32.add (i32.add (local.get $r) (i32.const 8)) (local.get $len)) (i32.add (i32.add (local.get $src) (i32.const 8)) (local.get $from)) (local.get $n))\n"
-    + "    (i32.store (local.get $r) (i32.wrap_i64 (local.get $total)))\n"
+    + "      (memory.copy (i32.add (local.get $r) (i32.const 8)) (i32.add (local.get $a) (i32.const 8)) (local.get $len))))\n";
+}
+
+function wasm_appended(): string {
+  return "    (i32.store (local.get $r) (i32.wrap_i64 (local.get $total)))\n"
     + "    (if (i32.ne (local.get $r) (local.get $a)) (then (drop (call $__fern_arr_dec (local.get $a)))))\n"
     + "    (local.get $r))\n";
 }

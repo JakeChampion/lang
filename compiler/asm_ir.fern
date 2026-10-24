@@ -9669,9 +9669,10 @@ function ir_i2f_rax(width: i32, unsigned: boolean, lb: string, d: string): strin
 }
 
 function emit_array_helpers(s: asmcore.EmitState): asmcore.EmitState {
-  if (s.has_need("byte_append") || s.has_need("byte_write")) {
+  let byte_copy = s.byte_copy_runtime();
+  if (byte_copy != "") {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_byte_copy(s.has_need("byte_append"), s.has_need("byte_write")), s);
+    s = emit_ir_runtime_fern_fn(byte_copy, s);
   }
   if (s.has_need("arr_str_join")) {
     s = s.write("    .text\n");
