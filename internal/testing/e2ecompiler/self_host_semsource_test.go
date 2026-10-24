@@ -4012,9 +4012,9 @@ function main(): i32 {
         return 2;
     }
     let merged = flatten.bundle(entry, loaded, "");
-    // Gate on the checker as the CLI does, so the fixture cannot hold a
-    // program the language rejects.
-    let gated: util.Diag[] = checker.build_gate_diags(merged);
+    // These internal memory probes use the runtime gate so they can inspect
+    // raw storage. The public CLI uses the source gate.
+    let gated: util.Diag[] = checker.build_runtime_gate_diags(merged);
     if (gated.len() > 0) {
         eprint(util.format_diags(gated));
         return 8;
