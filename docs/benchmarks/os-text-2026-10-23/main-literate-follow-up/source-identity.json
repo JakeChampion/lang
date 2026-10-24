@@ -1,0 +1,74 @@
+{
+  "source_commit": "0af7e76872465d58d0a6f90254ba8d1c46b1633e",
+  "base_private_commit": "126f1bca6859a5cc243ed25b14b1718566c90f96",
+  "base_public_commit": "8b5cadd1512a56ee3881e0106b5bbfd4b8ebf364",
+  "measured_native_source": "3048da4e51442f2baa9e8b045f5003329d72d214",
+  "compiler_stdlib_and_pin_unchanged": true,
+  "changed_test_files": [
+    {
+      "path": "internal/testing/e2ecompiler/self_host_ferndoc_test.go",
+      "sha256": "85f931dde823185031bfa7aee94464fe257d85cd7c3eb874958f769ca4871acb"
+    },
+    {
+      "path": "internal/testing/e2ecompiler/self_host_literate_stdlib_test.go",
+      "sha256": "86b680923de711eb5138558b6dac612470da1ef098ca2adb4387976513a7a706"
+    },
+    {
+      "path": "internal/testing/e2ecompiler/self_host_playground_overlay_test.go",
+      "sha256": "cd4a4bee2a46de870073ef4ace5e05b1205bf4080a7f210c0362bdf803157689"
+    }
+  ],
+  "passed_cases": 26,
+  "arm64_modes": [
+    0,
+    42,
+    0
+  ],
+  "artifacts": [
+    {
+      "path": "main-literate-repair.jsonl.gz",
+      "bytes": 2059,
+      "sha256": "7bf39557dfd73a02da831a20c5ddada1ac02f6b65d659ab5888fecade8e586bd"
+    },
+    {
+      "path": "playground-arm64-results.json",
+      "bytes": 999,
+      "sha256": "9ffc1cf1878ba6e5bb501e1a87e6c899f996d1c1f46f496be068dfd3c507957c"
+    },
+    {
+      "path": "playground-arm64-build.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "playground-arm64-check.stdout",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "playground-arm64-check.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "playground-arm64-interp.stdout",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "playground-arm64-interp.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "playground-arm64-emit.stdout.gz",
+      "bytes": 5500,
+      "sha256": "c0e660e69bacb0ff109535443020c22c88a4421cad98c52e6061fd10cae0bd3d"
+    },
+    {
+      "path": "playground-arm64-emit.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

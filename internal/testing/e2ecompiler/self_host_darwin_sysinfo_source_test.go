@@ -13,6 +13,7 @@ func TestSelfHostDarwinSysinfoSource(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 	const driver = `import "./asmcore";
 function main(): i32 {
+  print(asmcore.rt_src_utf8_valid());
   print(asmcore.rt_src_hostname("arm64-darwin"));
   print(asmcore.rt_src_uname_field("arm64-darwin"));
   return 0;

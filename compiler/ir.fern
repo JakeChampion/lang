@@ -333,6 +333,10 @@ pub function op_alloc_slots(width: i32): Op {
   return Op { ...op_alloc_u8(), width: width };
 }
 
+pub function bytes_payload(o: Op): Op {
+  return Op { ...o, i32_imm: 1 };
+}
+
 pub function packed(o: Op): Op {
   return Op { ...o, width: 8 };
 }

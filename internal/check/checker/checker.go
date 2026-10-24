@@ -1517,6 +1517,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	c.info.FuncSigs["read_dir_bytes"] = &ast.FuncType{Params: []ast.Type{ast.StringType{}}, Result: ast.EnumType{Name: "Result", Args: []ast.Type{ast.ArrayType{Elem: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}, ast.EnumType{Name: "IoError"}}}}
 	c.info.FuncSigs["read_dir"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
@@ -1724,6 +1725,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			ast.VoidType{},
 			ast.EnumType{Name: "IoError"},
 		}},
+	}
+	c.info.FuncSigs["read_link_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.EnumType{Name: "IoError"}}},
 	}
 	c.info.FuncSigs["read_link"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
@@ -1953,6 +1958,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	dirResult := ast.EnumType{Name: "Result", Args: []ast.Type{dirType, ioErrType}}
 	c.info.FuncSigs["open_dir"] = &ast.FuncType{Params: []ast.Type{ast.StringType{}}, Result: dirResult}
 	registerStructMethod("Dir", "open_dir", []ast.Type{ast.StringType{}}, dirResult)
+	registerStructMethod("Dir", "entries_bytes", nil, ast.EnumType{Name: "Result", Args: []ast.Type{ast.ArrayType{Elem: u8s}, ioErrType}})
 	registerStructMethod("Dir", "entries", nil,
 		ast.EnumType{Name: "Result", Args: []ast.Type{ast.ArrayType{Elem: ast.StringType{}}, ioErrType}})
 	registerStructMethod("Dir", "stat", []ast.Type{ast.StringType{}}, fileStatResult)

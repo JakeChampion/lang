@@ -2,7 +2,6 @@ package e2ecompiler
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,6 +35,11 @@ func buildPlaygroundDriverWith(t *testing.T, stdlib string) string {
 	if target == "" {
 		t.Skip("playground driver needs a supported native compiler host")
 	}
+	return buildPlaygroundDriverForTarget(t, stdlib, target)
+}
+
+func buildPlaygroundDriverForTarget(t *testing.T, stdlib, target string) string {
+	t.Helper()
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "playground_run.fern")
 	bin := filepath.Join(dir, "playground_run")
@@ -56,9 +60,11 @@ func runPlayground(t *testing.T, bin, cwd, src string, args ...string) (string, 
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
 	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if !errors.As(err, &exitErr) || exitErr.ExitCode() < 0 {
-			t.Fatalf("run playground %v: %v\n%s", args, err, errb.String())
+		if cmd.ProcessState == nil {
+			t.Fatalf("start playground driver: %v", err)
+		}
+		if cmd.ProcessState.ExitCode() < 0 {
+			errb.WriteString(err.Error() + "\n")
 		}
 	}
 	return out.String(), errb.String(), cmd.ProcessState.ExitCode()

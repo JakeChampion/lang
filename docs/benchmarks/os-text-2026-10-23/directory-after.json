@@ -1,0 +1,72 @@
+[
+  {
+    "mode": "names",
+    "directory": "valid",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "mode": "names",
+    "directory": "bad",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "mode": "all",
+    "directory": "valid",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "mode": "all",
+    "directory": "bad",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "mode": "ino",
+    "directory": "valid",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "mode": "ino",
+    "directory": "bad",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "mode": "ino_all",
+    "directory": "valid",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "mode": "ino_all",
+    "directory": "bad",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "mode": "entries",
+    "directory": "valid",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "mode": "entries",
+    "directory": "bad",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  }
+]

@@ -1,0 +1,145 @@
+{
+  "source_commit": "0e6cb8864dfbf7a63ae1b42ffc5c29bcd1c59b1d",
+  "dependency_base": "7122461ff44deeffbaaac9dede58639534ca340f",
+  "source_sha256": "443a378e7fe11b005a416d72b097d5f52f6b406235cccb9a9d81257ba219b585",
+  "source_files": 497,
+  "tests": [
+    {
+      "suite": "family-tests",
+      "actions": {
+        "start": 2,
+        "run": 281,
+        "output": 586,
+        "pass": 281,
+        "skip": 2
+      }
+    }
+  ],
+  "oracle_source_commit": "81fbf50964f8763695b04b8ceeff80dbf56517bc",
+  "oracle_sha256": "c4e5f5cfd0ed4bcda71cc6a39d2bb559097738a2c74900d06f2c269a255b93b4",
+  "matrix_commands": 20,
+  "balanced_execution_censuses": 5,
+  "public_baseline_commands": 4,
+  "artifacts": [
+    {
+      "path": "source-files.json",
+      "bytes": 78308,
+      "sha256": "af2947360490843036d381dc7838251b06fc39ada55192fe278cb91ee1030442"
+    },
+    {
+      "path": "change.patch.gz",
+      "bytes": 266465,
+      "sha256": "2aba5f03b9a336e13ffaafd13833fba50f92018b257ef98215880ac6011a0442"
+    },
+    {
+      "path": "bootstrap/bootstrap.json.gz",
+      "bytes": 399,
+      "sha256": "356139c66381bfb06b773f0abecb5d29a4125c2725be302d3643ed64b65c7f4c"
+    },
+    {
+      "path": "bootstrap/stage1.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "bootstrap/stage2.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "bootstrap/stage3.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "driver-builds.json.gz",
+      "bytes": 1031,
+      "sha256": "53762994a57c0306193272a475977d41129f426d8eb84fd47000c4051ea20f16"
+    },
+    {
+      "path": "driver-sizes.txt",
+      "bytes": 358,
+      "sha256": "86c08ce24b8d3d7e3f802bc253b54a5d0873874f3f543f06bc0be8a6def86743"
+    },
+    {
+      "path": "driver-gate.log",
+      "bytes": 896,
+      "sha256": "a33b7ba554e2e7a9898cd75e58fe2cd29fb5db597c5c415be7eb3798e507b72a"
+    },
+    {
+      "path": "check-sizes.py.gz",
+      "bytes": 890,
+      "sha256": "bf9216ab91152bdacb1a9961dc43ceee5ee9e5b6d64df702abcdea67ec0b139b"
+    },
+    {
+      "path": "family-tests.jsonl.gz",
+      "bytes": 18288,
+      "sha256": "8cb5d368a6a8630bf1c8322fa29481011d4c5d62dd5ecd222f66afff225da0d9"
+    },
+    {
+      "path": "format.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "gofmt.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "vet.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "oracle-version.txt.gz",
+      "bytes": 373,
+      "sha256": "4afe327bb8ffc79d6db05fea059743c03c842cd5e391acfa5611e28be4d9ecbf"
+    },
+    {
+      "path": "matrix.json.gz",
+      "bytes": 1221,
+      "sha256": "e59f4b28f7e94f61dc8ea0c6d9ce5542168c285e260627682b73f7d9f4443569"
+    },
+    {
+      "path": "matrix.py.gz",
+      "bytes": 2227,
+      "sha256": "245d4bf980b84a74555a65fb77d290c9a102633548a89c9f4f4ef2157022bc13"
+    },
+    {
+      "path": "matrix.log.gz",
+      "bytes": 779,
+      "sha256": "df64063e52c56d243035ac5b8b20bbb97c23f15fad853c8251b7654eeb275bc0"
+    },
+    {
+      "path": "public-baseline.json.gz",
+      "bytes": 645,
+      "sha256": "b0bf95525390ab7ecf624d9a1af6e37d7f42dda22c6e64b8bf74862a5c3ad10a"
+    },
+    {
+      "path": "baseline.py.gz",
+      "bytes": 748,
+      "sha256": "8e72db27402e937ee9176a233bbe04bcde1782cf5e7d726f5ce4784480646573"
+    },
+    {
+      "path": "baseline.log.gz",
+      "bytes": 370,
+      "sha256": "9e01ea6cb9779cde7b280b78a84569b0e6a8732511307917f4b606ae114c9c0a"
+    },
+    {
+      "path": "output-logs-and-inputs.tar.gz",
+      "bytes": 2312,
+      "sha256": "e194c01be9167b267b11232f4956b576255495a79d4f02e5a33936bf0cf783a9"
+    },
+    {
+      "path": "record-proofs.py.gz",
+      "bytes": 1872,
+      "sha256": "636aa3df3bccfdf31e57075c3b3b512c5a0533e999db9216dae66da7d8d97e1e"
+    },
+    {
+      "path": "helper-byte-identity.json",
+      "bytes": 2292,
+      "sha256": "9d608df2687696f21d21dedb2760857e166884885e82b79f5013cffdf2bf1ea9"
+    }
+  ]
+}

@@ -21,6 +21,9 @@ record; a closed epic alone is not validation evidence.
 | Producer | Bytes from | What it does with ill-formed bytes |
 |---|---|---|
 | `read_file` | a file | `Err(InvalidUtf8)`; `read_file_bytes` is raw |
+| Directory listing APIs | directory-entry names | `Err(InvalidUtf8(path))`; `Dir.entries` uses an empty error path |
+| `read_link`, `getcwd`, `mounts` | link targets, current path, mount fields | `Err(InvalidUtf8)` |
+| `hostname`, `uname_field` | kernel identity fields | empty text, as for a failed OS request |
 | `utf8.from_bytes` | anywhere | `None` |
 | `http` header values, request path | the peer | refused, 400 |
 | `HttpRequest.body_string` | the peer | `Err(BodyError.NotUtf8)`, 400 as a response; `body_bytes` is raw |
@@ -73,6 +76,11 @@ owned byte array and has separate text and byte renderers. This preserves
 unknown conversions that split a scalar into parser pieces without making
 partial strings. Raw CLI output matches GNU; text rendering validates only
 after those pieces have been joined.
+
+The [OS text audit](string-log/2026-10-23-os-text.md) covers directory
+names and the other runtime OS text producers. Native byte callers use
+`read_link_bytes`, `read_dir_bytes`, and `Dir.entries_bytes` to preserve
+path bytes without passing through text validation.
 
 The OS text contract remains a deliberate exception:
 

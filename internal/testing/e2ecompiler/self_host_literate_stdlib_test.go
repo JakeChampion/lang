@@ -92,7 +92,15 @@ func TestSelfHostLiterateStandardLibrary(t *testing.T) {
 }
 
 func TestSelfHostPlaygroundLiterateStandardLibrary(t *testing.T) {
-	bin := buildPlaygroundDriver(t)
+	target := e2eharness.HostSelfHostTarget()
+	if target == "" {
+		t.Skip("requires a supported native host")
+	}
+	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := buildPlaygroundDriverForTarget(t, stdlib, target)
 	for _, mode := range []string{"-check", "-interp"} {
 		_, stderr, code := runPlayground(t, bin, t.TempDir(), literateStdlibProgram, mode)
 		want := 0
