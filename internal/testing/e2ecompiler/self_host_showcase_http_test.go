@@ -30,7 +30,7 @@ func TestSelfHostShowcaseAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal("Node 22.15 or newer is required for asset codec tests")
 	}
-	cmd := exec.Command(node, "--test", "../../../examples/showcase/tests/prepare.test.mjs")
+	cmd := exec.Command(node, "--test", "../../../examples/showcase/tests/prepare.test.mjs", "../../../examples/showcase/tests/gather-protocol.test.mjs")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("asset encoders: %v\n%s", err, out)
 	}
@@ -306,4 +306,48 @@ func TestSelfHostShowcaseHTTP(t *testing.T) {
 			t.Fatal("identity preference was ignored")
 		}
 	})
+}
+
+func TestSelfHostGatherConcurrency(t *testing.T) {
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("concurrency gate runs on x86-64 Linux")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli := buildSelfHostCLI(t)
+	root, err := filepath.Abs("../../../examples")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := runX86_64Bin(cli.runner, cli.x86Binary(t, filepath.Join(root, "showcase/server.fern.md")), root)
+	addr, _ := e2eharness.StartInheritedServer(t, cmd)
+	descriptors := func() int {
+		entries, err := os.ReadDir(fmt.Sprintf("/proc/%d/fd", cmd.Process.Pid))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(entries)
+	}
+	response, err := http.Get("http://" + addr + "/gather/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, response.Body)
+	response.Body.Close()
+	before := descriptors()
+	load := exec.Command(node, "../../../examples/showcase/tests/gather.load.mjs", "http://"+addr, "512", "5")
+	if out, err := load.CombinedOutput(); err != nil {
+		t.Fatalf("512 real participants: %v\n%s", err, out)
+	} else {
+		t.Log(string(out))
+	}
+	until := time.Now().Add(5 * time.Second)
+	for descriptors() > before && time.Now().Before(until) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if after := descriptors(); after > before {
+		t.Fatalf("participant descriptors leaked: %d -> %d", before, after)
+	}
 }

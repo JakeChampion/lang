@@ -30,7 +30,7 @@ for (const fallback of [false, true]) {
         configurable: true,
       });
     });
-  for (const name of ["rally", "mosaic", "wave", "swarm", "pulse"]) {
+  for (const name of ["rally", "mosaic", "wave", "swarm", "pulse", "gather"]) {
     const page = await context.newPage();
     await page.goto(`${base}/${name}/`);
     await page.locator(".fullscreen-toggle").tap();
@@ -127,6 +127,22 @@ await p.waitForFunction(() =>
   document.querySelector("#connection").textContent.includes("Playing"),
 );
 await p.locator("#stop").tap();
+await p.goto(base + "/gather/");
+await p.locator("#join").tap();
+await p.waitForFunction(() => document.querySelector("#arena").dataset.x);
+const initialPosition = await p.locator("#arena").getAttribute("data-x");
+const arenaBox = await p.locator("#arena").boundingBox();
+await p
+  .locator("#arena")
+  .tap({ position: { x: arenaBox.width - 20, y: arenaBox.height - 20 } });
+await p.waitForFunction(
+  (value) => document.querySelector("#arena").dataset.x !== value,
+  initialPosition,
+);
+await p.locator("#join").tap();
+await p.waitForFunction(() =>
+  document.querySelector("#join").textContent.includes("Join"),
+);
 console.log(
   "touch-only paddle, start/pause, palette, paint, attract/repel/free flow, and sequencer playback OK",
 );

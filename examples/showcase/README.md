@@ -1,6 +1,6 @@
 # Fern, in action
 
-Seven web applications share one native Fern server. The homepage links each application and its source lesson.
+Eight web applications share one native Fern server. The homepage links each application and its source lesson.
 The application modules use literate Fern. Named sections explain the code that Fern compiles.
 
 | Application | URL | Server behavior |
@@ -8,6 +8,7 @@ The application modules use literate Fern. Named sections explain the code that 
 | Fractal explorer | `/fractal/` | Mandelbrot PNG tiles, perturbation, SIMD, HTTP and WebSocket delivery |
 | Rally | `/rally/` | Authoritative game physics, solo opponent, two-player WebSocket rooms |
 | Mosaic | `/mosaic/` | Shared pixel boards, atomic WebSocket strokes, immediate revision push, PNG export |
+| Gather | `/gather/` | Shared arena for 512 participants, binary WebSocket snapshots, authoritative collection |
 | Swarm | `/swarm/` | Browser Wasm particle field and PCM synthesis, WebGL, Web Audio, worker |
 | Wave lab | `/wave/` | Sixteen-step sequencer, four oscillators, native PCM WAV synthesis |
 | Guestbook | `/notes/` | HTML forms without JavaScript, signed tokens, 303 redirects, Atom feed |
@@ -145,3 +146,27 @@ Canvas coordinates account for any space around the rendered image after a resiz
 Touch controls cover paddle movement, paint strokes, palette selection, sequencer notes, and all particle interaction modes.
 Swarm retains the last touch position until the visitor selects Free flow or resets the field.
 Fractal has touch zoom buttons and a control to hide or show its panels.
+
+## Hundreds of participants
+
+Gather has 512 seats per server process. The native server accepts up to 2048 connections for games and other requests.
+Each participant submits an eight-byte destination. Fern validates movement and uses an 8 × 8 grid for seed checks.
+A shared clock creates ten snapshots per second. Every connection uses the same immutable packet.
+
+A slow participant cannot own or stop the clock. A blocked writer skips superseded snapshots.
+
+The browser predicts local motion and extrapolates other players for at most 150 milliseconds.
+Counts represent actual connections. The demo does not add simulated players to the arena.
+Multiple instances need connection affinity. This example does not provide a distributed world or persistent player data.
+
+Run the real-connection load test against a local server:
+
+```sh
+node examples/showcase/tests/gather.load.mjs http://localhost:8080 512 10
+```
+
+A local x86-64 Linux run used an optimized server and 512 real connections for ten seconds.
+Each participant sent twenty inputs per second. All participants received approximately ten snapshots per second.
+Input acknowledgement latency was 4.7 ms at the median and 9.2 ms at p95.
+Server RSS was 14.2 MiB, an increase of 4.16 MiB from the initial sample.
+These loopback measurements exclude Internet latency and hosting limits.

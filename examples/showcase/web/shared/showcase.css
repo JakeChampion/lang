@@ -1980,3 +1980,57 @@ canvas {
     grid-template-rows: repeat(8, 36px);
   }
 }
+.gather-card {
+  grid-column: 1/-1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+}
+.gather-preview {
+  min-height: 310px;
+  background: #14392f;
+  position: relative;
+}
+.gather-dots {
+  position: absolute;
+  inset: 25px;
+  background-image:
+    radial-gradient(circle, #b9cf9544 2px, transparent 3px),
+    radial-gradient(circle, #e7c76c88 2px, transparent 3px);
+  background-size:
+    29px 31px,
+    67px 53px;
+  background-position:
+    0 0,
+    17px 11px;
+}
+.gather-preview-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #eef3d8;
+  text-shadow: 0 2px 16px #14392f;
+}
+.gather-preview-label b {
+  font-size: 48px;
+  font-weight: 500;
+}
+.gather-preview-label span {
+  font: 10px monospace;
+  letter-spacing: 0.16em;
+  margin-top: 10px;
+}
+.gather-card .example-body {
+  padding: 30px 38px;
+}
+@media (max-width: 700px) {
+  .gather-card {
+    display: block;
+  }
+  .gather-card .example-body {
+    padding: 24px;
+  }
+}

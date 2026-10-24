@@ -16,6 +16,10 @@ for (const button of document.querySelectorAll("[data-filter]")) {
 }
 async function load() {
   const tasks = [
+    json("/gather/status").then((value) => {
+      $("home-gather-count").textContent =
+        `${value.players} / ${value.capacity}`;
+    }),
     json("/api/meta").then((meta) => {
       $("binary-size").textContent = meta.binary_bytes
         ? bytes(meta.binary_bytes)

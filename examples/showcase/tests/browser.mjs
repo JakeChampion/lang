@@ -16,9 +16,9 @@ const a = await context.newPage(),
   b = await context.newPage();
 await a.goto(base + "/");
 await a.getByRole("button", { name: "Make something", exact: true }).click();
-assert.equal(await a.locator(".example:visible").count(), 4);
-await a.getByRole("button", { name: "All seven", exact: true }).click();
-assert.equal(await a.locator(".example:visible").count(), 7);
+assert.equal(await a.locator(".example:visible").count(), 5);
+await a.getByRole("button", { name: "All eight", exact: true }).click();
+assert.equal(await a.locator(".example:visible").count(), 8);
 console.log("gallery filters OK");
 await a.goto(base + "/rally/");
 await a.waitForFunction(() =>
@@ -139,6 +139,28 @@ assert.ok(
 );
 await delayed.close();
 console.log("paddle prediction and pipelined input at 120 ms simulated RTT OK");
+await a.goto(base + "/gather/");
+await b.goto(base + "/gather/");
+await a.locator("#join").click();
+await b.locator("#join").click();
+await a.waitForFunction(() =>
+  document.querySelector("#players").textContent.startsWith("2 /"),
+);
+await b.waitForFunction(() =>
+  document.querySelector("#players").textContent.startsWith("2 /"),
+);
+const arenaX = await a.locator("#arena").getAttribute("data-x");
+await a.locator("#arena").click({ position: { x: 20, y: 20 } });
+await a.waitForFunction(
+  (value) => document.querySelector("#arena").dataset.x !== value,
+  arenaX,
+);
+await b.locator("#join").click();
+await a.waitForFunction(() =>
+  document.querySelector("#players").textContent.startsWith("1 /"),
+);
+await a.locator("#join").click();
+console.log("shared arena, predicted movement, and seat release OK");
 const nojs = await browser.newContext({ javaScriptEnabled: false });
 const form = await nojs.newPage();
 await form.goto(base + "/notes/");
@@ -159,7 +181,7 @@ for (const width of [320, 360, 375, 430, 721]) {
   const p = await mobile.newPage();
   await p.setViewportSize({ width, height: 844 });
   await p.goto(base + "/");
-  for (const filter of ["All seven", "Make something", "The web"]) {
+  for (const filter of ["All eight", "Make something", "The web"]) {
     await p.getByRole("button", { name: filter, exact: true }).click();
     const size = await p.evaluate(() => [
       document.documentElement.scrollWidth,
@@ -180,6 +202,7 @@ for (const route of [
   "/notes/",
   "/pulse/",
   "/swarm/",
+  "/gather/",
   "/_src/showcase/mosaic.fern",
 ]) {
   const p = await mobile.newPage();

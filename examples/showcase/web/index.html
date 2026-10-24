@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta
       name="description"
-      content="Seven working web applications. One native Fern server. Explore multiplayer games, live data, shared art, sound, and the hypertext web."
+      content="Eight working web applications. One native Fern server. Explore multiplayer games, live data, shared art, sound, and the hypertext web."
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Fern web application examples</title>
@@ -33,7 +33,7 @@
           <div class="eyebrow">WEB APPLICATIONS IN FERN</div>
           <h1>Web apps.<br /><em>Built with Fern.</em></h1>
           <p>
-            Play a game, draw together, or make a sound. These seven examples
+            Play a game, draw together, or make a sound. These eight examples
             show Fern on the server and in the browser. Each one includes its
             source code.
           </p>
@@ -46,7 +46,7 @@
         <div
           class="hero-art"
           role="img"
-          aria-label="One native Fern server connects seven applications through HTTP, WebSocket, and server-sent events."
+          aria-label="One native Fern server connects eight applications through HTTP, WebSocket, and server-sent events."
         >
           <svg viewBox="0 0 500 410" aria-hidden="true">
             <path
@@ -144,16 +144,16 @@
             </g>
           </svg>
           <div class="hero-art-caption">
-            <span>ONE SERVER. SEVEN APPLICATIONS.</span
+            <span>ONE SERVER. EIGHT APPLICATIONS.</span
             ><span>HTTP / WS / SSE / WASM</span>
           </div>
         </div>
       </section>
       <div class="build-strip">
-        <span><strong>Seven examples.</strong> Source included.</span>
+        <span><strong>Eight examples.</strong> Source included.</span>
         <div class="strip-values">
           <span><strong id="binary-size">Native</strong> binary</span
-          ><span><strong>07</strong> applications</span
+          ><span><strong>08</strong> applications</span
           ><span><strong>100%</strong> inspectable</span
           ><a href="/pulse/"
             >Server <strong id="instance">connecting</strong> ↗</a
@@ -165,7 +165,7 @@
           <h2 id="gallery-title">Explore the examples.</h2>
           <div class="filter-tabs" aria-label="Filter examples">
             <button type="button" data-filter="all" aria-pressed="true">
-              All seven</button
+              All eight</button
             ><button type="button" data-filter="live" aria-pressed="false">
               Live together</button
             ><button type="button" data-filter="media" aria-pressed="false">
@@ -364,6 +364,37 @@
               </div>
             </div>
           </a>
+          <a
+            class="example gather-card"
+            href="/gather/"
+            data-categories="live media"
+            ><div class="example-preview gather-preview" aria-hidden="true">
+              <div class="gather-dots"></div>
+              <div class="gather-preview-label">
+                <b id="home-gather-count">512 seats</b
+                ><span>ONE SHARED ARENA</span>
+              </div>
+              <span class="preview-caption"
+                >BINARY WEBSOCKET / SHARED SNAPSHOTS</span
+              >
+            </div>
+            <div class="example-body">
+              <div class="example-meta">
+                <span>08 / HUNDREDS IN ONE WORLD</span
+                ><span class="open-arrow" aria-hidden="true">↗</span>
+              </div>
+              <h3>Gather</h3>
+              <p>
+                Join a shared arena with up to 512 participants. Collect seeds
+                toward the team goal. Fern validates movement and broadcasts
+                compact snapshots.
+              </p>
+              <div class="example-tags">
+                <span>512 participants</span><span>Binary protocol</span
+                ><span>Spatial grid</span>
+              </div>
+            </div></a
+          >
         </div>
         <p
           id="filter-result"

@@ -6,6 +6,7 @@ import "std/option";
 import "std/result";
 import "std/array";
 import "../rally";
+import "../gather";
 import "../mosaic";
 import "../wave";
 import "../metrics";
@@ -139,6 +140,68 @@ function literate_source(): test.TestOutcome {
   return test.assert_true(html.contains("A real lesson") && html.contains("href=\"/_src/showcase/common.fern.md\"") && html.contains("<span class=\"k\">return</span>") && source.serve(pages, "showcase/server.fern").status == 200 && reexport.contains("<a class=\"import\" href=\"/_src/fractal/web/fullscreen.mjs\""));
 }
 
+function large_arena(): test.TestOutcome {
+  let state = gather.state("test");
+  let Ok(first) = gather.reserve(state) else {
+    return test.fail("first seat failed");
+  };
+  let bytes: u8[] = [1, 0, 0, 0, 0, 32, 0, 20];
+  if (gather.input(state, first, bytes).is_err() || gather.input(state, first, bytes).is_ok()) {
+    return test.fail("input sequence validation failed");
+  }
+  if (gather.input(state, first, [2, 0, 0, 0, 255, 255, 0, 0]).is_ok()) {
+    return test.fail("out-of-bounds target accepted");
+  }
+  gather.release(state, first);
+  let Ok(replacement) = gather.reserve(state) else {
+    return test.fail("replacement seat failed");
+  };
+  gather.release(state, first);
+  if (state.count.get() != 1 || gather.input(state, first, [2, 0, 0, 0, 0, 32, 0, 20]).is_ok()) {
+    return test.fail("old lease changed a replacement participant");
+  }
+  let seats = [replacement];
+  while (seats.len() < gather.CAPACITY) {
+    let Ok(seat) = gather.reserve(state) else {
+      return test.fail("arena rejected a valid seat");
+    };
+    seats = seats.append(seat);
+  }
+  if (gather.reserve(state).is_ok()) {
+    return test.fail("arena exceeded its capacity");
+  }
+  state.ends.set(120000000000);
+  state.updated.set(None);
+  state.restart.set(None);
+  gather.advance(state, 0);
+  if (state.packet.get().len() != 32 + 512 * 12 + 64 * 5) {
+    return test.fail("snapshot length differs from its participant count");
+  }
+  let tick = state.tick.get();
+  gather.advance(state, gather.PERIOD / 2);
+  if (state.tick.get() != tick) {
+    return test.fail("clock advanced before its deadline");
+  }
+  gather.advance(state, gather.PERIOD);
+  if (state.tick.get() != tick + 1) {
+    return test.fail("zero-origin clock did not advance");
+  }
+  state.ends.set(gather.PERIOD);
+  gather.advance(state, gather.PERIOD * 2);
+  if (state.restart.get().is_none() || state.packet.get()[3] != 1) {
+    return test.fail("expired round did not enter intermission");
+  }
+  let round = state.round.get();
+  gather.advance(state, gather.PERIOD * 2 + 10000000000);
+  if (state.restart.get().is_some() || state.round.get() != round + 1 || state.packet.get()[3] != 0) {
+    return test.fail("intermission did not start the next round");
+  }
+  for seat in seats {
+    gather.release(state, seat);
+  }
+  return test.assert_eq(state.count.get(), 0);
+}
+
 function streams_stay_lazy(): test.TestOutcome {
   let calls: Cell[i32] = cell_new(0);
   for content_type in ["text/event-stream", "application/octet-stream"] {
@@ -164,5 +227,6 @@ function main(): i32 {
   runner = runner.it("signed form token and proxy negotiation", form_and_proxy);
   runner = runner.it("woven lessons and import aliases", literate_source);
   runner = runner.it("compression preserves lazy streams", streams_stay_lazy);
+  runner = runner.it("512 arena seats, input validation, and lease isolation", large_arena);
   return runner.finish();
 }

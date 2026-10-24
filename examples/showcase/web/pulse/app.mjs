@@ -137,6 +137,7 @@ function receive(value) {
     ["tiles", "rendered_tiles"],
     ["renders", "active_renders"],
     ["games", "game_rooms"],
+    ["arena-players", "arena_players"],
     ["canvases", "canvas_rooms"],
     ["strokes", "strokes"],
     ["messages", "websocket_messages"],
