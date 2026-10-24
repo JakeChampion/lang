@@ -1990,6 +1990,13 @@ function enum_visible_from(u: UnionSig, from: string): boolean {
   return u.module == from || util.has_str(u.visible_from, from);
 }
 
+function enum_access_diags(u: UnionSig, s: Scope, line: i32, col: i32): util.Diag[] {
+  if (u.is_enum && !parser.is_reserved_enum_name(u.name) && !enum_visible_from(u, s.fn_module)) {
+    return [dg_at("E087", "enum " + util.demangle(u.name) + " is not visible from this package", line, col)];
+  }
+  return [];
+}
+
 function (ut: UnionTable) seen_from(fd: parser.FuncDecl): UnionTable {
   return UnionTable { ...ut, from_import: fd.module.len() > 0 };
 }
@@ -2427,8 +2434,32 @@ function union_of_variant(name: string, unions: UnionTable): string {
   return union_sig_of_variant(name, unions).name;
 }
 
+// Prefer visible variants when hidden enums share a constructor name.
+// Retain a hidden candidate so the diagnostic can identify its enum.
+function scope_variant_sig(name: string, s: Scope): UnionSig {
+  let first: UnionSig = union_sig_of_variant(name, s.unions);
+  let e: i32 = s.unions.variant_chain_head(name);
+  while (e >= 0) {
+    if (s.unions.vnames[e] == name) {
+      let u: UnionSig = s.unions.unions[s.unions.vowner[e]];
+      if (!u.is_enum || parser.is_reserved_enum_name(u.name) || enum_visible_from(u, s.fn_module)) {
+        return u;
+      }
+    }
+    e = s.unions.variant_chain_next(e);
+  }
+  if (parser.builtin_enum_of(name).len() > 0) {
+    return s.lookup_union(parser.builtin_enum_of(name));
+  }
+  return first;
+}
+
+function scope_variant_owner(name: string, s: Scope): string {
+  return scope_variant_sig(name, s).name;
+}
+
 function variant_value_payloads(s: Scope, en: string, name: string): i32 {
-  let owner: UnionSig = union_sig_of_variant(name, s.unions);
+  let owner: UnionSig = scope_variant_sig(name, s);
   if (en.len() > 0) {
     owner = s.lookup_union(en);
   }
@@ -3185,6 +3216,13 @@ function (s: Scope) lookup_variant(name: string): StructSig {
 }
 
 function (s: Scope) variant_hidden(v: StructSig): boolean {
+  let owner: i32 = s.unions.index.find(v.enum_owner);
+  if (owner >= 0) {
+    let u: UnionSig = s.unions.unions[owner];
+    if (u.is_enum && !parser.is_reserved_enum_name(u.name) && !enum_visible_from(u, s.fn_module)) {
+      return true;
+    }
+  }
   if (!s.unions.from_import) {
     return false;
   }
@@ -3908,7 +3946,7 @@ function ctor_payload_slot(s: Scope, owner: string, vname: string, k: i32): i32 
     }
     return 0 - 1;
   }
-  if (union_of_variant(vname, s.unions) != owner) {
+  if (scope_variant_owner(vname, s) != owner) {
     return 0 - 1;
   }
   return payload_type_param(s, s.lookup_union(owner), vname, k);
@@ -4939,7 +4977,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   }
   let ctor_user: string = "";
   if (!ctor_shadowed) {
-    ctor_user = union_of_variant(name, s.unions);
+    ctor_user = scope_variant_owner(name, s);
   }
   if (ctor_user.len() > 0) {
     return variant_ctor_type(s, ctor_user, name, c);
@@ -5901,7 +5939,7 @@ function check_ident_expr(id: ast.ExprIdent, s: Scope): typeinfo.Type {
   if (!s.has_sig(id.name) && s.variant_ambiguous(id.name)) {
     return t_unknown("ambiguous variant `" + id.name + "`");
   }
-  let un: string = union_of_variant(id.name, s.unions);
+  let un: string = scope_variant_owner(id.name, s);
   if (un.len() > 0 && !s.has_sig(id.name) && variant_value_payloads(s, "", id.name) == 0) {
     return t_union(un);
   }
@@ -10591,7 +10629,7 @@ function generic_binder_diags(pv: ast.PatVariant, s: Scope, whole: typeinfo.Type
       if (ss.name.len() > 0) {
         declared = payload_slot_type_name(ss, slot);
       }
-      let owner: string = union_of_variant(nm, s.unions);
+      let owner: string = scope_variant_owner(nm, s);
       if (owner.len() == 0) {
         owner = parser.builtin_enum_of(nm);
       }
@@ -11342,7 +11380,7 @@ function array_element_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): bool
 function ctor_boxes_into(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
   if let ast.ExprCall(c) = e {
     let vname: string = ctor_variant_name(c);
-    if (union_of_variant(vname, s.unions).len() == 0 && parser.builtin_enum_of(vname).len() == 0) {
+    if (scope_variant_owner(vname, s).len() == 0 && parser.builtin_enum_of(vname).len() == 0) {
       return false;
     }
     let got: typeinfo.Type = check_expr(e, s);
@@ -11509,7 +11547,13 @@ function settles_or_nested(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean 
 function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag[] {
   let vname: string = variant_pattern_name(qname);
   let out: util.Diag[] = [];
-  if (union_of_variant(vname, s.unions).len() == 0 && find_variant_sig(s.structs, qname).enum_owner.len() == 0) {
+  let owner: UnionSig = scope_variant_sig(vname, s);
+  if (dot_index(qname) >= 0) {
+    owner = s.lookup_union(variant_pattern_owner(qname));
+  }
+  out = util.append_diags(out, enum_access_diags(owner, s, c.line, c.col));
+
+  if (scope_variant_owner(vname, s).len() == 0 && find_variant_sig(s.structs, qname).enum_owner.len() == 0) {
     return out;
   }
   if (dot_index(qname) < 0 && s.variant_ambiguous(vname)) {
@@ -12607,7 +12651,8 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
         let cnat: typeinfo.Type = check_expr(c.args[0], s);
         out = util.append_diags(out, e057_diag(type_label(named_tparams(cnat)), cnat, s, expr_line(c.args[0]), expr_col(c.args[0])));
       }
-      if (union_of_variant(id.name, s.unions).len() > 0 || parser.builtin_enum_of(id.name).len() > 0) {
+
+      if (scope_variant_owner(id.name, s).len() > 0 || parser.builtin_enum_of(id.name).len() > 0) {
         for arg in c.args {
           let unit_binding: boolean = false;
           if let ast.ExprIdent(_) = arg {
@@ -13438,6 +13483,7 @@ function call_diags_slice(s2: ast.ExprSlice, s: Scope, out: util.Diag[]): util.D
 function call_diags_field_access(fa: ast.ExprFieldAccess, s: Scope, out: util.Diag[]): util.Diag[] {
   let qen: string = qual_enum_name(fa.obj, s);
   if (qen.len() > 0) {
+    out = util.append_diags(out, enum_access_diags(s.lookup_union(qen), s, fa.line, fa.col));
     if (!qual_variant_exists(qen, fa.field, s)) {
       out = out.append(no_variant_diag(s, qen, fa.field, fa.line, fa.col));
     } else {
@@ -13663,6 +13709,10 @@ function any_holds_view(ts: typeinfo.Type[], s: Scope, seen: string[]): (boolean
 }
 
 function call_diags_ident(id: ast.ExprIdent, s: Scope, out: util.Diag[]): util.Diag[] {
+  if (!s.known(id.name) && !s.has_sig(id.name)) {
+    out = util.append_diags(out, enum_access_diags(scope_variant_sig(id.name, s), s, id.line, id.col));
+  }
+
   let payloads: i32 = 0;
   if (!s.known(id.name) && !s.has_sig(id.name)) {
     payloads = variant_value_payloads(s, "", id.name);
@@ -14929,6 +14979,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
                   },
                   ast.PatVariant(cpv) => {
                     if (cpv.type_name.len() > 0) {
+                      out = util.append_diags(out, enum_access_diags(usig, cur, elem.line, elem.col));
                       let cdp: i32 = dot_index(cpv.type_name);
                       if (cdp >= 0) {
                         let cqual: str = slice_unchecked(cpv.type_name, 0, cdp);
@@ -21734,7 +21785,7 @@ pub function struct_sig(s: Scope, name: string): StructSig {
 }
 
 pub function variant_owner_of(s: Scope, name: string): string {
-  return union_of_variant(name, s.unions);
+  return scope_variant_owner(name, s);
 }
 
 pub function variant_sig(s: Scope, name: string, owner: string): StructSig {
@@ -21949,7 +22000,7 @@ pub function enum_sig(s: Scope, name: string): UnionSig {
 }
 
 pub function variant_enum(s: Scope, name: string): string {
-  let owner: string = union_of_variant(name, s.unions);
+  let owner: string = scope_variant_owner(name, s);
   if (owner.len() > 0) {
     return owner;
   }

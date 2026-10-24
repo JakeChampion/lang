@@ -1482,8 +1482,8 @@ function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.En
       col: e.col,
       must_consume: e.must_consume,
       try_marker: e.try_marker,
-      is_pub: true,
-      is_package: false, module: ctx.prefix,
+      is_pub: e.is_pub,
+      is_package: e.is_package, module: ctx.prefix,
       instance: rewrite_type_name(e.instance, with_type_params(ctx, e.type_params)),
       visible_from: e.visible_from,
     });

@@ -1,0 +1,112 @@
+// Public operations retain access to helpers inside the stdlib package.
+import "core/map";
+import "std/json";
+import "std/pvec";
+import "std/string";
+import "std/u64";
+import "std/utf8";
+import "./shared";
+
+@derive(json.FromJson)
+struct Row { value: i32, words: string[], extra: Option[string] }
+
+@derive(json.FromJson)
+enum Message { Nothing, Pair(i32, Option[string]), Named { value: i32 } }
+
+function main(): i32 {
+  let visible: shared.Open = shared.Shared("public payload");
+  match (visible) {
+    shared.Shared(text) => {
+      if (text != "public payload") {
+        return 18;
+      }
+    }
+  }
+  let numbers: pvec.PVec[i32] = pvec.pvec_new();
+  let words: pvec.PVec[string] = pvec.pvec_new();
+  let i: i32 = 0;
+  while (i < 96) {
+    numbers = numbers.append(i);
+    words = words.append("word" + i.to_string());
+    i = i + 1;
+  }
+  let snapshot: pvec.PVec[string] = words;
+  words = words.with(0, "changed");
+  if (numbers.get_or(64, -1) != 64 || words.get_or(0, "") != "changed") {
+    return 1;
+  }
+  if (snapshot.get_or(0, "") != "word0" || snapshot.get_or(95, "") != "word95") {
+    return 2;
+  }
+  match (words.pop()) {
+    Some((rest, last)) => {
+      if (rest.len() != 95 || last != "word95") {
+        return 3;
+      }
+    },
+    None => {
+      return 4;
+    }
+  }
+  match (Row.from_json("{\"value\":42,\"words\":[\"ok\"]}")) {
+    Ok(row) => {
+      if (row.value != 42 || row.words.len() != 1 || row.words[0] != "ok") {
+        return 5;
+      }
+      match (row.extra) {
+        Some(_) => {
+          return 6;
+        },
+        None => {}
+      }
+    },
+    Err(_) => {
+      return 7;
+    }
+  }
+  match (Message.from_json("{\"Pair\":[42,\"ok\"]}")) {
+    Ok(Pair(n, Some(s))) => {
+      if (n != 42 || s != "ok") {
+        return 8;
+      }
+    },
+    _ => {
+      return 9;
+    }
+  }
+  match (Message.from_json("{\"Named\":{\"value\":42}}")) {
+    Ok(Named(value)) => {
+      if (value != 42) {
+        return 10;
+      }
+    },
+    _ => {
+      return 11;
+    }
+  }
+  match (Message.from_json("{\"Pair\":[42,3]}")) {
+    Err(why) => {
+      if (why != "variant \"Pair\": [1]: expected a string, got a number") {
+        return 12;
+      }
+    },
+    _ => {
+      return 13;
+    }
+  }
+  let values: Map[string, i32] = Map { "answer": 42 };
+  if (values.get_or("answer", 0) != 42) {
+    return 14;
+  }
+  if ((18000000000000000007 as u64).to_string() != "18000000000000000007") {
+    return 15;
+  }
+  if (!" \t\n".is_blank() || "é".is_blank()) {
+    return 16;
+  }
+  if (utf8.substring("éx", 0, 1) != "é") {
+    return 17;
+  }
+  print("package helpers ok");
+  return 0;
+}

@@ -5955,7 +5955,8 @@ func (c *checker) visibleVariants(name string) []variantRef {
 	from := c.currentModule()
 	var out []variantRef
 	for _, vr := range all {
-		if c.moduleSeesVariant(from, vr.srcModule) {
+		ed := c.info.Enums[vr.enumName]
+		if c.moduleSeesVariant(from, vr.srcModule) && (ed.VisibleFrom == nil || ed.VisibleFrom[from]) {
 			out = append(out, vr)
 		}
 	}
@@ -16203,6 +16204,10 @@ func isBareNumericLiteral(e ast.Expr) bool {
 }
 
 func (c *checker) checkVariantQualifier(p ast.Position, qualifier string, ed *ast.EnumDecl) bool {
+	if ed.VisibleFrom != nil && !ed.VisibleFrom[c.currentModule()] {
+		c.errfCode(p, "E087", "enum %s is not visible from this package", c.enumHintName(ed.Name))
+		return false
+	}
 	if qualifier == "" {
 		return false
 	}

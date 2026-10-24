@@ -2,6 +2,8 @@ package e2e
 
 import "testing"
 
+// The byte predicate and public string operations must agree for every byte.
+// This checks the shared stdlib predicate without calling its private helper.
 const asciiWsProg = `import "std/i32";
 import "std/string";
 
@@ -11,7 +13,7 @@ function main(): i32 {
     let i: i32 = 0;
     while (i < ws.len()) {
         if (!(ws[i] as u8).is_ascii_white_space()) { return 1; }
-        if (!string.__is_ascii_ws(ws[i])) { return 2; }
+        if (!string.string_from_codepoint(ws[i] as char).is_blank()) { return 2; }
         i = i + 1;
     }
     // Boundaries either side of the 9..13 run and of SP must be false.
@@ -19,13 +21,13 @@ function main(): i32 {
     let j: i32 = 0;
     while (j < no.len()) {
         if ((no[j] as u8).is_ascii_white_space()) { return 3; }
-        if (string.__is_ascii_ws(no[j])) { return 4; }
+        if (string.string_from_codepoint(no[j] as char).is_blank()) { return 4; }
         j = j + 1;
     }
     // Exhaustive: the two spellings agree on every byte value.
     let b: i32 = 0;
     while (b < 256) {
-        if ((b as u8).is_ascii_white_space() != string.__is_ascii_ws(b)) { return 5; }
+        if ((b as u8).is_ascii_white_space() != string.string_from_codepoint(b as char).is_blank()) { return 5; }
         b = b + 1;
     }
     // The trim() / is_blank() family shares the same body.

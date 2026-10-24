@@ -100,7 +100,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<36 function __split_scalars(s: string): string[]>>
 
-<<37 pub function __utf8_step(s: string, i: i32, n: i32): i32>>
+<<37 pub(package) function __utf8_step(s: string, i: i32, n: i32): i32>>
 
 <<38 function __utf8_prev_unit(s: string, end: i32): i32>>
 
@@ -2547,11 +2547,11 @@ function __utf8_cont_hi(b0: i32): i32 {
 }
 ```
 
-### `37 pub function __utf8_step(s: string, i: i32, n: i32): i32`
+### `37 pub(package) function __utf8_step(s: string, i: i32, n: i32): i32`
 
 ```fern
-<<37 pub function __utf8_step(s: string, i: i32, n: i32): i32>>=
-pub function __utf8_step(s: string, i: i32, n: i32): i32 {
+<<37 pub(package) function __utf8_step(s: string, i: i32, n: i32): i32>>=
+pub(package) function __utf8_step(s: string, i: i32, n: i32): i32 {
   let b0: i32 = s[i] as i32;
   let want: i32 = __utf8_expect(b0);
   if (want <= 1) {
@@ -4202,7 +4202,7 @@ pub function repeat_char(ch: char, n: i32): string {
   return string_from_codepoint(ch).repeat(n);
 }
 
-pub function __is_ascii_ws(b: i32): boolean {
+pub(package) function __is_ascii_ws(b: i32): boolean {
   return b == 32 || b >= 9 && b <= 13;
 }
 

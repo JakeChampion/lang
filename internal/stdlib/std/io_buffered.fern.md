@@ -39,7 +39,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<5 pub function buf_writer_new(w: Writer, cap: i32): BufWriter>>
 
-<<6 pub function buf_u64_len(n: u64): i32>>
+<<6 pub(package) function buf_u64_len(n: u64): i32>>
 
 <<7 function __buf_writer_put(b: BufWriter, s: string): BufWriter>>
 
@@ -143,7 +143,7 @@ pub function (w: BytesWriter) reset(): BytesWriter {
 <<4 pub struct BufWriter>>=
 pub struct BufWriter { w: Writer, buf: BufBlock, cap: i32, err: Option[IoError] }
 
-pub struct BufBlock { h: usize }
+pub(package) struct BufBlock { h: usize }
 
 impl mem.Drop for BufBlock {
   function drop(self: BufBlock): void {
@@ -257,7 +257,7 @@ pub function (b: BufWriter) write_i64(n: i64): BufWriter {
   return b.write_u64(n as u64);
 }
 
-pub function buf_push_u64(h: usize, n: u64): void {
+pub(package) function buf_push_u64(h: usize, n: u64): void {
   if (n < 100 as u64) {
     if (n < 10 as u64) {
       buf_push_byte(h, 48 + n as i32);
@@ -273,7 +273,7 @@ pub function buf_push_u64(h: usize, n: u64): void {
   buf_push_range(h, digit_pairs(), r, r + 2);
 }
 
-pub function buf_push_i64(h: usize, n: i64): void {
+pub(package) function buf_push_i64(h: usize, n: i64): void {
   if (n < 0 as i64) {
     buf_push_byte(h, 45);
     buf_push_u64(h, 0 as u64 - n as u64);
@@ -283,11 +283,11 @@ pub function buf_push_i64(h: usize, n: i64): void {
 }
 ```
 
-### `6 pub function buf_u64_len(n: u64): i32`
+### `6 pub(package) function buf_u64_len(n: u64): i32`
 
 ```fern
-<<6 pub function buf_u64_len(n: u64): i32>>=
-pub function buf_u64_len(n: u64): i32 {
+<<6 pub(package) function buf_u64_len(n: u64): i32>>=
+pub(package) function buf_u64_len(n: u64): i32 {
   let d: i32 = 1;
   let p: u64 = 10 as u64;
   while (n >= p) {
@@ -300,7 +300,7 @@ pub function buf_u64_len(n: u64): i32 {
   return d;
 }
 
-pub function digit_pairs(): string {
+pub(package) function digit_pairs(): string {
   return "0001020304050607080910111213141516171819202122232425262728293031323334353637383940414243444546474849505152535455565758596061626364656667686970717273747576777879808182838485868788899091929394959697989900";
 }
 

@@ -141,7 +141,7 @@ pub function int_to_string(n: i32): string {
   return string_from_bytes_unchecked(buf);
 }
 
-pub function __int_to_string_u64(mag: i64, neg: i32): string {
+pub(package) function __int_to_string_u64(mag: i64, neg: i32): string {
   let m: u64 = mag as u64;
   let ndig: i32 = 1;
   let probe: u64 = m;
@@ -181,7 +181,7 @@ pub function __int_to_string_u64(mag: i64, neg: i32): string {
   return string_from_bytes_unchecked(buf);
 }
 
-pub function __radix_digit(c: i32): i32 {
+pub(package) function __radix_digit(c: i32): i32 {
   if (c >= 48 && c <= 57) {
     return c as i32 - 48;
   }
@@ -194,7 +194,7 @@ pub function __radix_digit(c: i32): i32 {
   return 0 - 1;
 }
 
-pub function __radix_char(d: i32): i32 {
+pub(package) function __radix_char(d: i32): i32 {
   if (d < 10) {
     return d + 48;
   }

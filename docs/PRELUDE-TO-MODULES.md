@@ -312,7 +312,9 @@ Semantics:
   the ultimate original).
 - This is the intended fix for the stdlib's `__`-helper leak: a module can
   keep its internals out of its public qualifier and re-export only the
-  curated names (pairs with a future `pub(package)` visibility level).
+  curated names. `pub(package)` shares internal declarations within the tree
+  governed by the nearest `fern.toml`, or within one directory without a manifest.
+  The standard library is one package. See [pub(package)](PUB-PACKAGE.md).
 
 **Types and traits** re-export the same way — a re-exported `struct` /
 `enum` / `trait` resolves through the facade in every type position

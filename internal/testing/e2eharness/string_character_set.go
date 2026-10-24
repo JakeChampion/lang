@@ -16,9 +16,11 @@ function check_malformed(s: string, set: string): boolean {
     let chars = set.chars();
     let positions: i32[] = [0];
     let pos: i32 = 0;
-    while (pos < s.len()) {
-        pos = pos + str.__utf8_step(s, pos, s.len());
+    let unit: i32 = 0;
+    while (unit < units.len()) {
+        pos = pos + utf8.substring(s, unit, unit + 1).len();
         positions = positions.append(pos);
+        unit = unit + 1;
     }
     let low: i32 = 0;
     let high: i32 = units.len();

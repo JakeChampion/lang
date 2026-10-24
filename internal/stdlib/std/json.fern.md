@@ -134,7 +134,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<52 pub function decode[T: FromJson](text: string): Result[T, string]>>
 
-<<53 pub function from_json_payload(v: JsonValue): JsonValue>>
+<<53 pub(package) function from_json_payload(v: JsonValue): JsonValue>>
 ```
 
 ### `dependencies 1`
@@ -2561,11 +2561,11 @@ pub function decode[T: FromJson](text: string): Result[T, string] {
   return Err("");
 }
 
-pub function from_json_elem[T: FromJson](v: JsonValue): Result[T, string] {
+pub(package) function from_json_elem[T: FromJson](v: JsonValue): Result[T, string] {
   return T.from_json_value(v);
 }
 
-pub function from_json_array[T: FromJson](v: JsonValue): Result[T[], string] {
+pub(package) function from_json_array[T: FromJson](v: JsonValue): Result[T[], string] {
   match (v) {
     JArray(xs) => {
       let out: T[] = [];
@@ -2590,7 +2590,7 @@ pub function from_json_array[T: FromJson](v: JsonValue): Result[T[], string] {
   return Err("");
 }
 
-pub function from_json_option[T: FromJson](v: Option[JsonValue]): Result[Option[T], string] {
+pub(package) function from_json_option[T: FromJson](v: Option[JsonValue]): Result[Option[T], string] {
   match (v) {
     Some(jv) => {
       match (T.from_json_value(jv)) {
@@ -2609,7 +2609,7 @@ pub function from_json_option[T: FromJson](v: Option[JsonValue]): Result[Option[
   return Err("");
 }
 
-pub function from_json_field(v: JsonValue, name: string): Result[JsonValue, string] {
+pub(package) function from_json_field(v: JsonValue, name: string): Result[JsonValue, string] {
   match (v) {
     JObject(m) => {
       match (m.get(name)) {
@@ -2628,7 +2628,7 @@ pub function from_json_field(v: JsonValue, name: string): Result[JsonValue, stri
   return Err("");
 }
 
-pub function from_json_optional_field(v: JsonValue, name: string): Result[Option[JsonValue], string] {
+pub(package) function from_json_optional_field(v: JsonValue, name: string): Result[Option[JsonValue], string] {
   match (v) {
     JObject(m) => {
       match (m.get(name)) {
@@ -2654,15 +2654,15 @@ pub function from_json_optional_field(v: JsonValue, name: string): Result[Option
   return Err("");
 }
 
-pub function from_json_at(name: string, why: string): string {
+pub(package) function from_json_at(name: string, why: string): string {
   return "field \"" + name + "\": " + why;
 }
 
-pub function from_json_index(i: i32, why: string): string {
+pub(package) function from_json_index(i: i32, why: string): string {
   return "[" + i.to_string() + "]: " + why;
 }
 
-pub function from_json_variant(v: JsonValue): Result[string, string] {
+pub(package) function from_json_variant(v: JsonValue): Result[string, string] {
   match (v) {
     JString(s) => {
       return Ok(s);
@@ -2681,11 +2681,11 @@ pub function from_json_variant(v: JsonValue): Result[string, string] {
 }
 ```
 
-### `53 pub function from_json_payload(v: JsonValue): JsonValue`
+### `53 pub(package) function from_json_payload(v: JsonValue): JsonValue`
 
 ```fern
-<<53 pub function from_json_payload(v: JsonValue): JsonValue>>=
-pub function from_json_payload(v: JsonValue): JsonValue {
+<<53 pub(package) function from_json_payload(v: JsonValue): JsonValue>>=
+pub(package) function from_json_payload(v: JsonValue): JsonValue {
   match (v) {
     JObject(m) => {
       if (m.len() == 1) {
@@ -2697,15 +2697,15 @@ pub function from_json_payload(v: JsonValue): JsonValue {
   return JNull;
 }
 
-pub function from_json_in(variant: string, why: string): string {
+pub(package) function from_json_in(variant: string, why: string): string {
   return "variant \"" + variant + "\": " + why;
 }
 
-pub function from_json_unknown_variant(name: string): string {
+pub(package) function from_json_unknown_variant(name: string): string {
   return "unknown variant \"" + name + "\"";
 }
 
-pub function from_json_item(p: JsonValue, i: i32, n: i32): Result[JsonValue, string] {
+pub(package) function from_json_item(p: JsonValue, i: i32, n: i32): Result[JsonValue, string] {
   if (n == 1) {
     return Ok(p);
   }
@@ -2723,7 +2723,7 @@ pub function from_json_item(p: JsonValue, i: i32, n: i32): Result[JsonValue, str
   return Err("");
 }
 
-pub function from_json_optional_item(p: JsonValue, i: i32, n: i32): Result[Option[JsonValue], string] {
+pub(package) function from_json_optional_item(p: JsonValue, i: i32, n: i32): Result[Option[JsonValue], string] {
   match (from_json_item(p, i, n)) {
     Ok(x) => {
       match (x) {
